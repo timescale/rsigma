@@ -505,3 +505,26 @@ mcp:
 #         set:
 #           level: high
 #     pipelines: [sysmon]
+
+# Conversion groups for `rsigma backend build`. Each group names a ruleset
+# from the `rulesets` section and writes its converted queries plus a
+# `<output>.manifest.json` manifest. `defaults` fills fields a group leaves
+# unset; a group's `options` merge per key over the defaults. Pipelines come
+# only from this section, never from the ruleset. `metadata` is copied into
+# the manifest verbatim. Groups are file-only: the environment layer can set
+# `defaults` but not a group.
+# convert:
+#   defaults:
+#     format: default
+#     options:
+#       correlation_method: join
+#     skip_unsupported: false
+#   groups:
+#     linux_edge_lynxdb:
+#       ruleset: vendor-windows
+#       target: lynxdb
+#       pipelines: [sysmon]
+#       output: build/lynxdb/linux_edge.txt
+#       metadata:
+#         rule_group: linux
+#         time_window: 5m

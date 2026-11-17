@@ -407,12 +407,12 @@ fn validate_rejects_an_unknown_selector_key() {
         .clone();
     let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(envelope["ok"], serde_json::json!(false));
-    let errors = envelope["ruleset_errors"].as_array().unwrap();
+    let errors = envelope["semantic_errors"].as_array().unwrap();
     assert_eq!(errors.len(), 2, "{errors:?}");
     assert!(
         errors
             .iter()
-            .all(|error| error["ruleset"] == serde_json::json!("local"))
+            .all(|error| error["path"] == serde_json::json!("local"))
     );
     assert!(errors.iter().any(|error| {
         error["message"]

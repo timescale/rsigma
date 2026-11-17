@@ -78,6 +78,14 @@ where
             ));
             continue;
         }
+        if path.first().is_some_and(|segment| segment == "convert")
+            && path.get(1).is_some_and(|segment| segment == "groups")
+        {
+            super::warn_once(format!(
+                "warning: ignoring environment variable {key}: convert groups are configured in files only"
+            ));
+            continue;
+        }
         // Parse the value as a YAML scalar so ints/bools/lists coerce.
         let scalar: Value = yaml_serde::from_str(&raw).unwrap_or(Value::String(raw));
         let mut obj = Map::new();
@@ -116,7 +124,7 @@ pub(crate) fn to_value(partial: &RsigmaConfigPartial) -> Value {
 
 /// Paths whose value is replaced wholesale by a higher layer. Named maps such
 /// as `rulesets.<name>` must not inherit fields from a lower layer's entry.
-const REPLACE_AT: &[&str] = &["rulesets.*"];
+const REPLACE_AT: &[&str] = &["rulesets.*", "convert.groups.*"];
 
 /// Whether `path` matches one of [`REPLACE_AT`], where `*` matches one
 /// segment.
@@ -281,6 +289,30 @@ mod tests {
         assert_eq!(daemon.api.expect("api").addr, Some("127.0.0.1:7000".into()));
         assert_eq!(daemon.input.expect("input").buffer_size, Some(42));
         assert_eq!(p.global.expect("global").log_format, Some("json".into()));
+    }
+
+    #[test]
+    fn env_sets_convert_defaults_but_not_groups() {
+        let vars = vec![
+            (
+                "RSIGMA_CONVERT__DEFAULTS__FORMAT".to_string(),
+                "view".to_string(),
+            ),
+            (
+                "RSIGMA_CONVERT__DEFAULTS__SKIP_UNSUPPORTED".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "RSIGMA_CONVERT__GROUPS__LINUX__TARGET".to_string(),
+                "postgres".to_string(),
+            ),
+        ];
+        let p = env_partial_from(vars);
+        let convert = p.convert.expect("convert");
+        let defaults = convert.defaults.expect("defaults");
+        assert_eq!(defaults.format.as_deref(), Some("view"));
+        assert_eq!(defaults.skip_unsupported, Some(true));
+        assert!(convert.groups.is_none(), "groups are file-only");
     }
 
     #[test]
