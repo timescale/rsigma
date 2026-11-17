@@ -233,7 +233,7 @@ Indicators pushed over the HTTP API. The source has nothing to fetch. Resolution
 
 Push, replace, delete, and list go through `/api/v1/sources/{source_id}/indicators`. See [HTTP API](http-api.md#watchlist-indicators) and [Threat intel watchlists](../guide/threat-intel-watchlists.md).
 
-A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. A watchlist that a pipeline references is capped at 4096 indicators, and a push past that cap returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set.
+A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. A watchlist that a pipeline references is capped at 4096 indicators, and a push past that cap returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set. A successful reload computes the cap again: a pipeline edit that starts referencing the watchlist lowers it, and one that stops referencing it restores `max_indicators`.
 
 ## Data formats
 

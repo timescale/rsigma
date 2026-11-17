@@ -8,7 +8,7 @@ description: "Push indicators into a running RSigma daemon and match them from S
 
 A watchlist is a dynamic source whose values are pushed over the daemon API instead of fetched from a file or a feed. Use it for indicators that change between rule reloads: a handful of C2 addresses, a short domain list, a hash an analyst just confirmed.
 
-A list that belongs in a rule as `%name%` has to stay under the placeholder expansion limit of 4096 combinations. A watchlist that a pipeline references is capped there: a push past 4096 indicators returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set.
+A list that belongs in a rule as `%name%` has to stay under the placeholder expansion limit of 4096 combinations. A watchlist that a pipeline references is capped there: a push past 4096 indicators returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set. A successful reload computes the cap again, so a pipeline edit that starts or stops referencing the watchlist changes it.
 
 ## Declare the source
 
@@ -32,7 +32,7 @@ rsigma engine daemon -r rules/ -p pipelines/c2.yml \
   --input http
 ```
 
-`--clear-state` deletes the saved indicators on startup.
+`--clear-state` deletes the saved indicators on startup. A restart that finds more saved indicators than the cap loads the cap and logs how many were left out. Those rows stay in the database until a later write replaces the set.
 
 ## Match them from a rule
 

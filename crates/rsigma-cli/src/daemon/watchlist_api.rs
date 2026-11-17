@@ -473,11 +473,17 @@ pub(crate) async fn restore_from_store(
         );
     }
     let now = Utc::now();
-    let dropped = registry.restore(&rows, now);
-    if dropped > 0
+    let restored = registry.restore(&rows, now);
+    if restored.expired > 0
         && let Err(error) = store.delete_expired_watchlist_rows(now).await
     {
         tracing::warn!(error = %error, "failed to delete expired watchlist indicators");
+    }
+    if restored.over_cap > 0 {
+        tracing::warn!(
+            indicators = restored.over_cap,
+            "watchlist indicators above the source cap were left in the state database"
+        );
     }
     for id in ids {
         if let Ok(values) = registry.values(id, now) {
@@ -488,7 +494,9 @@ pub(crate) async fn restore_from_store(
         }
     }
     tracing::info!(
-        indicators = rows.len().saturating_sub(skipped + dropped),
+        indicators = rows
+            .len()
+            .saturating_sub(skipped + restored.expired + restored.over_cap),
         "watchlist indicators restored"
     );
 }
@@ -996,5 +1004,34 @@ mod tests {
         let memory = api.registry.values("c2_ips", Utc::now()).unwrap();
         let stored = stored.lock().unwrap();
         assert_eq!(stored.last().unwrap(), &memory);
+    }
+
+    #[tokio::test]
+    async fn restore_leaves_out_rows_above_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = super::super::store::SqliteStateStore::open(&dir.path().join("state.db"))
+            .expect("state db");
+        let now = Utc::now();
+        let rows: Vec<WatchlistRow> = ["a", "b", "c"]
+            .into_iter()
+            .map(|value| WatchlistRow {
+                source_id: "c2".into(),
+                value: value.into(),
+                added_at: now,
+                expires_at: None,
+            })
+            .collect();
+        store
+            .replace_watchlist_rows("c2", &rows)
+            .await
+            .expect("store rows");
+        let registry = WatchlistRegistry::from_sources(&[watch("c2", 100)]);
+        let mut ids = HashSet::new();
+        ids.insert("c2".into());
+        registry.apply_reference_limits(&ids, 2);
+        let metrics = Metrics::new();
+        preregister_metrics(&metrics, &["c2".into()]);
+        restore_from_store(&store, &registry, &["c2".into()], &metrics, false).await;
+        assert_eq!(registry.values("c2", Utc::now()).unwrap(), vec!["a", "b"]);
     }
 }

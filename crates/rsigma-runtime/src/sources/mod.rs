@@ -31,7 +31,7 @@ pub use cache::SourceCache;
 pub use template::TemplateExpander;
 pub use watchlist::{
     AddSummary, RemoveSummary, ReplaceSummary, WatchlistError, WatchlistItem, WatchlistRegistry,
-    WatchlistRow,
+    WatchlistRestore, WatchlistRow,
 };
 
 /// The result of successfully resolving a dynamic source.

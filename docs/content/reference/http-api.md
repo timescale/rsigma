@@ -257,7 +257,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 `ttl` is optional. `POST` answers `{"source_id","added","updated","total"}`. `PUT` answers `{"source_id","total","removed"}` and drops every unexpired value the body does not name.
 
-`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total"}`.
+`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total"}`. The audit trail keeps that body when `--state-db` is set.
 
 `GET` accepts `limit` (default 1000, at most 10000) and `offset` (default 0). The answer is `{"source_id","total","indicators":[{"value","added_at","expires_at"}]}`, sorted by value. `expires_at` is `null` when the indicator does not expire.
 
@@ -267,7 +267,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 | 409 | The source exists and is not a watchlist. |
 | 400 | The body is not the expected JSON, or an indicator value or expiry is invalid. The message names the item index. |
 | 413 | The body is over 4 MiB, the request lists more than 10,000 indicators, or, when the audit trail is enabled, the body exceeds `daemon.api.audit.max_body_bytes` (default 64 KiB). |
-| 422 | The change would exceed the source's `max_indicators`. A watchlist that a pipeline references is capped at 4096, even when `max_indicators` is higher. |
+| 422 | The change would exceed the source's `max_indicators`. A watchlist that a pipeline references is capped at 4096, even when `max_indicators` is higher. A successful reload computes that cap again, and a reload that stops referencing the watchlist restores `max_indicators`. |
 | 500 | The state database rejected the write. Memory is unchanged. |
 
 ```bash

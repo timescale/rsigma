@@ -480,6 +480,19 @@ fn applied_from_capture(processor: &LogProcessor, captured: &AppliedSources) -> 
     }
 }
 
+fn refresh_watchlist_caps(registry: &rsigma_runtime::WatchlistRegistry, processor: &LogProcessor) {
+    let over = registry.apply_reference_limits(
+        &referenced_source_ids(processor),
+        rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
+    );
+    if over > 0 {
+        tracing::warn!(
+            indicators = over,
+            "referenced watchlists hold more indicators than placeholder expansion allows"
+        );
+    }
+}
+
 fn default_detect_inflight(workers: usize) -> usize {
     match workers {
         0 | 1 => 1,
@@ -623,7 +636,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let watchlist_registry = Arc::new(rsigma_runtime::WatchlistRegistry::from_sources(
         &declared_sources,
     ));
-    watchlist_registry.limit_referenced(
+    watchlist_registry.apply_reference_limits(
         &collect_source_ids(&config.pipelines, &config.rulesets),
         rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
     );
@@ -1263,6 +1276,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let audit_for_save = audit_log.clone();
 
     let source_registry = Arc::new(config.source_registry.clone());
+    let reload_watchlists = watchlist_registry.clone();
     let mut watchlists = super::watchlist_api::WatchlistApi::new(
         watchlist_registry,
         source_registry.clone(),
@@ -1562,6 +1576,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             .set(stats.parse_errors as i64);
                         *reload_applied.lock().unwrap() =
                             applied_from_capture(&reload_processor, &captured);
+                        refresh_watchlist_caps(&reload_watchlists, &reload_processor);
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -1611,6 +1626,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                     reload_health.set_ready(true);
                     *reload_applied.lock().unwrap() =
                         applied_from_capture(&reload_processor, &captured);
+                    refresh_watchlist_caps(&reload_watchlists, &reload_processor);
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to reload rules");

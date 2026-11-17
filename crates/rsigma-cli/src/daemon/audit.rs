@@ -184,10 +184,9 @@ fn digest_hex(body: &[u8]) -> Option<String> {
     )
 }
 
-fn skip_body_buffer(method: &Method, headers: &HeaderMap) -> bool {
-    if *method == Method::DELETE {
-        return true;
-    }
+fn skip_body_buffer(headers: &HeaderMap) -> bool {
+    // A missing length means there is no body. Indicator deletion is a
+    // `DELETE` that carries one, so the method alone cannot decide.
     match headers.get(header::CONTENT_LENGTH) {
         Some(v) => v.as_bytes() == b"0",
         None => !headers.contains_key(header::TRANSFER_ENCODING),
@@ -253,7 +252,7 @@ pub async fn audit_middleware(
 
     let max = log.max_body_bytes();
     let (parts, body) = request.into_parts();
-    let body_bytes = if skip_body_buffer(&method, &parts.headers) {
+    let body_bytes = if skip_body_buffer(&parts.headers) {
         Bytes::new()
     } else {
         // A declared `Content-Length` over the cap is a definitive reject

@@ -132,6 +132,9 @@ impl std::error::Error for WatchlistError {}
 
 struct Watchlist {
     entries: BTreeMap<String, WatchlistEntry>,
+    /// The `max_indicators` declared on the source.
+    configured_max: usize,
+    /// The cap in force. A pipeline reference lowers this to the placeholder limit.
     max_indicators: usize,
     max_value_length: usize,
     default_ttl: Option<Duration>,
@@ -145,6 +148,7 @@ impl Watchlist {
     ) -> Self {
         Self {
             entries: BTreeMap::new(),
+            configured_max: max_indicators,
             max_indicators,
             max_value_length,
             default_ttl,
@@ -272,6 +276,15 @@ impl Watchlist {
     }
 }
 
+/// How many stored rows [`WatchlistRegistry::restore`] did not load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchlistRestore {
+    /// Rows whose `expires_at` was not in the future.
+    pub expired: usize,
+    /// Unexpired rows left out because the source was already at its cap.
+    pub over_cap: usize,
+}
+
 /// The declared watchlists and their indicators.
 ///
 /// ```
@@ -341,17 +354,25 @@ impl WatchlistRegistry {
         Arc::clone(&self.writes)
     }
 
-    /// Lower `max_indicators` to `cap` for each named watchlist.
+    /// Set each watchlist's effective cap from the sources referenced now.
     ///
-    /// A pipeline placeholder cannot expand more than `cap` values. A later
-    /// push past the lowered cap is rejected and leaves the set unchanged.
-    pub fn limit_referenced(&self, source_ids: &HashSet<String>, cap: usize) {
+    /// A referenced watchlist is held to `min(configured max_indicators, cap)`.
+    /// A watchlist that is not referenced returns to its configured maximum.
+    /// The returned count is how many stored indicators sit above the new cap.
+    /// Those indicators stay until a later restore; a push that would grow the
+    /// set past the cap is rejected.
+    pub fn apply_reference_limits(&self, source_ids: &HashSet<String>, cap: usize) -> usize {
         let mut lists = self.lists.write();
-        for id in source_ids {
-            if let Some(list) = lists.get_mut(id) {
-                list.max_indicators = list.max_indicators.min(cap);
-            }
+        let mut over = 0;
+        for (id, list) in lists.iter_mut() {
+            list.max_indicators = if source_ids.contains(id) {
+                list.configured_max.min(cap)
+            } else {
+                list.configured_max
+            };
+            over += list.entries.len().saturating_sub(list.max_indicators);
         }
+        over
     }
 
     /// Add or refresh indicators. The change is kept only when every item is valid
@@ -460,24 +481,26 @@ impl WatchlistRegistry {
     }
 
     /// Replace stored rows. Expired rows are dropped. Rows for an unknown
-    /// source id are skipped. A source keeps at most `max_indicators` rows, so
-    /// a stored set larger than the placeholder cap cannot be loaded into a
-    /// rule. Returns how many expired rows were dropped.
-    pub fn restore(&self, rows: &[WatchlistRow], now: DateTime<Utc>) -> usize {
+    /// source id are skipped. A source keeps at most its effective cap, so a
+    /// stored set larger than the placeholder limit cannot be loaded into a
+    /// rule. [`WatchlistRestore::over_cap`] counts the unexpired rows left out.
+    pub fn restore(&self, rows: &[WatchlistRow], now: DateTime<Utc>) -> WatchlistRestore {
         let mut lists = self.lists.write();
         for list in lists.values_mut() {
             list.entries.clear();
         }
-        let mut dropped = 0;
+        let mut expired = 0;
+        let mut over_cap = 0;
         for row in rows {
             if row.expires_at.is_some_and(|exp| exp <= now) {
-                dropped += 1;
+                expired += 1;
                 continue;
             }
             let Some(list) = lists.get_mut(&row.source_id) else {
                 continue;
             };
             if list.entries.len() >= list.max_indicators {
+                over_cap += 1;
                 continue;
             }
             list.entries.insert(
@@ -488,7 +511,7 @@ impl WatchlistRegistry {
                 },
             );
         }
-        dropped
+        WatchlistRestore { expired, over_cap }
     }
 
     /// Put one source back to `rows`. Other sources are left as they are.
@@ -802,7 +825,13 @@ mod tests {
             expires_at: Some(now() - chrono::Duration::seconds(1)),
         });
         let later = now() + chrono::Duration::seconds(1);
-        assert_eq!(registry.restore(&rows, later), 1);
+        assert_eq!(
+            registry.restore(&rows, later),
+            WatchlistRestore {
+                expired: 1,
+                over_cap: 0,
+            }
+        );
         assert_eq!(registry.values("c2", later).unwrap(), vec!["keep"]);
     }
 
@@ -836,13 +865,16 @@ mod tests {
         let registry = sample(100_000, None);
         let mut ids = HashSet::new();
         ids.insert("c2".into());
-        registry.limit_referenced(&ids, 2);
+        assert_eq!(registry.apply_reference_limits(&ids, 2), 0);
         registry
             .add("c2", &[bare("a"), bare("b")], None, now())
             .unwrap();
         let err = registry.add("c2", &[bare("c")], None, now()).unwrap_err();
         assert!(matches!(err, WatchlistError::LimitExceeded { max: 2 }));
         assert_eq!(registry.values("c2", now()).unwrap(), vec!["a", "b"]);
+        assert_eq!(registry.apply_reference_limits(&HashSet::new(), 2), 0);
+        registry.add("c2", &[bare("c")], None, now()).unwrap();
+        assert_eq!(registry.values("c2", now()).unwrap(), vec!["a", "b", "c"]);
     }
 
     #[test]
@@ -850,14 +882,20 @@ mod tests {
         let registry = sample(100_000, None);
         let mut ids = HashSet::new();
         ids.insert("c2".into());
-        registry.limit_referenced(&ids, 2);
+        registry.apply_reference_limits(&ids, 2);
         let rows = ["a", "b", "c"].map(|value| WatchlistRow {
             source_id: "c2".into(),
             value: value.into(),
             added_at: now(),
             expires_at: None,
         });
-        assert_eq!(registry.restore(&rows, now()), 0);
+        assert_eq!(
+            registry.restore(&rows, now()),
+            WatchlistRestore {
+                expired: 0,
+                over_cap: 1,
+            }
+        );
         assert_eq!(registry.values("c2", now()).unwrap(), vec!["a", "b"]);
     }
 }

@@ -211,7 +211,7 @@ let value = resolver.resolve(&source).await?;
 
 The full reusable-source spec (types, data formats, extract languages, refresh policies) lives in [Dynamic Sources](../reference/dynamic-sources.md). `RefreshScheduler` runs the periodic refresh policies; `TemplateExpander` substitutes `${source.X}` references into pipelines, and `lookup` enrichers can read the same `SourceCache`.
 
-`LogProcessor::rebuild_from_sources` loads rules again from cached source values (`SourceFetch::CacheFirst`) and leaves the current engine in place when that load fails. `WatchlistRegistry` holds the unexpired indicators for `type: watchlist` sources. `SourceResolver::cached` and `store_cached` let a push update the cache that a later rebuild or lookup reads. {{ added "unreleased" }}
+`LogProcessor::rebuild_from_sources` loads rules again from cached source values (`SourceFetch::CacheFirst`) and leaves the current engine in place when that load fails. `WatchlistRegistry` holds the unexpired indicators for `type: watchlist` sources. After a successful reload or rebuild, `apply_reference_limits` sets each watchlist's cap from the pipelines that loaded, and `restore` reports how many saved rows were left out because the source was already at that cap. `SourceResolver::cached` and `store_cached` let a push update the cache that a later rebuild or lookup reads. {{ added "unreleased" }}
 
 ## Error handling
 

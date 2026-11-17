@@ -460,6 +460,147 @@ sources:
 }
 
 #[test]
+fn delete_with_state_db_removes_the_stored_indicator() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("state.db");
+    let rule = temp_file(".yml", STATIC_RULE);
+    let sources = temp_file(".yml", SOURCES);
+    let args = [
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "--source",
+        sources.path().to_str().unwrap(),
+        "--state-db",
+        db.to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ];
+    {
+        let daemon = DaemonProcess::spawn(&args);
+        let (status, response) = push(&daemon, r#"{"indicators":["198.51.100.7"]}"#);
+        assert_eq!(status, 200, "{response}");
+        let (status, body) = http_delete_body(
+            &daemon.url("/api/v1/sources/c2_ips/indicators"),
+            r#"{"indicators":["198.51.100.7"]}"#,
+        );
+        assert_eq!(status, 200, "{body}");
+        let deleted: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(deleted["removed"], 1, "{body}");
+        assert_eq!(deleted["total"], 0, "{body}");
+        let (status, body) = http_get(&daemon.url("/api/v1/sources/c2_ips/indicators"));
+        assert_eq!(status, 200, "{body}");
+        let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(listed["total"], 0, "{body}");
+    }
+    let daemon = DaemonProcess::spawn(&args);
+    let (status, body) = http_get(&daemon.url("/api/v1/sources/c2_ips/indicators"));
+    assert_eq!(status, 200, "{body}");
+    let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(listed["total"], 0, "{body}");
+}
+
+const STATIC_PIPELINE: &str = r#"
+name: watchlist-test
+priority: 10
+vars:
+  c2_ips:
+    - "203.0.113.9"
+transformations:
+  - type: value_placeholders
+"#;
+
+fn reload_count(daemon: &DaemonProcess) -> usize {
+    daemon
+        .stderr_lines()
+        .iter()
+        .filter(|line| line.contains("Rules and pipelines reloaded"))
+        .count()
+}
+
+fn wait_for_another_reload(daemon: &DaemonProcess, before: usize) {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        if reload_count(daemon) > before {
+            return;
+        }
+        if Instant::now() >= end {
+            panic!(
+                "timed out waiting for a reload; stderr: {:?}",
+                daemon.stderr_lines()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn many_indicators(count: usize) -> String {
+    let mut body = String::from("{\"indicators\":[");
+    for index in 0..count {
+        if index > 0 {
+            body.push(',');
+        }
+        body.push('"');
+        body.push_str(&index.to_string());
+        body.push('"');
+    }
+    body.push_str("]}");
+    body
+}
+
+#[test]
+fn a_reload_changes_the_cap_when_a_watchlist_becomes_referenced() {
+    let rule = temp_file(".yml", RULE);
+    let pipeline = temp_file(".yml", STATIC_PIPELINE);
+    let sources = temp_file(
+        ".yml",
+        r#"
+sources:
+  - id: c2_ips
+    type: watchlist
+    max_indicators: 5000
+"#,
+    );
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "-p",
+        pipeline.path().to_str().unwrap(),
+        "--source",
+        sources.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+
+    let before = reload_count(&daemon);
+    std::fs::write(pipeline.path(), PIPELINE).unwrap();
+    wait_for_another_reload(&daemon, before);
+    let (status, body) = push(&daemon, &many_indicators(4097));
+    assert_eq!(status, 422, "{body}");
+    assert!(
+        body.contains("4096"),
+        "the referenced cap must be the placeholder limit, got {body}"
+    );
+    let (status, body) = http_get(&daemon.url("/api/v1/sources/c2_ips/indicators"));
+    assert_eq!(status, 200, "{body}");
+    let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(listed["total"], 0, "{body}");
+
+    let before = reload_count(&daemon);
+    std::fs::write(pipeline.path(), STATIC_PIPELINE).unwrap();
+    wait_for_another_reload(&daemon, before);
+    let (status, body) = push(&daemon, &many_indicators(4097));
+    assert_eq!(status, 200, "{body}");
+}
+
+#[test]
 fn restart_keeps_unexpired_indicators() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.db");

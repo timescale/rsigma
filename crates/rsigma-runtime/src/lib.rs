@@ -146,7 +146,7 @@ pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, Sour
 pub use sources::{
     AddSummary, DefaultSourceResolver, RemoveSummary, ReplaceSummary, ResolvedValue, SourceCache,
     SourceError, SourceErrorKind, SourceResolver, TemplateExpander, WatchlistError, WatchlistItem,
-    WatchlistRegistry,
+    WatchlistRegistry, WatchlistRestore,
 };
 
 #[cfg(feature = "nats")]

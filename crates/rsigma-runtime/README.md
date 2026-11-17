@@ -76,7 +76,7 @@ let resolver = DefaultSourceResolver::with_cache(cache);
 
 ### Resolution flow
 
-1. **Fetch**: the source type (file, command, HTTP, NATS, watchlist) determines how raw data is obtained. A watchlist reads `WatchlistRegistry` and returns the unexpired values. Without a registry it returns `[]`.
+1. **Fetch**: the source type (file, command, HTTP, NATS, watchlist) determines how raw data is obtained. A watchlist reads `WatchlistRegistry` and returns the unexpired values. Without a registry it returns `[]`. A pipeline reference lowers that watchlist's cap to the placeholder limit, and `apply_reference_limits` applies the same cap from the pipelines that loaded. `restore` reports rows left above the cap.
 2. **Parse**: raw bytes are parsed according to the declared `DataFormat` (JSON, YAML, lines, CSV).
 3. **Extract**: an optional expression (jq, JSONPath, or CEL) selects a subset of the parsed data.
 4. **Cache**: successful results are stored for `use_cached` error policy fallback.
