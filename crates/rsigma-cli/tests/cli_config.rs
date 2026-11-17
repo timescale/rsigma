@@ -412,7 +412,7 @@ fn validate_rejects_an_unknown_selector_key() {
     assert!(
         errors
             .iter()
-            .all(|error| error["path"] == serde_json::json!("local"))
+            .all(|error| error["path"] == serde_json::json!("rulesets.local"))
     );
     assert!(errors.iter().any(|error| {
         error["message"]

@@ -25,7 +25,7 @@ use super::{discover, ignored_key_warning, inactive_sections, load_layered};
 use rsigma_parser::ruleset::validate_spec;
 
 /// Validate the `daemon.rulesets` selection.
-fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, String)> {
+fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let defined: HashSet<&str> = config
         .rulesets
@@ -40,9 +40,9 @@ fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, St
         .as_ref()
         .filter(|entries| !entries.is_empty());
     if daemon.rules.is_some() && list.is_some() {
-        errors.push((
-            "daemon".to_string(),
-            "set either daemon.rules or daemon.rulesets, not both".to_string(),
+        errors.push(SemanticError::new(
+            "daemon",
+            "set either daemon.rules or daemon.rulesets, not both",
         ));
     }
     if let Some(entries) = list {
@@ -51,11 +51,21 @@ fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, St
     errors
 }
 
-/// One semantic problem found while validating a config section.
+/// One semantic problem found while validating a config section, keyed by
+/// the dotted config path it concerns.
 #[derive(Debug, Clone)]
 struct SemanticError {
     path: String,
     message: String,
+}
+
+impl SemanticError {
+    fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// Validate the `convert` section: group names, ruleset references, and the
@@ -119,7 +129,7 @@ fn convert_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
 }
 
 /// Validate the `eval.ruleset`/`eval.rulesets` selection.
-fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, String)> {
+fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let defined: HashSet<&str> = config
         .rulesets
@@ -132,22 +142,22 @@ fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, Stri
     };
     let list = eval.rulesets.as_ref().filter(|entries| !entries.is_empty());
     if eval.rules.is_some() && (eval.ruleset.is_some() || list.is_some()) {
-        errors.push((
-            "eval".to_string(),
-            "set either eval.rules or eval.ruleset/eval.rulesets, not both".to_string(),
+        errors.push(SemanticError::new(
+            "eval",
+            "set either eval.rules or eval.ruleset/eval.rulesets, not both",
         ));
     }
     if eval.ruleset.is_some() && list.is_some() {
-        errors.push((
-            "eval".to_string(),
-            "set either eval.ruleset or eval.rulesets, not both".to_string(),
+        errors.push(SemanticError::new(
+            "eval",
+            "set either eval.ruleset or eval.rulesets, not both",
         ));
     }
     if let Some(name) = &eval.ruleset
         && !defined.contains(name.as_str())
     {
-        errors.push((
-            name.clone(),
+        errors.push(SemanticError::new(
+            "eval.ruleset",
             format!("eval.ruleset names unknown ruleset '{name}'"),
         ));
     }
@@ -164,8 +174,9 @@ fn ruleset_list_errors(
     section: &str,
     entries: &[super::RulesetEntryPartial],
     defined: &HashSet<&str>,
-    errors: &mut Vec<(String, String)>,
+    errors: &mut Vec<SemanticError>,
 ) {
+    let path = format!("{section}.rulesets");
     let mut seen = HashSet::new();
     for entry in entries {
         let (name, when, unknown) = match entry {
@@ -177,21 +188,24 @@ fn ruleset_list_errors(
             } => (name, when.as_ref(), Some(unknown)),
         };
         if !seen.insert(name.as_str()) {
-            errors.push((name.clone(), format!("duplicate ruleset name '{name}'")));
+            errors.push(SemanticError::new(
+                &path,
+                format!("duplicate ruleset name '{name}'"),
+            ));
         }
         if !defined.contains(name.as_str()) {
-            errors.push((
-                name.clone(),
+            errors.push(SemanticError::new(
+                &path,
                 format!("{section}.rulesets names unknown ruleset '{name}'"),
             ));
         }
         if let Some(unknown) = unknown
             && !unknown.is_empty()
         {
-            errors.push((
-                name.clone(),
+            errors.push(SemanticError::new(
+                &path,
                 format!(
-                    "unknown key(s) in ruleset entry: {}",
+                    "unknown key(s) in ruleset entry '{name}': {}",
                     unknown.keys().cloned().collect::<Vec<_>>().join(", ")
                 ),
             ));
@@ -199,10 +213,10 @@ fn ruleset_list_errors(
         if let Some(when) = when
             && !when.unknown.is_empty()
         {
-            errors.push((
-                name.clone(),
+            errors.push(SemanticError::new(
+                &path,
                 format!(
-                    "unknown key(s) in `when`: {}",
+                    "unknown key(s) in `when` of ruleset entry '{name}': {}",
                     when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
                 ),
             ));
@@ -403,21 +417,14 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     let mut errors = Vec::new();
                     for (name, spec) in rulesets {
                         for message in validate_spec(name, spec) {
-                            errors.push(SemanticError {
-                                path: name.clone(),
-                                message,
-                            });
+                            errors.push(SemanticError::new(format!("rulesets.{name}"), message));
                         }
                     }
                     errors
                 })
                 .unwrap_or_default();
-            for (path, message) in eval_ruleset_errors(&loaded.config) {
-                semantic_errors.push(SemanticError { path, message });
-            }
-            for (path, message) in daemon_ruleset_errors(&loaded.config) {
-                semantic_errors.push(SemanticError { path, message });
-            }
+            semantic_errors.extend(eval_ruleset_errors(&loaded.config));
+            semantic_errors.extend(daemon_ruleset_errors(&loaded.config));
             semantic_errors.extend(convert_errors(&loaded.config));
             let failed = (args.strict && unknown_count > 0) || !semantic_errors.is_empty();
 
