@@ -237,6 +237,14 @@ struct AppState {
     /// Control-plane API audit trail. `Some` when `--state-db` is configured
     /// and audit is not disabled; the `/api/v1/audit` handler reads from it.
     audit: Option<Arc<super::audit::AuditLog>>,
+    /// Indicator push API for `type: watchlist` sources.
+    watchlists: super::watchlist_api::WatchlistApi,
+}
+
+impl axum::extract::FromRef<AppState> for super::watchlist_api::WatchlistApi {
+    fn from_ref(state: &AppState) -> Self {
+        state.watchlists.clone()
+    }
 }
 
 #[derive(Clone)]
@@ -530,10 +538,32 @@ pub async fn run_daemon(config: DaemonConfig) {
     let mut source_resolver_val: Option<Arc<super::instrumented_resolver::InstrumentedResolver>> =
         None;
 
+    let declared_sources: Vec<_> = config
+        .source_registry
+        .sources()
+        .into_iter()
+        .cloned()
+        .collect();
+    let watchlist_ids: Vec<String> = declared_sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.source_type,
+                rsigma_eval::pipeline::sources::SourceType::Watchlist { .. }
+            )
+        })
+        .map(|source| source.id.clone())
+        .collect();
+    let watchlist_registry = Arc::new(rsigma_runtime::WatchlistRegistry::from_sources(
+        &declared_sources,
+    ));
+    super::watchlist_api::preregister_metrics(&metrics, &watchlist_ids);
+
     if has_dynamic {
-        let instrumented = Arc::new(super::instrumented_resolver::InstrumentedResolver::new(
-            metrics.clone(),
-        ));
+        let mut instrumented =
+            super::instrumented_resolver::InstrumentedResolver::new(metrics.clone());
+        instrumented.set_watchlists(watchlist_registry.clone());
+        let instrumented = Arc::new(instrumented);
         source_resolver_val = Some(instrumented.clone());
         let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = instrumented;
         engine.set_source_resolver(resolver.clone());
@@ -596,6 +626,13 @@ pub async fn run_daemon(config: DaemonConfig) {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
             source_results = Some(scheduler.result_receiver());
             sources_trigger_tx_val = Some(scheduler.trigger_sender());
+            if !watchlist_ids.is_empty() {
+                super::watchlist_api::spawn_sweeper(
+                    watchlist_registry.clone(),
+                    sources_trigger_tx_val.clone(),
+                    metrics.clone(),
+                );
+            }
 
             // Spawn NATS control subject listener for remote re-resolution triggers
             #[cfg(feature = "daemon-nats")]
@@ -1132,6 +1169,14 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
     let audit_for_save = audit_log.clone();
 
+    let source_registry = Arc::new(config.source_registry.clone());
+    let watchlists = super::watchlist_api::WatchlistApi::new(
+        watchlist_registry,
+        source_registry.clone(),
+        sources_trigger_tx_val.clone(),
+        metrics.clone(),
+    );
+
     let app_state = AppState {
         processor: processor.clone(),
         metrics: metrics.clone(),
@@ -1143,7 +1188,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
-        source_registry: Arc::new(config.source_registry.clone()),
+        source_registry,
         field_observer: field_observer.clone(),
         schema_observer: schema_observer.clone(),
         tap: tap.clone(),
@@ -1154,6 +1199,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         risk_state: risk_state.clone(),
         disposition_state,
         audit: audit_log,
+        watchlists: watchlists.clone(),
     };
 
     let app = Router::new()
@@ -1194,7 +1240,8 @@ pub async fn run_daemon(config: DaemonConfig) {
         .route("/api/v1/schemas/suggestions", get(schema_suggestions))
         .route("/api/v1/tap", get(tap_stream))
         .route("/api/v1/detections/stream", get(detections_stream))
-        .route("/api/v1/audit", get(list_audit));
+        .route("/api/v1/audit", get(list_audit))
+        .merge(super::watchlist_api::routes());
 
     #[cfg(feature = "daemon-otlp")]
     let app = app.route("/v1/logs", post(otlp_http_logs));

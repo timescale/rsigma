@@ -42,6 +42,8 @@ pub struct Metrics {
     pub source_cache_hits: IntCounter,
     pub source_last_resolved: GaugeVec,
     pub source_rebuilds_total: IntCounterVec,
+    pub watchlist_indicators: IntGaugeVec,
+    pub watchlist_changes_total: IntCounterVec,
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
@@ -474,6 +476,28 @@ impl Metrics {
         let _ = source_rebuilds_total.with_label_values(&["error"]);
         registry
             .register(Box::new(source_rebuilds_total.clone()))
+            .unwrap();
+        let watchlist_indicators = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_watchlist_indicators",
+                "Current unexpired indicators in a watchlist source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_indicators.clone()))
+            .unwrap();
+        let watchlist_changes_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_watchlist_changes_total",
+                "Watchlist indicator changes",
+            ),
+            &["source_id", "op"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_changes_total.clone()))
             .unwrap();
 
         let enrichment_total = IntCounterVec::new(
@@ -1300,6 +1324,8 @@ impl Metrics {
             source_cache_hits,
             source_last_resolved,
             source_rebuilds_total,
+            watchlist_indicators,
+            watchlist_changes_total,
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,

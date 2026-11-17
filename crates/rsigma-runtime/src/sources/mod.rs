@@ -153,8 +153,13 @@ impl DefaultSourceResolver {
     ///
     /// Without a registry those sources resolve to an empty list.
     pub fn with_watchlists(mut self, registry: std::sync::Arc<WatchlistRegistry>) -> Self {
-        self.watchlists = Some(registry);
+        self.set_watchlists(registry);
         self
+    }
+
+    /// Attach a watchlist registry after the resolver already exists.
+    pub fn set_watchlists(&mut self, registry: std::sync::Arc<WatchlistRegistry>) {
+        self.watchlists = Some(registry);
     }
 
     /// Get a reference to the cache (for inspection/testing).

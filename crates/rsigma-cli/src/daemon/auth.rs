@@ -151,6 +151,11 @@ pub fn required_access(method: &Method, path: &str) -> Access {
             req("sources", "write")
         }
         (&Method::DELETE, "/api/v1/sources/cache/{source_id}") => req("sources", "write"),
+        (&Method::GET, "/api/v1/sources/{source_id}/indicators") => req("sources", "read"),
+        (
+            &Method::POST | &Method::PUT | &Method::DELETE,
+            "/api/v1/sources/{source_id}/indicators",
+        ) => req("sources", "write"),
         (&Method::GET, "/api/v1/fields" | "/api/v1/fields/unknown" | "/api/v1/fields/missing") => {
             req("fields", "read")
         }
@@ -627,6 +632,10 @@ mod tests {
             (Method::POST, "/api/v1/sources/resolve"),
             (Method::POST, "/api/v1/sources/resolve/{source_id}"),
             (Method::DELETE, "/api/v1/sources/cache/{source_id}"),
+            (Method::GET, "/api/v1/sources/{source_id}/indicators"),
+            (Method::POST, "/api/v1/sources/{source_id}/indicators"),
+            (Method::PUT, "/api/v1/sources/{source_id}/indicators"),
+            (Method::DELETE, "/api/v1/sources/{source_id}/indicators"),
             (Method::GET, "/api/v1/fields"),
             (Method::GET, "/api/v1/fields/unknown"),
             (Method::GET, "/api/v1/fields/missing"),

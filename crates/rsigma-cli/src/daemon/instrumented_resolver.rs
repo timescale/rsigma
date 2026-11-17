@@ -24,6 +24,11 @@ impl InstrumentedResolver {
         }
     }
 
+    /// Resolve `type: watchlist` sources from `registry`.
+    pub fn set_watchlists(&mut self, registry: std::sync::Arc<rsigma_runtime::WatchlistRegistry>) {
+        self.inner.set_watchlists(registry);
+    }
+
     /// Access the underlying cache for invalidation operations.
     pub fn cache(&self) -> &rsigma_runtime::sources::cache::SourceCache {
         self.inner.cache()

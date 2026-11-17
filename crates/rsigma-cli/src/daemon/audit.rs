@@ -154,6 +154,9 @@ pub fn is_audited(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/sources/resolve")
             | (&Method::POST, "/api/v1/sources/resolve/{source_id}")
             | (&Method::DELETE, "/api/v1/sources/cache/{source_id}")
+            | (&Method::POST, "/api/v1/sources/{source_id}/indicators")
+            | (&Method::PUT, "/api/v1/sources/{source_id}/indicators")
+            | (&Method::DELETE, "/api/v1/sources/{source_id}/indicators")
             | (&Method::DELETE, "/api/v1/fields/observer")
             | (&Method::DELETE, "/api/v1/schemas")
     )
@@ -297,6 +300,22 @@ mod tests {
         assert!(!is_audited(&Method::POST, "/api/v1/events"));
         assert!(!is_audited(&Method::POST, "/v1/logs"));
         assert!(!is_audited(&Method::GET, "/metrics"));
+        assert!(is_audited(
+            &Method::POST,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(is_audited(
+            &Method::PUT,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(is_audited(
+            &Method::DELETE,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
+        assert!(!is_audited(
+            &Method::GET,
+            "/api/v1/sources/{source_id}/indicators"
+        ));
     }
 
     #[test]
