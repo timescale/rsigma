@@ -16,7 +16,7 @@ This reference documents every subcommand with its flag table, verified examples
 |-------|-------------|--------------|
 | [`engine`](engine/eval.md) | `eval`, `explain`, `classify`, `discover-schemas`, `status`, `incidents export`, `tap`, `tail`, `daemon` | Run and inspect Sigma rules against events: one-shot, explain, classify, or long-running |
 | [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, format, tune, reverse-convert, backtest, score, and ATT&CK-map Sigma rule files |
-| [`backend`](backend/convert.md) | `convert`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, Fibratus, and delegated sigma-cli targets) |
+| [`backend`](backend/convert.md) | `convert`, `build`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, Fibratus, and delegated sigma-cli targets), and build every configured group into query files and manifests |
 | [`pipeline`](pipeline/diff.md) | `diff`, `resolve` | Diff pipeline rewrites and test dynamic sources |
 | [`ruleset`](ruleset/list.md) | `list`, `show`, `build`, `diff` | Curate named rule sets declared in `rsigma.yaml`, materialize them, and compare them with a lockfile {{ added "unreleased" }} |
 | [`hunt`](hunt/run.md) | `run` | Hunt a PostgreSQL/TimescaleDB archive with converted rules, streaming matches back as events |
@@ -76,6 +76,7 @@ rsigma
 │   └── migrate-sources        extract pipeline-embedded sources into standalone files
 ├── backend
 │   ├── convert                emit backend-native queries from rules
+│   ├── build                  convert every configured group into queries and manifests
 │   ├── targets                list compiled-in backends
 │   └── formats                list output formats for one backend
 ├── pipeline

@@ -152,7 +152,7 @@ You have used RSigma in three modes:
 
 - One-shot evaluation with `engine eval`.
 - Continuous streaming detection with `engine daemon`.
-- Query generation with `backend convert`.
+- Query generation with `backend convert`, or repeatable multi-target exports with `backend build`.
 
 To take one rule through drafting, testing, deployment, triage, tuning, measurement, and hunting, follow [Tutorial: The Detection Loop](../guide/detection-loop.md). Otherwise, pick the path that matches your work:
 

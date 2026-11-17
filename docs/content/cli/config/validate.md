@@ -66,13 +66,14 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
     { "file": "./rsigma.yaml", "key": "mcp.daemon_url" }
   ],
   "inactive_sections": [],
-  "ruleset_errors": [
-    { "ruleset": "linux_edge", "message": "ruleset 'linux_edge': unknown key 'exlude' (did you mean 'exclude'?)" }
+  "semantic_errors": [
+    { "path": "linux_edge", "message": "ruleset 'linux_edge': unknown key 'exlude' (did you mean 'exclude'?)" },
+    { "path": "convert.groups.linux_edge_lynxdb", "message": "convert group 'linux_edge_lynxdb' names unknown ruleset 'linux_edg'" }
   ]
 }
 ```
 
-`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `ruleset_errors` {{ added "unreleased" }} reports each problem found in a ruleset spec, keyed by ruleset name.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `semantic_errors` {{ added "unreleased" }} reports each problem found in a ruleset spec or a `convert` group, as `{path, message}`.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 

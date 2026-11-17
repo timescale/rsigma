@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Conversion manifest
+
+`rsigma.yaml` gains a `convert:` section. It holds `defaults` and named `groups`; a group sets `ruleset`, `target`, `format`, `pipelines`, `options` (the `-O key=value` equivalents), `skip_unsupported`, `without_pipeline`, `output`, and an opaque `metadata` map. Group fields override the defaults field by field, `options` merge per key, and groups replace wholesale across config layers. Pipelines come only from the group or the defaults, never from the ruleset. Groups are file-only; `RSIGMA_CONVERT__DEFAULTS__*` works, but `convert.groups.*` is ignored.
+
+`rsigma backend build` runs every group, or the groups named with repeatable `--group`, in name order. For each group it writes the queries to `output` and a manifest to `<output>.manifest.json`. The manifest records the group, ruleset, target, format, pipelines, output, generator, query count, one entry per detection or correlation document with its canonical hash and conversion status, and the group's `metadata` copied verbatim. A failed group does not stop the others: the command exits `2` when any rule failed to convert without `skip_unsupported`, `3` for configuration errors, and `1` for drift under `--check`, which writes nothing. Delegated targets materialize the resolved ruleset before sigma-cli runs and omit per-rule status from the manifest.
+
+`config validate` now reports `semantic_errors` with `{path, message}` instead of `ruleset_errors`, and covers the `convert` section: group names, ruleset references, and the fields a group needs after defaults. `config show --for convert` and the `RSIGMA_CONVERT__DEFAULTS__*` environment layer are supported.
+
+No breaking changes.
+
 ### Several rulesets side by side (#715)
 
 `rsigma-eval` adds `RulesetEngines`, a fan-out over independent named rulesets. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; results carry the ruleset name, `when` bindings route by classified schema, and skipped events and routing outcomes are counted per unit. Classification runs once per event, and only when a unit has a `when` binding. `skipped_totals` reads the skip counts and `take_skipped` drains them. `CorrelationSnapshot` carries a per-ruleset map, with `has_collection_state` and `window_entries` helpers. A single-engine snapshot imports into a fan-out with one unit and a one-ruleset snapshot imports into a `CorrelationEngine`; any other layout mismatch fails the import instead of dropping state silently. `RuleFieldSet::extend` unions field sets, and `RuleHeader` gains an optional `ruleset` name. `UnitEngine` and `RulesetEnginesError` are `#[non_exhaustive]`.
