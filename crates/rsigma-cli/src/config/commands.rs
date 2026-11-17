@@ -24,7 +24,7 @@ use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
 use super::{discover, ignored_key_warning, inactive_sections, load_layered};
 use rsigma_parser::ruleset::validate_spec;
 
-/// Validate the `daemon.rulesets` selection and its schema bindings.
+/// Validate the `daemon.rulesets` selection.
 fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, String)> {
     let mut errors = Vec::new();
     let defined: HashSet<&str> = config
@@ -46,53 +46,12 @@ fn daemon_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, St
         ));
     }
     if let Some(entries) = list {
-        let mut seen = HashSet::new();
-        for entry in entries {
-            let (name, when, unknown) = match entry {
-                super::RulesetEntryPartial::Name(name) => (name, None, None),
-                super::RulesetEntryPartial::Bound {
-                    name,
-                    when,
-                    unknown,
-                } => (name, when.as_ref(), Some(unknown)),
-            };
-            if !seen.insert(name.clone()) {
-                errors.push((name.clone(), format!("duplicate ruleset name '{name}'")));
-            }
-            if !defined.contains(name.as_str()) {
-                errors.push((
-                    name.clone(),
-                    format!("daemon.rulesets names unknown ruleset '{name}'"),
-                ));
-            }
-            if let Some(unknown) = unknown
-                && !unknown.is_empty()
-            {
-                errors.push((
-                    name.clone(),
-                    format!(
-                        "unknown key(s) in ruleset entry: {}",
-                        unknown.keys().cloned().collect::<Vec<_>>().join(", ")
-                    ),
-                ));
-            }
-            if let Some(when) = when
-                && !when.unknown.is_empty()
-            {
-                errors.push((
-                    name.clone(),
-                    format!(
-                        "unknown key(s) in `when`: {}",
-                        when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
-                    ),
-                ));
-            }
-        }
+        ruleset_list_errors("daemon", entries, &defined, &mut errors);
     }
     errors
 }
 
-/// Validate the `eval.ruleset`/`eval.rulesets` selection and its schema bindings.
+/// Validate the `eval.ruleset`/`eval.rulesets` selection.
 fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, String)> {
     let mut errors = Vec::new();
     let defined: HashSet<&str> = config
@@ -126,50 +85,62 @@ fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, Stri
         ));
     }
     if let Some(entries) = list {
-        let mut seen = HashSet::new();
-        for entry in entries {
-            let (name, when, unknown) = match entry {
-                super::RulesetEntryPartial::Name(name) => (name, None, None),
-                super::RulesetEntryPartial::Bound {
-                    name,
-                    when,
-                    unknown,
-                } => (name, when.as_ref(), Some(unknown)),
-            };
-            if !seen.insert(name.clone()) {
-                errors.push((name.clone(), format!("duplicate ruleset name '{name}'")));
-            }
-            if !defined.contains(name.as_str()) {
-                errors.push((
-                    name.clone(),
-                    format!("eval.rulesets names unknown ruleset '{name}'"),
-                ));
-            }
-            if let Some(unknown) = unknown
-                && !unknown.is_empty()
-            {
-                errors.push((
-                    name.clone(),
-                    format!(
-                        "unknown key(s) in ruleset entry: {}",
-                        unknown.keys().cloned().collect::<Vec<_>>().join(", ")
-                    ),
-                ));
-            }
-            if let Some(when) = when
-                && !when.unknown.is_empty()
-            {
-                errors.push((
-                    name.clone(),
-                    format!(
-                        "unknown key(s) in `when`: {}",
-                        when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
-                    ),
-                ));
-            }
-        }
+        ruleset_list_errors("eval", entries, &defined, &mut errors);
     }
     errors
+}
+
+/// Check a `<section>.rulesets` list for duplicate or undefined names and
+/// unknown entry or `when` keys. Schema names are checked when the classifier
+/// loads, since `--schema-config` can add schemas.
+fn ruleset_list_errors(
+    section: &str,
+    entries: &[super::RulesetEntryPartial],
+    defined: &HashSet<&str>,
+    errors: &mut Vec<(String, String)>,
+) {
+    let mut seen = HashSet::new();
+    for entry in entries {
+        let (name, when, unknown) = match entry {
+            super::RulesetEntryPartial::Name(name) => (name, None, None),
+            super::RulesetEntryPartial::Bound {
+                name,
+                when,
+                unknown,
+            } => (name, when.as_ref(), Some(unknown)),
+        };
+        if !seen.insert(name.as_str()) {
+            errors.push((name.clone(), format!("duplicate ruleset name '{name}'")));
+        }
+        if !defined.contains(name.as_str()) {
+            errors.push((
+                name.clone(),
+                format!("{section}.rulesets names unknown ruleset '{name}'"),
+            ));
+        }
+        if let Some(unknown) = unknown
+            && !unknown.is_empty()
+        {
+            errors.push((
+                name.clone(),
+                format!(
+                    "unknown key(s) in ruleset entry: {}",
+                    unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+        if let Some(when) = when
+            && !when.unknown.is_empty()
+        {
+            errors.push((
+                name.clone(),
+                format!(
+                    "unknown key(s) in `when`: {}",
+                    when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+    }
 }
 
 /// Render protected keys dropped from project files as `[{file, key}]`.
