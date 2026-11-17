@@ -45,7 +45,18 @@ struct DaemonStatus {
     correlation_matches: u64,
     uptime_seconds: f64,
     #[serde(default)]
+    rulesets: Vec<RulesetStatus>,
+    #[serde(default)]
     dynamic_sources: Option<DynamicSources>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RulesetStatus {
+    name: String,
+    detection_rules: u64,
+    correlation_rules: u64,
+    #[serde(default)]
+    when_schemas: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +177,22 @@ fn status_rows(status: &DaemonStatus) -> Vec<StatusRow> {
         ),
         StatusRow::new("uptime", format_uptime(status.uptime_seconds)),
     ];
+    for ruleset in &status.rulesets {
+        rows.push(StatusRow::new(
+            format!("rulesets.{}.detection_rules", ruleset.name),
+            ruleset.detection_rules.to_string(),
+        ));
+        rows.push(StatusRow::new(
+            format!("rulesets.{}.correlation_rules", ruleset.name),
+            ruleset.correlation_rules.to_string(),
+        ));
+        if !ruleset.when_schemas.is_empty() {
+            rows.push(StatusRow::new(
+                format!("rulesets.{}.when_schemas", ruleset.name),
+                ruleset.when_schemas.join(","),
+            ));
+        }
+    }
     if let Some(ds) = &status.dynamic_sources {
         rows.push(StatusRow::new(
             "dynamic_sources.total",

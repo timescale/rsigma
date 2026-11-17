@@ -141,6 +141,9 @@ pub(crate) struct DaemonPartial {
     /// Builtin pipeline names or YAML file paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipelines: Option<Vec<PathBuf>>,
+    /// Several named rulesets evaluated side by side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rulesets: Option<Vec<RulesetEntryPartial>>,
     /// External dynamic-source files or directories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<PathBuf>>,
@@ -201,6 +204,7 @@ impl Merge for DaemonPartial {
         Self {
             rules: over.rules.or(self.rules),
             pipelines: over.pipelines.or(self.pipelines),
+            rulesets: over.rulesets.or(self.rulesets),
             sources: over.sources.or(self.sources),
             enrichers: over.enrichers.or(self.enrichers),
             #[cfg(feature = "stix-enrich")]

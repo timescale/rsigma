@@ -242,6 +242,8 @@ struct AppState {
 #[derive(Clone)]
 pub struct DaemonConfig {
     pub rules_path: PathBuf,
+    pub rulesets: Vec<rsigma_runtime::RulesetBinding>,
+    pub ruleset_classifier: Option<Arc<rsigma_eval::SchemaClassifier>>,
     pub pipelines: Vec<Pipeline>,
     pub pipeline_paths: Vec<PathBuf>,
     pub corr_config: CorrelationConfig,
@@ -431,12 +433,21 @@ pub async fn run_daemon(config: DaemonConfig) {
         Arc::new(store)
     });
 
-    let mut engine = RuntimeEngine::new(
-        config.rules_path.clone(),
-        config.pipelines.clone(),
-        config.corr_config.clone(),
-        config.include_event,
-    );
+    let mut engine = if config.rulesets.is_empty() {
+        RuntimeEngine::new(
+            config.rules_path.clone(),
+            config.pipelines.clone(),
+            config.corr_config.clone(),
+            config.include_event,
+        )
+    } else {
+        RuntimeEngine::with_rulesets(
+            config.rulesets.clone(),
+            config.corr_config.clone(),
+            config.include_event,
+        )
+    };
+    engine.set_ruleset_classifier(config.ruleset_classifier.clone());
     engine.set_pipeline_paths(config.pipeline_paths.clone());
     engine.set_allow_remote_include(config.allow_remote_include);
     engine.set_strict_rules(config.strict_rules);
@@ -612,6 +623,16 @@ pub async fn run_daemon(config: DaemonConfig) {
             metrics
                 .detection_rules_loaded
                 .set(stats.detection_rules as i64);
+            for ruleset in processor.ruleset_stats() {
+                metrics
+                    .ruleset_rules_loaded
+                    .with_label_values(&[&ruleset.name, "detection"])
+                    .set(ruleset.detection_rules as i64);
+                metrics
+                    .ruleset_rules_loaded
+                    .with_label_values(&[&ruleset.name, "correlation"])
+                    .set(ruleset.correlation_rules as i64);
+            }
             metrics
                 .correlation_rules_loaded
                 .set(stats.correlation_rules as i64);
@@ -852,18 +873,14 @@ pub async fn run_daemon(config: DaemonConfig) {
     // sleep + try_recv drain, collapsing bursts into a single reload.
     let (reload_tx, mut reload_rx) = mpsc::channel::<()>(4);
 
-    // File watcher for hot-reload (rules + pipeline files)
-    let pipeline_watch_paths: Vec<&std::path::Path> =
-        config.pipeline_paths.iter().map(|p| p.as_path()).collect();
-    let _watcher = if config.rules_path.is_dir() {
-        reload::spawn_file_watcher(&config.rules_path, &pipeline_watch_paths, reload_tx.clone())
+    // File watcher for hot-reload (rules, overlays, and pipeline files)
+    let rule_source = if config.rulesets.is_empty() {
+        rsigma_runtime::RuleSource::Path(config.rules_path.clone())
     } else {
-        reload::spawn_file_watcher(
-            config.rules_path.parent().unwrap_or(&config.rules_path),
-            &pipeline_watch_paths,
-            reload_tx.clone(),
-        )
+        rsigma_runtime::RuleSource::Rulesets(config.rulesets.clone())
     };
+    let watched = rsigma_runtime::watch_paths(&rule_source);
+    let _watcher = reload::spawn_file_watcher(&watched, reload_tx.clone());
 
     let start_time = Instant::now();
 
@@ -1316,6 +1333,16 @@ pub async fn run_daemon(config: DaemonConfig) {
                     reload_metrics
                         .detection_rules_loaded
                         .set(stats.detection_rules as i64);
+                    for ruleset in reload_processor.ruleset_stats() {
+                        reload_metrics
+                            .ruleset_rules_loaded
+                            .with_label_values(&[&ruleset.name, "detection"])
+                            .set(ruleset.detection_rules as i64);
+                        reload_metrics
+                            .ruleset_rules_loaded
+                            .with_label_values(&[&ruleset.name, "correlation"])
+                            .set(ruleset.correlation_rules as i64);
+                    }
                     reload_metrics
                         .correlation_rules_loaded
                         .set(stats.correlation_rules as i64);
@@ -3319,11 +3346,17 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn list_rules(State(state): State<AppState>) -> impl IntoResponse {
     let stats = state.processor.stats();
-    Json(serde_json::json!({
+    let rulesets = state.processor.ruleset_stats();
+    let mut value = serde_json::json!({
         "detection_rules": stats.detection_rules,
         "correlation_rules": stats.correlation_rules,
-        "rules_path": state.processor.rules_path().display().to_string(),
-    }))
+    });
+    if rulesets.is_empty() {
+        value["rules_path"] = serde_json::json!(state.processor.rules_path().display().to_string());
+    } else {
+        value["rulesets"] = serde_json::json!(rulesets);
+    }
+    Json(value)
 }
 
 #[derive(Serialize)]
@@ -3336,6 +3369,8 @@ struct StatusResponse {
     detection_matches: u64,
     correlation_matches: u64,
     uptime_seconds: f64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rulesets: Vec<rsigma_eval::RulesetStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dynamic_sources: Option<DynamicSourcesSummary>,
 }
@@ -3820,6 +3855,7 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
         detection_matches: state.metrics.detection_matches.get(),
         correlation_matches: state.metrics.correlation_matches.get(),
         uptime_seconds: state.start_time.elapsed().as_secs_f64(),
+        rulesets: state.processor.ruleset_stats(),
         dynamic_sources,
     };
     Json(resp)

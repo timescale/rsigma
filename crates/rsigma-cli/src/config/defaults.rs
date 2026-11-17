@@ -136,6 +136,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
         daemon: Some(DaemonPartial {
             rules: None,
             pipelines: Some(Vec::new()),
+            rulesets: None,
             sources: Some(Vec::new()),
             enrichers: None,
             #[cfg(feature = "stix-enrich")]
