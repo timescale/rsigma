@@ -51,7 +51,7 @@ See the [examples](examples/) directory for complete working programs.
 
 ## Named rulesets
 
-`RuntimeEngine::with_rulesets` loads several named rulesets with per-ruleset pipelines and state, using `RuleSource`, `RulesetBinding`, and `PipelineRef`. `watch_paths` returns the source, overlay, and pipeline paths the hot-reload watcher should follow. `LogProcessor` reports per-ruleset matches and skipped events through the metrics hook.
+`RuntimeEngine::with_rulesets` loads several named rulesets with per-ruleset pipelines and state, using `RuleSource`, `RulesetBinding`, and `PipelineRef`. `watch_paths(source, pipeline_paths)` returns the directories the hot-reload watcher should follow in both modes: rule sources, overlays, ruleset pipelines, and the `-p` pipeline files. `RuntimeEngine::take_ruleset_skipped` drains the skipped-event counts since the last call, and `load_rules` resolves dynamic pipeline sources in ruleset mode as it does in path mode. `LogProcessor` reports per-ruleset matches and skipped events through the metrics hook.
 
 ## Dynamic Source Resolution
 
