@@ -1,3 +1,4 @@
+mod backend_build;
 mod backtest;
 mod classify;
 mod convert;
@@ -45,6 +46,7 @@ mod tune;
 mod validate;
 mod visibility;
 
+pub(crate) use backend_build::{BackendBuildArgs, cmd_build};
 pub(crate) use backtest::{BacktestArgs, apply_backtest_config, cmd_backtest};
 pub(crate) use classify::{ClassifyArgs, cmd_classify};
 pub(crate) use convert::{

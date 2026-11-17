@@ -459,6 +459,40 @@ When `-o` names a directory (an existing directory, or a path ending in a separa
 rsigma backend convert rules/windows/ -t fibratus -p fibratus_windows -o ./Rules/
 ```
 
+## Convert named rulesets
+
+{{ added "unreleased" }}
+
+`rsigma backend build` turns the `convert:` section of `rsigma.yaml` into repeatable exports. Each group names a ruleset, a target, and an output path; the command writes the queries and a manifest next to them. This is the path for a scheduled-query pipeline that needs several targets, or for CI that regenerates every artifact on each rule change.
+
+```yaml
+rulesets:
+  linux_edge:
+    sources: [rules/linux]
+
+convert:
+  defaults:
+    format: default
+    skip_unsupported: true
+  groups:
+    linux_edge_lynxdb:
+      ruleset: linux_edge
+      target: lynxdb
+      pipelines: [sysmon]
+      output: build/lynxdb/linux_edge.txt
+      metadata:
+        rule_group: linux
+        time_window: 5m
+```
+
+```bash
+rsigma backend build --config rsigma.yaml
+```
+
+The manifest records the group, ruleset, target, format, pipelines, output, generator version, query count, and one entry per detection or correlation document with its canonical hash and conversion status. Values under `metadata` are copied verbatim, so a consumer can carry a rule group, a lookback, or a time window without rsigma interpreting them.
+
+Pipelines come only from the group or the defaults, never from the ruleset. `--group` selects a subset, `--check` reports drift without writing, and a failing group does not stop the others. See [`backend build`](../cli/backend/build.md) for the full contract.
+
 ## Workflow: from rules to a Grafana dashboard
 
 A typical detection-engineering loop with the PostgreSQL backend:
@@ -475,6 +509,7 @@ This avoids the impedance mismatch of running Sigma rules through pySigma at eve
 ## See also
 
 - [CLI reference: `backend convert`](../cli/backend/convert.md) for the full flag table.
+- [CLI reference: `backend build`](../cli/backend/build.md) for repeatable multi-target exports and manifests.
 - [Hunting in the archive](hunting.md) for executing converted detection rules read-only and getting exemplar-shaped events back.
 - [Backends reference: PostgreSQL/TimescaleDB](../reference/backends/postgres.md) for every option, modifier mapping, and edge case.
 - [Backends reference: LynxDB](../reference/backends/lynxdb.md) for SPL2 specifics.

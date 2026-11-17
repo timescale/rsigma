@@ -1,0 +1,4 @@
+EventType="login"
+Image endswith "\whoami.exe" and User="SYSTEM"
+CommandLine contains "-EncodedCommand"
+CommandLine contains "net user"

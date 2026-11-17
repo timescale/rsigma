@@ -19,7 +19,10 @@ mod schema;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub(crate) use schema::{Merge, RsigmaConfigPartial, RulesetEntryPartial, WhenPartial};
+pub(crate) use schema::{
+    ConvertGroupPartial, Merge, RsigmaConfigPartial, RulesetEntryPartial, WhenPartial,
+    manifest_path,
+};
 
 /// Load the config files and fold them with the compiled defaults and the
 /// `RSIGMA_*` environment layer into one typed partial (precedence:
@@ -686,7 +689,7 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
             let message = if raw.contains("expected struct RsigmaConfigPartial") {
                 format!(
                     "top-level config must be a YAML mapping of sections \
-                 (global, daemon, eval, backtest, coverage, scorecard, visibility, doc, hygiene, mcp, rulesets); got {raw}"
+                 (global, daemon, eval, backtest, coverage, scorecard, visibility, doc, hygiene, mcp, rulesets, convert); got {raw}"
                 )
             } else {
                 raw

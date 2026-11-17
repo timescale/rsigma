@@ -189,6 +189,12 @@ In the daemon, the ruleset list and definitions are read once at startup. Changi
 
 `engine eval --dump-correlation-state` prints a map keyed by ruleset name, even when only one ruleset is selected. `--stats` adds one line per ruleset with detection matches, correlation matches, and, for bound rulesets, skipped events.
 
+## Converting a ruleset
+
+{{ added "unreleased" }}
+
+`convert:` groups name a ruleset, a target, and an output path, and `rsigma backend build` writes the queries plus a manifest for each group. Pipelines come only from the conversion group, never from the ruleset. See [Rule Conversion](rule-conversion.md#convert-named-rulesets).
+
 ## See also
 
 - [Configuration reference](../reference/configuration.md)
