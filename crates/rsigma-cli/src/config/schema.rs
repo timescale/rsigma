@@ -840,13 +840,13 @@ impl ConvertPartial {
             let Some(output) = self.effective(group).output else {
                 continue;
             };
-            let output: PathBuf = output
-                .components()
-                .filter(|component| *component != std::path::Component::CurDir)
-                .collect();
             let manifest = manifest_path(&output);
             for path in [output, manifest] {
-                if let Some(owner) = claimed.get(&path) {
+                let key: PathBuf = path
+                    .components()
+                    .filter(|component| *component != std::path::Component::CurDir)
+                    .collect();
+                if let Some(owner) = claimed.get(&key) {
                     collisions.push((
                         name.clone(),
                         format!(
@@ -856,7 +856,7 @@ impl ConvertPartial {
                     ));
                     break;
                 } else {
-                    claimed.insert(path, name.clone());
+                    claimed.insert(key, name.clone());
                 }
             }
         }

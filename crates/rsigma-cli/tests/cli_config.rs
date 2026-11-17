@@ -425,7 +425,7 @@ fn validate_reports_semantic_errors_by_config_path() {
         ),
         (
             "convert.groups.b",
-            "convert groups 'a' and 'b' both write build/a.sql",
+            "convert groups 'a' and 'b' both write ./build/a.sql",
         ),
         (
             "convert.groups.c",
