@@ -426,43 +426,8 @@ impl RuntimeEngine {
             self.pipelines = reload_pipelines(&self.pipeline_paths)?;
         }
 
-        // Resolve dynamic sources if a resolver is set.
-        //
-        // Both error cases must fail closed. Loading rules with unresolved
-        // `${source.*}` templates produces rules whose semantics differ
-        // from what the operator wrote; on a hot-reload, the previous
-        // engine is still serving traffic, so returning an error here
-        // keeps it active rather than silently replacing it with a broken
-        // one.
-        if self.source_resolver.is_some() && self.pipelines.iter().any(|p| p.is_dynamic()) {
-            let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-                "Dynamic pipelines require a tokio runtime; refusing to load rules with \
-                 unresolved sources"
-                    .to_string()
-            })?;
-            let pipelines = std::mem::take(&mut self.pipelines);
-            let resolver = self.source_resolver.clone().unwrap();
-            let allow_remote = self.allow_remote_include;
-            let external = self.external_sources.clone();
-            let resolved = match block_on_from_sync(&handle, async {
-                resolve_pipelines_async(&resolver, &pipelines, &external, allow_remote).await
-            }) {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    self.pipelines = pipelines;
-                    return Err(e);
-                }
-            };
-            match resolved {
-                Ok(p) => self.pipelines = p,
-                Err(e) => {
-                    // Restore the captured pipelines so a higher-level
-                    // retry can re-run the same load against the same
-                    // inputs.
-                    self.pipelines = pipelines;
-                    return Err(format!("Dynamic source resolution failed: {e}"));
-                }
-            }
+        if let Some(resolved) = self.resolve_pipeline_sources(&self.pipelines)? {
+            self.pipelines = resolved;
         }
 
         let previous_state = self.export_state();
@@ -499,8 +464,16 @@ impl RuntimeEngine {
                 resolve_ruleset(&binding.name, &binding.spec, &ResolveOptions::default())
                     .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
             let collection = resolved.collection;
+            check_parse_errors(&collection, self.strict_rules)
+                .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
             parse_errors += collection.error_count();
-            let pipelines = load_ruleset_pipelines(binding)?;
+            let mut pipelines = load_ruleset_pipelines(binding)?;
+            if let Some(resolved) = self
+                .resolve_pipeline_sources(&pipelines)
+                .map_err(|error| format!("ruleset '{}': {error}", binding.name))?
+            {
+                pipelines = resolved;
+            }
             let previous_state = previous
                 .as_ref()
                 .and_then(|snapshot| snapshot.rulesets.get(&binding.name));
@@ -532,6 +505,37 @@ impl RuntimeEngine {
         self.engine = EngineVariant::Rulesets(Box::new(engines));
         self.parse_errors = parse_errors;
         Ok(stats)
+    }
+
+    /// Resolve dynamic `${source.*}` sources in `pipelines`.
+    ///
+    /// Returns `None` when no resolver is configured or no pipeline is
+    /// dynamic. Both error cases fail closed: rules compiled with unresolved
+    /// templates differ from what the operator wrote, and on a hot-reload the
+    /// previous engine keeps serving traffic when this returns an error.
+    fn resolve_pipeline_sources(
+        &self,
+        pipelines: &[Pipeline],
+    ) -> Result<Option<Vec<Pipeline>>, String> {
+        let Some(resolver) = self.source_resolver.clone() else {
+            return Ok(None);
+        };
+        if !pipelines.iter().any(|p| p.is_dynamic()) {
+            return Ok(None);
+        }
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            "Dynamic pipelines require a tokio runtime; refusing to load rules with \
+             unresolved sources"
+                .to_string()
+        })?;
+        let allow_remote = self.allow_remote_include;
+        let external = self.external_sources.clone();
+        let resolved = block_on_from_sync(&handle, async {
+            resolve_pipelines_async(&resolver, pipelines, &external, allow_remote).await
+        })?;
+        resolved
+            .map(Some)
+            .map_err(|e| format!("Dynamic source resolution failed: {e}"))
     }
 
     /// Build one engine variant from a parsed collection. Shared by the
@@ -1195,6 +1199,110 @@ transformations:
         std::fs::remove_dir_all(root.join("rules")).unwrap();
         assert!(engine.load_rules().is_err());
         let value = serde_json::json!({"EventID": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        assert_eq!(engine.process_batch(&[&event])[0].len(), 1);
+    }
+
+    fn single_ruleset_engine(root: &Path) -> RuntimeEngine {
+        RuntimeEngine::with_rulesets(
+            vec![ruleset_binding("a", root, Vec::new())],
+            CorrelationConfig::default(),
+            false,
+        )
+    }
+
+    #[test]
+    fn a_ruleset_whose_rules_all_fail_to_parse_keeps_the_old_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(root.join("rules/rule.yml"), RULE_YAML).unwrap();
+        let mut engine = single_ruleset_engine(&root);
+        engine.load_rules().unwrap();
+
+        std::fs::write(root.join("rules/rule.yml"), "title: [unclosed\n").unwrap();
+        let err = engine.load_rules().unwrap_err();
+        assert!(
+            err.contains("ruleset 'a'") && err.contains("every rule failed to parse"),
+            "got: {err}"
+        );
+        let value = serde_json::json!({"EventID": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        assert_eq!(engine.process_batch(&[&event])[0].len(), 1);
+    }
+
+    #[test]
+    fn strict_rules_reject_a_ruleset_with_a_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(root.join("rules/rule.yml"), RULE_YAML).unwrap();
+        std::fs::write(root.join("rules/broken.yml"), "title: [unclosed\n").unwrap();
+        let mut engine = single_ruleset_engine(&root);
+
+        engine.set_strict_rules(true);
+        let err = engine.load_rules().unwrap_err();
+        assert!(
+            err.contains("ruleset 'a'") && err.contains("strict rule loading"),
+            "got: {err}"
+        );
+
+        engine.set_strict_rules(false);
+        let stats = engine.load_rules().unwrap();
+        assert_eq!(stats.detection_rules, 1);
+        assert_eq!(stats.parse_errors, 1);
+    }
+
+    fn feed_source(path: PathBuf) -> Vec<DynamicSource> {
+        vec![DynamicSource {
+            id: "feed".to_string(),
+            source_type: SourceType::File {
+                path,
+                format: DataFormat::Json,
+                extract: None,
+            },
+            refresh: RefreshPolicy::Once,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }]
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ruleset_pipelines_resolve_dynamic_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a");
+        std::fs::create_dir_all(root.join("rules")).unwrap();
+        std::fs::write(
+            root.join("rules/rule.yml"),
+            "title: Feed\nid: feed\nlogsource:\n    category: test\ndetection:\n    selection:\n        Image|expand: '%feed%'\n    condition: selection\n",
+        )
+        .unwrap();
+        let pipeline_path = dir.path().join("pipeline.yml");
+        std::fs::write(&pipeline_path, DYNAMIC_PIPELINE).unwrap();
+        let feed = dir.path().join("feed.json");
+        let mut engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding(
+                "a",
+                &root,
+                vec![crate::ruleset::PipelineRef::File(pipeline_path)],
+            )],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_source_resolver(Arc::new(sources::DefaultSourceResolver::new()));
+        engine.set_external_sources(feed_source(feed.clone()));
+
+        let err = engine.load_rules().unwrap_err();
+        assert!(
+            err.contains("ruleset 'a'") && err.contains("Dynamic source resolution failed"),
+            "a missing source must fail closed; got: {err}"
+        );
+
+        std::fs::write(&feed, r#"["whoami"]"#).unwrap();
+        engine.load_rules().unwrap();
+        let value = serde_json::json!({"Image": "whoami"});
         let event = rsigma_eval::JsonEvent::borrow(&value);
         assert_eq!(engine.process_batch(&[&event])[0].len(), 1);
     }
