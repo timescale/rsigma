@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Conversion manifest
+### Conversion manifest (#717)
 
 `rsigma.yaml` gains a `convert:` section. It holds `defaults` and named `groups`; a group sets `ruleset`, `target`, `format`, `pipelines`, `options` (the `-O key=value` equivalents), `skip_unsupported`, `without_pipeline`, `output`, and an opaque `metadata` map. Group fields override the defaults field by field, `options` merge per key, and groups replace wholesale across config layers. Pipelines come only from the group or the defaults, never from the ruleset. Groups are file-only; `RSIGMA_CONVERT__DEFAULTS__*` works, but `convert.groups.*` is ignored.
 
