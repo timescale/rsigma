@@ -1,0 +1,3 @@
+RULESET,LEVEL,RULE,TYPE,DETAIL
+win_a,high,Windows whoami,detection,process.executable=whoami
+win_b,high,Windows whoami,detection,Image=whoami

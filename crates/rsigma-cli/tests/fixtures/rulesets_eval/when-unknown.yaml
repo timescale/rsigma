@@ -1,0 +1,8 @@
+rulesets:
+  cloud:
+    sources: [cloud]
+eval:
+  rulesets:
+    - name: cloud
+      when:
+        schemas: [not_a_schema]

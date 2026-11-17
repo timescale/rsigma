@@ -1,0 +1,5 @@
+name: rename_image
+transformations:
+  - type: field_name_mapping
+    mapping:
+      Image: process.executable
