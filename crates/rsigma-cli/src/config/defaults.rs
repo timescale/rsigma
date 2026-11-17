@@ -272,6 +272,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 strict: Some(LOGSOURCE_STRICT),
             }),
             ruleset: None,
+            rulesets: None,
         }),
         backtest: Some(BacktestPartial {
             // rules, corpus, and expectations are required at runtime and have

@@ -6,7 +6,7 @@
 //! `--format json` so agents can branch on a structured envelope. The global
 //! `--output-format` is honored when the local `--format` is unset.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::process;
 
@@ -23,6 +23,86 @@ use super::defaults::defaults_partial;
 use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
 use super::{discover, ignored_key_warning, inactive_sections, load_layered};
 use rsigma_parser::ruleset::validate_spec;
+
+/// Validate the `eval.ruleset`/`eval.rulesets` selection and its schema bindings.
+fn eval_ruleset_errors(config: &super::RsigmaConfigPartial) -> Vec<(String, String)> {
+    let mut errors = Vec::new();
+    let defined: HashSet<&str> = config
+        .rulesets
+        .as_ref()
+        .map(|rulesets| rulesets.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+
+    let Some(eval) = &config.eval else {
+        return errors;
+    };
+    let list = eval.rulesets.as_ref().filter(|entries| !entries.is_empty());
+    if eval.rules.is_some() && (eval.ruleset.is_some() || list.is_some()) {
+        errors.push((
+            "eval".to_string(),
+            "set either eval.rules or eval.ruleset/eval.rulesets, not both".to_string(),
+        ));
+    }
+    if eval.ruleset.is_some() && list.is_some() {
+        errors.push((
+            "eval".to_string(),
+            "set either eval.ruleset or eval.rulesets, not both".to_string(),
+        ));
+    }
+    if let Some(name) = &eval.ruleset
+        && !defined.contains(name.as_str())
+    {
+        errors.push((
+            name.clone(),
+            format!("eval.ruleset names unknown ruleset '{name}'"),
+        ));
+    }
+    if let Some(entries) = list {
+        let mut seen = HashSet::new();
+        for entry in entries {
+            let (name, when, unknown) = match entry {
+                super::RulesetEntryPartial::Name(name) => (name, None, None),
+                super::RulesetEntryPartial::Bound {
+                    name,
+                    when,
+                    unknown,
+                } => (name, when.as_ref(), Some(unknown)),
+            };
+            if !seen.insert(name.clone()) {
+                errors.push((name.clone(), format!("duplicate ruleset name '{name}'")));
+            }
+            if !defined.contains(name.as_str()) {
+                errors.push((
+                    name.clone(),
+                    format!("eval.rulesets names unknown ruleset '{name}'"),
+                ));
+            }
+            if let Some(unknown) = unknown
+                && !unknown.is_empty()
+            {
+                errors.push((
+                    name.clone(),
+                    format!(
+                        "unknown key(s) in ruleset entry: {}",
+                        unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+            if let Some(when) = when
+                && !when.unknown.is_empty()
+            {
+                errors.push((
+                    name.clone(),
+                    format!(
+                        "unknown key(s) in `when`: {}",
+                        when.unknown.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    errors
+}
 
 /// Render protected keys dropped from project files as `[{file, key}]`.
 fn ignored_keys_json(ignored: &[(PathBuf, &'static str)]) -> Value {
@@ -209,7 +289,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
         Ok(loaded) => {
             let inactive = inactive_sections(&loaded.config);
             let unknown_count = loaded.unknown_keys.len();
-            let ruleset_errors: Vec<(String, String)> = loaded
+            let mut ruleset_errors: Vec<(String, String)> = loaded
                 .config
                 .rulesets
                 .as_ref()
@@ -223,6 +303,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     errors
                 })
                 .unwrap_or_default();
+            ruleset_errors.extend(eval_ruleset_errors(&loaded.config));
             let failed = (args.strict && unknown_count > 0) || !ruleset_errors.is_empty();
 
             let envelope = serde_json::json!({
