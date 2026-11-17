@@ -484,14 +484,15 @@ rsigma pipeline resolve -p pipeline.yml --source-file sources.yml --dry-run
 
 The daemon's hot-reload mechanism extends to dynamic sources. The triggers:
 
-| Trigger | What it re-resolves |
-|---------|---------------------|
-| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Rules + pipelines + all dynamic sources (push, watch, and interval still tick independently). |
-| `SIGHUP` | Same as above. |
-| `POST /api/v1/reload` | Same as above. |
-| `POST /api/v1/sources/resolve` | All dynamic sources only (rules not reloaded). |
-| `POST /api/v1/sources/resolve` with `{"source_id": "..."}` | One source. |
-| `DELETE /api/v1/sources/cache/{source_id}` | Invalidate one source's cache so the next read fetches fresh. |
+| Trigger | What it does |
+|---------|--------------|
+| A referenced source value changes | Rebuilds rules from cached source values. A failed rebuild keeps the previous rules. |
+| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Full reload of rules, pipelines, and dynamic sources. |
+| `SIGHUP` | Same as a full reload. |
+| `POST /api/v1/reload` | Same as a full reload. |
+| `POST /api/v1/sources/resolve` | Re-resolves every dynamic source. The body is ignored. Rules reload only when a referenced value changes. |
+| `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. |
+| `DELETE /api/v1/sources/cache/{source_id}` | Invalidates one source's cache so the next read fetches fresh. |
 | NATS message on `rsigma.control.resolve` | Same as `POST /api/v1/sources/resolve`. |
 
 ### Security model

@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Watchlist sources and rebuilds on source change
+
+A dynamic source with `type: watchlist` holds indicators pushed over the daemon HTTP API. Nothing is fetched. `POST`, `PUT`, and `DELETE /api/v1/sources/{source_id}/indicators` add, replace, and delete values, and `GET` lists the unexpired ones. Each value is compared exactly, after surrounding whitespace is removed. An empty value, a value longer than `max_value_length` (default 2048 bytes), or a value containing an ASCII control character is rejected. Expiry comes from the item's `expires_at`, then the item's `ttl`, then the request `ttl`, then the source `default_ttl`. When none of those is set, the indicator stays until it is deleted. A sweeper drops expired indicators about every 10 seconds.
+
+A successful change asks the daemon to rebuild rules from the cached source values. The HTTP response returns before that rebuild finishes. The same rebuild runs when any referenced source, not only a watchlist, gets a new value, so a file or HTTP refresh updates the rules that name it without a full reload. A failed rebuild keeps the previous rules. An empty placeholder expansion matches nothing. A list written as `Field: []` in a rule is unchanged. Placeholder expansion still stops at 4096 combinations, so a watchlist larger than that belongs in a `lookup` enricher rather than a `%name%` list.
+
+With `--state-db`, indicators are written through before the response. A failed write leaves memory unchanged and returns 500. A restart loads unexpired rows and deletes expired ones. Rows whose source is no longer a declared watchlist stay in the database and are not loaded. `--clear-state` deletes the table. Without `--state-db`, the set lives in memory only.
+
+`POST`, `PUT`, and `DELETE` require `sources:write` and are audited. `GET` requires `sources:read` and is not audited. A request may carry at most 10,000 indicators and 4 MiB. `max_indicators` (default 100,000) caps the stored set. `refresh`, `format`, `extract`, and `timeout` are rejected on a watchlist, and the ids `resolve` and `cache` are reserved.
+
+**Breaking changes.** Rules that reference a dynamic source now change when that source's value changes, without `POST /api/v1/reload`. Code that matches on `SourceType` exhaustively must handle the `Watchlist` variant.
+
 ### Rulesets (#712)
 
 A `rulesets:` section in `rsigma.yaml` declares named curations of Sigma rules. Each ruleset lists source files or directories, selectors that include or exclude candidates by id, name, title, tags, level, status, kind, logsource, or path, and a dependency policy for correlation references. `dependencies: include` pulls a referenced rule back in, while `drop` removes a correlation whose references are not kept and warns. Metadata overlays can set or append level, status, description, author, tags, references, false positives, fields, and custom attributes without editing the vendor files. Overlays validate exemplars and ADS attributes after application, so an overlay can add `rsigma.exemplars` for a vendored rule and `rule test` replays them. An overlay cannot set a standard Sigma or engine key through `custom_attributes`, and an empty `set` or `append` is rejected.
