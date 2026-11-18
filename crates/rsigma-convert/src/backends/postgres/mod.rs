@@ -99,8 +99,8 @@ pub static POSTGRES_CONFIG: TextQueryConfig = TextQueryConfig {
     field_quote: Some("\""),
     field_quote_pattern: Some(r"^[a-z_][a-z0-9_]*$"),
     field_quote_pattern_negation: true,
-    field_escape: None,
-    field_escape_pattern: None,
+    field_escape: Some("\"\""),
+    field_escape_pattern: Some("\""),
 
     startswith_expression: Some("{field} ILIKE {value}"),
     not_startswith_expression: Some("{field} NOT ILIKE {value}"),
@@ -324,7 +324,13 @@ impl PostgresBackend {
             // JSONB navigation, with text extraction (`->>`) on the final hop.
             // Supports dotted paths and positional `[N]` indices.
             Some(json_col) => jsonb::jsonb_path(json_col, field, true),
-            None => Ok(text_escape_and_quote_field(self.config, field)),
+            None => {
+                reject_nul("PostgreSQL", field)?;
+                if field.chars().any(|c| c.is_control()) {
+                    return Err(ConvertError::InvalidIdentifier(field.to_string()));
+                }
+                Ok(text_escape_and_quote_field(self.config, field))
+            }
         }
     }
 

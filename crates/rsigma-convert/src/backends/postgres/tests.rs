@@ -50,6 +50,25 @@ detection:
 }
 
 #[test]
+fn test_field_name_sqli_escaped() {
+    let queries = convert(
+        r#"
+title: Test SQLi Escaping
+logsource:
+    category: test
+detection:
+    selection:
+        'CommandLine" OR 1=1; --': whoami
+    condition: selection
+"#,
+    );
+    assert_eq!(
+        queries,
+        vec![r#"SELECT * FROM security_events WHERE "CommandLine"" OR 1=1; --" ILIKE 'whoami'"#]
+    );
+}
+
+#[test]
 fn test_lowercase_field_unquoted() {
     let queries = convert(
         r#"
@@ -1991,6 +2010,31 @@ correlation:
 }
 
 // --- SQL injection prevention ---
+
+#[test]
+fn field_expr_escapes_double_quotes_in_columnar_mode() {
+    let backend = PostgresBackend::new();
+    let result = backend
+        .field_expr("CommandLine\" OR 1=1; --")
+        .expect("field expression should succeed");
+    assert_eq!(result, r#""CommandLine"" OR 1=1; --""#);
+}
+
+#[test]
+fn field_expr_rejects_nul_in_columnar_mode() {
+    let backend = PostgresBackend::new();
+    let result = backend.field_expr("CommandLine\0evil");
+    assert!(result.is_err());
+}
+
+#[test]
+fn field_expr_rejects_control_characters_in_columnar_mode() {
+    let backend = PostgresBackend::new();
+    let result_nl = backend.field_expr("CommandLine\nOR 1=1");
+    assert!(result_nl.is_err());
+    let result_cr = backend.field_expr("CommandLine\rOR 1=1");
+    assert!(result_cr.is_err());
+}
 
 #[test]
 fn field_expr_rejects_quote_in_field_name() {
