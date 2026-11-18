@@ -113,6 +113,19 @@ pub trait MetricsHook: Send + Sync {
     /// scrape, even before the enricher has run. Called once per
     /// configured enricher at pipeline construction.
     fn register_enricher(&self, _enricher_id: &str, _kind: &str) {}
+
+    /// Pre-register the STIX source gauge and skip-reason counters for `source_id`.
+    fn register_stix_source(&self, _source_id: &str) {}
+    /// Set the number of active indicators for `source_id`.
+    fn set_stix_source_indicators(&self, _source_id: &str, _count: u64) {}
+    /// Count STIX objects received while resolving `source_id`.
+    fn on_stix_source_objects(&self, _source_id: &str, _count: u64) {}
+    /// Count indicators or observables skipped for `reason`.
+    ///
+    /// `reason` is one of `revoked`, `expired`, `not_yet_valid`, `low_confidence`,
+    /// `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`,
+    /// or `over_limit`.
+    fn on_stix_source_skipped(&self, _source_id: &str, _reason: &'static str, _count: u64) {}
     /// Pre-register the three HTTP-cache counter label sets for an
     /// `HttpEnricher` instance so the cache counters are visible on
     /// `/metrics` from startup, even before any cache event fires.

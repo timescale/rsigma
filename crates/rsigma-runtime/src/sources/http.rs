@@ -78,26 +78,29 @@ pub async fn resolve_http(
         method,
         headers,
         body,
-        format,
         extract_expr,
         timeout,
         MAX_SOURCE_RESPONSE_BYTES,
+        |text| parse_data(text, format),
     )
     .await
 }
 
 /// Inner implementation with a configurable size limit (for testing).
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn resolve_http_with_limit(
+pub(crate) async fn resolve_http_with_limit<F>(
     url: &str,
     method: Option<&str>,
     headers: &HashMap<String, String>,
     body: Option<&str>,
-    format: DataFormat,
     extract_expr: Option<&ExtractExpr>,
     timeout: Option<Duration>,
     max_bytes: usize,
-) -> Result<ResolvedValue, SourceError> {
+    parse: F,
+) -> Result<ResolvedValue, SourceError>
+where
+    F: FnOnce(&str) -> Result<serde_json::Value, SourceError> + Send,
+{
     let SourceClient { client, policy } = shared_source_client()?;
     policy.check_url(url).map_err(|denial| SourceError {
         source_id: String::new(),
@@ -165,7 +168,7 @@ pub(crate) async fn resolve_http_with_limit(
 
     let body = read_body_capped(response, max_bytes).await?;
 
-    let parsed = parse_data(&body, format)?;
+    let parsed = parse(&body)?;
 
     let data = if let Some(expr) = extract_expr {
         apply_extract(&parsed, expr)?
