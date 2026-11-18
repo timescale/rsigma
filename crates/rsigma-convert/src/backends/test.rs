@@ -1091,6 +1091,22 @@ detection:
     }
 
     #[test]
+    fn test_placeholder_in_value_stays_literal() {
+        let queries = convert_rule_yaml(
+            r#"
+title: 'x" OR "1'
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine: '{rule.title}'
+    condition: selection
+"#,
+        );
+        assert_eq!(queries, vec!["CommandLine=\"{rule.title}\""]);
+    }
+
+    #[test]
     fn test_and_condition() {
         let queries = convert_rule_yaml(
             r#"

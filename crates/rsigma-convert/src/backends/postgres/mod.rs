@@ -99,8 +99,8 @@ pub static POSTGRES_CONFIG: TextQueryConfig = TextQueryConfig {
     field_quote: Some("\""),
     field_quote_pattern: Some(r"^[a-z_][a-z0-9_]*$"),
     field_quote_pattern_negation: true,
-    field_escape: None,
-    field_escape_pattern: None,
+    field_escape: Some("\"\""),
+    field_escape_pattern: Some("\""),
 
     startswith_expression: Some("{field} ILIKE {value}"),
     not_startswith_expression: Some("{field} NOT ILIKE {value}"),
@@ -800,14 +800,14 @@ impl Backend for PostgresBackend {
             None => format!("SELECT {select_cols} FROM {{table}} WHERE {{query}}"),
         };
 
-        let mut result = effective_tmpl.replace("{query}", &query);
-        result = result.replace("{table}", &qualified);
-        result = result.replace("{rule.title}", &rule.title);
-        if let Some(id) = &rule.id {
-            result = result.replace("{rule.id}", id);
-        }
-
-        Ok(result)
+        // Rule metadata is free text, so it renders as string literal content.
+        Ok(render_query_template(&effective_tmpl, |key| match key {
+            "query" => Some(query.clone()),
+            "table" => Some(qualified.clone()),
+            "rule.title" => Some(rule.title.replace('\'', "''")),
+            "rule.id" => rule.id.as_ref().map(|id| id.replace('\'', "''")),
+            _ => None,
+        }))
     }
 
     fn finalize_query(

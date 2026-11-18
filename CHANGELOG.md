@@ -4,6 +4,17 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### PostgreSQL output escapes quotes in field names and expands template placeholders once (security, #718)
+
+The PostgreSQL backend wrapped mixed-case field names in double quotes without doubling a `"` inside the name, so a Sigma rule with a field name such as `CommandLine" OR 1=1; --` broke out of the identifier and added its own SQL. The backend also substituted `{rule.title}` and `{rule.id}` into the finished query after the detection was rendered, so a string value of `{rule.title}` was replaced by the raw title, and a single quote in the title closed the string literal, in JSONB mode as well ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7)).
+
+- A `"` inside a quoted field name is doubled (`"a""b"`). This covers detection fields, `fields:` projections, and correlation `group-by` and aggregate fields in every output format.
+- Query template placeholders are substituted in a single pass, so placeholder text inside a rule's values stays literal.
+- In a `query_expression_placeholders` template, `{rule.title}` and `{rule.id}` render with single quotes doubled, for use inside a string literal.
+- `rsigma-convert` adds `render_query_template`, which substitutes `{name}` placeholders in one pass. `text_finish_query` uses it, so backends built on it no longer expand placeholder text that appears in a rule's values.
+
+No breaking changes.
+
 ### Watchlist sources and rebuilds on source change (#716)
 
 A dynamic source with `type: watchlist` holds indicators pushed over the daemon HTTP API. Nothing is fetched. `POST`, `PUT`, and `DELETE /api/v1/sources/{source_id}/indicators` add, replace, and delete values, and `GET` lists the unexpired ones. Each value is compared exactly, after surrounding whitespace is removed. An empty value, a value longer than `max_value_length` (default 2048 bytes), or a value containing an ASCII control character is rejected. Expiry comes from the item's `expires_at`, then the item's `ttl`, then the request `ttl`, then the source `default_ttl`. When none of those is set, the indicator stays until it is deleted. A sweeper drops expired indicators about every 10 seconds.

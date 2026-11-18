@@ -126,6 +126,8 @@ The default `convert_rule` lowers the rule to `IrRule`, walks the resulting `IrD
 
 The numeric leaves (`convert_field_eq_num`, `convert_field_compare_op`, `convert_keyword_num`) receive a `rsigma_ir::NumericLiteral` rather than an `f64`, so integers above 2^53 reach the backend exactly. Render it with `to_string()` to get the exact digits. {{ added "0.25.0" }}
 
+`render_query_template(template, lookup)` substitutes `{name}` placeholders in a query template in one pass: `lookup` returns the text for a name, or `None` to keep the placeholder as written. Substituted text is never scanned again, so a rule value or title that contains a placeholder stays literal. `text_finish_query` uses it, and a backend with its own `finish_query` should too, rather than calling `str::replace` on a string that already holds the rendered detection. {{ added "unreleased" }}
+
 See [Adding Backends](../developers/adding-backends.md) for the step-by-step walkthrough, the testing pattern, and how to wire a new backend into `rsigma backend convert` if you also want CLI integration.
 
 ## Error handling

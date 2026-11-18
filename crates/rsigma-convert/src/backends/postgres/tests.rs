@@ -2013,6 +2013,129 @@ fn field_expr_rejects_quote_in_dotted_path() {
 }
 
 #[test]
+fn field_expr_doubles_quote_in_column_name() {
+    let backend = PostgresBackend::new();
+    assert_eq!(backend.field_expr(r#"a"b"#).unwrap(), r#""a""b""#);
+    assert_eq!(backend.field_expr(r#"""#).unwrap(), r#""""""#);
+}
+
+#[test]
+fn quote_in_field_name_stays_inside_identifier() {
+    let queries = convert(
+        r#"
+title: Identifier breakout
+logsource:
+    category: process_creation
+detection:
+    selection:
+        'CommandLine" OR 1=1; --': whoami
+    condition: selection
+"#,
+    );
+    assert_eq!(
+        queries,
+        vec![r#"SELECT * FROM security_events WHERE "CommandLine"" OR 1=1; --" ILIKE 'whoami'"#]
+    );
+}
+
+#[test]
+fn quote_in_field_name_stays_inside_identifier_in_view() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: Stacked
+id: 6f1e2c3d-0000-4000-8000-000000000001
+logsource:
+    category: process_creation
+detection:
+    selection:
+        'x" IS NULL; DROP TABLE users; --': a
+    condition: selection
+"#,
+    )
+    .unwrap();
+    let queries = PostgresBackend::new()
+        .convert_rule(&collection.rules[0], "view", &PipelineState::default())
+        .unwrap();
+    assert_eq!(
+        queries,
+        vec![
+            r#"CREATE OR REPLACE VIEW sigma_6f1e2c3d_0000_4000_8000_000000000001 AS SELECT * FROM security_events WHERE "x"" IS NULL; DROP TABLE users; --" ILIKE 'a'"#
+        ]
+    );
+}
+
+const PLACEHOLDER_IN_VALUE: &str = r#"
+title: "a' OR 1=1; --"
+id: "b' OR 1=1; --"
+logsource:
+    category: process_creation
+detection:
+    selection:
+        title_field: '{rule.title}'
+        id_field: '{rule.id}'
+        table_field: '{table}'
+    condition: selection
+"#;
+
+#[test]
+fn placeholder_in_value_stays_literal() {
+    assert_eq!(
+        convert(PLACEHOLDER_IN_VALUE),
+        vec![
+            "SELECT * FROM security_events WHERE title_field ILIKE '{rule.title}' \
+             AND id_field ILIKE '{rule.id}' AND table_field ILIKE '{table}'"
+        ]
+    );
+}
+
+#[test]
+fn placeholder_in_value_stays_literal_in_jsonb_mode() {
+    let mut backend = PostgresBackend::new();
+    backend.json_field = Some("data".to_string());
+    assert_eq!(
+        convert_with(PLACEHOLDER_IN_VALUE, &backend),
+        vec![
+            "SELECT * FROM security_events WHERE data->>'title_field' ILIKE '{rule.title}' \
+             AND data->>'id_field' ILIKE '{rule.id}' AND data->>'table_field' ILIKE '{table}'"
+        ]
+    );
+}
+
+#[test]
+fn template_rule_metadata_renders_as_string_content() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: "a' OR 1=1; --"
+id: "b' OR 1=1; --"
+logsource:
+    category: process_creation
+detection:
+    selection:
+        field: x
+    condition: selection
+"#,
+    )
+    .unwrap();
+    let mut pipeline_state = PipelineState::default();
+    pipeline_state.set_state(
+        "query_expression_template".to_string(),
+        serde_json::json!(
+            "SELECT '{rule.title}' AS title, '{rule.id}' AS id, * FROM {table} WHERE {query}"
+        ),
+    );
+    let queries = PostgresBackend::new()
+        .convert_rule(&collection.rules[0], "default", &pipeline_state)
+        .unwrap();
+    assert_eq!(
+        queries,
+        vec![
+            "SELECT 'a'' OR 1=1; --' AS title, 'b'' OR 1=1; --' AS id, * \
+             FROM security_events WHERE field ILIKE 'x'"
+        ]
+    );
+}
+
+#[test]
 fn resolve_table_rejects_quote_in_table_name() {
     let backend = PostgresBackend::new();
     let custom_attrs = HashMap::new();
