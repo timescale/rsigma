@@ -132,9 +132,7 @@ pub(crate) async fn poll(
         .poll_objects(&prepared.url, &prepared.collection, filter)
         .await
         .map_err(fetch_error)?;
-    let mut set = previous
-        .map(|state| state.set)
-        .unwrap_or_default();
+    let mut set = previous.map(|state| state.set).unwrap_or_default();
     let received = objects.len();
     for object in objects {
         if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {

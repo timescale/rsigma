@@ -9,10 +9,10 @@ use std::process::{Command, Stdio};
 #[cfg(feature = "stix-source")]
 use std::time::Duration;
 
-#[cfg(not(feature = "stix-source"))]
-use common::{rsigma_bin, temp_file};
 #[cfg(feature = "stix-source")]
 use common::{DaemonProcess, http_get, http_post, poll_until, temp_file};
+#[cfg(not(feature = "stix-source"))]
+use common::{rsigma_bin, temp_file};
 
 const RULE: &str = r#"
 title: STIX Destination

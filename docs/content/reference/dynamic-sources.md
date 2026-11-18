@@ -10,7 +10,7 @@ Dynamic sources let the daemon fetch reusable values from files, local commands,
 
 Dynamic pipelines and `lookup` enrichers are currently the only consumers of dynamic sources. This page documents the consumer-independent source specification: every source type, the data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
 
-For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics).
+For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics).
 
 ## Source declaration
 
@@ -487,7 +487,7 @@ Exceeding any limit produces a `SourceErrorKind::ResourceLimit` failure with a d
 - [Disposition Source Recipes](../guide/disposition-recipes.md) for worked HTTP sources (env-header auth, POST `body`, jq `extract`) that pull case-system verdicts into the triage loop.
 - [`pipeline resolve`](../cli/pipeline/resolve.md) for offline source testing.
 - [`rule validate --resolve-sources`](../cli/rule/validate.md) for the strict CI gate.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for what every successful and failing resolve exposes.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for what every successful and failing resolve exposes.
 - [HTTP API: sources](http-api.md#dynamic-sources) for the daemon control endpoints.
 - [Security Hardening](security.md) for every other resource limit the runtime enforces.
 - [`rsigma_runtime::sources` source](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation.

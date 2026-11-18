@@ -33,7 +33,9 @@ pub struct Server {
 
 impl Server {
     pub async fn start(collection: &str) -> Self {
-        let server = MockServer::start().await;
+        // `MockServer::start` recycles a process-wide server. A later test can
+        // still be answered by the previous test's mock. A bare server is not pooled.
+        let server = MockServer::builder().start().await;
         let state = Arc::new(State {
             objects: Mutex::new(Vec::new()),
             object_requests: Mutex::new(Vec::new()),

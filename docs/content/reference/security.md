@@ -315,6 +315,6 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 - [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
 - [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for observability of limit hits.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

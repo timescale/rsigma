@@ -60,7 +60,7 @@ These counters carry labels that identify which rule fired. They surface on `/me
 
 These two families feed the silence and noisy signals of [`rule hygiene`](../cli/rule/hygiene.md) (and the production-volume column of [`rule scorecard`](../cli/rule/scorecard.md)): pass a saved scrape or a live endpoint as `--metrics` and they join per-rule by `rule_title`.
 
-## Dynamic sources (10 metrics)
+## Dynamic sources (11 metrics)
 
 Exposed when one or more dynamic sources are configured. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
 
@@ -78,7 +78,7 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 | `rsigma_stix_source_objects_total` | counter | `source_id` | STIX objects received while resolving a STIX source. Requires `stix-source`. {{ added "unreleased" }} |
 | `rsigma_stix_source_skipped_total` | counter | `source_id`, `reason` (`revoked`, `expired`, `not_yet_valid`, `low_confidence`, `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`, `over_limit`) | Indicators or observables left out of a STIX source value. Requires `stix-source`. Each reason is registered at 0. {{ added "unreleased" }} |
 
-The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, and NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
+The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, NATS connect-or-read, and TAXII poll failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 
 ## Enrichment (13 metrics)
 
