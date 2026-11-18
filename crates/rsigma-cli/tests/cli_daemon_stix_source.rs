@@ -1,11 +1,18 @@
 //! STIX file sources in the daemon: lifecycle values, rebuild on edit, lookup, metrics.
 
+#![cfg(feature = "daemon")]
+
 mod common;
 
+#[cfg(not(feature = "stix-source"))]
 use std::process::{Command, Stdio};
+#[cfg(feature = "stix-source")]
 use std::time::Duration;
 
-use common::{DaemonProcess, http_get, http_post, poll_until, rsigma_bin, temp_file};
+#[cfg(not(feature = "stix-source"))]
+use common::{rsigma_bin, temp_file};
+#[cfg(feature = "stix-source")]
+use common::{DaemonProcess, http_get, http_post, poll_until, temp_file};
 
 const RULE: &str = r#"
 title: STIX Destination
@@ -31,6 +38,7 @@ transformations:
   - type: value_placeholders
 "#;
 
+#[cfg(feature = "stix-source")]
 const ENRICHERS: &str = r#"
 enrichers:
   - id: ti_hit
@@ -58,6 +66,7 @@ fn bundle(ips: &[(&str, u8)]) -> String {
     )
 }
 
+#[cfg(feature = "stix-source")]
 fn status(daemon: &DaemonProcess) -> serde_json::Value {
     serde_json::from_str(&http_get(&daemon.url("/api/v1/status")).1).expect("status json")
 }

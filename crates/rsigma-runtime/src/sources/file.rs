@@ -66,16 +66,16 @@ pub fn parse_data(raw: &str, format: DataFormat) -> Result<serde_json::Value, So
                     &rsigma_eval::pipeline::sources::StixOptions::all(),
                     &rstix::core::StixTimestamp::now(),
                 )?;
-                return Ok(built.value);
+                Ok(built.value)
             }
             #[cfg(not(feature = "stix-source"))]
             {
-                return Err(SourceError {
+                Err(SourceError {
                     source_id: String::new(),
                     kind: SourceErrorKind::Parse(
                         "STIX source format requires the stix-source feature".into(),
                     ),
-                });
+                })
             }
         }
         DataFormat::Csv => {

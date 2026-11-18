@@ -134,7 +134,7 @@ pub(crate) async fn poll(
         .map_err(fetch_error)?;
     let mut set = previous
         .map(|state| state.set)
-        .unwrap_or_else(IndicatorSet::new);
+        .unwrap_or_default();
     let received = objects.len();
     for object in objects {
         if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {
@@ -172,9 +172,11 @@ fn build_client(
     policy: EgressPolicy,
     allow_insecure_http: bool,
 ) -> Result<TaxiiClient, SourceError> {
-    let mut parse_options = ParseOptions::default();
-    parse_options.allow_custom = true;
-    parse_options.max_object_count = page_size.saturating_mul(2);
+    let parse_options = ParseOptions {
+        allow_custom: true,
+        max_object_count: page_size.saturating_mul(2),
+        ..ParseOptions::default()
+    };
     let permit = move |ip: IpAddr| policy.permit_ip(ip).is_ok();
     let mut config = TaxiiClientConfig::new(url)
         .allow_insecure_http(allow_insecure_http)

@@ -240,7 +240,7 @@ impl IndicatorSet {
                         .map(serde_json::Value::String)
                         .collect()
                 })
-                .unwrap_or_else(Vec::new);
+                .unwrap_or_default();
             object.insert(key.clone(), serde_json::Value::Array(list));
         }
         let mut indicator_map = serde_json::Map::new();
@@ -395,9 +395,11 @@ pub fn build(
     options: &StixOptions,
     now: &StixTimestamp,
 ) -> Result<StixBuild, SourceError> {
-    let mut parse_options = ParseOptions::default();
-    parse_options.allow_custom = true;
-    parse_options.max_object_count = PARSE_OBJECT_CAP;
+    let parse_options = ParseOptions {
+        allow_custom: true,
+        max_object_count: PARSE_OBJECT_CAP,
+        ..ParseOptions::default()
+    };
     let bundle = Bundle::parse_with_options(raw, &parse_options).map_err(|err| SourceError {
         source_id: String::new(),
         kind: SourceErrorKind::Parse(format!("invalid STIX bundle: {err}")),

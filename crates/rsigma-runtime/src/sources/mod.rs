@@ -195,7 +195,7 @@ impl DefaultSourceResolver {
         #[cfg(feature = "stix-source")]
         {
             let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
-            return taxii.prepare(sources, policy, allow_insecure_http);
+            taxii.prepare(sources, policy, allow_insecure_http)
         }
         #[cfg(not(feature = "stix-source"))]
         {
@@ -288,6 +288,7 @@ impl DefaultSourceResolver {
         file::resolve_file(path, format, extract).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_http_source(
         &self,
         source_id: &str,

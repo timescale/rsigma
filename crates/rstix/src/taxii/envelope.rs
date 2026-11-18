@@ -209,11 +209,12 @@ mod tests {
     use crate::ParseError;
 
     fn limited(max_objects: usize, max_depth: usize, max_string: usize) -> ParseOptions {
-        let mut opts = ParseOptions::default();
-        opts.max_object_count = max_objects;
-        opts.max_nesting_depth = max_depth;
-        opts.max_string_length = max_string;
-        opts
+        ParseOptions {
+            max_object_count: max_objects,
+            max_nesting_depth: max_depth,
+            max_string_length: max_string,
+            ..ParseOptions::default()
+        }
     }
 
     #[test]
