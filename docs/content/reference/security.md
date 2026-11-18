@@ -102,9 +102,10 @@ Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON ev
 
 The PostgreSQL backend (`backend convert -t postgres`) generates SQL by:
 
-- Always double-quoting field names (`"CommandLine" ILIKE '%whoami%'`).
+- Double-quoting field names other than plain lowercase identifiers (`"CommandLine" ILIKE '%whoami%'`), with a `"` inside the name doubled (`"a""b"`). {{ added "unreleased" }}
 - Always single-quoting string literals with SQL-standard escaping (`'don''t'`).
 - Validating identifiers (`table`, `schema`, `database`) against `^[A-Za-z_][A-Za-z0-9_$]*$` before insertion. Non-matching identifiers fail conversion with `InvalidIdentifier`.
+- Substituting query template placeholders in a single pass, so placeholder text such as `{rule.title}` inside a rule's values is never expanded, and rendering the rule title and ID in a template with single quotes doubled. {{ added "unreleased" }}
 - Never templating user-controlled strings into SQL keywords or structural positions.
 
 This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL. The same conventions apply to the LynxDB backend. See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
