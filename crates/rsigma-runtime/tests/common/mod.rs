@@ -20,6 +20,8 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "dns-enrich")]
 pub mod dns;
+#[cfg(feature = "stix-source")]
+pub mod taxii;
 
 /// Absolute path to a committed MMDB fixture.
 pub fn mmdb_fixture(name: &str) -> String {

@@ -138,6 +138,7 @@ struct Kept {
 }
 
 /// Latest version of each indicator id, then the lifecycle and the cap.
+#[derive(Clone, Debug)]
 pub struct IndicatorSet {
     by_id: HashMap<String, Candidate>,
 }

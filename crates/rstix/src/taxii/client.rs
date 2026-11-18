@@ -392,6 +392,53 @@ impl TaxiiClient {
         Ok(TaxiiPaged::new(envelope, &response))
     }
 
+    /// Drain `objects_stream` pagination and return the last page's
+    /// `X-TAXII-Date-Added-Last`.
+    ///
+    /// The header is consumed while advancing pages. Callers that poll with
+    /// `added_after` use the returned timestamp as the next cursor. A failed
+    /// page returns the error and no cursor.
+    pub async fn poll_objects(
+        &self,
+        api_root_url: &str,
+        collection_id: &str,
+        filter: TaxiiFilter,
+    ) -> Result<(Vec<StixObject>, Option<crate::core::TaxiiTimestamp>), TaxiiError> {
+        let mut pagination = ObjectPaginationState::new(filter);
+        let mut objects = Vec::new();
+        loop {
+            if let Some(object) = pagination.pending_objects.pop_front() {
+                objects.push(object);
+                continue;
+            }
+            if pagination.finished {
+                return Ok((objects, pagination.date_added_last));
+            }
+            match self
+                .fetch_objects_page(api_root_url, collection_id, &pagination.filter)
+                .await
+            {
+                Ok((envelope, response)) => {
+                    pagination.apply_page(
+                        envelope.more,
+                        envelope.next.clone(),
+                        TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
+                            .headers
+                            .date_added_last,
+                        envelope.objects,
+                    )?;
+                }
+                Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                    recover_from_range_not_satisfiable(
+                        &mut pagination.filter,
+                        pagination.baseline_added_after.clone(),
+                    );
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
     /// Paginated stream of STIX objects from a collection.
     pub fn objects_stream(
         &self,

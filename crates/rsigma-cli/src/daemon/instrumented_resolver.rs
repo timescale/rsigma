@@ -29,6 +29,14 @@ impl InstrumentedResolver {
         self.inner.set_watchlists(registry);
     }
 
+    /// Read TAXII credentials for `sources` before the first poll.
+    pub fn prepare_taxii(
+        &mut self,
+        sources: &[rsigma_eval::pipeline::sources::DynamicSource],
+    ) -> Result<(), rsigma_runtime::sources::SourceError> {
+        self.inner.prepare_taxii(sources)
+    }
+
     /// Access the underlying cache for invalidation operations.
     pub fn cache(&self) -> &rsigma_runtime::sources::cache::SourceCache {
         self.inner.cache()

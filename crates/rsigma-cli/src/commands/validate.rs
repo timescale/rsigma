@@ -430,7 +430,11 @@ fn resolve_validate_sources(
                     process::exit(crate::exit_code::CONFIG_ERROR);
                 });
 
-            let resolver = rsigma_runtime::DefaultSourceResolver::new();
+            let mut resolver = rsigma_runtime::DefaultSourceResolver::new();
+            if let Err(err) = resolver.prepare_taxii(&external_sources) {
+                eprintln!("Error preparing TAXII sources: {err}");
+                process::exit(crate::exit_code::CONFIG_ERROR);
+            }
             let mut resolved_pipelines = Vec::with_capacity(pipelines.len());
             let mut source_errors: Vec<String> = Vec::new();
 

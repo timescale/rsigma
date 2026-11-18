@@ -656,6 +656,11 @@ pub async fn run_daemon(config: DaemonConfig) {
         let mut instrumented =
             super::instrumented_resolver::InstrumentedResolver::new(metrics.clone());
         instrumented.set_watchlists(watchlist_registry.clone());
+        if let Err(err) = instrumented.prepare_taxii(&declared_sources) {
+            tracing::error!(error = %err, "Failed to prepare TAXII sources");
+            eprintln!("Error preparing TAXII sources: {err}");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
         let instrumented = Arc::new(instrumented);
         source_resolver_val = Some(instrumented.clone());
         let resolver: Arc<dyn rsigma_runtime::sources::SourceResolver> = instrumented;

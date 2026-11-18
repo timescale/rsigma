@@ -16,6 +16,8 @@ pub mod refresh;
 pub mod registry;
 #[cfg(feature = "stix-source")]
 pub mod stix;
+#[cfg(feature = "stix-source")]
+pub(crate) mod taxii;
 pub mod template;
 pub mod watchlist;
 
@@ -126,6 +128,8 @@ pub struct DefaultSourceResolver {
     /// Clock used when a STIX source is resolved. Unset uses the wall clock.
     #[cfg(feature = "stix-source")]
     stix_now: Option<rstix::core::StixTimestamp>,
+    #[cfg(feature = "stix-source")]
+    taxii: std::sync::Mutex<taxii::TaxiiSources>,
 }
 
 impl DefaultSourceResolver {
@@ -137,6 +141,8 @@ impl DefaultSourceResolver {
             metrics: None,
             #[cfg(feature = "stix-source")]
             stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
         }
     }
 
@@ -148,6 +154,8 @@ impl DefaultSourceResolver {
             metrics: None,
             #[cfg(feature = "stix-source")]
             stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
         }
     }
 
@@ -161,6 +169,49 @@ impl DefaultSourceResolver {
             metrics: None,
             #[cfg(feature = "stix-source")]
             stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
+        }
+    }
+
+    /// Read TAXII credentials and build clients for `sources`.
+    ///
+    /// A missing environment variable is an error that names the variable.
+    /// Without the `stix-source` feature, a `type: taxii` source is rejected.
+    pub fn prepare_taxii(&mut self, sources: &[DynamicSource]) -> Result<(), SourceError> {
+        self.prepare_taxii_with(sources, crate::default_egress_policy(), false)
+    }
+
+    /// [`prepare_taxii`](Self::prepare_taxii) with an explicit egress policy.
+    ///
+    /// `allow_insecure_http` is for tests. Source YAML has no such field.
+    #[doc(hidden)]
+    pub fn prepare_taxii_with(
+        &mut self,
+        sources: &[DynamicSource],
+        policy: crate::EgressPolicy,
+        allow_insecure_http: bool,
+    ) -> Result<(), SourceError> {
+        #[cfg(feature = "stix-source")]
+        {
+            let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+            return taxii.prepare(sources, policy, allow_insecure_http);
+        }
+        #[cfg(not(feature = "stix-source"))]
+        {
+            let _ = (policy, allow_insecure_http);
+            if let Some(source) = sources
+                .iter()
+                .find(|source| matches!(source.source_type, SourceType::Taxii { .. }))
+            {
+                return Err(SourceError {
+                    source_id: source.id.clone(),
+                    kind: SourceErrorKind::Fetch(
+                        "TAXII source requires the stix-source feature".into(),
+                    ),
+                });
+            }
+            Ok(())
         }
     }
 
@@ -282,6 +333,30 @@ impl DefaultSourceResolver {
         http::resolve_http(url, method, headers, body, format, extract, timeout).await
     }
 
+    async fn resolve_taxii(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
+        #[cfg(not(feature = "stix-source"))]
+        {
+            let _ = source;
+            return Err(SourceError {
+                source_id: String::new(),
+                kind: SourceErrorKind::Fetch(
+                    "TAXII source requires the stix-source feature".into(),
+                ),
+            });
+        }
+        #[cfg(feature = "stix-source")]
+        {
+            let (prepared, previous) = {
+                let taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+                taxii.poll_inputs(&source.id)?
+            };
+            let (state, built) = taxii::poll(&prepared, previous, &self.stix_now()).await?;
+            let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+            taxii.commit(&source.id, state);
+            Ok(self.finish_stix(&source.id, built))
+        }
+    }
+
     #[cfg(feature = "stix-source")]
     fn finish_stix(&self, source_id: &str, built: stix::StixBuild) -> ResolvedValue {
         if let Some(metrics) = &self.metrics {
@@ -363,14 +438,7 @@ impl SourceResolver for DefaultSourceResolver {
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
             }
-            SourceType::Taxii { .. } => {
-                return Err(SourceError {
-                    source_id: source.id.clone(),
-                    kind: SourceErrorKind::Fetch(
-                        "TAXII source requires the stix-source feature".into(),
-                    ),
-                });
-            }
+            SourceType::Taxii { .. } => self.resolve_taxii(source).await,
             SourceType::Watchlist { .. } => {
                 let data = self
                     .watchlists
