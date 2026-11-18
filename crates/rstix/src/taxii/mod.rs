@@ -5,6 +5,7 @@
 
 #![allow(clippy::result_large_err)]
 
+mod address_filter;
 mod capability;
 mod client;
 mod dane;

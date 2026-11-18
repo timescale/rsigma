@@ -150,6 +150,12 @@ pub enum TaxiiError {
     /// URL must use HTTPS (spec section 8.5.1).
     #[error("TAXII requires HTTPS: {0}")]
     InsecureUrl(String),
+    /// The address filter rejected every address for this request.
+    #[error("destination address rejected: {host}")]
+    DestinationRejected {
+        /// Host from the request URL.
+        host: String,
+    },
     /// DNS SRV or TLSA lookup failure (non-DNSSEC path, or SRV when not using DANE).
     #[error("DNS SRV discovery failed: {0}")]
     DnsDiscovery(String),

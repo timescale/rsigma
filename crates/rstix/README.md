@@ -482,6 +482,8 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `dane_require_dnssec(b)` | `true` | When `server_trust` is `Dane`: DNSSEC-validate TLSA prefetch and SRV; set `false` for unsigned lab DNS only. |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate): mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
+| `address_filter(f)` | none | Keep only destinations `f` accepts. Name lookup drops rejected addresses and fails when none remain. IP literals are checked on every request, including absolute URLs from the server. Redirects and proxies are disabled. With no filter, resolver, redirect, and proxy behavior stay unchanged. |
+| `address_filter(f)` | none | Accept only addresses `f` allows. Name lookup drops the rest and fails when none remain. IP literals are checked on every request, including absolute URLs from the server. Redirects and proxies are disabled. With no filter, resolution, redirects, and proxies stay at their defaults. |
 | `max_response_bytes(n)` | 512 MiB | Reject oversized bodies (`Content-Length` or streaming cap) → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
 | `parse_options(o)` | default | STIX parse options for envelope objects. |
 | `status_poll_interval(d)` | 1s | Delay between status polls. |
@@ -725,6 +727,8 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Auth secrets | `SecretString`; redacted `Debug` | Credentials never in `TaxiiError` messages |
 | Pagination headers | `TaxiiPaged<T>` exposes `X-TAXII-Date-Added-First` / `Last` | One-shot GETs and streams |
 | HTTPS | Required by default; `allow_insecure_http(true)` for tests | Spec section 3.3 |
+| Destination filter | `address_filter` rejects IP literals before the request and drops rejected DNS answers. Redirects and proxies are off while a filter is set | `TaxiiError::DestinationRejected` for a rejected literal. No filter leaves redirects and the default resolver in place |
+| Address filter | When set, rejected IPs are dropped at resolution and IP literals fail before the request. Redirects and proxies are off. Unset leaves those behaviors unchanged | `TaxiiClientConfig::address_filter`. `DestinationRejected` for a rejected literal |
 | DELETE preflight | Requires both `can_read` and `can_write` | Spec section 5.7 |
 | Manifest Accept | TAXII + STIX media types | Spec section 5.3 |
 | DNS SRV discovery | `resolve_taxii_srv` + `TaxiiClient::discover_via_srv` | `_taxii2._tcp` records |

@@ -1,6 +1,6 @@
 //! TAXII 2.1 HTTP client.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +13,7 @@ use crate::model::{ParseOptions, StixObject};
 
 use super::TaxiiAuthProvider;
 use super::TaxiiError;
+use super::address_filter::{AddressFilter, FilteringResolver};
 use super::capability::{
     ensure_api_root_supports_taxii, ensure_collection_accepts_stix, ensure_post_content_type,
 };
@@ -60,6 +61,7 @@ pub struct TaxiiClientConfig {
     tlsa_cache: TlsaCache,
     dns_nameserver: Option<SocketAddr>,
     dane_require_dnssec: bool,
+    address_filter: Option<AddressFilter>,
 }
 
 impl TaxiiClientConfig {
@@ -84,6 +86,7 @@ impl TaxiiClientConfig {
             tlsa_cache: TlsaCache::default(),
             dns_nameserver: None,
             dane_require_dnssec: true,
+            address_filter: None,
         }
     }
 
@@ -195,6 +198,18 @@ impl TaxiiClientConfig {
         self.dane_require_dnssec = required;
         self
     }
+
+    /// Accept only destination addresses for which `filter` returns true.
+    ///
+    /// Name resolution drops rejected addresses and fails when none remain. IP
+    /// literals are checked on every request, including absolute URLs advertised
+    /// by the server. Redirects and proxies are disabled so a later hop cannot
+    /// bypass the filter. With no filter, the client keeps its default resolver,
+    /// redirect policy, and proxy behavior.
+    pub fn address_filter(mut self, filter: Arc<dyn Fn(IpAddr) -> bool + Send + Sync>) -> Self {
+        self.address_filter = Some(filter);
+        self
+    }
 }
 
 struct TaxiiClientInner {
@@ -232,11 +247,16 @@ impl TaxiiClient {
             &config.tlsa_cache,
             config.client_certificate.as_ref(),
         )?;
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(config.timeout)
-            .use_preconfigured_tls(tls)
-            .build()
-            .map_err(TaxiiError::NetworkError)?;
+            .use_preconfigured_tls(tls);
+        if let Some(filter) = config.address_filter.clone() {
+            builder = builder
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .dns_resolver(FilteringResolver { permit: filter });
+        }
+        let client = builder.build().map_err(TaxiiError::NetworkError)?;
 
         Ok(Self {
             base_url,
@@ -253,6 +273,7 @@ impl TaxiiClient {
                     tlsa_cache: config.tlsa_cache,
                     dns_nameserver: config.dns_nameserver,
                     dane_require_dnssec: config.dane_require_dnssec,
+                    address_filter: config.address_filter,
                 },
                 preflight: config.preflight,
                 status_poll_interval: config.status_poll_interval,

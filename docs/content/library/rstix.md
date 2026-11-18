@@ -152,7 +152,7 @@ Optional `taxii` feature: a TAXII 2.1 HTTP client for all normative endpoint gro
 
 | Feature | Key API | Highlights |
 | ------- | ------- | ---------- |
-| `taxii` | `TaxiiClient`, `TaxiiEnvelope` | TAXII 2.1 HTTP client (rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin/DANE, auth, pagination, SRV + `dns_nameserver()`). Covers Discovery, API Root, Collections, Objects, Manifests, and Status. |
+| `taxii` | `TaxiiClient`, `TaxiiEnvelope` | TAXII 2.1 HTTP client (rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin/DANE, auth, pagination, SRV + `dns_nameserver()`). `address_filter` drops rejected destination addresses, checks IP literals on every request, and disables redirects and proxies. With no filter, resolution, redirects, and proxies stay at their defaults. {{ added "unreleased" }} Covers Discovery, API Root, Collections, Objects, Manifests, and Status. |
 
 ```rust
 use rstix::taxii::{BearerAuth, TaxiiClient, TaxiiClientConfig, TaxiiFilter};

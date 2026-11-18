@@ -11,6 +11,7 @@ use url::Url;
 use crate::model::ParseOptions;
 
 use super::TaxiiError;
+use super::address_filter::{self, AddressFilter};
 use super::dns::DnsLookupOptions;
 use super::envelope::parse_envelope;
 use super::error::{parse_error_body, parse_retry_after};
@@ -32,6 +33,7 @@ pub(crate) struct TaxiiHttp {
     pub tlsa_cache: TlsaCache,
     pub dns_nameserver: Option<SocketAddr>,
     pub dane_require_dnssec: bool,
+    pub address_filter: Option<AddressFilter>,
 }
 
 pub(crate) struct TaxiiResponse {
@@ -77,6 +79,9 @@ impl TaxiiHttp {
         accept: &str,
     ) -> Result<TaxiiResponse, TaxiiError> {
         let mut attempt = 0u32;
+        if let Some(filter) = &self.address_filter {
+            address_filter::reject_literal_host(&url, filter)?;
+        }
         loop {
             self.prefetch_dane(&url).await?;
 

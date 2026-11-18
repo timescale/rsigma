@@ -1,5 +1,7 @@
 //! TAXII client integration tests (wiremock).
 
+#[path = "taxii/address_filter_tests.rs"]
+mod address_filter_tests;
 #[path = "taxii/auth_tests.rs"]
 mod auth_tests;
 #[path = "taxii/build.rs"]
