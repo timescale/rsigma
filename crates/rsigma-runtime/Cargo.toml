@@ -139,3 +139,8 @@ required-features = ["otlp"]
 [[bench]]
 name = "watchlist"
 harness = false
+
+[[bench]]
+name = "stix_source"
+harness = false
+required-features = ["stix-source"]
