@@ -80,6 +80,8 @@ jobs:
             max_len: 4096
           - target: fuzz_taxii_envelope
             max_len: 65536
+          - target: fuzz_stix_source
+            max_len: 262144
           - target: fuzz_capture_spool
             max_len: 65536
           - target: fuzz_otlp_logs_decode

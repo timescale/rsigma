@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 35 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 29 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 36 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 30 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
@@ -39,6 +39,7 @@ The workspace ships 35 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_stix_pattern` | STIX pattern parsing. | 4096 |
 | `fuzz_taxii_envelope` | TAXII envelope parsing, including object-count, nesting, and string-length limits. Seeds in `fuzz/seeds/fuzz_taxii_envelope/` cover a valid envelope, a truncated envelope, and an oversized envelope. {{ added "unreleased" }} | 65536 |
+| `fuzz_stix_source` | `format: stix` bundle build at a fixed clock. A successful build must be an object with every observable key as an array and an `indicators` object. Seeds in `fuzz/seeds/fuzz_stix_source/` cover the source fixtures, a truncated bundle, duplicate ids, a 300-indicator bundle, and each unsupported pattern shape. {{ added "unreleased" }} | 262144 |
 | `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` STIX bundle parse entrypoint. Seed locally from `tests/fixtures/spec/` or a downloaded ATT&CK bundle (see [rstix: Local MITRE ATT&CK corpus test](../library/rstix.md#rstix-testing-local-mitre-attck-corpus)). | 65536 |
 | `fuzz_rstix_validate_json` | The `rstix::Validator::validate_json_str` Validation Pipeline raw JSON entry (`validate` feature). Seeds in `fuzz/seeds/fuzz_rstix_validate_json/`. | 65536 |
 | `fuzz_mmdb_record` | MMDB decoding and field projection (`mmdb-enrich` feature): `MmdbDatabase::from_bytes` over arbitrary bytes, then lookups for a fixed set of IPv4 and IPv6 addresses with no projection and with a projection that includes an array index. Seeds in `fuzz/corpus/fuzz_mmdb_record/` cover the synthetic fixtures, a truncated file, a metadata-marker-only file, and a file with corrupted search-tree bytes. {{ added "unreleased" }} | 65536 |
@@ -46,7 +47,7 @@ The workspace ships 35 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_ruleset_resolve` | Named ruleset resolution: the first input byte selects a spec, overlay list, or selector; `validate_spec` and `resolve_loaded` then run against embedded fixture rules with the inline-only overlay loader. Seeds in `fuzz/seeds/fuzz_ruleset_resolve/` cover each mode, an invalid glob, deeply nested custom attributes, a 240-element tag list, a null patch, and unknown keys at every level. {{ added "unreleased" }} | 4096 |
 | `fuzz_ocsf_sidecar` | Dedup sidecar OCSF serialization, risk-event mapping, and webhook JSON bodies. Arbitrary JSON goes to `dedup_summary_finding_opts` and, when it is a risk event, to `risk_event_finding_opts`, for schema `1.1.0` or `1.3.0`. The same bytes are rendered with `render_webhook_body`, so `${detection.ocsf}` and `${correlation.ocsf}` are validated, including a reference inside a string. Seeds in `fuzz/corpus/fuzz_ocsf_sidecar/` cover those shapes. The `${source.X}` expander does not see webhook placeholders, so the seeds live on this target. {{ added "unreleased" }} | 8192 |
 
-All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime` (with `logfmt`, `cef`, `otlp`, `mmdb-enrich`, and `dns-enrich` features), `prost`, and `rstix` (with `serde`, `pattern`, and `validate` features).
+All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime` (with `logfmt`, `cef`, `otlp`, `mmdb-enrich`, `dns-enrich`, and `stix-source` features), `prost`, and `rstix` (with `serde`, `pattern`, `validate`, and `taxii` features).
 
 ## Run one target locally
 

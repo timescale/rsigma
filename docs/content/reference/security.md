@@ -96,7 +96,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, TAXII envelopes, and the conversion backends. Twenty-nine harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, and the conversion backends. Thirty harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
