@@ -641,6 +641,19 @@ pub async fn run_daemon(config: DaemonConfig) {
         rsigma_eval::MAX_PLACEHOLDER_COMBINATIONS,
     );
     super::watchlist_api::preregister_metrics(&metrics, &watchlist_ids);
+    for source in &declared_sources {
+        let stix = match &source.source_type {
+            rsigma_eval::pipeline::sources::SourceType::Taxii { .. } => true,
+            rsigma_eval::pipeline::sources::SourceType::File { format, .. }
+            | rsigma_eval::pipeline::sources::SourceType::Http { format, .. } => {
+                *format == rsigma_eval::pipeline::sources::DataFormat::Stix
+            }
+            _ => false,
+        };
+        if stix {
+            metrics.register_stix_source(&source.id);
+        }
+    }
     if let Some(store) = state_store.as_ref() {
         super::watchlist_api::restore_from_store(
             store,

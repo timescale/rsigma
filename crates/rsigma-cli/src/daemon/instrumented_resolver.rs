@@ -18,8 +18,9 @@ pub struct InstrumentedResolver {
 
 impl InstrumentedResolver {
     pub fn new(metrics: Arc<Metrics>) -> Self {
+        let hook: Arc<dyn rsigma_runtime::MetricsHook> = metrics.clone();
         Self {
-            inner: rsigma_runtime::DefaultSourceResolver::new(),
+            inner: rsigma_runtime::DefaultSourceResolver::new().with_metrics(hook),
             metrics,
         }
     }

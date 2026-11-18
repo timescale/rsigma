@@ -35,6 +35,7 @@ cli_features! {
     "mcp",
     "mmdb-enrich",
     "stix-enrich",
+    "stix-source",
     "taxii-sync",
 }
 

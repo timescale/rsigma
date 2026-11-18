@@ -80,6 +80,8 @@ stix-enrich = [
 ]
 # Enrichers `type: mmdb` (`mmdb-enrich` feature).
 mmdb-enrich = ["daemon", "rsigma-runtime/mmdb-enrich"]
+# TAXII collections and `format: stix` file or HTTP sources.
+stix-source = ["daemon", "rsigma-runtime/stix-source"]
 # Enrichers `type: dns` (`dns-enrich` feature).
 dns-enrich = ["daemon", "rsigma-runtime/dns-enrich"]
 
