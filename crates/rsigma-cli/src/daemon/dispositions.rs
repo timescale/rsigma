@@ -253,6 +253,7 @@ impl DispositionState {
                     SourceType::Nats { .. } => "nats",
                     SourceType::Command { .. } => "command",
                     SourceType::Watchlist { .. } => "watchlist",
+                    SourceType::Taxii { .. } => "taxii",
                 };
                 (s.id.clone(), label)
             })
@@ -596,6 +597,7 @@ mod tests {
                 path,
                 format: DataFormat::Json,
                 extract: None,
+                stix: None,
             },
             refresh: RefreshPolicy::OnDemand,
             timeout: None,

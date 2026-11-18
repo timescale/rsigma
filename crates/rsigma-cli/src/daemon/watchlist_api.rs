@@ -590,6 +590,7 @@ mod tests {
                 path: PathBuf::from("list.txt"),
                 format: DataFormat::Lines,
                 extract: None,
+                stix: None,
             },
             refresh: RefreshPolicy::Once,
             timeout: None,

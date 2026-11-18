@@ -60,7 +60,9 @@ fn expand_includes_with_depth(
                 && let Some(source) = sources.iter().find(|s| s.id == source_id)
             {
                 match &source.source_type {
-                    SourceType::Http { .. } | SourceType::Nats { .. } => {
+                    SourceType::Http { .. }
+                    | SourceType::Nats { .. }
+                    | SourceType::Taxii { .. } => {
                         return Err(format!(
                             "include references remote source '{source_id}'; use --allow-remote-include to permit"
                         ));

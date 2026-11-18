@@ -1,0 +1,14 @@
+sources:
+  - id: ti
+    type: taxii
+    url: https://taxii.example/api/
+    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+    refresh: 5m
+    page_size: 500
+    auth:
+      bearer_token_env: TAXII_TOKEN
+    stix:
+      min_confidence: 50
+      observables:
+        - ipv4
+        - domain

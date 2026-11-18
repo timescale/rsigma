@@ -196,6 +196,7 @@ impl SourceResolver for DefaultSourceResolver {
                 path,
                 format,
                 extract,
+                stix: _,
             } => file::resolve_file(path, *format, extract.as_ref()).await,
             SourceType::Command {
                 command,
@@ -209,6 +210,7 @@ impl SourceResolver for DefaultSourceResolver {
                 body,
                 format,
                 extract,
+                stix: _,
             } => {
                 http::resolve_http(
                     url,
@@ -233,6 +235,14 @@ impl SourceResolver for DefaultSourceResolver {
                 return Err(SourceError {
                     source_id: source.id.clone(),
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
+                });
+            }
+            SourceType::Taxii { .. } => {
+                return Err(SourceError {
+                    source_id: source.id.clone(),
+                    kind: SourceErrorKind::Fetch(
+                        "TAXII source requires the stix-source feature".into(),
+                    ),
                 });
             }
             SourceType::Watchlist { .. } => {

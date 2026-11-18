@@ -463,6 +463,7 @@ mod tests {
                 path,
                 format: DataFormat::Json,
                 extract: None,
+                stix: None,
             },
             refresh: RefreshPolicy::OnDemand,
             timeout: None,

@@ -99,6 +99,7 @@ async fn resolve_recipe(recipe: &str, sample: &str) -> serde_json::Value {
             path: dir.join(sample),
             format,
             extract,
+            stix: None,
         },
         refresh: RefreshPolicy::Once,
         timeout: None,
