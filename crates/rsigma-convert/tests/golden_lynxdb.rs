@@ -118,3 +118,8 @@ fn golden_encodings() {
 fn golden_large_integers() {
     run_golden("large_integers");
 }
+
+#[test]
+fn golden_placeholders_in_values() {
+    run_golden("placeholders_in_values");
+}

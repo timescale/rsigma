@@ -633,32 +633,28 @@ impl Backend for LynxDbBackend {
         query: String,
         state: &ConversionState,
     ) -> Result<String> {
-        // Custom finish_query: apply processing state BEFORE defaults so that
-        // pipeline-provided values (e.g. `index`) override the default ("main").
-        // The generic `text_finish_query` applies defaults first, which prevents
-        // state values from overriding them.
-        let mut result = self.config.query_expression.replace("{query}", &query);
-
-        // Processing state first (pipeline-provided values take precedence)
-        for (key, val) in &state.processing_state {
-            if let Some(s) = val.as_str() {
-                let placeholder = format!("{{{key}}}");
-                result = result.replace(&placeholder, s);
-            }
-        }
-        // Then defaults for anything not yet substituted
-        for (key, default) in self.config.state_defaults {
-            let placeholder = format!("{{{key}}}");
-            result = result.replace(&placeholder, default);
-        }
-
-        // Rule metadata
-        result = result.replace("{rule.title}", &rule.title);
-        if let Some(id) = &rule.id {
-            result = result.replace("{rule.id}", id);
-        }
-
-        Ok(result)
+        // Pipeline-provided values (e.g. `index`) override the defaults
+        // ("main"), unlike the generic `text_finish_query`.
+        Ok(render_query_template(
+            self.config.query_expression,
+            |key| match key {
+                "query" => Some(query.clone()),
+                "rule.title" => Some(rule.title.clone()),
+                "rule.id" => rule.id.clone(),
+                _ => state
+                    .processing_state
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        self.config
+                            .state_defaults
+                            .iter()
+                            .find(|(k, _)| *k == key)
+                            .map(|(_, v)| *v)
+                    })
+                    .map(str::to_string),
+            },
+        ))
     }
 
     fn finalize_query(
@@ -1757,6 +1753,28 @@ detection:
             q,
             vec![
                 r#"FROM main | search cs-uri-query="x" AND winlog.event_data.Image="y" AND ns:field="z" AND _id=1"#
+            ]
+        );
+    }
+
+    #[test]
+    fn placeholder_in_regex_value_stays_literal() {
+        let q = convert(
+            r#"
+title: 'x") OR true | stats count by host | where match(y, "'
+id: 'x | stats count'
+logsource: { category: test }
+detection:
+    selection:
+        CommandLine|re: '{rule.title}'
+        Image|re: '{rule.id}|{index}'
+    condition: selection
+"#,
+        );
+        assert_eq!(
+            q,
+            vec![
+                r#"FROM main | where match(CommandLine, "{rule.title}") AND match(Image, "{rule.id}|{index}")"#
             ]
         );
     }
