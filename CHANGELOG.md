@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### LynxDB output rejects unsafe field names and expands template placeholders once (security, #719)
+
+The LynxDB backend rendered field names verbatim, so a field name such as `Image=* OR CommandLine` rewrote the logic of the generated `search` or `where` stage. It also substituted `{rule.title}`, `{rule.id}`, and pipeline state keys into the finished query after the detection was rendered, so a field name or regex value of `{rule.title}` was replaced by the raw title, which could close a quoted string and append pipeline stages such as `| stats count by host` ([GHSA-f96v-37xh-p653](https://github.com/timescale/rsigma/security/advisories/GHSA-f96v-37xh-p653)).
+
+- A field name must start with a letter or `_` and contain only letters, digits, `_`, `.`, `:`, and `-`. LynxDB has no quoted identifier syntax, so any other field name fails conversion with `invalid LynxDB field name`. Every field name in the SigmaHQ rule set already fits.
+- Query template placeholders are substituted in a single pass with `render_query_template`, so placeholder text inside a rule's values stays literal. Pipeline state still takes precedence over the default `index`.
+
+**Breaking changes.** A rule or pipeline that maps a field to a name outside LynxDB identifier syntax now fails to convert for LynxDB. Such a name did not convert to a working query before.
+
 ### PostgreSQL output escapes quotes in field names and expands template placeholders once (security, #718)
 
 The PostgreSQL backend wrapped mixed-case field names in double quotes without doubling a `"` inside the name, so a Sigma rule with a field name such as `CommandLine" OR 1=1; --` broke out of the identifier and added its own SQL. The backend also substituted `{rule.title}` and `{rule.id}` into the finished query after the detection was rendered, so a string value of `{rule.title}` was replaced by the raw title, and a single quote in the title closed the string literal, in JSONB mode as well ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7)).

@@ -250,6 +250,24 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+/// A field name as a bare LynxDB identifier: a letter or `_`, then letters,
+/// digits, `_`, `.`, `:`, or `-`. LynxDB has no quoted identifier syntax, so a
+/// name its lexer would not read as one identifier is rejected.
+fn field_ident(field: &str) -> Result<&str> {
+    let mut chars = field.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || "_.:-".contains(c));
+    if valid {
+        Ok(field)
+    } else {
+        Err(ConvertError::RuleConversion(format!(
+            "invalid LynxDB field name: {field}"
+        )))
+    }
+}
+
 /// The field as read from the event's raw JSON. Columns store an empty string
 /// as null, while the raw JSON keeps the two apart.
 fn raw_field(field: &str) -> String {
@@ -401,6 +419,7 @@ impl Backend for LynxDbBackend {
     ) -> Result<ConvertResult> {
         if !self.where_mode && search_safe(pattern, case_insensitive) {
             let (op, literal) = search_literal(op, pattern);
+            let field = field_ident(field)?;
             return text_convert_field_str_ir(self.config, field, op, &literal, case_insensitive);
         }
         if let Some(placeholder) = self.needs_where(state) {
@@ -416,7 +435,7 @@ impl Backend for LynxDbBackend {
                 raw_field(field)
             )));
         }
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         let re = pattern_regex(pattern, op, case_insensitive, false);
         Ok(ConvertResult::Query(format!(
             "match({f}, {})",
@@ -430,7 +449,7 @@ impl Backend for LynxDbBackend {
         value: NumericLiteral,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         let v = value.to_string();
         if self.where_mode {
             Ok(format!("coalesce(tonumber({f})={v}, false)"))
@@ -445,7 +464,7 @@ impl Backend for LynxDbBackend {
         value: bool,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         if self.where_mode {
             return Ok(format!("match({f}, \"(?i)^{value}$\")"));
         }
@@ -469,7 +488,7 @@ impl Backend for LynxDbBackend {
         if let Some(placeholder) = self.needs_where(state) {
             return Ok(ConvertResult::Query(placeholder));
         }
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         let re = format!("{}{pattern}", flags.inline_prefix());
         Ok(ConvertResult::Query(format!(
             "match({f}, {})",
@@ -486,7 +505,7 @@ impl Backend for LynxDbBackend {
         if let Some(placeholder) = self.needs_where(state) {
             return Ok(ConvertResult::Query(placeholder));
         }
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         Ok(ConvertResult::Query(format!(
             "cidrmatch({}, {f})",
             quote_str(cidr)
@@ -503,7 +522,7 @@ impl Backend for LynxDbBackend {
         if let Some(placeholder) = self.needs_where(state) {
             return Ok(placeholder);
         }
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         let op_token = match op {
             CompareOp::Lt => "<",
             CompareOp::Lte => "<=",
@@ -515,7 +534,7 @@ impl Backend for LynxDbBackend {
             .compare_op_expression
             .ok_or_else(|| ConvertError::UnsupportedModifier("compare".into()))?;
         Ok(expr
-            .replace("{field}", &f)
+            .replace("{field}", f)
             .replace("{op}", op_token)
             .replace("{value}", &value.to_string()))
     }
@@ -531,14 +550,14 @@ impl Backend for LynxDbBackend {
             let check = if exists { "isnotnull" } else { "isnull" };
             return Ok(format!("{check}({})", raw_field(field)));
         }
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         let expr = if exists {
             self.config.field_exists_expression
         } else {
             self.config.field_not_exists_expression
         };
         let expr = expr.ok_or_else(|| ConvertError::UnsupportedModifier("exists".into()))?;
-        Ok(expr.replace("{field}", &f))
+        Ok(expr.replace("{field}", f))
     }
 
     fn convert_field_eq_query_expr(
@@ -548,7 +567,7 @@ impl Backend for LynxDbBackend {
         _id: &str,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = text_escape_and_quote_field(self.config, field);
+        let f = field_ident(field)?;
         Ok(format!("{f}={expr}"))
     }
 
@@ -614,32 +633,28 @@ impl Backend for LynxDbBackend {
         query: String,
         state: &ConversionState,
     ) -> Result<String> {
-        // Custom finish_query: apply processing state BEFORE defaults so that
-        // pipeline-provided values (e.g. `index`) override the default ("main").
-        // The generic `text_finish_query` applies defaults first, which prevents
-        // state values from overriding them.
-        let mut result = self.config.query_expression.replace("{query}", &query);
-
-        // Processing state first (pipeline-provided values take precedence)
-        for (key, val) in &state.processing_state {
-            if let Some(s) = val.as_str() {
-                let placeholder = format!("{{{key}}}");
-                result = result.replace(&placeholder, s);
-            }
-        }
-        // Then defaults for anything not yet substituted
-        for (key, default) in self.config.state_defaults {
-            let placeholder = format!("{{{key}}}");
-            result = result.replace(&placeholder, default);
-        }
-
-        // Rule metadata
-        result = result.replace("{rule.title}", &rule.title);
-        if let Some(id) = &rule.id {
-            result = result.replace("{rule.id}", id);
-        }
-
-        Ok(result)
+        // Pipeline-provided values (e.g. `index`) override the defaults
+        // ("main"), unlike the generic `text_finish_query`.
+        Ok(render_query_template(
+            self.config.query_expression,
+            |key| match key {
+                "query" => Some(query.clone()),
+                "rule.title" => Some(rule.title.clone()),
+                "rule.id" => rule.id.clone(),
+                _ => state
+                    .processing_state
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        self.config
+                            .state_defaults
+                            .iter()
+                            .find(|(k, _)| *k == key)
+                            .map(|(_, v)| *v)
+                    })
+                    .map(str::to_string),
+            },
+        ))
     }
 
     fn finalize_query(
@@ -1683,5 +1698,84 @@ detection:
         assert_eq!(num(12345678901234567890.0.into()), "12345678901234567000");
         assert_eq!(num(1e300.into()), 1e300.to_string());
         assert_eq!(num(9007199254740993.into()), "9007199254740993");
+    }
+
+    // --- Field names and placeholders ---
+
+    fn convert_err(yaml: &str) -> String {
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        LynxDbBackend::new()
+            .convert_rule(&collection.rules[0], "default", &PipelineState::default())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn rejects_field_names_outside_identifier_syntax() {
+        for field in [
+            "Image=* OR CommandLine",
+            "{rule.title}",
+            "a b",
+            "x)",
+            "\"x\"",
+            "1abc",
+            "café",
+        ] {
+            for value in ["whoami", "a/b"] {
+                let yaml = format!(
+                    "title: T\nlogsource: {{ category: test }}\ndetection:\n    selection:\n        '{field}': '{value}'\n    condition: selection\n"
+                );
+                assert_eq!(
+                    convert_err(&yaml),
+                    format!("rule conversion failed: invalid LynxDB field name: {field}"),
+                    "field {field:?} with value {value:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn accepts_dotted_colon_and_dash_field_names() {
+        let q = convert(
+            r#"
+title: T
+logsource: { category: test }
+detection:
+    selection:
+        cs-uri-query: x
+        winlog.event_data.Image: y
+        ns:field: z
+        _id: 1
+    condition: selection
+"#,
+        );
+        assert_eq!(
+            q,
+            vec![
+                r#"FROM main | search cs-uri-query="x" AND winlog.event_data.Image="y" AND ns:field="z" AND _id=1"#
+            ]
+        );
+    }
+
+    #[test]
+    fn placeholder_in_regex_value_stays_literal() {
+        let q = convert(
+            r#"
+title: 'x") OR true | stats count by host | where match(y, "'
+id: 'x | stats count'
+logsource: { category: test }
+detection:
+    selection:
+        CommandLine|re: '{rule.title}'
+        Image|re: '{rule.id}|{index}'
+    condition: selection
+"#,
+        );
+        assert_eq!(
+            q,
+            vec![
+                r#"FROM main | where match(CommandLine, "{rule.title}") AND match(Image, "{rule.id}|{index}")"#
+            ]
+        );
     }
 }

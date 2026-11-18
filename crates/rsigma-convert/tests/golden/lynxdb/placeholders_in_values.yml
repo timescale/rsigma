@@ -1,0 +1,10 @@
+title: 'x") OR true | stats count by host | where match(y, "'
+id: 'x | stats count'
+status: test
+logsource:
+    category: process_creation
+detection:
+    selection:
+        CommandLine|re: '{rule.title}'
+        Image|re: '{rule.id}|{index}'
+    condition: selection

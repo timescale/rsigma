@@ -108,7 +108,11 @@ The PostgreSQL backend (`backend convert -t postgres`) generates SQL by:
 - Substituting query template placeholders in a single pass, so placeholder text such as `{rule.title}` inside a rule's values is never expanded, and rendering the rule title and ID in a template with single quotes doubled. {{ added "unreleased" }}
 - Never templating user-controlled strings into SQL keywords or structural positions.
 
-This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL. The same conventions apply to the LynxDB backend. See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
+This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL.
+
+The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "unreleased" }}
+
+See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
 
 Custom identifiers passed through `-O table=...` or pipeline `set_state` are validated identically; an `-O table='evil; DROP'` is rejected at conversion time, not at execution time.
 
