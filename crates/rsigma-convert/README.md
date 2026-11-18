@@ -291,6 +291,7 @@ For text-based query backends (the vast majority), create a `TextQueryConfig` wi
 | `text_convert_condition_group` | Precedence-aware grouping |
 | `text_convert_field_str_ir` | String match dispatch (contains/startswith/endswith/wildcard/exact) |
 | `text_finish_query` | Assemble query with deferred parts and state substitution |
+| `render_query_template` | Substitute `{name}` placeholders in a query template in one pass, so substituted text is never expanded again |
 
 ## Implementing a Backend
 

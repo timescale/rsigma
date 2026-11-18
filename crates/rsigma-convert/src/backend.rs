@@ -660,6 +660,36 @@ pub fn text_convert_condition_not(cfg: &TextQueryConfig, expr: &str) -> String {
     format!("{}{}{expr}", cfg.not_token, cfg.token_separator)
 }
 
+/// Substitute `{name}` placeholders in a query template in a single pass.
+///
+/// `lookup` returns the text for a placeholder name, or `None` to keep the
+/// placeholder as written. Substituted text is never scanned again, so rule
+/// content that contains a placeholder, such as a value of `{rule.title}`,
+/// stays literal.
+pub fn render_query_template(template: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        match tail[1..].find(['{', '}']).map(|i| i + 1) {
+            Some(end) if tail.as_bytes()[end] == b'}' => {
+                match lookup(&tail[1..end]) {
+                    Some(value) => out.push_str(&value),
+                    None => out.push_str(&tail[..=end]),
+                }
+                rest = &tail[end + 1..];
+            }
+            _ => {
+                out.push('{');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Assemble the final query from the main condition string and any deferred parts.
 pub fn text_finish_query(
     cfg: &TextQueryConfig,
@@ -673,25 +703,24 @@ pub fn text_finish_query(
         query
     };
 
-    let mut result = cfg.query_expression.replace("{query}", main_query);
-
-    // Substitute state defaults first, then actual state values
-    for (key, default) in cfg.state_defaults {
-        let placeholder = format!("{{{key}}}");
-        result = result.replace(&placeholder, default);
-    }
-    for (key, val) in &state.processing_state {
-        if let Some(s) = val.as_str() {
-            let placeholder = format!("{{{key}}}");
-            result = result.replace(&placeholder, s);
-        }
-    }
-
-    // Substitute rule metadata
-    result = result.replace("{rule.title}", &rule.title);
-    if let Some(id) = &rule.id {
-        result = result.replace("{rule.id}", id);
-    }
+    // State defaults take precedence over state values.
+    let mut result = render_query_template(cfg.query_expression, |key| match key {
+        "query" => Some(main_query.to_string()),
+        "rule.title" => Some(rule.title.clone()),
+        "rule.id" => rule.id.clone(),
+        _ => cfg
+            .state_defaults
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.to_string())
+            .or_else(|| {
+                state
+                    .processing_state
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            }),
+    });
 
     // Append deferred parts
     if state.has_deferred() {
@@ -850,4 +879,35 @@ pub fn text_convert_field_str_ir(
         format!("{escaped_field}{}{value_str}", cfg.eq_token)
     };
     Ok(ConvertResult::Query(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_query_template;
+
+    fn lookup(key: &str) -> Option<String> {
+        match key {
+            "query" => Some("a = '{rule.title}'".to_string()),
+            "rule.title" => Some("{query}".to_string()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn render_query_template_substitutes_known_placeholders() {
+        assert_eq!(
+            render_query_template("SELECT {rule.title} WHERE {query}", lookup),
+            "SELECT {query} WHERE a = '{rule.title}'"
+        );
+    }
+
+    #[test]
+    fn render_query_template_keeps_unknown_and_unbalanced_braces() {
+        assert_eq!(
+            render_query_template("{other} { {query} {{query}} }{", lookup),
+            "{other} { a = '{rule.title}' {a = '{rule.title}'} }{"
+        );
+        assert_eq!(render_query_template("", lookup), "");
+        assert_eq!(render_query_template("{query", lookup), "{query");
+    }
 }
