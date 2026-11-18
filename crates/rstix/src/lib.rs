@@ -104,7 +104,10 @@ pub enum ParseError {
 }
 
 #[cfg(feature = "pattern")]
-pub use pattern::{Pattern, PatternAst, PatternError, PatternMatchError, PatternScoType};
+pub use pattern::{
+    ObservableExtraction, ObservableKind, Pattern, PatternAst, PatternError, PatternMatchError,
+    PatternScoType, SimpleObservable, UnsupportedReason,
+};
 
 #[cfg(feature = "validate")]
 pub use validate::{

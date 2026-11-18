@@ -184,6 +184,12 @@ fn print_op(op: ComparisonOp) -> &'static str {
     }
 }
 
+pub(crate) fn render_object_path(path: &ObjectPath) -> String {
+    let mut out = String::new();
+    print_object_path(path, &mut out);
+    out
+}
+
 fn print_object_path(path: &ObjectPath, out: &mut String) {
     out.push_str(path.object_type.type_name());
     out.push(':');

@@ -235,6 +235,7 @@ flowchart LR
 | Path resolver | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle | Done |
 | Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
 | Canonical printer | `Pattern::canonical`, `Display` | Done |
+| Observable extraction | `Pattern::simple_observables` | Done. Exact `=` and `IN` values only. Qualifiers, `AND`, `FOLLOWEDBY`, and `NOT` return `UnsupportedReason`. |
 
 ```rust
 use rstix::Pattern;
