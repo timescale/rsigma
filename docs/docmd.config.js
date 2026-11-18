@@ -121,6 +121,7 @@ export default {
             { title: "Schema Routing", path: "/guide/schema-routing" },
             { title: "Logsource-Aware Evaluation", path: "/guide/logsource-routing" },
             { title: "Enrichers", path: "/guide/enrichers" },
+            { title: "Threat Intel Watchlists", path: "/guide/threat-intel-watchlists" },
             { title: "Input Formats", path: "/guide/input-formats" },
             { title: "NATS Streaming", path: "/guide/nats-streaming" },
             { title: "OTLP Integration", path: "/guide/otlp-integration" },
@@ -231,6 +232,7 @@ export default {
           collapsible: true,
           children: [
             { title: "convert", path: "/cli/backend/convert" },
+            { title: "build", path: "/cli/backend/build" },
             { title: "targets", path: "/cli/backend/targets" },
             { title: "formats", path: "/cli/backend/formats" },
           ],

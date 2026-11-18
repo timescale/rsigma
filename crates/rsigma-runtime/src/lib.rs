@@ -91,7 +91,7 @@ pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
     set_default_egress_policy,
 };
-pub use engine::{EngineStats, RoutingSpec, RuntimeEngine};
+pub use engine::{EngineStats, RoutingSpec, RuntimeEngine, SourceFetch};
 pub use enrichment::config::{
     EnricherConfig, EnricherResources, EnrichersConfigError, EnrichersFile, build_enrichers,
     build_enrichers_full, load_enrichers_file,
@@ -144,8 +144,9 @@ pub use rsigma_eval::{
 };
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
-    DefaultSourceResolver, ResolvedValue, SourceCache, SourceError, SourceErrorKind,
-    SourceResolver, TemplateExpander,
+    AddSummary, DefaultSourceResolver, RemoveSummary, ReplaceSummary, ResolvedValue, SourceCache,
+    SourceError, SourceErrorKind, SourceResolver, TemplateExpander, WatchlistError, WatchlistItem,
+    WatchlistRegistry, WatchlistRestore,
 };
 
 #[cfg(feature = "nats")]

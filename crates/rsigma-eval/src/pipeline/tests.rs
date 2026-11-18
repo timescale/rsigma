@@ -1064,6 +1064,63 @@ transformations:
 }
 
 #[test]
+fn test_parse_watchlist_source_defaults_and_ttl() {
+    let yaml = r#"
+sources:
+  - id: c2_ips
+    type: watchlist
+    default_ttl: 30d
+"#;
+    let src = &parse_source_list(yaml).unwrap()[0];
+    assert_eq!(src.id, "c2_ips");
+    match &src.source_type {
+        sources::SourceType::Watchlist {
+            max_indicators,
+            max_value_length,
+            default_ttl,
+        } => {
+            assert_eq!(*max_indicators, 100_000);
+            assert_eq!(*max_value_length, 2048);
+            assert_eq!(
+                *default_ttl,
+                Some(std::time::Duration::from_secs(30 * 86_400))
+            );
+        }
+        other => panic!("expected Watchlist, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_watchlist_source_rejects_fetch_fields_and_reserved_ids() {
+    let cases = [
+        ("refresh: 5m\n", "does not accept 'refresh'"),
+        ("format: json\n", "does not accept 'format'"),
+        ("extract: .[]\n", "does not accept 'extract'"),
+        ("timeout: 10s\n", "does not accept 'timeout'"),
+        (
+            "max_indicators: 0\n",
+            "max_indicators must be greater than 0",
+        ),
+    ];
+    for (extra, needle) in cases {
+        let yaml = format!("sources:\n  - id: c2_ips\n    type: watchlist\n    {extra}");
+        let err = parse_source_list(&yaml).unwrap_err().to_string();
+        assert!(
+            err.contains("c2_ips") && err.contains(needle),
+            "expected '{needle}' naming c2_ips, got: {err}"
+        );
+    }
+    for id in ["resolve", "cache"] {
+        let yaml = format!("sources:\n  - id: {id}\n    type: watchlist\n");
+        let err = parse_source_list(&yaml).unwrap_err().to_string();
+        assert!(
+            err.contains(id) && err.contains("reserved"),
+            "expected reserved id '{id}', got: {err}"
+        );
+    }
+}
+
+#[test]
 fn test_parse_http_source() {
     let yaml = r#"
 name: Dynamic Pipeline

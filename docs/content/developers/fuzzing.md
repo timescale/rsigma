@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 33 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 27 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 34 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 28 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
@@ -19,6 +19,7 @@ The workspace ships 33 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_regex_compile` | The hardened regex compilation path (size and complexity caps). | 1024 |
 | `fuzz_pipeline_yaml` | Pipeline YAML parser. | 4096 |
 | `fuzz_pipeline_sources_yaml` | Dynamic source spec parser. | 8192 |
+| `fuzz_watchlist_request` | Watchlist push, replace, and delete bodies. The first byte selects the operation. The rest is JSON. {{ added "unreleased" }} | 4096 |
 | `fuzz_alert_pipeline_config` | Alert-pipeline configuration parser. | 4096 |
 | `fuzz_input_formats` | The line-format parser (auto-detect, JSON, syslog, logfmt, CEF, plain). | 4096 |
 | `fuzz_rule_tune` | False-positive-driven rule tuning over JSON FP and TP corpora. | 65536 |

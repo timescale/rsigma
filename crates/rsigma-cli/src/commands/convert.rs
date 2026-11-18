@@ -54,11 +54,11 @@ pub(crate) struct ConvertArgs {
 /// Canonical names of the targets rsigma converts natively, for listings and
 /// error messages. Aliases (`postgresql`, `pg`) and the internal test backends
 /// are accepted by [`try_native_backend`] but intentionally not advertised.
-const NATIVE_TARGETS: &[&str] = &["postgres", "lynxdb", "fibratus"];
+pub(crate) const NATIVE_TARGETS: &[&str] = &["postgres", "lynxdb", "fibratus"];
 
 /// Return the native backend for `target`, or `None` when rsigma has no native
 /// backend for it, in which case `backend convert` delegates to sigma-cli.
-fn try_native_backend(
+pub(crate) fn try_native_backend(
     target: &str,
     options: &std::collections::HashMap<String, String>,
 ) -> Option<Box<dyn rsigma_convert::Backend>> {
@@ -82,6 +82,238 @@ fn try_native_backend(
     }
 }
 
+/// One rule-loading request for the shared conversion core.
+pub(crate) struct ConvertRequest<'a> {
+    pub collection: &'a rsigma_parser::SigmaCollection,
+    pub target: &'a str,
+    pub format: &'a str,
+    pub pipelines: Vec<rsigma_eval::Pipeline>,
+    pub options: std::collections::HashMap<String, String>,
+    pub skip_unsupported: bool,
+    pub without_pipeline: bool,
+}
+
+/// Per-rule conversion status for a build manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RuleStatus {
+    Converted,
+    Skipped,
+    Failed,
+}
+
+/// Per-rule outcome from the shared conversion core.
+#[derive(Debug, Clone)]
+pub(crate) struct RuleOutcome {
+    pub id: Option<String>,
+    pub title: String,
+    pub status: RuleStatus,
+    pub error: Option<String>,
+}
+
+/// Rendered conversion output and per-rule outcomes.
+#[derive(Debug)]
+pub(crate) struct ConvertOutput {
+    pub text: String,
+    pub results: Vec<rsigma_convert::ConversionResult>,
+    pub rules: Vec<RuleOutcome>,
+    pub queries: usize,
+    pub warnings: Vec<(String, String)>,
+}
+
+/// A conversion failure with the exit-code class it maps to.
+#[derive(Debug)]
+pub(crate) enum ConvertFailure {
+    Config(String),
+    Rule(String),
+}
+
+/// A delegated sigma-cli conversion.
+#[derive(Debug)]
+pub(crate) struct DelegatedOutput {
+    pub raw: String,
+    pub queries: Vec<String>,
+    pub stderr: String,
+}
+
+/// Convert a collection with a native backend.
+pub(crate) fn convert_native(req: &ConvertRequest<'_>) -> Result<ConvertOutput, ConvertFailure> {
+    let Some(backend) = try_native_backend(req.target, &req.options) else {
+        return Err(ConvertFailure::Config(format!(
+            "unknown target '{}'; available: {}",
+            req.target,
+            NATIVE_TARGETS.join(", ")
+        )));
+    };
+
+    if backend.requires_pipeline() && req.pipelines.is_empty() && !req.without_pipeline {
+        return Err(ConvertFailure::Config(format!(
+            "Backend '{}' requires a pipeline. Use -p or --without-pipeline.",
+            req.target
+        )));
+    }
+
+    if !backend.formats().iter().any(|(f, _)| *f == req.format) {
+        let available = backend
+            .formats()
+            .iter()
+            .map(|(f, d)| format!("{f} ({d})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ConvertFailure::Config(format!(
+            "Unknown format '{}' for backend '{}'\nAvailable: {available}",
+            req.format, req.target
+        )));
+    }
+
+    if let Some(method) = req.options.get("correlation_method") {
+        let methods = backend.correlation_methods();
+        if !methods.iter().any(|(n, _)| n == method) {
+            let available = methods
+                .iter()
+                .map(|(n, d)| format!("{n} ({d})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ConvertFailure::Config(if methods.is_empty() {
+                format!(
+                    "Unknown correlation_method '{method}' for backend '{}'\nBackend '{}' does not support selectable correlation methods.",
+                    req.target, req.target
+                )
+            } else {
+                format!(
+                    "Unknown correlation_method '{method}' for backend '{}'\nAvailable: {available}",
+                    req.target
+                )
+            }));
+        }
+    }
+
+    if let Some(gap) = req.options.get("gap")
+        && rsigma_parser::Timespan::parse(gap).is_err()
+    {
+        return Err(ConvertFailure::Config(format!(
+            "Invalid gap '{gap}': expected a duration like 30s, 5m, 1h, 7d"
+        )));
+    }
+
+    let output_data = rsigma_convert::convert_collection(
+        backend.as_ref(),
+        req.collection,
+        &req.pipelines,
+        req.format,
+    )
+    .map_err(|e| ConvertFailure::Rule(format!("Conversion failed: {e}")))?;
+
+    let mut rules = Vec::new();
+    for result in &output_data.queries {
+        rules.push(RuleOutcome {
+            id: result.rule_id.clone(),
+            title: result.rule_title.clone(),
+            status: RuleStatus::Converted,
+            error: None,
+        });
+    }
+    for (title, error) in &output_data.errors {
+        let (id, status, message) = if req.skip_unsupported {
+            (None, RuleStatus::Skipped, Some(error.to_string()))
+        } else {
+            (None, RuleStatus::Failed, Some(error.to_string()))
+        };
+        rules.push(RuleOutcome {
+            id,
+            title: title.clone(),
+            status,
+            error: message,
+        });
+    }
+
+    let warnings = output_data
+        .warnings()
+        .map(|(title, message)| (title.to_string(), message.to_string()))
+        .collect::<Vec<_>>();
+
+    let all_queries: Vec<String> = output_data
+        .queries
+        .iter()
+        .flat_map(|r| r.queries.iter().cloned())
+        .collect();
+    let queries = all_queries.len();
+    let text = backend
+        .finalize_output(all_queries, req.format)
+        .map_err(|e| ConvertFailure::Rule(format!("Output finalization failed: {e}")))?;
+
+    Ok(ConvertOutput {
+        text,
+        results: output_data.queries,
+        rules,
+        queries,
+        warnings,
+    })
+}
+
+/// Convert via an external sigma-cli for a target rsigma has no native backend.
+pub(crate) fn convert_delegated(
+    paths: &[PathBuf],
+    target: &str,
+    format: &str,
+    pipelines: &[PathBuf],
+    options: &[String],
+    skip_unsupported: bool,
+    without_pipeline: bool,
+) -> Result<DelegatedOutput, ConvertFailure> {
+    use rsigma_convert::sigma_cli::{self, DelegateError, SigmaCli};
+
+    let cli = SigmaCli::configured();
+    let argv = sigma_cli::build_convert_args(
+        target,
+        format,
+        pipelines,
+        without_pipeline,
+        skip_unsupported,
+        options,
+        paths,
+    );
+
+    let result = match cli.run(&argv) {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ConvertFailure::Config(sigma_cli::install_hint(
+                target,
+                cli.program(),
+                cli.is_override(),
+                NATIVE_TARGETS,
+            )));
+        }
+        Err(e) => {
+            return Err(ConvertFailure::Config(format!(
+                "Failed to launch sigma-cli ('{}'): {e}",
+                cli.program().display()
+            )));
+        }
+    };
+
+    let conversion = match sigma_cli::classify_output(&result) {
+        Ok(conversion) => conversion,
+        Err(DelegateError::NonZero { stderr, .. }) => {
+            return Err(ConvertFailure::Rule(stderr));
+        }
+        Err(DelegateError::NotInstalled { .. }) => {
+            return Err(ConvertFailure::Config(sigma_cli::install_hint(
+                target,
+                cli.program(),
+                cli.is_override(),
+                NATIVE_TARGETS,
+            )));
+        }
+    };
+
+    Ok(DelegatedOutput {
+        raw: conversion.raw.trim_end_matches('\n').to_string(),
+        queries: conversion.queries,
+        stderr: conversion.stderr,
+    })
+}
+
 pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
     let options: std::collections::HashMap<String, String> = args
         .backend_options
@@ -96,9 +328,6 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         ctx.warn_ignored("backend convert", "--output always writes raw query text");
     }
 
-    // Native-first dispatch: convert with a native rsigma backend when one
-    // exists, otherwise delegate the whole conversion to a discovered
-    // sigma-cli (or fail with install guidance when neither is available).
     let Some(backend) = try_native_backend(&args.target, &options) else {
         let tempdir = args.ruleset.as_deref().map(|name| {
             let (name, spec) = crate::ruleset::load_named(name, args.config.as_deref());
@@ -145,170 +374,113 @@ pub(crate) fn cmd_convert(args: ConvertArgs, ctx: OutputCtx) {
         );
     }
 
-    if backend.requires_pipeline() && pipelines.is_empty() && !without_pipeline {
-        eprintln!("Backend '{target}' requires a pipeline. Use -p or --without-pipeline.");
-        process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-
-    if !backend.formats().iter().any(|(f, _)| *f == format) {
-        eprintln!("Unknown format '{format}' for backend '{target}'");
-        eprintln!(
-            "Available: {}",
-            backend
-                .formats()
-                .iter()
-                .map(|(f, d)| format!("{f} ({d})"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        process::exit(crate::exit_code::CONFIG_ERROR);
-    }
-
-    if let Some(method) = options.get("correlation_method") {
-        let methods = backend.correlation_methods();
-        if !methods.iter().any(|(n, _)| n == method) {
-            eprintln!("Unknown correlation_method '{method}' for backend '{target}'");
-            if methods.is_empty() {
-                eprintln!("Backend '{target}' does not support selectable correlation methods.");
-            } else {
-                eprintln!(
-                    "Available: {}",
-                    methods
-                        .iter()
-                        .map(|(n, d)| format!("{n} ({d})"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
+    let request = ConvertRequest {
+        collection: &collection,
+        target: &target,
+        format: &format,
+        pipelines,
+        options,
+        skip_unsupported,
+        without_pipeline,
+    };
+    let output_data = match convert_native(&request) {
+        Ok(output) => output,
+        Err(ConvertFailure::Config(message)) => {
+            eprintln!("{message}");
             process::exit(crate::exit_code::CONFIG_ERROR);
         }
-    }
+        Err(ConvertFailure::Rule(message)) => {
+            eprintln!("{message}");
+            process::exit(crate::exit_code::RULE_ERROR);
+        }
+    };
 
-    if let Some(gap) = options.get("gap")
-        && rsigma_parser::Timespan::parse(gap).is_err()
+    for rule in &output_data.rules {
+        if let Some(error) = &rule.error {
+            if rule.status == RuleStatus::Skipped {
+                eprintln!("Warning: rule '{}' skipped: {error}", rule.title);
+            } else {
+                eprintln!("Error: rule '{}' failed: {error}", rule.title);
+            }
+        }
+    }
+    for (rule_title, warning) in &output_data.warnings {
+        eprintln!("Warning: rule '{rule_title}': {warning}");
+    }
+    if !skip_unsupported
+        && output_data
+            .rules
+            .iter()
+            .any(|rule| rule.status == RuleStatus::Failed)
     {
-        eprintln!("Invalid gap '{gap}': expected a duration like 30s, 5m, 1h, 7d");
-        process::exit(crate::exit_code::CONFIG_ERROR);
+        process::exit(crate::exit_code::RULE_ERROR);
     }
 
-    let result =
-        rsigma_convert::convert_collection(backend.as_ref(), &collection, &pipelines, &format);
-    match result {
-        Ok(output_data) => {
-            for (rule_title, error) in &output_data.errors {
-                if skip_unsupported {
-                    eprintln!("Warning: rule '{rule_title}' skipped: {error}");
-                } else {
-                    eprintln!("Error: rule '{rule_title}' failed: {error}");
-                }
-            }
-            for (rule_title, warning) in output_data.warnings() {
-                eprintln!("Warning: rule '{rule_title}': {warning}");
-            }
-            if !skip_unsupported && !output_data.errors.is_empty() {
-                process::exit(crate::exit_code::RULE_ERROR);
-            }
-            // When `--output` points at a directory (an existing directory or a
-            // path with a trailing separator), write one file per converted
-            // rule into it instead of a single concatenated stream. This lets
-            // operators drop the result straight into a target rules directory
-            // (e.g. a Fibratus `Rules/` folder) without splitting the output by
-            // hand.
-            if let Some(dir) = output.as_deref().filter(|p| is_directory_target(p)) {
-                write_split_output(backend.as_ref(), &output_data, &format, dir, &ctx);
+    if let Some(dir) = output.as_deref().filter(|p| is_directory_target(p)) {
+        write_split_output(backend.as_ref(), &output_data.results, &format, dir, &ctx);
+        return;
+    }
+
+    if ctx.explicit_format && output.is_none() {
+        let out_format = ctx.format;
+        match out_format {
+            OutputFormat::Json => {
+                let queries: Vec<serde_json::Value> = output_data
+                    .results
+                    .iter()
+                    .flat_map(|r| {
+                        r.queries.iter().map(move |q| {
+                            serde_json::json!({
+                                "rule_title": r.rule_title,
+                                "rule_id": r.rule_id,
+                                "query": q,
+                            })
+                        })
+                    })
+                    .collect();
+                render_json(
+                    &serde_json::json!({
+                        "target": target,
+                        "format": format,
+                        "queries": queries,
+                    }),
+                    ctx.pretty_json(),
+                );
                 return;
             }
-            // Explicit `--output-format json|ndjson` wraps queries. Raw backend
-            // text remains the default (and the only path when `--output` is
-            // set). Table/csv/tsv warn and fall back to raw text.
-            if ctx.explicit_format && output.is_none() {
-                let out_format = ctx.format;
-                match out_format {
-                    OutputFormat::Json => {
-                        let queries: Vec<serde_json::Value> = output_data
-                            .queries
-                            .iter()
-                            .flat_map(|r| {
-                                r.queries.iter().map(move |q| {
-                                    serde_json::json!({
-                                        "rule_title": r.rule_title,
-                                        "rule_id": r.rule_id,
-                                        "query": q,
-                                    })
-                                })
-                            })
-                            .collect();
+            OutputFormat::Ndjson => {
+                for r in &output_data.results {
+                    for q in &r.queries {
                         render_json(
                             &serde_json::json!({
                                 "target": target,
                                 "format": format,
-                                "queries": queries,
+                                "rule_title": r.rule_title,
+                                "rule_id": r.rule_id,
+                                "query": q,
                             }),
-                            ctx.pretty_json(),
+                            false,
                         );
-                        return;
-                    }
-                    OutputFormat::Ndjson => {
-                        for r in &output_data.queries {
-                            for q in &r.queries {
-                                render_json(
-                                    &serde_json::json!({
-                                        "target": target,
-                                        "format": format,
-                                        "rule_title": r.rule_title,
-                                        "rule_id": r.rule_id,
-                                        "query": q,
-                                    }),
-                                    false,
-                                );
-                            }
-                        }
-                        return;
-                    }
-                    OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
-                        ctx.warn_unsupported("backend convert", "raw query text");
                     }
                 }
+                return;
             }
-            let all_queries: Vec<String> = output_data
-                .queries
-                .iter()
-                .flat_map(|r| r.queries.iter().cloned())
-                .collect();
-            // Defer to the backend so format-aware separators land in
-            // the joined output (e.g. `---\n` between YAML rule
-            // documents for the Fibratus backend, `;\n\n` between
-            // PostgreSQL `view`/`continuous_aggregate` statements).
-            let output_str = backend
-                .finalize_output(all_queries, &format)
-                .unwrap_or_else(|e| {
-                    eprintln!("Output finalization failed: {e}");
-                    process::exit(crate::exit_code::RULE_ERROR);
-                });
-            write_output(&output_str, output.as_deref());
-        }
-        Err(e) => {
-            eprintln!("Conversion failed: {e}");
-            process::exit(crate::exit_code::RULE_ERROR);
+            OutputFormat::Table | OutputFormat::Csv | OutputFormat::Tsv => {
+                ctx.warn_unsupported("backend convert", "raw query text");
+            }
         }
     }
+
+    write_output(&output_data.text, output.as_deref());
 }
 
-/// Convert via an external sigma-cli for a target rsigma has no native backend
-/// for. The original rule files and a near 1:1 flag mapping are passed straight
-/// through, and sigma-cli's stdout is relayed through rsigma's output handling,
-/// so the result is identical to running sigma-cli directly.
-///
-/// `materialized` holds a resolved ruleset written for sigma-cli. It is
-/// dropped as soon as sigma-cli exits, since `process::exit` skips destructors.
+/// Convert via an external sigma-cli for a target rsigma has no native backend.
 fn run_delegated(
     args: &ConvertArgs,
     ctx: &OutputCtx,
     rules: &[PathBuf],
     materialized: Option<tempfile::TempDir>,
 ) {
-    use rsigma_convert::sigma_cli::{self, DelegateError, SigmaCli};
-
     let target = args.target.as_str();
     let format = args.format.as_str();
     let output = args.output.as_deref();
@@ -326,63 +498,36 @@ fn run_delegated(
         process::exit(crate::exit_code::CONFIG_ERROR);
     }
 
-    let cli = SigmaCli::configured();
-    let argv = sigma_cli::build_convert_args(
+    let converted = convert_delegated(
+        rules,
         target,
         format,
         &args.pipeline,
-        args.without_pipeline,
-        args.skip_unsupported,
         &args.backend_options,
-        rules,
+        args.skip_unsupported,
+        args.without_pipeline,
     );
-
-    let run = cli.run(&argv);
     drop(materialized);
-    let result = match run {
-        Ok(out) => out,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "{}",
-                sigma_cli::install_hint(target, cli.program(), cli.is_override(), NATIVE_TARGETS)
-            );
-            process::exit(crate::exit_code::CONFIG_ERROR);
-        }
-        Err(e) => {
-            eprintln!(
-                "Failed to launch sigma-cli ('{}'): {e}",
-                cli.program().display()
-            );
-            process::exit(crate::exit_code::CONFIG_ERROR);
-        }
-    };
 
-    let conversion = match sigma_cli::classify_output(&result) {
-        Ok(conversion) => conversion,
-        Err(DelegateError::NonZero { stderr, .. }) => {
+    let converted = match converted {
+        Ok(converted) => converted,
+        Err(ConvertFailure::Config(message)) => {
+            eprintln!("{message}");
+            process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+        Err(ConvertFailure::Rule(stderr)) => {
             // Relay sigma-cli's error text verbatim.
             if !stderr.is_empty() {
                 eprint!("{stderr}");
             }
             process::exit(crate::exit_code::RULE_ERROR);
         }
-        Err(DelegateError::NotInstalled { .. }) => {
-            // classify_output never produces NotInstalled (spawn errors are
-            // handled above), but keep the match exhaustive and safe.
-            eprintln!(
-                "{}",
-                sigma_cli::install_hint(target, cli.program(), cli.is_override(), NATIVE_TARGETS)
-            );
-            process::exit(crate::exit_code::CONFIG_ERROR);
-        }
     };
 
     // Relay sigma-cli diagnostics verbatim (warnings, skipped-rule notes).
-    if !conversion.stderr.is_empty() {
-        eprint!("{}", conversion.stderr);
+    if !converted.stderr.is_empty() {
+        eprint!("{}", converted.stderr);
     }
-
-    let queries = conversion.raw.trim_end_matches('\n');
 
     // Explicit `--output-format json|ndjson` wraps the delegated queries in
     // the same envelope shape the native path emits. sigma-cli text backends
@@ -391,7 +536,7 @@ fn run_delegated(
         let out_format = ctx.format;
         match out_format {
             OutputFormat::Json => {
-                let query_objs: Vec<serde_json::Value> = conversion
+                let query_objs: Vec<serde_json::Value> = converted
                     .queries
                     .iter()
                     .map(|q| serde_json::json!({ "query": q }))
@@ -408,7 +553,7 @@ fn run_delegated(
                 return;
             }
             OutputFormat::Ndjson => {
-                for q in &conversion.queries {
+                for q in &converted.queries {
                     render_json(
                         &serde_json::json!({
                             "target": target,
@@ -427,7 +572,7 @@ fn run_delegated(
         }
     }
 
-    write_output(queries, output);
+    write_output(&converted.raw, output);
 }
 
 #[derive(Debug, Serialize)]
@@ -779,7 +924,7 @@ fn is_directory_target(path: &std::path::Path) -> bool {
 /// through the backend so format-aware separators land inside the file.
 fn write_split_output(
     backend: &dyn rsigma_convert::Backend,
-    output_data: &rsigma_convert::ConversionOutput,
+    results: &[rsigma_convert::ConversionResult],
     format: &str,
     dir: &std::path::Path,
     ctx: &OutputCtx,
@@ -793,7 +938,7 @@ fn write_split_output(
     let mut used_names = std::collections::HashSet::new();
     let mut written = 0usize;
 
-    for result in &output_data.queries {
+    for result in results {
         let content = backend
             .finalize_output(result.queries.clone(), format)
             .unwrap_or_else(|e| {

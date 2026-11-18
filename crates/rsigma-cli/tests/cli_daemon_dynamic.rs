@@ -1127,3 +1127,176 @@ level: high
         "include-expanded field mapping should enable detection: {v}"
     );
 }
+
+fn rebuild_total(body: &str, result: &str) -> u64 {
+    let prefix = format!("rsigma_source_rebuilds_total{{result=\"{result}\"}}");
+    body.lines()
+        .find(|line| line.starts_with(&prefix))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+#[test]
+fn source_value_change_rebuilds_without_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_path = dir.path().join("commands.json");
+    write_source_file(&source_path, r#"["unlikely_string_xyz"]"#);
+
+    let rule_file = temp_file(".yml", DYNAMIC_VAR_RULE);
+    let pipeline_file = temp_file(".yml", &dynamic_pipeline_yaml());
+    let sources_file = temp_file(".yml", &sources_yaml(source_path.to_str().unwrap()));
+
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule_file.path().to_str().unwrap(),
+        "-p",
+        pipeline_file.path().to_str().unwrap(),
+        "--source",
+        sources_file.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+
+    http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"CommandLine":"malware.exe --payload"}"#,
+    );
+    let v = wait_for_status(&daemon, Duration::from_secs(10), |v| {
+        v["events_processed"].as_u64().unwrap_or(0) >= 1
+    });
+    assert_eq!(v["detection_matches"].as_u64().unwrap(), 0);
+
+    write_source_file(&source_path, r#"["malware.exe"]"#);
+    let v = wait_for_detections(
+        &daemon,
+        r#"{"CommandLine":"malware.exe --payload"}"#,
+        1,
+        Duration::from_secs(15),
+    );
+    assert!(
+        v["detection_matches"].as_u64().unwrap() >= 1,
+        "a watched source change should rebuild rules without /api/v1/reload: {v}"
+    );
+}
+
+#[test]
+fn source_value_unchanged_interval_does_not_rebuild() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_path = dir.path().join("commands.json");
+    write_source_file(&source_path, r#"["malware.exe"]"#);
+    let sources = format!(
+        r#"
+sources:
+  - id: cmd_list
+    type: file
+    path: {}
+    format: json
+    refresh: 1s
+"#,
+        source_path.display()
+    );
+
+    let rule_file = temp_file(".yml", DYNAMIC_VAR_RULE);
+    let pipeline_file = temp_file(".yml", &dynamic_pipeline_yaml());
+    let sources_file = temp_file(".yml", &sources);
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule_file.path().to_str().unwrap(),
+        "-p",
+        pipeline_file.path().to_str().unwrap(),
+        "--source",
+        sources_file.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+
+    let baseline = resolve_activity(&read_status(&daemon));
+    wait_for_status(&daemon, Duration::from_secs(8), |v| {
+        resolve_activity(v) > baseline
+    });
+    let (_, metrics) = http_get(&daemon.url("/metrics"));
+    assert_eq!(
+        rebuild_total(&metrics, "success"),
+        0,
+        "the same source value must not rebuild rules:\n{metrics}"
+    );
+}
+
+#[test]
+fn source_value_lookup_only_does_not_rebuild() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_path = dir.path().join("directory.json");
+    write_source_file(&source_path, r#"{"10.0.0.5":"alice"}"#);
+    let sources = format!(
+        r#"
+sources:
+  - id: employee_directory
+    type: file
+    path: {}
+    format: json
+    refresh: watch
+"#,
+        source_path.display()
+    );
+    let enrichers = r#"
+enrichers:
+  - id: employee
+    kind: detection
+    type: lookup
+    inject_field: employee
+    source: employee_directory
+    default: unknown
+"#;
+    let rule = r#"
+title: Static Rule
+id: 00000000-0000-0000-0000-000000000097
+status: test
+logsource:
+    category: test
+    product: test
+detection:
+    selection:
+        CommandLine|contains: malware
+    condition: selection
+level: high
+"#;
+
+    let rule_file = temp_file(".yml", rule);
+    let sources_file = temp_file(".yml", &sources);
+    let enrichers_file = temp_file(".yml", enrichers);
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule_file.path().to_str().unwrap(),
+        "--source",
+        sources_file.path().to_str().unwrap(),
+        "--enrichers",
+        enrichers_file.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+
+    let baseline = resolve_activity(&read_status(&daemon));
+    write_source_file(&source_path, r#"{"10.0.0.5":"bob"}"#);
+    wait_for_status(&daemon, Duration::from_secs(10), |v| {
+        resolve_activity(v) > baseline
+    });
+    let (_, metrics) = http_get(&daemon.url("/metrics"));
+    assert_eq!(
+        rebuild_total(&metrics, "success"),
+        0,
+        "a lookup-only source must not rebuild rules:\n{metrics}"
+    );
+}

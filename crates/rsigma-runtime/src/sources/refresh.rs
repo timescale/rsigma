@@ -214,6 +214,7 @@ impl RefreshScheduler {
             // Handle NATS push with pre-parsed data (no re-resolution needed)
             #[cfg(feature = "nats")]
             if let RefreshTrigger::NatsPush { source_id, data } = trigger {
+                resolver.store_cached(&source_id, data.clone());
                 let mut resolved = HashMap::new();
                 resolved.insert(source_id, data);
                 let _ = result_tx.send(Some(RefreshResult { resolved }));
@@ -498,5 +499,30 @@ mod tests {
         let data = payload.resolved.get("d").expect("source d resolved");
         assert_eq!(data["rules"][0]["rule_id"], "r1");
         assert_eq!(data["rules"][0]["verdict"], "false_positive");
+    }
+
+    #[cfg(feature = "nats")]
+    #[tokio::test]
+    async fn nats_push_writes_the_cache() {
+        let resolver = Arc::new(DefaultSourceResolver::new());
+        let scheduler = RefreshScheduler::new();
+        let mut results = scheduler.result_receiver();
+        let trigger = scheduler.trigger_sender();
+        let handle = scheduler.run(Vec::new(), resolver.clone());
+
+        trigger
+            .send(RefreshTrigger::NatsPush {
+                source_id: "feed".to_string(),
+                data: serde_json::json!(["198.51.100.7"]),
+            })
+            .await
+            .unwrap();
+        results.changed().await.unwrap();
+
+        assert_eq!(
+            resolver.cache().get("feed"),
+            Some(serde_json::json!(["198.51.100.7"]))
+        );
+        handle.abort();
     }
 }

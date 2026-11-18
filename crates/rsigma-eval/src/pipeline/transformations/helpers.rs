@@ -794,6 +794,13 @@ fn expand_placeholders_in_detection(
             for item in items.iter_mut() {
                 if item.field.modifiers.contains(&Modifier::Expand) {
                     expand_placeholders_in_values(&mut item.values, expansion, rule_title)?;
+                    // An authored empty list is a null check. A placeholder
+                    // that expanded to no values must match nothing instead,
+                    // or an empty feed would fire on events missing the field.
+                    if item.values.is_empty() {
+                        item.field.modifiers = vec![Modifier::Re];
+                        item.values = vec![SigmaValue::from_raw_string("a^")];
+                    }
                 }
             }
         }
@@ -910,7 +917,7 @@ fn escape_bare_percent(text: &str) -> String {
     out
 }
 
-const MAX_PLACEHOLDER_COMBINATIONS: usize = 4096;
+pub const MAX_PLACEHOLDER_COMBINATIONS: usize = 4096;
 
 /// Substitute the placeholders in the raw source text `s` that `expansion`
 /// handles, producing the Cartesian product of multi-value variables.

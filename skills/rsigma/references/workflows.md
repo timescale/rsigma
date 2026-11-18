@@ -71,4 +71,4 @@ Guides: [ATT&CK coverage](https://rsigma.io/guide/attack-coverage/), [Detection 
 
 ## Convert
 
-Native versus delegated targets are in the Convert section of [SKILL.md](../SKILL.md#convert). When delegation fails, read the error. If `sigma` could not be found or executed, install sigma-cli or set `RSIGMA_SIGMA_CLI`. If sigma-cli rejects the target, install that backend plugin (`sigma plugin install <name>`), then check `rsigma backend targets`.
+For repeatable multi-target exports, put the rulesets and targets in the `convert:` section of `rsigma.yaml` and run `rsigma backend build`. It writes each group's queries and a manifest, and `--check` reports drift without writing. Native versus delegated targets are in the Convert section of [SKILL.md](../SKILL.md#convert). When delegation fails, read the error. If `sigma` could not be found or executed, install sigma-cli or set `RSIGMA_SIGMA_CLI`. If sigma-cli rejects the target, install that backend plugin (`sigma plugin install <name>`), then check `rsigma backend targets`.

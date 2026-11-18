@@ -66,11 +66,14 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
+| `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`, `watchlist`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
 | `rsigma_source_resolve_errors_total` | counter | `source_id`, `error_kind` (`Fetch`, `Parse`, `Extract`, `Timeout`, `ResourceLimit`) | Failed dynamic source resolutions. |
 | `rsigma_source_resolve_seconds` | histogram | none | Dynamic source resolution latency. Aggregated across all sources. |
 | `rsigma_source_cache_hits_total` | counter | none | Times cached source data was served on resolution failure. Aggregated across all sources. |
 | `rsigma_source_last_resolved_timestamp` | gauge | `source_id` | Unix timestamp of the last successful resolution per source. Alert on staleness. |
+| `rsigma_source_rebuilds_total` | counter | `result` (`success`, `error`) | Rule rebuilds triggered by a changed pipeline source value. {{ added "unreleased" }} |
+| `rsigma_watchlist_indicators` | gauge | `source_id` | Current unexpired indicators in a watchlist. One series per declared watchlist, starting at 0. {{ added "unreleased" }} |
+| `rsigma_watchlist_changes_total` | counter | `source_id`, `op` (`add`, `update`, `remove`, `expire`) | Watchlist indicator changes. {{ added "unreleased" }} |
 
 The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, and NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 

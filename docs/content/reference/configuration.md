@@ -107,6 +107,22 @@ rulesets:
     pipelines: [sysmon]
     output: ./build/linux_edge
 
+convert:
+  defaults:
+    format: default
+    skip_unsupported: true
+    options:
+      correlation_method: join
+  groups:
+    linux_edge_lynxdb:
+      ruleset: linux_edge
+      target: lynxdb
+      pipelines: [sysmon]
+      output: ./build/lynxdb/linux_edge.txt
+      metadata:
+        rule_group: linux
+        time_window: 5m
+
 daemon:
   rules: /etc/rsigma/rules
   # rulesets:            # several named rulesets, optionally schema-bound
@@ -267,6 +283,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 |---------|---------|-------|
 | `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
 | `rulesets` | `ruleset`, `--ruleset` commands, MCP tools | Named curation of Sigma rules: sources, selectors, dependency policy, overlays, pipelines, and build output. File-only; environment variables are ignored. See [Rulesets](../guide/rulesets.md). {{ added "unreleased" }} |
+| `convert` | `backend build` | Named conversion groups: `ruleset`, `target`, `format`, `pipelines`, `options`, `skip_unsupported`, `without_pipeline`, `output`, and opaque `metadata` copied into the manifest. `defaults` fills unset group fields. Groups are file-only; `RSIGMA_CONVERT__DEFAULTS__*` works, but `convert.groups.*` is ignored. See [`backend build`](../cli/backend/build.md). {{ added "unreleased" }} |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
 | `daemon.rulesets` | `engine daemon` | Several named rulesets evaluated side by side. Each entry is a name or `{name, when: {schemas: [...]}}`. Conflicts with `daemon.rules`. Read once at startup. See [Rulesets](../guide/rulesets.md#several-rulesets-side-by-side). {{ added "unreleased" }} |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |

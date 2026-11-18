@@ -5,6 +5,8 @@
 //! and is applied via the [`Transformation::apply`] method.
 
 mod helpers;
+
+pub use helpers::MAX_PLACEHOLDER_COMBINATIONS;
 #[cfg(test)]
 mod tests;
 

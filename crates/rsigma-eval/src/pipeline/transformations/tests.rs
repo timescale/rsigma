@@ -549,6 +549,67 @@ fn test_value_placeholders() {
 }
 
 #[test]
+fn empty_placeholder_expansion_matches_nothing() {
+    let mut named = HashMap::new();
+    named.insert(
+        "selection".to_string(),
+        Detection::AllOf(vec![DetectionItem {
+            field: FieldSpec::new(Some("DestinationIp".to_string()), vec![Modifier::Expand]),
+            values: vec![SigmaValue::String(SigmaString::new("%c2_ips%"))],
+        }]),
+    );
+    let mut rule = SigmaRule {
+        sigma_version: None,
+        title: "Empty feed".to_string(),
+        logsource: LogSource::default(),
+        detection: Detections {
+            named,
+            conditions: vec![ConditionExpr::Identifier("selection".to_string())],
+            condition_strings: vec!["selection".to_string()],
+            timeframe: None,
+        },
+        id: None,
+        name: None,
+        related: vec![],
+        taxonomy: None,
+        status: None,
+        description: None,
+        license: None,
+        author: None,
+        references: vec![],
+        date: None,
+        modified: None,
+        fields: vec![],
+        falsepositives: vec![],
+        level: None,
+        tags: vec![],
+        scope: vec![],
+        custom_attributes: HashMap::new(),
+    };
+    let mut state = PipelineState::default();
+    state.vars.insert("c2_ips".to_string(), Vec::new());
+    Transformation::ValuePlaceholders {
+        allow_unresolved: false,
+        include: None,
+        exclude: None,
+    }
+    .apply(&mut rule, &mut state, &[], &[], false)
+    .unwrap();
+
+    let compiled = crate::compiler::compile_rule(&rule).unwrap();
+    let missing = serde_json::json!({});
+    let present = serde_json::json!({"DestinationIp": "198.51.100.7"});
+    assert!(
+        crate::compiler::evaluate_rule(&compiled, &crate::event::JsonEvent::borrow(&missing))
+            .is_none()
+    );
+    assert!(
+        crate::compiler::evaluate_rule(&compiled, &crate::event::JsonEvent::borrow(&present))
+            .is_none()
+    );
+}
+
+#[test]
 fn test_field_name_transform_lowercase() {
     let mut rule = make_test_rule();
     let mut state = PipelineState::default();
