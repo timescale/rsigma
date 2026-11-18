@@ -99,8 +99,8 @@ pub static POSTGRES_CONFIG: TextQueryConfig = TextQueryConfig {
     field_quote: Some("\""),
     field_quote_pattern: Some(r"^[a-z_][a-z0-9_]*$"),
     field_quote_pattern_negation: true,
-    field_escape: None,
-    field_escape_pattern: None,
+    field_escape: Some("\"\""),
+    field_escape_pattern: Some("\""),
 
     startswith_expression: Some("{field} ILIKE {value}"),
     not_startswith_expression: Some("{field} NOT ILIKE {value}"),

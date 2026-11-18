@@ -2013,6 +2013,58 @@ fn field_expr_rejects_quote_in_dotted_path() {
 }
 
 #[test]
+fn field_expr_doubles_quote_in_column_name() {
+    let backend = PostgresBackend::new();
+    assert_eq!(backend.field_expr(r#"a"b"#).unwrap(), r#""a""b""#);
+    assert_eq!(backend.field_expr(r#"""#).unwrap(), r#""""""#);
+}
+
+#[test]
+fn quote_in_field_name_stays_inside_identifier() {
+    let queries = convert(
+        r#"
+title: Identifier breakout
+logsource:
+    category: process_creation
+detection:
+    selection:
+        'CommandLine" OR 1=1; --': whoami
+    condition: selection
+"#,
+    );
+    assert_eq!(
+        queries,
+        vec![r#"SELECT * FROM security_events WHERE "CommandLine"" OR 1=1; --" ILIKE 'whoami'"#]
+    );
+}
+
+#[test]
+fn quote_in_field_name_stays_inside_identifier_in_view() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: Stacked
+id: 6f1e2c3d-0000-4000-8000-000000000001
+logsource:
+    category: process_creation
+detection:
+    selection:
+        'x" IS NULL; DROP TABLE users; --': a
+    condition: selection
+"#,
+    )
+    .unwrap();
+    let queries = PostgresBackend::new()
+        .convert_rule(&collection.rules[0], "view", &PipelineState::default())
+        .unwrap();
+    assert_eq!(
+        queries,
+        vec![
+            r#"CREATE OR REPLACE VIEW sigma_6f1e2c3d_0000_4000_8000_000000000001 AS SELECT * FROM security_events WHERE "x"" IS NULL; DROP TABLE users; --" ILIKE 'a'"#
+        ]
+    );
+}
+
+#[test]
 fn resolve_table_rejects_quote_in_table_name() {
     let backend = PostgresBackend::new();
     let custom_attrs = HashMap::new();
