@@ -800,14 +800,14 @@ impl Backend for PostgresBackend {
             None => format!("SELECT {select_cols} FROM {{table}} WHERE {{query}}"),
         };
 
-        let mut result = effective_tmpl.replace("{query}", &query);
-        result = result.replace("{table}", &qualified);
-        result = result.replace("{rule.title}", &rule.title);
-        if let Some(id) = &rule.id {
-            result = result.replace("{rule.id}", id);
-        }
-
-        Ok(result)
+        // Rule metadata is free text, so it renders as string literal content.
+        Ok(render_query_template(&effective_tmpl, |key| match key {
+            "query" => Some(query.clone()),
+            "table" => Some(qualified.clone()),
+            "rule.title" => Some(rule.title.replace('\'', "''")),
+            "rule.id" => rule.id.as_ref().map(|id| id.replace('\'', "''")),
+            _ => None,
+        }))
     }
 
     fn finalize_query(
