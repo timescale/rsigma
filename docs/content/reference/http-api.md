@@ -257,7 +257,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 `ttl` is optional. `POST` answers `{"source_id","added","updated","total"}`. `PUT` answers `{"source_id","total","removed"}` and drops every unexpired value the body does not name.
 
-`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total"}`. The audit trail keeps that body when `--state-db` is set.
+`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total"}`. When `--state-db` is set, the audit trail records a SHA-256 digest of that body. The body itself is not stored.
 
 `GET` accepts `limit` (default 1000, at most 10000) and `offset` (default 0). The answer is `{"source_id","total","indicators":[{"value","added_at","expires_at"}]}`, sorted by value. `expires_at` is `null` when the indicator does not expire.
 
