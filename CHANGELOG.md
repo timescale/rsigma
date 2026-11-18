@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### STIX indicator sources
+### STIX indicator sources (#722)
 
 A dynamic source can turn STIX 2.1 indicators into a value the daemon already knows how to use. `type: taxii` polls a TAXII 2.1 collection. `format: stix` on a file or HTTP source reads a STIX bundle. Both need the `stix-source` feature. Without it, the daemon exits 3 and names the feature.
 
