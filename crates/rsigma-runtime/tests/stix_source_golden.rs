@@ -8,6 +8,8 @@
 
 #![cfg(feature = "stix-source")]
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -19,6 +21,8 @@ use rsigma_runtime::SourceResolver;
 use rsigma_runtime::sources::DefaultSourceResolver;
 use rstix::core::StixTimestamp;
 use serde_json::Value;
+
+use common::canonical;
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -63,7 +67,11 @@ fn options_for(name: &str) -> StixOptions {
 
 fn check(name: &str, value: &Value) {
     let path = golden_path(name);
-    let actual = format!("{}\n", serde_json::to_string_pretty(value).unwrap());
+    // `preserve_order` is on for some workspace builds and off for others.
+    let actual = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&canonical(value)).unwrap()
+    );
     if std::env::var_os("RSIGMA_UPDATE_GOLDEN").is_some() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &actual)
