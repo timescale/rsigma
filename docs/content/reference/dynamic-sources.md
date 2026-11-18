@@ -1,14 +1,14 @@
 ---
-description: "Reference for reusable RSigma dynamic sources: file, command, HTTP, and NATS types, extraction, refresh, errors, and limits."
+description: "Reference for reusable RSigma dynamic sources: file, command, HTTP, NATS, watchlist, and TAXII types, extraction, refresh, errors, and limits."
 ---
 
 # Dynamic Sources
 
 {{ added "0.10.0" }}
 
-Dynamic sources let the daemon fetch reusable values from files, local commands, HTTP endpoints, and NATS subjects. Source declarations are loaded independently through `--source`, resolved into a shared cache, and consumed by either [dynamic pipelines](dynamic-pipelines.md) or [`lookup` enrichers](../guide/enrichers.md#lookup-read-from-the-dynamic-source-cache). One source can be reused by any number of pipelines and enrichers.
+Dynamic sources let the daemon fetch reusable values from files, local commands, HTTP endpoints, NATS subjects, and TAXII collections. Source declarations are loaded independently through `--source`, resolved into a shared cache, and consumed by either [dynamic pipelines](dynamic-pipelines.md) or [`lookup` enrichers](../guide/enrichers.md#lookup-read-from-the-dynamic-source-cache). One source can be reused by any number of pipelines and enrichers.
 
-Dynamic pipelines and `lookup` enrichers are currently the only consumers of dynamic sources. This page documents the consumer-independent source specification: every source type, the four data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
+Dynamic pipelines and `lookup` enrichers are currently the only consumers of dynamic sources. This page documents the consumer-independent source specification: every source type, the data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
 
 For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics).
 
@@ -69,9 +69,9 @@ Every entry in the `sources:` list takes the same shape:
 ```yaml
 sources:
   - id: <source-id>           # required, used in ${source.<id>} refs
-    type: <file|http|command|nats>
+    type: <file|http|command|nats|watchlist|taxii>
     # type-specific fields…
-    format: <json|yaml|lines|csv>
+    format: <json|yaml|lines|csv|stix>
     extract: <expression>     # optional
     refresh: <once|<duration>|watch|push|on_demand>
     required: <true|false>    # default true
@@ -113,8 +113,9 @@ Reads a local file, parses it according to `format`, applies `extract` if set, a
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `path` | string | yes | Absolute or pipeline-relative path. |
-| `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
-| `extract` | string or object | no | Filter applied after parsing. |
+| `format` | enum | yes | `json`, `yaml`, `lines`, `csv`, or `stix`. |
+| `extract` | string or object | no | Filter applied after parsing. Rejected when `format` is `stix`. |
+| `stix` | object | no | Options for `format: stix`. See [format: stix](#format-stix). |
 
 `refresh: watch` is only valid for file sources (uses `notify`). For other refresh policies, file behaves like the others.
 
@@ -158,8 +159,9 @@ A POST query with a request body:
 | `method` | string | no | `GET` (default), `POST`, `PUT`, etc. Defaults to `POST` when `body` is set. |
 | `headers` | mapping | no | Request headers. `${VAR}` references are expanded from the environment at fetch time, so tokens stay out of the committed YAML. |
 | `body` | string | no | Request body sent verbatim after `${VAR}` expansion. Set `Content-Type` in `headers`; the engine does not infer it. |
-| `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
-| `extract` | string or object | no | Filter applied after parsing. |
+| `format` | enum | yes | `json`, `yaml`, `lines`, `csv`, or `stix`. |
+| `extract` | string or object | no | Filter applied after parsing. Rejected when `format` is `stix`. |
+| `stix` | object | no | Options for `format: stix`. See [format: stix](#format-stix). |
 | `timeout` | duration | no | Request timeout. Default `30s`. |
 | `max_body_size` | bytes | no | Per-source override for the 10 MiB default. |
 
@@ -235,6 +237,43 @@ Push, replace, delete, and list go through `/api/v1/sources/{source_id}/indicato
 
 A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watchlist expands to a condition that matches nothing. A watchlist that a pipeline references is capped at 4096 indicators, and a push past that cap returns 422 and changes nothing. A watchlist that no pipeline references keeps `max_indicators`, which is how a lookup enricher holds a larger set. A successful reload computes the cap again: a pipeline edit that starts referencing the watchlist lowers it, and one that stops referencing it restores `max_indicators`.
 
+### `taxii`
+
+{{ added "unreleased" }}
+
+Polls a TAXII 2.1 collection and turns its indicators into the value described under [`format: stix`](#format-stix). Requires the `stix-source` feature. `url` is the API root. The daemon does not run discovery. `collection` is the collection id, a UUID. `refresh` may be a duration, `once`, or `on_demand`. Omitted means `once`. `watch` and `push` are rejected, and so are `extract` and `format`.
+
+```yaml
+- id: ti
+  type: taxii
+  url: https://taxii.example/api1/
+  collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+  refresh: 15m
+  page_size: 500
+  auth:
+    bearer_token_env: TAXII_TOKEN
+  stix:
+    min_confidence: 50
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | yes | TAXII API root. Checked against the daemon egress policy before the first poll. |
+| `collection` | string | yes | Collection id. Must be a UUID (`8-4-4-4-12` hex). |
+| `page_size` | integer | no | Objects requested per page. Default `500`. Must be greater than 0. |
+| `auth` | object | no | Omit it when the collection needs no credentials. When present, exactly one of bearer, basic, or API key. Each secret is an environment variable name, read when the resolver is built. A missing variable is a startup error that names it. |
+| `auth.bearer_token_env` | string | no | Variable holding a bearer token. Sent as `Authorization: Bearer`. |
+| `auth.basic_user_env` | string | no | Variable holding the basic-auth user. Requires `basic_password_env`. |
+| `auth.basic_password_env` | string | no | Variable holding the basic-auth password. Requires `basic_user_env`. |
+| `auth.api_key_env` | string | no | Variable holding an API key. |
+| `auth.api_key_header` | string | no | Header for `api_key_env`. Default `X-API-Key`. |
+| `stix` | object | no | Same block as [`format: stix`](#format-stix). Omitted means every observable kind, no confidence floor, and a cap of 100000 active indicators. |
+| `timeout` | duration | no | Per-request timeout. Default 30s. |
+
+The first resolve reads the collection. Later resolves send `added_after` set to the previous poll's last `X-TAXII-Date-Added-Last` and merge what comes back. A failed poll returns the error and leaves the cached value and the cursor unchanged, so `on_error: use_cached` keeps serving the last good value. The cursor lives in the process. After a restart the next poll is a full read.
+
+The client follows the daemon egress policy. It does not follow redirects and it does not use a proxy, including when the server returns an absolute URL. Each objects page is capped at 64 MiB. The page is parsed with a depth limit, a string limit, and an object-count limit of twice `page_size`. Objects that are not indicators, including custom objects, are accepted by the parser and then ignored.
+
 ## Data formats
 
 | Format | Library | Notes |
@@ -243,6 +282,83 @@ A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watch
 | `yaml` | `yaml_serde` 0.10 | Multi-document files concatenate into an array. |
 | `lines` | (internal) | One value per non-blank line; the resolved value is a JSON array of strings. |
 | `csv` | `csv` crate | Header row required; each subsequent row becomes an object keyed by the header. |
+| `stix` | `rstix` | A STIX 2.1 bundle. File and HTTP only. Requires `stix-source`. `extract` is rejected. See [format: stix](#format-stix). {{ added "unreleased" }} |
+
+### `format: stix`
+
+{{ added "unreleased" }}
+
+`format: stix` on a file or HTTP source parses the body as a STIX bundle and builds the same value a TAXII source builds. The file or HTTP fetch is otherwise unchanged: a file may use `refresh: watch`, and HTTP keeps the egress policy and the 10 MiB body cap. Each resolve is stateless. There is no cursor.
+
+```yaml
+- id: ti_file
+  type: file
+  path: ./intel/indicators.json
+  format: stix
+  refresh: watch
+  stix:
+    min_confidence: 70
+    observables: [ipv4, domain]
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `stix.min_confidence` | integer | no | Drop indicators whose confidence is set and below this value. Range 0..=100. Unset confidence is kept. |
+| `stix.observables` | list of strings | no | Kinds to emit. Omitted means every kind in the table below. An unknown name is a configuration error that lists the valid names. `[]` emits no kinds. |
+| `stix.max_indicators` | integer | no | Most active indicators kept. Default `100000`. `0` is a configuration error. Past the cap, the highest confidence wins and equal confidence keeps the smaller id. The rest count as `over_limit`. |
+
+An indicator is kept when all of these hold: `pattern_type` is `stix`, `revoked` is not true, `valid_from` is at or before the resolve time, `valid_until` is unset or after that time, confidence is unset or at least `min_confidence`, and the pattern is a simple comparison. A simple pattern is one observation, or several joined only by `OR`, with no qualifier (`WITHIN`, `REPEATS`, `START`, `STOP`), no `AND`, no `FOLLOWEDBY`, and no negated comparison. Each comparison is `=` or `IN` against a string or integer. Anything else is `unsupported_pattern` and the indicator is dropped. A comparison whose path is not one of the kinds below increments `unmapped_observable` and is left out of the arrays. The indicator still counts as active.
+
+Objects that are not indicators are ignored. Two versions of the same id keep the one with the greater `modified`. A newer version with `revoked: true` removes it. Expiry is applied at resolve time, so an indicator stays in the value until the next refresh after `valid_until`.
+
+Every configured kind is always present. Arrays are sorted and deduplicated. `indicators` maps a value to at most 16 metadata objects, sorted by confidence descending and then by id. Metadata fields are `id`, `name` (omitted when unset), `confidence` (omitted when unset), `valid_until` (omitted when unset, RFC3339), `labels` (the indicator types, always present, possibly empty), and `kill_chain_phases` (always present, each with `kill_chain_name` and `phase_name`).
+
+| Key | Taken from |
+|-----|------------|
+| `ipv4` | `ipv4-addr:value` with no `/` |
+| `ipv4_cidr` | `ipv4-addr:value` containing `/` |
+| `ipv6` | `ipv6-addr:value` with no `/`. The text is not lowercased. |
+| `ipv6_cidr` | `ipv6-addr:value` containing `/` |
+| `domain` | `domain-name:value`, lowercased |
+| `url` | `url:value` |
+| `email` | `email-addr:value` |
+| `file_name` | `file:name` |
+| `md5` | `file:hashes.MD5`, lowercased |
+| `sha1` | `file:hashes.'SHA-1'`, lowercased |
+| `sha256` | `file:hashes.'SHA-256'`, lowercased |
+| `sha512` | `file:hashes.'SHA-512'`, lowercased |
+| `registry_key` | `windows-registry-key:key` |
+| `mutex` | `mutex:name` |
+| `mac` | `mac-addr:value`, lowercased |
+| `asn` | `autonomous-system:number`, printed as a decimal |
+
+A resolved value looks like this when `observables` names `ipv4`, `ipv4_cidr`, `domain`, `url`, and `sha256`:
+
+```json
+{
+  "domain": ["bad.example.com"],
+  "indicators": {
+    "198.51.100.7": [
+      {
+        "confidence": 80,
+        "id": "indicator--01234567-89ab-4cde-8fab-0123456789ab",
+        "kill_chain_phases": [
+          {"kill_chain_name": "mitre-attack", "phase_name": "command-and-control"}
+        ],
+        "labels": ["malicious-activity"],
+        "name": "c2",
+        "valid_until": "2026-12-01T00:00:00Z"
+      }
+    ]
+  },
+  "ipv4": ["198.51.100.7"],
+  "ipv4_cidr": ["203.0.113.0/24"],
+  "sha256": ["abcdef"],
+  "url": []
+}
+```
+
+`command` and `nats` cannot use `format: stix`. A `stix:` block on any other format is a configuration error. See [Threat intel watchlists](../guide/threat-intel-watchlists.md#stix-indicator-sources) for how this sits next to a watchlist and next to `taxii sync`.
 
 ## Extract languages
 

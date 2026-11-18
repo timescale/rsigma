@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### STIX indicator sources
+
+A dynamic source can turn STIX 2.1 indicators into a value the daemon already knows how to use. `type: taxii` polls a TAXII 2.1 collection. `format: stix` on a file or HTTP source reads a STIX bundle. Both need the `stix-source` feature. Without it, the daemon exits 3 and names the feature.
+
+The value is a JSON object. Every observable kind named in `stix.observables` is present, as a sorted array, empty when nothing matched, so `${source.ti.ipv4}` does not dangle. `indicators` maps each value to at most 16 metadata objects, ordered by confidence descending and then by id. An indicator is kept when its pattern type is `stix`, it is not revoked, `valid_from` is not after the resolve time, `valid_until` is unset or still ahead, confidence is unset or at least `min_confidence`, and the pattern is a simple comparison. Versions of the same id keep the greatest `modified`. A newer revoked version removes the indicator. Indicators expire at the first refresh after `valid_until`, so the refresh interval is the expiry granularity.
+
+A TAXII source polls indicators of spec version 2.1. The first poll is the whole collection. Later polls ask for objects added after the last page's `X-TAXII-Date-Added-Last`. A failed poll leaves the previous value and cursor in place, so `on_error: use_cached` keeps serving it. The cursor is not saved across a restart. The client uses the daemon egress policy, does not follow redirects, and does not use a proxy. Credentials are the names of environment variables, read when the resolver is built. A missing variable is a startup error that names the variable.
+
+`Pattern::simple_observables` extracts the values. TAXII envelope parsing enforces the same depth, string, and object-count limits as bundle parsing. `TaxiiClient::poll_objects` returns the last page's added-date header.
+
+**Breaking changes.** Code that matches on `SourceType` or `DataFormat` exhaustively must handle `Taxii` and `Stix`. A TAXII envelope that exceeds the parse limits now fails instead of being parsed.
+
 ### LynxDB output rejects unsafe field names and expands template placeholders once (security, #719)
 
 The LynxDB backend rendered field names verbatim, so a field name such as `Image=* OR CommandLine` rewrote the logic of the generated `search` or `where` stage. It also substituted `{rule.title}`, `{rule.id}`, and pipeline state keys into the finished query after the detection was rendered, so a field name or regex value of `{rule.title}` was replaced by the raw title, which could close a quoted string and append pipeline stages such as `| stats count by host` ([GHSA-f96v-37xh-p653](https://github.com/timescale/rsigma/security/advisories/GHSA-f96v-37xh-p653)).

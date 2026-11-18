@@ -71,6 +71,16 @@ IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host tha
 
 The policy applies only to those three clients. OTLP sinks, the MCP server's daemon client, and one-shot CLI commands such as `rsigma taxii sync` or `engine status` do not go through it, so point them only at endpoints you trust. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
 
+### STIX indicator sources
+
+{{ added "unreleased" }} A `type: taxii` source uses the same egress policy. The API root is checked before the first poll, and every address the name resolves to is checked again. An IP literal in the API root, or in an absolute URL the server returns, is rejected before the request. While that filter is set the client follows no redirects and uses no proxy, so a proxy variable cannot move the request off the filtered path. `rsigma taxii sync` is a separate command and is not covered by this filter.
+
+TAXII credentials are environment variable names in the source YAML. The values are read when the resolver is built and are not written into the declaration or into errors. A missing variable fails startup and names the variable.
+
+Each TAXII page is limited to 64 MiB and parsed with a finite depth, string length, and object count. A file or HTTP source with `format: stix` uses the same parser limits. HTTP still stops at its 10 MiB body cap. Indicator values are data: they land in the source cache and can be expanded into a rule or returned to a lookup enricher. They are not executed.
+
+A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `watch` or `push` on `type: taxii` are configuration errors.
+
 ### DNS enricher
 
 {{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.

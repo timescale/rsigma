@@ -467,7 +467,7 @@ rsigma engine daemon -r rules/ \
 |----------|---------|--------------|
 | `/healthz` | 200 once the listener is up. | Liveness probe. |
 | `/readyz` | 200 once rules + pipelines are loaded; 503 during startup or after a failed reload. | Readiness probe. Drain traffic when 503. |
-| `/metrics` | Prometheus text format. {{ rsigma.metrics.names }} metric names under `--all-features` ({{ rsigma.metrics.always }} always-present + {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS gated on the matching build features). A startup scrape shows a subset; the rest appear as their surfaces are exercised. | Scrape every 15-30 s. |
+| `/metrics` | Prometheus text format. {{ rsigma.metrics.names }} metric names under `--all-features` ({{ rsigma.metrics.always }} always-present + {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS + {{ rsigma.metrics.stix }} STIX source, gated on the matching build features). A startup scrape shows a subset; the rest appear as their surfaces are exercised. | Scrape every 15-30 s. |
 
 Full HTTP API reference: [HTTP API](../../reference/http-api.md). All metric definitions: [Prometheus metrics](../../reference/metrics.md).
 

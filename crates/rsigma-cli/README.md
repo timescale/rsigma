@@ -121,6 +121,8 @@ For TAXII feeds that require auth, pass `--bearer-token`, `--basic-user` with `-
 
 Point the daemon at the same directory with **`--stix-store`** and a `type: stix` enricher (`stix-enrich` feature) to attach store intel to firings. A store written with `--allow-custom` also needs `--stix-store-allow-custom` on the daemon. See [Enrichers](https://rsigma.io/guide/enrichers/#stix-local-stix-store-lookup).
 
+A running daemon can also poll a collection itself. `type: taxii`, and `format: stix` on a file or HTTP source, need the **`stix-source`** feature. That path expands observables into a pipeline value. It does not write an `FsStore`. See [Threat intel watchlists](https://rsigma.io/guide/threat-intel-watchlists/#stix-indicator-sources).
+
 ### `config`: YAML configuration
 
 Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config). Project files cannot set security-sensitive keys such as `mcp.daemon_url` or `mcp.allow_operate_writes`; those are ignored with a warning and read only from `--config`, the user or system config, the environment, or flags. See [Project config trust](https://rsigma.io/reference/configuration/#project-config-trust).
@@ -555,7 +557,7 @@ The `tracing` spans installed on hot paths (batch processing, source resolution,
 
 **Consumer groups:** the `--consumer-group` flag sets a shared durable consumer name. Multiple daemon instances using the same group pull from a single JetStream consumer, and NATS distributes messages for load balancing. When not specified, the consumer name is derived from the subject.
 
-**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. To build without daemon dependencies: `cargo build --no-default-features`.
+**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. `type: taxii` and `format: stix` require the `stix-source` feature. To build without daemon dependencies: `cargo build --no-default-features`.
 
 ### `engine status`: Query a running daemon
 

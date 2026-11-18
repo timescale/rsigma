@@ -4,7 +4,7 @@ description: "Every Prometheus metric the RSigma daemon exposes on /metrics: eva
 
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is {{ rsigma.metrics.names }} metric names: {{ rsigma.metrics.always }} are always registered, and the OTLP ({{ rsigma.metrics.otlp }}) and TLS ({{ rsigma.metrics.tls }}) families are feature-gated on `daemon-otlp` and `daemon-tls` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is {{ rsigma.metrics.names }} metric names: {{ rsigma.metrics.always }} are always registered, and the OTLP ({{ rsigma.metrics.otlp }}), TLS ({{ rsigma.metrics.tls }}), and STIX source ({{ rsigma.metrics.stix }}) families are feature-gated on `daemon-otlp`, `daemon-tls`, and `stix-source` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
@@ -60,13 +60,13 @@ These counters carry labels that identify which rule fired. They surface on `/me
 
 These two families feed the silence and noisy signals of [`rule hygiene`](../cli/rule/hygiene.md) (and the production-volume column of [`rule scorecard`](../cli/rule/scorecard.md)): pass a saved scrape or a live endpoint as `--metrics` and they join per-rule by `rule_title`.
 
-## Dynamic sources (5 metrics)
+## Dynamic sources (10 metrics)
 
 Exposed when one or more dynamic sources are configured. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`, `watchlist`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
+| `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`, `watchlist`, `taxii`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
 | `rsigma_source_resolve_errors_total` | counter | `source_id`, `error_kind` (`Fetch`, `Parse`, `Extract`, `Timeout`, `ResourceLimit`) | Failed dynamic source resolutions. |
 | `rsigma_source_resolve_seconds` | histogram | none | Dynamic source resolution latency. Aggregated across all sources. |
 | `rsigma_source_cache_hits_total` | counter | none | Times cached source data was served on resolution failure. Aggregated across all sources. |
@@ -74,6 +74,9 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 | `rsigma_source_rebuilds_total` | counter | `result` (`success`, `error`) | Rule rebuilds triggered by a changed pipeline source value. {{ added "unreleased" }} |
 | `rsigma_watchlist_indicators` | gauge | `source_id` | Current unexpired indicators in a watchlist. One series per declared watchlist, starting at 0. {{ added "unreleased" }} |
 | `rsigma_watchlist_changes_total` | counter | `source_id`, `op` (`add`, `update`, `remove`, `expire`) | Watchlist indicator changes. {{ added "unreleased" }} |
+| `rsigma_stix_source_indicators` | gauge | `source_id` | Active indicators in a STIX source after lifecycle and the cap. Requires `stix-source`. One series per declared STIX source, starting at 0. {{ added "unreleased" }} |
+| `rsigma_stix_source_objects_total` | counter | `source_id` | STIX objects received while resolving a STIX source. Requires `stix-source`. {{ added "unreleased" }} |
+| `rsigma_stix_source_skipped_total` | counter | `source_id`, `reason` (`revoked`, `expired`, `not_yet_valid`, `low_confidence`, `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`, `over_limit`) | Indicators or observables left out of a STIX source value. Requires `stix-source`. Each reason is registered at 0. {{ added "unreleased" }} |
 
 The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, and NATS connect-or-read failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
 

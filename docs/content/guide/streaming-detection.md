@@ -216,7 +216,7 @@ The table below is a subset of the core surface. The full catalog (incidents, si
 |------|--------|---------|
 | `/healthz` | GET | Liveness probe. Always 200 once the listener is up. |
 | `/readyz` | GET | Readiness probe. 200 once rules are loaded, 503 otherwise. |
-| `/metrics` | GET | Prometheus text format, {{ rsigma.metrics.names }} metric names under `--all-features` ({{ rsigma.metrics.always }} always-present + {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS gated on the matching build features). |
+| `/metrics` | GET | Prometheus text format, {{ rsigma.metrics.names }} metric names under `--all-features` ({{ rsigma.metrics.always }} always-present + {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS + {{ rsigma.metrics.stix }} STIX source, gated on the matching build features). |
 | `/api/v1/status` | GET | Counters, state-entry counts, uptime. |
 | `/api/v1/rules` | GET | Rule counts and rules-directory path. |
 | `/api/v1/reload` | POST | Trigger an immediate rules reload. |
