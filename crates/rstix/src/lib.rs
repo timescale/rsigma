@@ -149,8 +149,8 @@ pub use taxii::{
     TaxiiAuthProvider, TaxiiClient, TaxiiClientConfig, TaxiiCollection, TaxiiDiscovery,
     TaxiiEnvelope, TaxiiError, TaxiiFilter, TaxiiPageHeaders, TaxiiPaged, TaxiiStatus, TlsaCache,
     TlsaRecord, VersionFilter, VersionSelector, VersionsQueryFilter, VersionsResponse,
-    build_rustls_config, parse_www_authenticate, resolve_taxii_srv, resolve_taxii_srv_with_options,
-    resolve_tlsa, resolve_tlsa_with_options,
+    build_rustls_config, parse_envelope, parse_www_authenticate, resolve_taxii_srv,
+    resolve_taxii_srv_with_options, resolve_tlsa, resolve_tlsa_with_options,
 };
 #[cfg(all(feature = "taxii", feature = "store"))]
 pub use taxii::{

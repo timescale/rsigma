@@ -535,6 +535,7 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | [`TaxiiFilter`](taxii::TaxiiFilter) / [`ObjectByIdFilter`](taxii::ObjectByIdFilter) / [`VersionsQueryFilter`](taxii::VersionsQueryFilter) / [`DeleteObjectFilter`](taxii::DeleteObjectFilter) | Query encoding (`match[type]`, `added_after`, `next`, …). |
 | [`VersionFilter`](taxii::VersionFilter) / [`VersionSelector`](taxii::VersionSelector) / [`ObjectVersion`](taxii::ObjectVersion) | Version match encoding. |
 | [`TaxiiEnvelope`](taxii::TaxiiEnvelope) | Wire envelope (not `Bundle`). |
+| [`parse_envelope`](taxii::parse_envelope) | Parse envelope bytes with the same nesting, string, and object-count limits as `Bundle::parse_with_options`. |
 | [`TaxiiPaged<T>`](taxii::TaxiiPaged) / [`TaxiiPageHeaders`](taxii::TaxiiPageHeaders) | Page body + `X-TAXII-Date-Added-*` headers. |
 | [`TaxiiStatus`](taxii::TaxiiStatus) / [`StatusDetail`](taxii::StatusDetail) / [`StatusState`](taxii::StatusState) | POST 202 / status polling. |
 | [`ManifestRecord`](taxii::ManifestRecord) / [`ManifestResponse`](taxii::ManifestResponse) | Manifest entries. |
@@ -702,6 +703,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Area | Enforced behavior | Notes |
 | ---- | ----------------- | ----- |
 | Envelope vs Bundle | POST/GET object pages deserialize `TaxiiEnvelope` | Bundle rejected at API boundary |
+| Envelope parse limits | `parse_envelope` rejects nesting, string length, and `objects` length using the caller's `ParseOptions`, with the same `ParseError` variants as bundle parse | HTTP decoding passes the client's `ParseOptions` |
 | Envelope custom props | Flattened `x_*` on `TaxiiEnvelope` / `TaxiiStatus` | `with_custom`; CSD01 §3.15.1 |
 | Response media type | Success responses must include TAXII JSON `Content-Type` | `MissingContentType` / `InvalidContentType` |
 | TLS | rustls with **TLS 1.2 and TLS 1.3** (no 1.0/1.1); optional SPKI pinning and DANE | `ServerTrustPolicy`, `build_rustls_config`, `SpkiPin`, `TlsaCache`, `resolve_tlsa` |

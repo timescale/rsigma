@@ -37,6 +37,7 @@ pub use dns::{
 };
 pub use envelope::{
     ManifestRecord, ManifestResponse, StatusDetail, StatusState, TaxiiEnvelope, TaxiiStatus,
+    parse_envelope,
 };
 pub use error::TaxiiError;
 pub use filter::{

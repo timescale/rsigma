@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 34 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 28 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 35 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 29 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
@@ -38,6 +38,7 @@ The workspace ships 34 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_risk_config` | Risk configuration parsing. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_stix_pattern` | STIX pattern parsing. | 4096 |
+| `fuzz_taxii_envelope` | TAXII envelope parsing, including object-count, nesting, and string-length limits. Seeds in `fuzz/seeds/fuzz_taxii_envelope/` cover a valid envelope, a truncated envelope, and an oversized envelope. {{ added "unreleased" }} | 65536 |
 | `fuzz_rstix_parse_bundle` | The `rstix::parse_bundle` STIX bundle parse entrypoint. Seed locally from `tests/fixtures/spec/` or a downloaded ATT&CK bundle (see [rstix: Local MITRE ATT&CK corpus test](../library/rstix.md#rstix-testing-local-mitre-attck-corpus)). | 65536 |
 | `fuzz_rstix_validate_json` | The `rstix::Validator::validate_json_str` Validation Pipeline raw JSON entry (`validate` feature). Seeds in `fuzz/seeds/fuzz_rstix_validate_json/`. | 65536 |
 | `fuzz_mmdb_record` | MMDB decoding and field projection (`mmdb-enrich` feature): `MmdbDatabase::from_bytes` over arbitrary bytes, then lookups for a fixed set of IPv4 and IPv6 addresses with no projection and with a projection that includes an array index. Seeds in `fuzz/corpus/fuzz_mmdb_record/` cover the synthetic fixtures, a truncated file, a metadata-marker-only file, and a file with corrupted search-tree bytes. {{ added "unreleased" }} | 65536 |
