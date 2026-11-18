@@ -1,0 +1,11 @@
+title: "Quote in a field name and placeholders in values"
+id: "a' OR 1=1; --"
+status: test
+logsource:
+    category: process_creation
+detection:
+    selection:
+        'CommandLine" OR 1=1; --': whoami
+        title_field: '{rule.title}'
+        id_field: '{rule.id}'
+    condition: selection

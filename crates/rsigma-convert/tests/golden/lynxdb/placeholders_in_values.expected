@@ -1,0 +1,1 @@
+FROM main | where match(CommandLine, "{rule.title}") AND match(Image, "{rule.id}|{index}")

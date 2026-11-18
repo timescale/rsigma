@@ -159,3 +159,8 @@ fn golden_encodings() {
 fn golden_large_integers() {
     run_golden("large_integers");
 }
+
+#[test]
+fn golden_quoted_identifiers() {
+    run_golden("quoted_identifiers");
+}

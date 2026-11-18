@@ -18,6 +18,26 @@ Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exit
 
 See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs). A new [Serverless](https://rsigma.io/deployment/serverless/) deployment page covers an AWS Lambda handler over Kinesis and a wrapper for scheduled container jobs.
 
+### LynxDB output rejects unsafe field names and expands template placeholders once (security, #719)
+
+The LynxDB backend rendered field names verbatim, so a field name such as `Image=* OR CommandLine` rewrote the logic of the generated `search` or `where` stage. It also substituted `{rule.title}`, `{rule.id}`, and pipeline state keys into the finished query after the detection was rendered, so a field name or regex value of `{rule.title}` was replaced by the raw title, which could close a quoted string and append pipeline stages such as `| stats count by host` ([GHSA-f96v-37xh-p653](https://github.com/timescale/rsigma/security/advisories/GHSA-f96v-37xh-p653)).
+
+- A field name must start with a letter or `_` and contain only letters, digits, `_`, `.`, `:`, and `-`. LynxDB has no quoted identifier syntax, so any other field name fails conversion with `invalid LynxDB field name`. Every field name in the SigmaHQ rule set already fits.
+- Query template placeholders are substituted in a single pass with `render_query_template`, so placeholder text inside a rule's values stays literal. Pipeline state still takes precedence over the default `index`.
+
+**Breaking changes.** A rule or pipeline that maps a field to a name outside LynxDB identifier syntax now fails to convert for LynxDB. Such a name did not convert to a working query before.
+
+### PostgreSQL output escapes quotes in field names and expands template placeholders once (security, #718)
+
+The PostgreSQL backend wrapped mixed-case field names in double quotes without doubling a `"` inside the name, so a Sigma rule with a field name such as `CommandLine" OR 1=1; --` broke out of the identifier and added its own SQL. The backend also substituted `{rule.title}` and `{rule.id}` into the finished query after the detection was rendered, so a string value of `{rule.title}` was replaced by the raw title, and a single quote in the title closed the string literal, in JSONB mode as well ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7)).
+
+- A `"` inside a quoted field name is doubled (`"a""b"`). This covers detection fields, `fields:` projections, and correlation `group-by` and aggregate fields in every output format.
+- Query template placeholders are substituted in a single pass, so placeholder text inside a rule's values stays literal.
+- In a `query_expression_placeholders` template, `{rule.title}` and `{rule.id}` render with single quotes doubled, for use inside a string literal.
+- `rsigma-convert` adds `render_query_template`, which substitutes `{name}` placeholders in one pass. `text_finish_query` uses it, so backends built on it no longer expand placeholder text that appears in a rule's values.
+
+No breaking changes.
+
 ### Watchlist sources and rebuilds on source change (#716)
 
 A dynamic source with `type: watchlist` holds indicators pushed over the daemon HTTP API. Nothing is fetched. `POST`, `PUT`, and `DELETE /api/v1/sources/{source_id}/indicators` add, replace, and delete values, and `GET` lists the unexpired ones. Each value is compared exactly, after surrounding whitespace is removed. An empty value, a value longer than `max_value_length` (default 2048 bytes), or a value containing an ASCII control character is rejected. Expiry comes from the item's `expires_at`, then the item's `ttl`, then the request `ttl`, then the source `default_ttl`. When none of those is set, the indicator stays until it is deleted. A sweeper drops expired indicators about every 10 seconds.
@@ -26,7 +46,7 @@ A successful change asks the daemon to rebuild rules from the cached source valu
 
 With `--state-db`, indicators are written through before the response. Writes to the indicator API are serialized, and a failed write rolls back only the source it changed, so another request's accepted indicators stay. The response is 500. A restart loads unexpired rows, leaves out rows past the source cap and logs how many, and deletes expired ones. The rows left out stay in the database until a later write replaces the set. Rows whose source is no longer a declared watchlist stay in the database and are not loaded. `--clear-state` deletes the table. Without `--state-db`, the set lives in memory only.
 
-`POST`, `PUT`, and `DELETE` require `sources:write` and are audited. `GET` requires `sources:read` and is not audited. `DELETE` carries a JSON body, and the audit trail keeps that body. A request may carry at most 10,000 indicators and 4 MiB. When the audit trail is enabled, a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) is rejected with 413 before the handler runs. `max_indicators` (default 100,000) caps the stored set. An `expires_at` that is not later than the current time is rejected. `refresh`, `format`, `extract`, and `timeout` are rejected on a watchlist, and the ids `resolve` and `cache` are reserved.
+`POST`, `PUT`, and `DELETE` require `sources:write` and are audited. `GET` requires `sources:read` and is not audited. `DELETE` carries a JSON body. The audit trail records a SHA-256 digest of that body and does not store the body itself. A request may carry at most 10,000 indicators and 4 MiB. When the audit trail is enabled, a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) is rejected with 413 before the handler runs. `max_indicators` (default 100,000) caps the stored set. An `expires_at` that is not later than the current time is rejected. `refresh`, `format`, `extract`, and `timeout` are rejected on a watchlist, and the ids `resolve` and `cache` are reserved.
 
 **Breaking changes.** Rules that reference a dynamic source now change when that source's value changes, without `POST /api/v1/reload`. Code that matches on `SourceType` exhaustively must handle the `Watchlist` variant.
 

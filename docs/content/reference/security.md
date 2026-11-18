@@ -102,12 +102,17 @@ Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON ev
 
 The PostgreSQL backend (`backend convert -t postgres`) generates SQL by:
 
-- Always double-quoting field names (`"CommandLine" ILIKE '%whoami%'`).
+- Double-quoting field names other than plain lowercase identifiers (`"CommandLine" ILIKE '%whoami%'`), with a `"` inside the name doubled (`"a""b"`). {{ added "unreleased" }}
 - Always single-quoting string literals with SQL-standard escaping (`'don''t'`).
 - Validating identifiers (`table`, `schema`, `database`) against `^[A-Za-z_][A-Za-z0-9_$]*$` before insertion. Non-matching identifiers fail conversion with `InvalidIdentifier`.
+- Substituting query template placeholders in a single pass, so placeholder text such as `{rule.title}` inside a rule's values is never expanded, and rendering the rule title and ID in a template with single quotes doubled. {{ added "unreleased" }}
 - Never templating user-controlled strings into SQL keywords or structural positions.
 
-This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL. The same conventions apply to the LynxDB backend. See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
+This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL.
+
+The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "unreleased" }}
+
+See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
 
 Custom identifiers passed through `-O table=...` or pipeline `set_state` are validated identically; an `-O table='evil; DROP'` is rejected at conversion time, not at execution time.
 
