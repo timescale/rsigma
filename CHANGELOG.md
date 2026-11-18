@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### PostgreSQL output escapes quotes in field names and expands template placeholders once (security)
+### PostgreSQL output escapes quotes in field names and expands template placeholders once (security, #718)
 
 The PostgreSQL backend wrapped mixed-case field names in double quotes without doubling a `"` inside the name, so a Sigma rule with a field name such as `CommandLine" OR 1=1; --` broke out of the identifier and added its own SQL. The backend also substituted `{rule.title}` and `{rule.id}` into the finished query after the detection was rendered, so a string value of `{rule.title}` was replaced by the raw title, and a single quote in the title closed the string literal, in JSONB mode as well ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7)).
 
