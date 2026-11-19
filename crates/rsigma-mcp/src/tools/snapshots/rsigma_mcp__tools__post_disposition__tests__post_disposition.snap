@@ -7,6 +7,7 @@ expression: value
   "duplicate": 0,
   "echo_analyst": "rsigma-mcp",
   "echo_fingerprint": "fp1",
+  "echo_tenant": null,
   "echo_timestamp": null,
   "ok": true,
   "rejected": 0

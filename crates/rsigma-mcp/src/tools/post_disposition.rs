@@ -36,6 +36,10 @@ pub struct PostDispositionInput {
     /// Free-text note.
     #[serde(default)]
     pub note: Option<String>,
+    /// Tenant to bind the disposition to. Required when the daemon token can
+    /// see every tenant; ignored by the daemon otherwise.
+    #[serde(default)]
+    pub tenant: Option<String>,
 }
 
 #[tool_router(router = post_disposition_router, vis = "pub(crate)")]
@@ -86,6 +90,9 @@ impl RsigmaMcp {
         if let Some(note) = input.note {
             body["note"] = json!(note);
         }
+        if let Some(tenant) = input.tenant.filter(|t| !t.is_empty()) {
+            body["tenant"] = json!(tenant);
+        }
         Ok(self.daemon_post("/api/v1/dispositions", &body).await)
     }
 }
@@ -116,6 +123,7 @@ mod tests {
             "echo_fingerprint": body.get("fingerprint"),
             "echo_analyst": body.get("analyst"),
             "echo_timestamp": body.get("timestamp"),
+            "echo_tenant": body.get("tenant"),
         }))
     }
 
@@ -131,6 +139,7 @@ mod tests {
             timestamp: None,
             analyst: None,
             note: None,
+            tenant: None,
         }))
         .unwrap_err();
         assert!(format!("{err:?}").contains("fingerprint"));
@@ -152,6 +161,7 @@ mod tests {
                     timestamp: None,
                     analyst: None,
                     note: None,
+                    tenant: None,
                 })
                 .await
                 .unwrap();
@@ -180,11 +190,36 @@ mod tests {
                     timestamp: Some("2026-09-07T12:00:00Z".into()),
                     analyst: None,
                     note: None,
+                    tenant: None,
                 })
                 .await
                 .unwrap();
             assert_eq!(value["ok"], true);
             assert_eq!(value["echo_timestamp"], "2026-09-07T12:00:00Z");
+        });
+    }
+
+    #[test]
+    fn tenant_is_passed_through() {
+        block_on(async {
+            let url =
+                spawn_stub(axum::Router::new().route("/api/v1/dispositions", post(ingest))).await;
+            let handler = operate_handler(&url, true);
+            let value = handler
+                .run_post_disposition(PostDispositionInput {
+                    verdict: "true_positive".into(),
+                    fingerprint: Some("fp3".into()),
+                    incident_id: None,
+                    rule_id: Some("r1".into()),
+                    scope: None,
+                    timestamp: None,
+                    analyst: None,
+                    note: None,
+                    tenant: Some("tenant-a".into()),
+                })
+                .await
+                .unwrap();
+            assert_eq!(value["echo_tenant"], "tenant-a");
         });
     }
 }

@@ -34,6 +34,10 @@ pub struct CreateSilenceInput {
     /// Who created it. Defaults to `rsigma-mcp`.
     #[serde(default)]
     pub created_by: Option<String>,
+    /// Tenant to bind the silence to. Required when the daemon token can see
+    /// every tenant; ignored by the daemon otherwise.
+    #[serde(default)]
+    pub tenant: Option<String>,
 }
 
 #[tool_router(router = create_silence_router, vis = "pub(crate)")]
@@ -91,6 +95,9 @@ impl RsigmaMcp {
         }
         if let Some(comment) = input.comment {
             body["comment"] = json!(comment);
+        }
+        if let Some(tenant) = input.tenant.filter(|t| !t.is_empty()) {
+            body["tenant"] = json!(tenant);
         }
         Ok(self.daemon_post("/api/v1/silences", &body).await)
     }
@@ -185,6 +192,7 @@ mod tests {
             id: None,
             comment: None,
             created_by: None,
+            tenant: None,
         }))
         .unwrap_err();
         assert!(format!("{err:?}").contains("unbounded"));
@@ -210,6 +218,7 @@ mod tests {
                     id: Some("sil-1".into()),
                     comment: Some("known benign".into()),
                     created_by: None,
+                    tenant: None,
                 })
                 .await
                 .unwrap();
@@ -249,12 +258,43 @@ mod tests {
                     id: Some("sil-1".into()),
                     comment: None,
                     created_by: None,
+                    tenant: None,
                 })
                 .await
                 .unwrap();
             assert_eq!(value["ok"], true);
             assert_eq!(value["status"], "exists");
             assert_eq!(value["silence"]["id"], "sil-1");
+        });
+    }
+
+    #[test]
+    fn tenant_is_passed_through() {
+        block_on(async {
+            let store = Store::default();
+            let url = spawn_stub(
+                axum::Router::new()
+                    .route("/api/v1/silences", get(list).post(create))
+                    .with_state(store.clone()),
+            )
+            .await;
+            let handler = operate_handler(&url, true);
+            let value = handler
+                .run_create_silence(CreateSilenceInput {
+                    matchers: vec![json!({ "selector": "rule", "value": "r1" })],
+                    ends_at: Some("2026-12-01T00:00:00Z".into()),
+                    duration: None,
+                    starts_at: None,
+                    id: Some("sil-tenant".into()),
+                    comment: None,
+                    created_by: None,
+                    tenant: Some("tenant-a".into()),
+                })
+                .await
+                .unwrap();
+            assert_eq!(value["ok"], true);
+            let stored = store.0.lock().expect("store")[0].clone();
+            assert_eq!(stored["tenant"], "tenant-a");
         });
     }
 }
