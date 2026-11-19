@@ -334,6 +334,30 @@ fn invalid_date_exits_3_on_the_stix_path() {
 
 #[cfg(feature = "stix-draft")]
 #[test]
+fn observable_and_include_expired_require_from_stix() {
+    let cases: &[&[&str]] = &[
+        &["rule", "draft", "--observable", "ipv4"],
+        &["rule", "draft", "--include-expired"],
+        &["rule", "draft", "--event", "{}", "--observable", "ipv4"],
+        &["rule", "draft", "--event", "{}", "--include-expired"],
+    ];
+    for args in cases {
+        let out = draft(args);
+        assert!(
+            !out.status.success(),
+            "{args:?} {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("from-stix") || stderr.contains("from_stix"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+#[cfg(feature = "stix-draft")]
+#[test]
 fn help_lists_from_stix() {
     let out = draft(&["rule", "draft", "--help"]);
     assert!(out.status.success());

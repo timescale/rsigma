@@ -141,12 +141,12 @@ pub(crate) struct DraftArgs {
 
     /// Observable kind to draft. Repeatable. Defaults to every mapped kind.
     #[cfg(feature = "stix-draft")]
-    #[arg(long = "observable", value_name = "KIND")]
+    #[arg(long = "observable", value_name = "KIND", requires = "from_stix")]
     pub observable: Vec<String>,
 
     /// Keep expired and not-yet-valid indicators. Revoked indicators are still skipped.
     #[cfg(feature = "stix-draft")]
-    #[arg(long)]
+    #[arg(long, requires = "from_stix")]
     pub include_expired: bool,
 
     /// Keep the baseline for contrastive scoring but skip the final baseline
