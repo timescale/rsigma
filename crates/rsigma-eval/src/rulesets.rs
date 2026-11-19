@@ -23,6 +23,7 @@ use crate::fields::RuleFieldSet;
 use crate::result::EvaluationResult;
 use crate::router::{RouteOutcome, SchemaRouter};
 use crate::rule_metadata::RuleMetadataLookup;
+use crate::tenant::{TenantId, tenant_at};
 use crate::{CorrelationSnapshot, CorrelationStateSnapshot, Engine, ProcessResult};
 
 /// The compiled engine behind one ruleset unit.
@@ -43,6 +44,8 @@ pub struct RulesetUnit {
     pub name: Arc<str>,
     /// Schema names that admit an event to this unit. Empty means every event.
     pub when_schemas: Vec<String>,
+    /// Tenant ids admitted to this unit. Empty means every tenant.
+    pub tenants: Vec<TenantId>,
     /// The compiled engine for this unit.
     pub engine: UnitEngine,
     /// Post-pipeline field set for this unit's collection.
@@ -60,6 +63,9 @@ pub struct RulesetStats {
     pub correlation_rules: usize,
     /// Schema names that admit an event to this ruleset.
     pub when_schemas: Vec<String>,
+    /// Tenant ids admitted to this ruleset. Empty means every tenant.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tenants: Vec<TenantId>,
 }
 
 /// Routing outcomes counted across a single routed unit.
@@ -207,6 +213,7 @@ impl RulesetEngines {
                 detection_rules: unit_detection_rule_count(unit),
                 correlation_rules: unit_correlation_rule_count(unit),
                 when_schemas: unit.when_schemas.clone(),
+                tenants: unit.tenants.clone(),
             })
             .collect()
     }
@@ -340,7 +347,19 @@ impl RulesetEngines {
 
     /// Process one event through every unit that accepts it.
     pub fn process_event<E: Event>(&mut self, event: &E) -> ProcessResult {
-        let accepted = self.acceptance(event);
+        self.process_event_for_tenant(event, None)
+    }
+
+    /// Process one event as `tenant` through every unit that accepts it.
+    ///
+    /// A unit bound to tenants accepts only events carrying one of them; an
+    /// unbound unit accepts every tenant.
+    pub fn process_event_for_tenant<E: Event>(
+        &mut self,
+        event: &E,
+        tenant: Option<&TenantId>,
+    ) -> ProcessResult {
+        let accepted = self.acceptance(event, tenant);
         let mut results = Vec::new();
         let units = &mut self.units;
         for (index, unit) in units.iter_mut().enumerate() {
@@ -350,9 +369,9 @@ impl RulesetEngines {
             }
             let mut batch = match &mut unit.engine {
                 UnitEngine::Detection(engine) => engine.evaluate(event),
-                UnitEngine::Correlation(engine) => engine.process_event(event),
+                UnitEngine::Correlation(engine) => engine.process_event_for_tenant(event, tenant),
                 UnitEngine::Routed(router) => {
-                    let routed = router.route(event);
+                    let routed = router.route_for_tenant(event, tenant);
                     match routed.outcome {
                         RouteOutcome::Evaluated => {}
                         RouteOutcome::EvaluatedUnknown => self.route_counts.unknown += 1,
@@ -373,7 +392,35 @@ impl RulesetEngines {
     /// Results are scattered back to their event positions in unit declaration
     /// order.
     pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
-        let accepted = self.batch_acceptance(events);
+        self.process_batch_for_tenants(events, &[])
+    }
+
+    /// Process a batch with a parallel tenant slice, scattering results back
+    /// to their event positions.
+    ///
+    /// `tenants` is empty (every event untenanted) or exactly parallel to
+    /// `events`; any other length logs and returns empty results.
+    pub fn process_batch_for_tenants<E: Event + Sync>(
+        &mut self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Vec<ProcessResult> {
+        if !tenants.is_empty() && tenants.len() != events.len() {
+            debug_assert!(
+                false,
+                "tenants must be empty or parallel to events: {} tenants for {} events",
+                tenants.len(),
+                events.len()
+            );
+            log::error!(
+                "tenant slice length mismatch: {} tenants for {} events; returning empty results",
+                tenants.len(),
+                events.len()
+            );
+            return vec![ProcessResult::new(); events.len()];
+        }
+
+        let accepted = self.batch_acceptance(events, tenants);
 
         let mut output: Vec<ProcessResult> = vec![Vec::new(); events.len()];
         let units = &mut self.units;
@@ -387,10 +434,22 @@ impl RulesetEngines {
                 continue;
             }
             let sub_events: Vec<&E> = indices.iter().map(|index| events[*index]).collect();
+            let sub_tenants: Vec<Option<TenantId>> = if tenants.is_empty() {
+                Vec::new()
+            } else {
+                indices
+                    .iter()
+                    .map(|index| tenants[*index].clone())
+                    .collect()
+            };
             let results = match &mut unit.engine {
                 UnitEngine::Detection(engine) => engine.evaluate_batch(&sub_events),
-                UnitEngine::Correlation(engine) => engine.process_batch(&sub_events),
-                UnitEngine::Routed(router) => router.process_batch(&sub_events),
+                UnitEngine::Correlation(engine) => {
+                    engine.process_batch_for_tenants(&sub_events, &sub_tenants)
+                }
+                UnitEngine::Routed(router) => {
+                    router.process_batch_for_tenants(&sub_events, &sub_tenants)
+                }
             };
             for (sub_index, mut batch) in results.into_iter().enumerate() {
                 stamp_results(&unit.name, &mut batch);
@@ -404,6 +463,15 @@ impl RulesetEngines {
     ///
     /// Returns `None` when any unit carries correlation state or a router.
     pub fn detect_batch<E: Event + Sync>(&self, events: &[&E]) -> Option<Vec<ProcessResult>> {
+        self.detect_batch_for_tenants(events, &[])
+    }
+
+    /// Like [`detect_batch`](Self::detect_batch) with a parallel tenant slice.
+    pub fn detect_batch_for_tenants<E: Event + Sync>(
+        &self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Option<Vec<ProcessResult>> {
         if self
             .units
             .iter()
@@ -411,8 +479,22 @@ impl RulesetEngines {
         {
             return None;
         }
+        if !tenants.is_empty() && tenants.len() != events.len() {
+            debug_assert!(
+                false,
+                "tenants must be empty or parallel to events: {} tenants for {} events",
+                tenants.len(),
+                events.len()
+            );
+            log::error!(
+                "tenant slice length mismatch: {} tenants for {} events; returning empty results",
+                tenants.len(),
+                events.len()
+            );
+            return Some(vec![ProcessResult::new(); events.len()]);
+        }
 
-        let accepted = self.batch_acceptance(events);
+        let accepted = self.batch_acceptance(events, tenants);
 
         let mut output: Vec<ProcessResult> = vec![Vec::new(); events.len()];
         for (unit_index, unit) in self.units.iter().enumerate() {
@@ -534,39 +616,44 @@ impl RulesetEngines {
 
     /// Per-unit acceptance for a batch, classifying each event once and
     /// counting skips.
-    fn batch_acceptance<E: Event>(&self, events: &[&E]) -> Vec<Vec<bool>> {
+    fn batch_acceptance<E: Event>(
+        &self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Vec<Vec<bool>> {
         let mut accepted = vec![Vec::with_capacity(events.len()); self.units.len()];
-        for event in events {
-            for (index, accepts) in self.acceptance(*event).into_iter().enumerate() {
+        for (index, event) in events.iter().enumerate() {
+            let tenant = tenant_at(tenants, index);
+            for (unit_index, accepts) in self.acceptance(*event, tenant).into_iter().enumerate() {
                 if !accepts {
-                    count_skip(&self.skipped, &self.unreported_skips, index);
+                    count_skip(&self.skipped, &self.unreported_skips, unit_index);
                 }
-                accepted[index].push(accepts);
+                accepted[unit_index].push(accepts);
             }
         }
         accepted
     }
 
-    fn acceptance<E: Event>(&self, event: &E) -> Vec<bool> {
+    fn acceptance<E: Event>(&self, event: &E, tenant: Option<&TenantId>) -> Vec<bool> {
         let any_when = self.units.iter().any(|unit| !unit.when_schemas.is_empty());
-        if !any_when {
-            return vec![true; self.units.len()];
-        }
-        let schema = self
-            .classifier
-            .as_ref()
-            .and_then(|classifier| classifier.classify(event))
-            .map(|matched| matched.name);
+        let schema = if any_when {
+            self.classifier
+                .as_ref()
+                .and_then(|classifier| classifier.classify(event))
+                .map(|matched| matched.name)
+        } else {
+            None
+        };
         self.units
             .iter()
             .map(|unit| {
-                if unit.when_schemas.is_empty() {
-                    true
-                } else {
-                    schema
+                let schema_ok = unit.when_schemas.is_empty()
+                    || schema
                         .as_ref()
-                        .is_some_and(|schema| unit.when_schemas.iter().any(|name| name == schema))
-                }
+                        .is_some_and(|schema| unit.when_schemas.iter().any(|name| name == schema));
+                let tenant_ok = unit.tenants.is_empty()
+                    || tenant.is_some_and(|tenant| unit.tenants.iter().any(|t| t == tenant));
+                schema_ok && tenant_ok
             })
             .collect()
     }
@@ -671,6 +758,7 @@ correlation:
         RulesetUnit {
             name: Arc::from(name),
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
             engine: UnitEngine::Detection(Box::new(engine)),
             field_set: RuleFieldSet::collect(&collection, &[], true),
         }
@@ -683,6 +771,7 @@ correlation:
         RulesetUnit {
             name: Arc::from(name),
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
             engine: UnitEngine::Correlation(Box::new(engine)),
             field_set: RuleFieldSet::collect(&collection, &[], true),
         }
@@ -730,6 +819,7 @@ correlation:
             vec![RulesetUnit {
                 name: Arc::from("routed"),
                 when_schemas: Vec::new(),
+                tenants: Vec::new(),
                 engine: UnitEngine::Routed(Box::new(router)),
                 field_set: RuleFieldSet::collect(&collection, &[], true),
             }],
@@ -1125,5 +1215,149 @@ correlation:
                 serde_json::to_string(batch).unwrap()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tenant_tests {
+    use super::*;
+    use crate::tenant::TenantId;
+    use crate::{JsonEvent, SchemaPredicate, SchemaSignature};
+
+    const DETECTION: &str = r#"
+title: Whoami
+id: whoami
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image: whoami
+    condition: selection
+"#;
+
+    fn detection_unit(name: &str, schemas: &[&str]) -> RulesetUnit {
+        let collection = rsigma_parser::parse_sigma_yaml(DETECTION).unwrap();
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+        RulesetUnit {
+            name: Arc::from(name),
+            when_schemas: schemas.iter().map(|schema| (*schema).to_string()).collect(),
+            tenants: Vec::new(),
+            engine: UnitEngine::Detection(Box::new(engine)),
+            field_set: RuleFieldSet::collect(&collection, &[], true),
+        }
+    }
+
+    fn tenant_bound_unit(name: &str, tenants: &[&str]) -> RulesetUnit {
+        let mut unit = detection_unit(name, &[]);
+        unit.tenants = tenants
+            .iter()
+            .map(|tenant| TenantId::new(tenant).unwrap())
+            .collect();
+        unit
+    }
+
+    fn classifier_with(schemas: &[&str]) -> Arc<SchemaClassifier> {
+        Arc::new(SchemaClassifier::new(
+            schemas
+                .iter()
+                .map(|name| SchemaSignature {
+                    name: (*name).to_string(),
+                    predicates: vec![SchemaPredicate::FieldPresent("schema_marker".to_string())],
+                    specificity: 10,
+                })
+                .collect(),
+        ))
+    }
+
+    fn event() -> serde_json::Value {
+        serde_json::json!({"Image": "whoami"})
+    }
+
+    #[test]
+    fn a_tenant_bound_unit_skips_other_tenants_and_untenanted_events() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut engines =
+            RulesetEngines::new(vec![tenant_bound_unit("bound", &["a"])], None).unwrap();
+        let value = event();
+        let event = JsonEvent::borrow(&value);
+
+        assert_eq!(engines.process_event_for_tenant(&event, Some(&a)).len(), 1);
+        assert!(
+            engines
+                .process_event_for_tenant(&event, Some(&b))
+                .is_empty()
+        );
+        assert!(engines.process_event_for_tenant(&event, None).is_empty());
+
+        let skipped = engines.skipped_totals();
+        assert_eq!(skipped[0].1, 2);
+    }
+
+    #[test]
+    fn an_unbound_unit_accepts_every_tenant() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut engines = RulesetEngines::new(vec![detection_unit("all", &[])], None).unwrap();
+        let value = event();
+        let event = JsonEvent::borrow(&value);
+
+        for tenant in [Some(&a), Some(&b), None] {
+            assert_eq!(engines.process_event_for_tenant(&event, tenant).len(), 1);
+        }
+        assert_eq!(engines.skipped_totals()[0].1, 0);
+    }
+
+    #[test]
+    fn when_and_tenants_combine_with_and() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut unit = detection_unit("cloud", &["aws_cloudtrail"]);
+        unit.tenants = vec![a.clone()];
+        let mut engines =
+            RulesetEngines::new(vec![unit], Some(classifier_with(&["aws_cloudtrail"]))).unwrap();
+
+        let matching = serde_json::json!({"schema_marker": true, "Image": "whoami"});
+        let matching = JsonEvent::borrow(&matching);
+        assert_eq!(
+            engines.process_event_for_tenant(&matching, Some(&a)).len(),
+            1
+        );
+        assert!(
+            engines
+                .process_event_for_tenant(&matching, Some(&b))
+                .is_empty()
+        );
+
+        let other_schema = serde_json::json!({"Image": "whoami"});
+        let other_schema = JsonEvent::borrow(&other_schema);
+        assert!(
+            engines
+                .process_event_for_tenant(&other_schema, Some(&a))
+                .is_empty()
+        );
+        assert_eq!(engines.skipped_totals()[0].1, 2);
+    }
+
+    #[test]
+    fn batch_processing_counts_tenant_skips_and_reports_tenants() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut engines =
+            RulesetEngines::new(vec![tenant_bound_unit("bound", &["a"])], None).unwrap();
+        let values = [event(), event()];
+        let events: Vec<JsonEvent> = values.iter().map(JsonEvent::borrow).collect();
+        let refs: Vec<&JsonEvent> = events.iter().collect();
+        let tenants = vec![Some(a.clone()), Some(b)];
+
+        let output = engines.process_batch_for_tenants(&refs, &tenants);
+        assert_eq!(output[0].len(), 1);
+        assert!(output[1].is_empty());
+        assert_eq!(engines.take_skipped()[0].1, 1);
+
+        let stats = engines.ruleset_stats();
+        assert_eq!(stats[0].tenants, vec![a]);
     }
 }

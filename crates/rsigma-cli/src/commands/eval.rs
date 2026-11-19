@@ -997,6 +997,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         units.push(RulesetUnit {
             name: Arc::from(name.as_str()),
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
             engine: UnitEngine::Routed(Box::new(router)),
             field_set,
         });
@@ -1045,6 +1046,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
             units.push(RulesetUnit {
                 name: Arc::from(name.as_str()),
                 when_schemas,
+                tenants: Vec::new(),
                 engine,
                 field_set,
             });

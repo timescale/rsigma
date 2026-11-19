@@ -522,6 +522,7 @@ impl RuntimeEngine {
             units.push(RulesetUnit {
                 name: Arc::from(binding.name.as_str()),
                 when_schemas: binding.when_schemas.clone(),
+                tenants: Vec::new(),
                 engine: into_unit(variant),
                 field_set,
             });

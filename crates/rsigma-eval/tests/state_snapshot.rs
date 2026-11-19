@@ -641,6 +641,7 @@ fn a_v1_per_ruleset_snapshot_imports_into_ruleset_engines() {
     let unit = RulesetUnit {
         name: Arc::from("a"),
         when_schemas: Vec::new(),
+        tenants: Vec::new(),
         engine: UnitEngine::Correlation(Box::new(correlation)),
         field_set: RuleFieldSet::collect(&collection, &[], true),
     };
