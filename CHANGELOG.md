@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### pySigma 2.1.0 and dependency follow-up for #723
+### pySigma 2.1.0 and dependency follow-up for #723 (#730)
 
 Rolls up the Dependabot PRs that opened after #723. The pySigma engine image moves to pySigma 2.1.0 (#728), with `requirements.txt` re-resolved for Python 3.13 against packages released on or before 2026-11-12, which also brings `jq` 1.13.0, `certifi` 2026.10.23, and `types-pyyaml` 6.0.12.20261111. The `test` backend still matches pySigma's output. CI: `taiki-e/install-action` v2.90.3, repinned by commit SHA (#729). Held back: the `python:3.15-slim` base image (#727), because `google-re2` publishes no Python 3.15 wheel and the slim image has no compiler to build it from source; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
 
