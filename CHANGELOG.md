@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `cargo deny` accepts `ar_archive_writer`, and `psm` moves to 0.1.32
+### `cargo deny` accepts `ar_archive_writer`, and `psm` moves to 0.1.32 (#726)
 
 `psm` 0.1.28 and later build their assembly archive with `ar_archive_writer`, licensed `Apache-2.0 WITH LLVM-exception`, which `cargo deny` rejected because it matches license expressions literally. `deny.toml` now allows that license for `ar_archive_writer` alone, and `psm`, which every crate reaches through `pest`'s stack guard, moves from 0.1.27 to 0.1.32 in all three lockfiles. `ar_archive_writer` is a build dependency of `psm`, so nothing from it is linked into rsigma, and the LLVM exception only adds a permission to Apache-2.0.
 
