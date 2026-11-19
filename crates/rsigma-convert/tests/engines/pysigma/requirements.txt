@@ -470,9 +470,9 @@ pyparsing==3.3.3 \
     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \
     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4
     # via pysigma
-pysigma==2.0.2 \
-    --hash=sha256:8fb128597a5d3812219d4dd17c76426bc480ea9875325c5eeeac114d6d8ebbec \
-    --hash=sha256:c8fac45d24adfa14aeebcbab95929066116b2dbcc0816498066af56dda039832
+pysigma==2.1.0 \
+    --hash=sha256:3495dcfff8aaefc81f9249a6ebdb3ef823ca84bfa32fa0a8f0ef0421049cced4 \
+    --hash=sha256:b800923786ace5bc90bd35f488d81b7a2b86e04856f213f5de52c05f876901d1
     # via -r requirements.in
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
@@ -553,9 +553,9 @@ requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
     # via pysigma
-types-pyyaml==6.0.12.20260906 \
-    --hash=sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b \
-    --hash=sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212
+types-pyyaml==6.0.12.20261113 \
+    --hash=sha256:0828be2580fd94151182364f4d0158e4de62fdbeeb8d4296f7f7d2b6c22bb640 \
+    --hash=sha256:3600749e613748afdc4327f0b17c3296cf880cdbc7335f320007abd9dd815f67
     # via pysigma
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
