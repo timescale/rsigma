@@ -947,4 +947,18 @@ mod tests {
         assert!(hive_only.rules.is_empty());
         assert_eq!(hive_only.report.skipped[0].reason, "unmapped_observable");
     }
+
+    #[test]
+    fn valid_until_equal_to_the_clock_is_expired() {
+        let mut object = indicator(
+            "indicator--00000000-0000-4000-8000-000000000026",
+            "Boundary",
+            "[ipv4-addr:value = '198.51.100.26']",
+        );
+        object["valid_until"] = serde_json::json!("2026-06-01T00:00:00.000Z");
+        let outcome = draft_stix(&bundle(vec![object]), &options()).unwrap();
+        assert!(outcome.rules.is_empty());
+        assert_eq!(outcome.report.skipped.len(), 1);
+        assert_eq!(outcome.report.skipped[0].reason, "expired");
+    }
 }

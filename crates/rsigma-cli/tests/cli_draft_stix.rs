@@ -232,20 +232,36 @@ fn unknown_observable_and_conflicting_flags_exit_3() {
     assert!(stderr.contains("ipv4"), "{stderr}");
 
     let path = fixture("one-ip.json");
-    let conflict = draft(&[
-        "rule",
-        "draft",
-        "--from-stix",
-        path.to_str().unwrap(),
-        "--event",
-        "{}",
-    ]);
-    assert_eq!(conflict.status.code(), Some(3));
-    assert!(
-        String::from_utf8(conflict.stderr)
-            .unwrap()
-            .contains("cannot be combined with --event")
-    );
+    let path = path.to_str().unwrap();
+    let cases: &[(&[&str], &str)] = &[
+        (&["--event", "{}"], "--event"),
+        (&["--groups", "@groups.jsonl"], "--groups"),
+        (&["--negative", "@neg.jsonl"], "--negative"),
+        (&["--baseline", "@base.jsonl"], "--baseline"),
+        (&["--group-by", "Image"], "--group-by"),
+        (&["--correlation-type", "temporal"], "--correlation-type"),
+        (&["--min-groups", "2"], "--min-groups"),
+        (&["--window-margin", "2.0"], "--window-margin"),
+        (&["--max-fields", "2"], "--max-fields"),
+        (&["--min-prevalence", "0.5"], "--min-prevalence"),
+        (&["--include-field", "Image"], "--include-field"),
+        (&["--exclude-field", "Image"], "--exclude-field"),
+        (&["--skip-baseline-eval"], "--skip-baseline-eval"),
+    ];
+    for (extra, flag) in cases {
+        let mut args = vec!["rule", "draft", "--from-stix", path];
+        args.extend_from_slice(extra);
+        let conflict = draft(&args);
+        assert_eq!(
+            conflict.status.code(),
+            Some(3),
+            "{flag} {}",
+            String::from_utf8_lossy(&conflict.stderr)
+        );
+        let stderr = String::from_utf8(conflict.stderr).unwrap();
+        let expected = format!("cannot be combined with {flag}");
+        assert!(stderr.contains(&expected), "{flag}: {stderr}");
+    }
 }
 
 #[cfg(feature = "stix-draft")]
