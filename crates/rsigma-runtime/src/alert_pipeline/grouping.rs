@@ -614,6 +614,40 @@ impl IncidentStore {
         excess
     }
 
+    /// Count of open incidents owned by `tenant`.
+    pub(crate) fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
+        self.incidents
+            .values()
+            .filter(|inc| inc.tenant.as_ref() == tenant)
+            .count()
+    }
+
+    /// Evict the least recently seen incident owned by `tenant`, dropping its
+    /// entity join keys and cardinality counters. Returns whether one was
+    /// evicted.
+    pub(crate) fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
+        let victim = self
+            .incidents
+            .values()
+            .filter(|inc| inc.tenant.as_ref() == tenant)
+            .min_by_key(|inc| inc.last_seen)
+            .map(|inc| inc.id.clone());
+        let Some(id) = victim else {
+            return false;
+        };
+        if let Some(inc) = self.incidents.remove(&id) {
+            let tenant = inc.tenant.clone();
+            for (sel, values) in inc.entities {
+                for value in values {
+                    let key = (tenant.clone(), sel.clone(), value);
+                    self.entity_index.remove(&key);
+                    self.value_counts.remove(&key);
+                }
+            }
+        }
+        true
+    }
+
     /// Drop an entity value's index entry and cardinality counter, but only
     /// while the index still attributes the value to incident `id`.
     fn forget_value(&mut self, id: &str, key: (Option<TenantId>, String, String)) {

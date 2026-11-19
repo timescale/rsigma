@@ -101,6 +101,10 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     pipelines: Vec<Pipeline>,
     /// Events skipped by `require_tenant` because they carried no tenant.
     untenanted_skipped: u64,
+    /// Live state entries per tenant, kept in step with `state`.
+    tenant_counts: HashMap<Option<TenantId>, usize>,
+    /// Entries evicted because a tenant hit its quota.
+    tenant_quota_evictions: u64,
 }
 
 impl CorrelationEngine {
@@ -132,6 +136,8 @@ impl<L> CorrelationEngine<L> {
             config,
             pipelines: Vec::new(),
             untenanted_skipped: 0,
+            tenant_counts: HashMap::new(),
+            tenant_quota_evictions: 0,
         }
     }
 
@@ -739,6 +745,17 @@ impl<L> CorrelationEngine<L> {
         self.untenanted_skipped
     }
 
+    /// Set the per-tenant state cap. `None` leaves only the global cap.
+    pub fn set_max_state_entries_per_tenant(&mut self, max: Option<usize>) {
+        self.config.max_state_entries_per_tenant = max;
+    }
+
+    /// Entries evicted because a tenant hit its quota since the previous call,
+    /// draining the counter.
+    pub fn take_tenant_quota_evictions(&mut self) -> u64 {
+        std::mem::take(&mut self.tenant_quota_evictions)
+    }
+
     /// Run stateless detection only (no correlation), delegating to the inner engine.
     ///
     /// Returns one [`EvaluationResult`] per matched detection. Takes `&self`
@@ -961,27 +978,6 @@ impl<L> CorrelationEngine<L> {
         (det.header.rule_id.clone(), None)
     }
 
-    /// Resolve the event mode for a given correlation.
-    fn resolve_event_mode(&self, corr_idx: usize) -> CorrelationEventMode {
-        let corr = &self.correlations[corr_idx];
-        corr.event_mode
-            .unwrap_or(self.config.correlation_event_mode)
-    }
-
-    /// Resolve the max events cap for a given correlation.
-    fn resolve_max_events(&self, corr_idx: usize) -> usize {
-        let corr = &self.correlations[corr_idx];
-        corr.max_events
-            .unwrap_or(self.config.max_correlation_events)
-    }
-
-    /// Resolve the per-group window-state entry cap for a given correlation.
-    /// `None` means unbounded.
-    fn resolve_max_group_entries(&self, corr_idx: usize) -> Option<usize> {
-        let corr = &self.correlations[corr_idx];
-        corr.max_group_entries.or(self.config.max_group_entries)
-    }
-
     /// Update a single correlation's state and check its condition.
     #[allow(clippy::too_many_arguments)]
     fn update_correlation(
@@ -994,39 +990,74 @@ impl<L> CorrelationEngine<L> {
         rule_name: &Option<String>,
         out: &mut Vec<EvaluationResult>,
     ) {
-        // Borrow the correlation by reference — no cloning needed.  Rust allows
-        // simultaneous &self.correlations and &mut self.state / &mut self.last_alert
-        // because they are disjoint struct fields.
-        let corr = &self.correlations[corr_idx];
-        let corr_type = corr.correlation_type;
-        let timespan = corr.timespan_secs;
-        let window_mode = corr.window_mode;
-        let gap_secs = corr.gap_secs;
-        let level = corr.level;
-        let suppress_secs = corr.suppress_secs.or(self.config.suppress);
-        let action = corr.action.unwrap_or(self.config.action_on_match);
-        let event_mode = self.resolve_event_mode(corr_idx);
-        let max_events = self.resolve_max_events(corr_idx);
-        let max_group_entries = self.resolve_max_group_entries(corr_idx);
+        // Copy the scalars and resolve the group key while borrowing the
+        // correlation immutably. The borrow ends before the state entry so the
+        // tenant quota can evict from `self.state`.
+        let (
+            corr_type,
+            timespan,
+            window_mode,
+            gap_secs,
+            level,
+            suppress_secs,
+            action,
+            event_mode,
+            max_events,
+            max_group_entries,
+            rule_ref,
+            group_key,
+        ) = {
+            let corr = &self.correlations[corr_idx];
+            let corr_type = corr.correlation_type;
+            let timespan = corr.timespan_secs;
+            let window_mode = corr.window_mode;
+            let gap_secs = corr.gap_secs;
+            let level = corr.level;
+            let suppress_secs = corr.suppress_secs.or(self.config.suppress);
+            let action = corr.action.unwrap_or(self.config.action_on_match);
+            let event_mode = corr
+                .event_mode
+                .unwrap_or(self.config.correlation_event_mode);
+            let max_events = corr
+                .max_events
+                .unwrap_or(self.config.max_correlation_events);
+            let max_group_entries = corr.max_group_entries.or(self.config.max_group_entries);
 
-        // Determine the rule_ref strings for alias resolution and temporal tracking.
-        let mut ref_strs: Vec<&str> = Vec::new();
-        if let Some(id) = rule_id.as_deref() {
-            ref_strs.push(id);
-        }
-        if let Some(name) = rule_name.as_deref() {
-            ref_strs.push(name);
-        }
-        let rule_ref = ref_strs
-            .iter()
-            .copied()
-            .find(|identity| corr.rule_refs.iter().any(|rule_ref| rule_ref == identity))
-            .unwrap_or("");
+            // Determine the rule_ref strings for alias resolution and temporal tracking.
+            let mut ref_strs: Vec<&str> = Vec::new();
+            if let Some(id) = rule_id.as_deref() {
+                ref_strs.push(id);
+            }
+            if let Some(name) = rule_name.as_deref() {
+                ref_strs.push(name);
+            }
+            let rule_ref = ref_strs
+                .iter()
+                .copied()
+                .find(|identity| corr.rule_refs.iter().any(|rule_ref| rule_ref == identity))
+                .unwrap_or("")
+                .to_string();
 
-        // An event without every group-by value cannot be assigned to a
-        // correlation group.
-        let Some(group_key) = GroupKey::extract(event, &corr.group_by, &ref_strs) else {
-            return;
+            // An event without every group-by value cannot be assigned to a
+            // correlation group.
+            let Some(group_key) = GroupKey::extract(event, &corr.group_by, &ref_strs) else {
+                return;
+            };
+
+            (
+                corr_type,
+                timespan,
+                window_mode,
+                gap_secs,
+                level,
+                suppress_secs,
+                action,
+                event_mode,
+                max_events,
+                max_group_entries,
+                rule_ref,
+                group_key,
+            )
         };
 
         // Get or create window state
@@ -1035,10 +1066,32 @@ impl<L> CorrelationEngine<L> {
             corr_idx,
             group_key: group_key.clone(),
         };
+        let is_new = !self.state.contains_key(&state_key);
+        if is_new
+            && let Some(cap) = self.config.max_state_entries_per_tenant
+            && self
+                .tenant_counts
+                .get(&state_key.tenant)
+                .copied()
+                .unwrap_or(0)
+                >= cap
+        {
+            self.evict_tenant(tenant, ts);
+        }
+        if is_new {
+            *self
+                .tenant_counts
+                .entry(state_key.tenant.clone())
+                .or_insert(0) += 1;
+        }
         let state = self
             .state
             .entry(state_key.clone())
             .or_insert_with(|| WindowState::new_for(corr_type));
+
+        // Re-borrow the correlation: `self.state` and `self.correlations` are
+        // disjoint fields, so the mutable state borrow and this read coexist.
+        let corr = &self.correlations[corr_idx];
 
         // Apply the window's pre-insert maintenance (sliding evict, tumbling
         // bucket reset/late-event discard, or session gap/cap reset). On
@@ -1065,7 +1118,7 @@ impl<L> CorrelationEngine<L> {
                 }
             }
             CorrelationType::Temporal | CorrelationType::TemporalOrdered => {
-                state.push_temporal(ts, rule_ref);
+                state.push_temporal(ts, &rule_ref);
             }
             CorrelationType::ValueSum
             | CorrelationType::ValueAvg
@@ -1286,23 +1339,57 @@ impl<L> CorrelationEngine<L> {
 
             let mut next_pending = Vec::new();
             for (corr_idx, group_key_pairs, fired_ref, tenant) in work {
-                let corr = &self.correlations[corr_idx];
-                let corr_type = corr.correlation_type;
-                let timespan = corr.timespan_secs;
-                let window_mode = corr.window_mode;
-                let gap_secs = corr.gap_secs;
-                let level = corr.level;
-                let suppress_secs = corr.suppress_secs.or(self.config.suppress);
-                let action = corr.action.unwrap_or(self.config.action_on_match);
-
-                let Some(group_key) = GroupKey::from_pairs(&group_key_pairs, &corr.group_by) else {
-                    continue;
+                let (
+                    corr_type,
+                    timespan,
+                    window_mode,
+                    gap_secs,
+                    level,
+                    suppress_secs,
+                    action,
+                    max_group_entries,
+                    group_key,
+                ) = {
+                    let corr = &self.correlations[corr_idx];
+                    let Some(group_key) = GroupKey::from_pairs(&group_key_pairs, &corr.group_by)
+                    else {
+                        continue;
+                    };
+                    (
+                        corr.correlation_type,
+                        corr.timespan_secs,
+                        corr.window_mode,
+                        corr.gap_secs,
+                        corr.level,
+                        corr.suppress_secs.or(self.config.suppress),
+                        corr.action.unwrap_or(self.config.action_on_match),
+                        corr.max_group_entries.or(self.config.max_group_entries),
+                        group_key,
+                    )
                 };
                 let state_key = StateKey {
                     tenant: tenant.clone(),
                     corr_idx,
                     group_key: group_key.clone(),
                 };
+                let is_new = !self.state.contains_key(&state_key);
+                if is_new
+                    && let Some(cap) = self.config.max_state_entries_per_tenant
+                    && self
+                        .tenant_counts
+                        .get(&state_key.tenant)
+                        .copied()
+                        .unwrap_or(0)
+                        >= cap
+                {
+                    self.evict_tenant(tenant.as_ref(), ts);
+                }
+                if is_new {
+                    *self
+                        .tenant_counts
+                        .entry(state_key.tenant.clone())
+                        .or_insert(0) += 1;
+                }
                 let state = self
                     .state
                     .entry(state_key.clone())
@@ -1331,10 +1418,13 @@ impl<L> CorrelationEngine<L> {
 
                 // Same per-group cap as the direct path; session windows
                 // keep the span anchor.
-                if let Some(cap) = corr.max_group_entries.or(self.config.max_group_entries) {
+                if let Some(cap) = max_group_entries {
                     state.truncate_oldest(cap, window_mode == WindowMode::Session);
                 }
 
+                // `self.state` and `self.correlations` are disjoint fields, so
+                // the mutable state borrow and this read coexist.
+                let corr = &self.correlations[corr_idx];
                 let fired = state.check_condition(
                     &corr.condition,
                     corr_type,
@@ -1438,6 +1528,111 @@ impl<L> CorrelationEngine<L> {
         self.evict_all(now_secs);
     }
 
+    /// Decrement a tenant's live entry count for `key`.
+    fn note_tenant_removal(&mut self, key: &StateKey) {
+        if let Some(count) = self.tenant_counts.get_mut(&key.tenant) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.tenant_counts.remove(&key.tenant);
+            }
+        }
+    }
+
+    /// Remove one state entry and every sidecar keyed by it.
+    fn remove_state_entry(&mut self, key: &StateKey) -> bool {
+        let existed = self.state.remove(key).is_some();
+        if existed {
+            self.note_tenant_removal(key);
+        }
+        self.last_alert.remove(key);
+        self.event_buffers.remove(key);
+        self.event_ref_buffers.remove(key);
+        existed
+    }
+
+    /// Evict one tenant's expired entries, then its stalest entries down to 90%
+    /// of the configured per-tenant cap. Returns how many entries were removed.
+    fn evict_tenant(&mut self, tenant: Option<&TenantId>, now_secs: i64) -> usize {
+        let Some(cap) = self.config.max_state_entries_per_tenant else {
+            return 0;
+        };
+        let tenant_key = tenant.cloned();
+        let specs: Vec<(u64, WindowMode, Option<u64>)> = self
+            .correlations
+            .iter()
+            .map(|c| (c.timespan_secs, c.window_mode, c.gap_secs))
+            .collect();
+
+        let mut removed_keys = Vec::new();
+        self.state.retain(|key, state| {
+            if key.tenant != tenant_key {
+                return true;
+            }
+            if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
+                match mode {
+                    WindowMode::Sliding => {
+                        state.evict(now_secs - timespan as i64);
+                    }
+                    WindowMode::Tumbling | WindowMode::Session => {
+                        let staleness = if mode == WindowMode::Session {
+                            gap.unwrap_or(timespan)
+                        } else {
+                            timespan
+                        } as i64;
+                        if state
+                            .latest_timestamp()
+                            .is_some_and(|last| now_secs - last > staleness)
+                        {
+                            state.clear();
+                        }
+                    }
+                }
+            }
+            if state.is_empty() {
+                removed_keys.push(key.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let mut evicted = 0;
+        for key in removed_keys {
+            self.note_tenant_removal(&key);
+            self.last_alert.remove(&key);
+            self.event_buffers.remove(&key);
+            self.event_ref_buffers.remove(&key);
+            evicted += 1;
+        }
+
+        let count = self.tenant_counts.get(&tenant_key).copied().unwrap_or(0);
+        if count >= cap {
+            let target = cap * 9 / 10;
+            let excess = count.saturating_sub(target);
+            let mut by_staleness: Vec<_> = self
+                .state
+                .iter()
+                .filter(|(key, _)| key.tenant == tenant_key)
+                .map(|(key, state)| (key, state.latest_timestamp().unwrap_or(i64::MIN)))
+                .collect();
+            if excess < by_staleness.len() {
+                by_staleness.select_nth_unstable_by_key(excess, |&(_, ts)| ts);
+            }
+            let stalest: Vec<_> = by_staleness
+                .iter()
+                .take(excess)
+                .map(|&(key, _)| key.clone())
+                .collect();
+            for key in stalest {
+                if self.remove_state_entry(&key) {
+                    evicted += 1;
+                }
+            }
+        }
+
+        self.tenant_quota_evictions += evicted as u64;
+        evicted
+    }
+
     /// Evict expired entries and remove empty states.
     fn evict_all(&mut self, now_secs: i64) {
         // Phase 1: Time-based eviction — remove entries outside their correlation
@@ -1456,6 +1651,7 @@ impl<L> CorrelationEngine<L> {
             .map(|c| (c.timespan_secs, c.window_mode, c.gap_secs))
             .collect();
 
+        let mut removed_keys = Vec::new();
         self.state.retain(|key, state| {
             if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
                 match mode {
@@ -1477,8 +1673,16 @@ impl<L> CorrelationEngine<L> {
                     }
                 }
             }
-            !state.is_empty()
+            if state.is_empty() {
+                removed_keys.push(key.clone());
+                false
+            } else {
+                true
+            }
         });
+        for key in removed_keys {
+            self.note_tenant_removal(&key);
+        }
 
         // Evict event buffers in sync with window state: sliding buffers trim by
         // the trailing cutoff, tumbling/session buffers live and die with their
@@ -1547,10 +1751,7 @@ impl<L> CorrelationEngine<L> {
 
             // Drop the stalest entries (and their associated event buffers)
             for key in stalest {
-                self.state.remove(&key);
-                self.last_alert.remove(&key);
-                self.event_buffers.remove(&key);
-                self.event_ref_buffers.remove(&key);
+                self.remove_state_entry(&key);
             }
         }
 
@@ -1755,14 +1956,14 @@ impl<L> CorrelationEngine<L> {
             for (corr_id, groups) in tenant_state.windows {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
                     for (gk, ws) in groups {
-                        self.state.insert(
-                            StateKey {
-                                tenant: tenant.clone(),
-                                corr_idx: idx,
-                                group_key: gk,
-                            },
-                            ws,
-                        );
+                        let key = StateKey {
+                            tenant: tenant.clone(),
+                            corr_idx: idx,
+                            group_key: gk,
+                        };
+                        if self.state.insert(key.clone(), ws).is_none() {
+                            *self.tenant_counts.entry(key.tenant.clone()).or_insert(0) += 1;
+                        }
                         stats.restored += 1;
                     }
                 }

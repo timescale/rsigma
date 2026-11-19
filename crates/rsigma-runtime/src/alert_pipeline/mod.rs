@@ -85,6 +85,8 @@ pub struct AlertPipeline {
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
     silence_limits: SilenceLimits,
+    max_active_alerts_per_tenant: Option<usize>,
+    max_open_incidents_per_tenant: Option<usize>,
 }
 
 impl AlertPipeline {
@@ -109,7 +111,16 @@ impl AlertPipeline {
             inhibit,
             max_silences,
             silence_limits,
+            max_active_alerts_per_tenant: None,
+            max_open_incidents_per_tenant: None,
         }
+    }
+
+    /// Set the per-tenant caps for active alerts and open incidents. `None`
+    /// leaves only the global caps in force.
+    pub fn set_tenant_quotas(&mut self, active_alerts: Option<usize>, incidents: Option<usize>) {
+        self.max_active_alerts_per_tenant = active_alerts;
+        self.max_open_incidents_per_tenant = incidents;
     }
 
     /// The bounds the silence API applies to new silences
@@ -306,6 +317,17 @@ impl AlertPipeline {
                     continue;
                 }
                 if state.dedup.len() < cfg.max_active_alerts {
+                    if let Some(cap) = self.max_active_alerts_per_tenant
+                        && state
+                            .dedup
+                            .count_for_tenant(result.header.tenant_id.as_ref())
+                            >= cap
+                        && state
+                            .dedup
+                            .evict_tenant_oldest(result.header.tenant_id.as_ref())
+                    {
+                        metrics.on_tenant_quota_eviction("active_alerts");
+                    }
                     let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
                     let sample = dedup::sample_of(&result);
                     state.dedup.insert(
@@ -322,8 +344,19 @@ impl AlertPipeline {
             // Grouping: assign the survivor to an incident, reading entity /
             // group-by selectors off the result while the event is still
             // present, then annotate it with the incident id.
-            if let Some(gcfg) = self.group.as_ref()
-                && let Some(id) = state.incidents.assign_with_finding_uid(
+            if let Some(gcfg) = self.group.as_ref() {
+                if let Some(cap) = self.max_open_incidents_per_tenant
+                    && state
+                        .incidents
+                        .count_for_tenant(result.header.tenant_id.as_ref())
+                        >= cap
+                    && state
+                        .incidents
+                        .evict_tenant_oldest(result.header.tenant_id.as_ref())
+                {
+                    metrics.on_tenant_quota_eviction("incidents");
+                }
+                if let Some(id) = state.incidents.assign_with_finding_uid(
                     gcfg,
                     &result,
                     finding_uid.as_deref().filter(|uid| !uid.is_empty()),
@@ -331,14 +364,14 @@ impl AlertPipeline {
                     |guard| {
                         metrics.on_alert_pipeline_overmerge(guard_label(guard));
                     },
-                )
-            {
-                if self.strip_event {
-                    strip_event_payloads(&mut result);
+                ) {
+                    if self.strip_event {
+                        strip_event_payloads(&mut result);
+                    }
+                    annotate_incident(&mut result, id);
+                    keep(result, finding_uid);
+                    continue;
                 }
-                annotate_incident(&mut result, id);
-                keep(result, finding_uid);
-                continue;
             }
 
             if self.strip_event {
@@ -1286,5 +1319,26 @@ mod tests {
         assert_eq!(stats.discarded_tenanted, 2);
         assert_eq!(untenanted.dedup.len(), 1);
         assert_eq!(untenanted.incidents.len(), 1);
+    }
+
+    #[test]
+    fn tenant_quotas_evict_only_that_tenants_entries() {
+        let mut p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        p.set_tenant_quotas(Some(2), Some(2));
+        let mut st = AlertPipelineState::default();
+        let a = rsigma_eval::TenantId::new("a").unwrap();
+        let b = rsigma_eval::TenantId::new("b").unwrap();
+
+        for i in 0..3 {
+            tenant_run(&p, &ip(i), "a", &mut st, i);
+        }
+        tenant_run(&p, "10.0.0.9", "b", &mut st, 10);
+
+        assert_eq!(st.dedup.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.dedup.count_for_tenant(Some(&b)), 1);
+        assert_eq!(st.incidents.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.incidents.count_for_tenant(Some(&b)), 1);
     }
 }

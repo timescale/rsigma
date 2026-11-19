@@ -519,6 +519,19 @@ impl RulesetEngines {
         Some(output)
     }
 
+    /// Entries evicted because a tenant hit its correlation quota since the
+    /// previous call, summed across units.
+    pub fn take_tenant_quota_evictions(&mut self) -> u64 {
+        self.units
+            .iter_mut()
+            .map(|unit| match &mut unit.engine {
+                UnitEngine::Detection(_) => 0,
+                UnitEngine::Correlation(engine) => engine.take_tenant_quota_evictions(),
+                UnitEngine::Routed(router) => router.take_tenant_quota_evictions(),
+            })
+            .sum()
+    }
+
     /// Export per-ruleset correlation state in one snapshot.
     pub fn export_state(&self) -> CorrelationSnapshot {
         let mut rulesets = BTreeMap::new();

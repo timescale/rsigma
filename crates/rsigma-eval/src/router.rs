@@ -469,6 +469,14 @@ impl<L> SchemaRouter<L> {
         self.correlation.as_ref().map(|c| c.export_state())
     }
 
+    /// Entries evicted because a tenant hit its correlation quota since the
+    /// previous call, draining the counter.
+    pub fn take_tenant_quota_evictions(&mut self) -> u64 {
+        self.correlation
+            .as_mut()
+            .map_or(0, |c| c.take_tenant_quota_evictions())
+    }
+
     /// Import previously exported correlation state into the shared store.
     /// No-op (returns `true`) when there is no correlation store.
     pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {

@@ -161,6 +161,32 @@ impl DedupStore {
         out
     }
 
+    /// Count of active alerts owned by `tenant`.
+    pub(crate) fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
+        self.alerts
+            .values()
+            .filter(|alert| alert.tenant.as_ref() == tenant)
+            .count()
+    }
+
+    /// Evict the least recently seen alert owned by `tenant`. Returns whether
+    /// one was evicted.
+    pub(crate) fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
+        let victim = self
+            .alerts
+            .iter()
+            .filter(|(_, alert)| alert.tenant.as_ref() == tenant)
+            .min_by_key(|(_, alert)| alert.last_seen)
+            .map(|(fingerprint, _)| fingerprint.clone());
+        match victim {
+            Some(fingerprint) => {
+                self.alerts.remove(&fingerprint);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Snapshot the active alerts (fingerprint -> alert) for persistence.
     pub(crate) fn snapshot(&self) -> Vec<(String, ActiveAlert)> {
         self.alerts

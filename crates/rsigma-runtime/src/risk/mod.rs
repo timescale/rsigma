@@ -126,6 +126,13 @@ impl RiskLayer {
         self.nats_subject.as_deref()
     }
 
+    /// Set the per-tenant entity cap. `None` leaves only the global cap.
+    pub fn set_max_open_entities_per_tenant(&mut self, max: Option<usize>) {
+        if let Some(incident) = self.incident.as_mut() {
+            incident.caps.max_open_entities_per_tenant = max;
+        }
+    }
+
     /// The validated incident config, if the accumulator is enabled.
     pub fn incident_config(&self) -> Option<&IncidentConfig> {
         self.incident.as_ref()
@@ -284,6 +291,9 @@ impl RiskLayer {
                 contribution,
                 now,
             );
+            if outcome.quota_evicted {
+                metrics.on_tenant_quota_eviction("risk_entities");
+            }
             if outcome.evicted {
                 metrics.on_risk_eviction();
             }

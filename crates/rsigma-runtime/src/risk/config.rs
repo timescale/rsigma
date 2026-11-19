@@ -315,6 +315,7 @@ fn build_incident_config(file: IncidentFile) -> Result<IncidentConfig, RiskConfi
         max_results_per_incident: caps_file
             .max_results_per_incident
             .unwrap_or(defaults.max_results_per_incident),
+        max_open_entities_per_tenant: None,
     };
     Ok(IncidentConfig {
         window: file.window.unwrap_or(DEFAULT_WINDOW),

@@ -4541,3 +4541,52 @@ fn require_tenant_skips_untenanted_events_and_counts_them() {
     assert_eq!(engine.untenanted_skipped(), 1);
     assert_eq!(engine.state_count(), 1);
 }
+
+#[test]
+fn a_tenant_quota_evicts_only_its_own_entries() {
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let b = crate::tenant::TenantId::new("b").unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        max_state_entries_per_tenant: Some(2),
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(TENANT_RULES).unwrap())
+        .unwrap();
+
+    let quiet = json!({"EventType": "login", "User": "quiet"});
+    let quiet = JsonEvent::borrow(&quiet);
+    engine.process_event_at_for_tenant(&quiet, 100, Some(&b));
+
+    for i in 0..3 {
+        let value = json!({"EventType": "login", "User": format!("noisy_{i}")});
+        let event = JsonEvent::borrow(&value);
+        engine.process_event_at_for_tenant(&event, 200 + i, Some(&a));
+    }
+
+    assert_eq!(engine.state_count(), 3, "quiet tenant plus two noisy");
+    let noisy = engine.introspect_for_tenant(None, None, Some(&a));
+    assert_eq!(noisy.groups.len(), 2);
+    let quiet = engine.introspect_for_tenant(None, None, Some(&b));
+    assert_eq!(quiet.groups.len(), 1);
+    assert_eq!(quiet.groups[0].group_key_display, "User=quiet");
+    assert_eq!(engine.take_tenant_quota_evictions(), 1);
+}
+
+#[test]
+fn the_global_cap_still_applies_without_a_per_tenant_cap() {
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        max_state_entries: 2,
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(TENANT_RULES).unwrap())
+        .unwrap();
+    for i in 0..5 {
+        let value = json!({"EventType": "login", "User": format!("u{i}")});
+        let event = JsonEvent::borrow(&value);
+        engine.process_event_at(&event, i);
+    }
+    assert!(engine.state_count() <= 2);
+    assert_eq!(engine.take_tenant_quota_evictions(), 0);
+}

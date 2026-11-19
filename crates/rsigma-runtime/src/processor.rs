@@ -470,19 +470,20 @@ impl LogProcessor {
         };
 
         let start = Instant::now();
-        let (batch_results, state_entries, skipped) = if concurrent {
+        let (batch_results, state_entries, skipped, quota_evictions) = if concurrent {
             let engine = engine_guard.read();
             let results = engine
                 .process_batch_shared_for_tenants(&event_refs, &event_tenants)
                 .expect("concurrent path requires shared detection");
             let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries, engine.take_ruleset_skipped())
+            (results, state_entries, engine.take_ruleset_skipped(), 0)
         } else {
             let mut engine = engine_guard.write();
             let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
             let state_entries = engine.stats().state_entries as u64;
             let skipped = engine.take_ruleset_skipped();
-            (results, state_entries, skipped)
+            let quota = engine.take_tenant_quota_evictions();
+            (results, state_entries, skipped, quota)
         };
         let elapsed = start.elapsed().as_secs_f64();
         self.metrics
@@ -490,6 +491,9 @@ impl LogProcessor {
         let per_event_latency = elapsed / event_refs.len() as f64;
 
         self.metrics.set_correlation_state_entries(state_entries);
+        for _ in 0..quota_evictions {
+            self.metrics.on_tenant_quota_eviction("correlation_state");
+        }
 
         // Merge results per input line and update metrics.
         let merge_results_start = Instant::now();

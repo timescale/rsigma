@@ -42,6 +42,9 @@ pub struct RiskCaps {
     pub max_sources_per_entity: usize,
     /// Maximum contributions retained per entity (and embedded per incident).
     pub max_results_per_incident: usize,
+    /// Maximum simultaneously-tracked entities per tenant. At the cap, that
+    /// tenant's stalest entity is dropped. `None` leaves only the global cap.
+    pub max_open_entities_per_tenant: Option<usize>,
 }
 
 impl Default for RiskCaps {
@@ -50,6 +53,7 @@ impl Default for RiskCaps {
             max_open_entities: DEFAULT_MAX_OPEN_ENTITIES,
             max_sources_per_entity: DEFAULT_MAX_SOURCES_PER_ENTITY,
             max_results_per_incident: DEFAULT_MAX_RESULTS_PER_INCIDENT,
+            max_open_entities_per_tenant: None,
         }
     }
 }
@@ -198,6 +202,9 @@ pub struct RecordOutcome {
     pub links: crate::FindingLinks,
     /// True when a new entity could not be tracked because the store was full.
     pub evicted: bool,
+    /// True when a tenant's own stalest entity was evicted to make room under
+    /// its per-tenant cap.
+    pub quota_evicted: bool,
 }
 
 impl RiskState {
@@ -209,6 +216,46 @@ impl RiskState {
     /// True when no entities are tracked.
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
+    }
+
+    /// Count of tracked entities owned by `tenant`.
+    pub fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
+        self.entities
+            .keys()
+            .filter(|(own, _, _)| own.as_ref() == tenant)
+            .count()
+    }
+
+    /// Whether `(tenant, entity_type, entity_value)` is already tracked.
+    pub fn contains_entity(
+        &self,
+        tenant: Option<&TenantId>,
+        entity_type: &str,
+        entity_value: &str,
+    ) -> bool {
+        self.entities.contains_key(&(
+            tenant.cloned(),
+            entity_type.to_string(),
+            entity_value.to_string(),
+        ))
+    }
+
+    /// Evict the stalest entity owned by `tenant`. Returns whether one was
+    /// evicted.
+    pub fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
+        let victim = self
+            .entities
+            .iter()
+            .filter(|((own, _, _), _)| own.as_ref() == tenant)
+            .min_by_key(|(_, window)| window.last_seen)
+            .map(|(key, _)| key.clone());
+        match victim {
+            Some(key) => {
+                self.entities.remove(&key);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Total retained contributions across all entities (for the state gauge).
@@ -234,6 +281,14 @@ impl RiskState {
         );
         let cutoff = now - cfg.window_secs();
 
+        let mut quota_evicted = false;
+        if !self.entities.contains_key(&key)
+            && let Some(cap) = cfg.caps.max_open_entities_per_tenant
+            && self.count_for_tenant(tenant) >= cap
+        {
+            quota_evicted = self.evict_tenant_oldest(tenant);
+        }
+
         if !self.entities.contains_key(&key) && self.entities.len() >= cfg.caps.max_open_entities {
             // At capacity: a brand-new entity is not tracked, bounding memory.
             // The firing still passes through annotated; the saturation shows
@@ -242,6 +297,7 @@ impl RiskState {
                 incident: None,
                 links: crate::FindingLinks::default(),
                 evicted: true,
+                quota_evicted,
             };
         }
 
@@ -295,6 +351,7 @@ impl RiskState {
             incident,
             links,
             evicted: false,
+            quota_evicted,
         }
     }
 
@@ -851,5 +908,36 @@ mod tests {
         assert_eq!(stats.restored, 1);
         assert_eq!(stats.discarded_tenanted, 1);
         assert_eq!(untenanted.len(), 1);
+    }
+
+    #[test]
+    fn a_tenant_quota_evicts_only_its_own_entities() {
+        let mut c = cfg(Some(1_000), None);
+        c.caps.max_open_entities_per_tenant = Some(2);
+        let mut st = RiskState::default();
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        for i in 0..3 {
+            st.record(
+                &c,
+                Some(&a),
+                "user",
+                &format!("a{i}"),
+                contrib(i as i64, 10, &["execution"], "r1"),
+                i as i64,
+            );
+        }
+        st.record(
+            &c,
+            Some(&b),
+            "user",
+            "quiet",
+            contrib(0, 10, &["execution"], "r1"),
+            0,
+        );
+
+        assert_eq!(st.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.count_for_tenant(Some(&b)), 1);
+        assert_eq!(st.len(), 3);
     }
 }

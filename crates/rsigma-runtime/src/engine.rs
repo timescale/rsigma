@@ -315,6 +315,23 @@ impl RuntimeEngine {
         self.corr_config.require_tenant
     }
 
+    /// Set the per-tenant correlation state cap. Applies on the next
+    /// `load_rules()`; pre-load callers should set this before calling it.
+    pub fn set_max_state_entries_per_tenant(&mut self, max: Option<usize>) {
+        self.corr_config.max_state_entries_per_tenant = max;
+    }
+
+    /// Entries evicted because a tenant hit its correlation quota since the
+    /// previous call, summed across engine variants.
+    pub fn take_tenant_quota_evictions(&mut self) -> u64 {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.take_tenant_quota_evictions(),
+            EngineVariant::Routed(router) => router.take_tenant_quota_evictions(),
+            EngineVariant::Rulesets(engines) => engines.take_tenant_quota_evictions(),
+        }
+    }
+
     /// Return the current match-detail verbosity. Used by hot-reload to
     /// carry the setting across a `RuntimeEngine` swap.
     pub fn match_detail(&self) -> MatchDetailLevel {

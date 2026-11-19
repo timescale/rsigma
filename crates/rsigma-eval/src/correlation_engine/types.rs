@@ -173,6 +173,12 @@ pub struct CorrelationConfig {
     /// Default: 10.
     pub max_correlation_events: usize,
 
+    /// Maximum state entries per tenant. At a tenant's cap, that tenant's own
+    /// expired entries are evicted first, then its stalest entries down to 90%
+    /// of the cap. `None` leaves only the global [`Self::max_state_entries`]
+    /// bound in force.
+    pub max_state_entries_per_tenant: Option<usize>,
+
     /// Skip correlation for events that carry no tenant, counting them in
     /// [`CorrelationEngine::untenanted_skipped`].
     ///
@@ -210,6 +216,7 @@ impl Default for CorrelationConfig {
             emit_detections: false,
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
+            max_state_entries_per_tenant: None,
             require_tenant: false,
         }
     }
