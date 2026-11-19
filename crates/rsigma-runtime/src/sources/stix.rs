@@ -143,8 +143,9 @@ struct Kept {
 /// Latest version of each indicator id, then the lifecycle and the cap.
 ///
 /// Revoked and expired ids stay as a modified time so an older copy cannot
-/// return. That list, and the indicators kept in memory, are bounded by
-/// `max_indicators`.
+/// return. Indicators that lose the cap stay while the retained set is under
+/// twice `max_indicators`, so a later build can fill a freed slot from them.
+/// Past that bound they are dropped. Tombstones are capped at `max_indicators`.
 #[derive(Clone, Debug)]
 pub struct IndicatorSet {
     by_id: HashMap<String, Candidate>,
@@ -198,12 +199,50 @@ impl IndicatorSet {
         }
     }
 
+    /// Tombstone revoked and expired indicators and return how many moved.
+    ///
+    /// The caller adds the counts. A later [`IndicatorSet::build`] no longer
+    /// sees those ids, so it does not count them again.
+    pub(crate) fn tombstone_terminal(
+        &mut self,
+        options: &StixOptions,
+        now: &StixTimestamp,
+    ) -> (u64, u64) {
+        let configured: BTreeSet<&str> = options.observables.iter().map(String::as_str).collect();
+        let ids: Vec<String> = self.by_id.keys().cloned().collect();
+        let mut expired = 0u64;
+        let mut revoked = 0u64;
+        let mut tomb = Vec::new();
+        for id in ids {
+            let Some(candidate) = self.by_id.get(&id) else {
+                continue;
+            };
+            let modified = candidate.modified.clone();
+            match keep(&candidate.indicator, options, now, &configured) {
+                Err(SkipReason::Expired) => {
+                    expired += 1;
+                    tomb.push((id, modified));
+                }
+                Err(SkipReason::Revoked) => {
+                    revoked += 1;
+                    tomb.push((id, modified));
+                }
+                _ => {}
+            }
+        }
+        for (id, modified) in tomb {
+            self.by_id.remove(&id);
+            self.tombstones.insert(id, modified);
+        }
+        (expired, revoked)
+    }
+
     /// Apply the lifecycle at `now`, then the cap, and build the source value.
     ///
     /// `None` counts every id still stored. `Some` counts a not-yet-valid id,
-    /// and unmapped comparisons on an id that stays, only when the id is in
-    /// the set. Ids this call drops are counted once, because a later call no
-    /// longer has them.
+    /// an unmapped comparison on an id that stays, and an id that loses the
+    /// cap, only when the id is in the set. Ids this call drops are counted
+    /// once, because a later call no longer has them.
     pub fn build(
         &mut self,
         options: &StixOptions,
@@ -260,13 +299,19 @@ impl IndicatorSet {
                 .cmp(&left.confidence)
                 .then_with(|| left.id.cmp(&right.id))
         });
+        let mut reserve = Vec::new();
         if kept.len() > options.max_indicators {
-            let extra = kept.len() - options.max_indicators;
-            let dropped = kept.split_off(options.max_indicators);
-            skips.add(SkipReason::OverLimit, extra as u64);
-            for item in dropped {
-                self.by_id.remove(&item.id);
+            let extra = kept.split_off(options.max_indicators);
+            let mut counted = 0u64;
+            for item in &extra {
+                if received.is_none_or(|ids| ids.contains(&item.id)) {
+                    counted += 1;
+                }
             }
+            if counted > 0 {
+                skips.add(SkipReason::OverLimit, counted);
+            }
+            reserve = extra.into_iter().map(|item| item.id).collect();
         }
         for (id, modified) in tomb {
             self.by_id.remove(&id);
@@ -274,6 +319,12 @@ impl IndicatorSet {
         }
         self.evict_tombstones(options.max_indicators);
         let id_cap = options.max_indicators.saturating_mul(2);
+        while self.retained_ids() > id_cap {
+            let Some(id) = reserve.pop() else {
+                break;
+            };
+            self.by_id.remove(&id);
+        }
         waiting.sort_by(|left, right| right.1.cmp(&left.1));
         while self.retained_ids() > id_cap {
             let Some((id, _)) = waiting.pop() else {
@@ -760,6 +811,48 @@ mod tests {
         assert_eq!(built.active, 1);
         assert_eq!(built.skips.unmapped_observable, 1);
         assert_eq!(built.skips.over_limit, 0);
+    }
+
+    #[test]
+    fn cut_indicator_fills_a_freed_slot_until_the_retained_bound() {
+        let mut options = StixOptions::all();
+        options.observables = vec!["ipv4".to_owned()];
+        options.max_indicators = 1;
+        let low = indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.1']",
+            r#","confidence":10"#,
+        );
+        let middle = indicator(
+            2,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.2']",
+            r#","confidence":20"#,
+        );
+        let high = indicator(
+            3,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.3']",
+            r#","confidence":30,"valid_until":"2026-07-01T00:00:00.000Z""#,
+        );
+        let mut set = IndicatorSet::new();
+        set.upsert(load(&bundle(&[&low])));
+        set.upsert(load(&bundle(&[&middle])));
+        set.upsert(load(&bundle(&[&high])));
+        let (value, skips, active) = set.build(&options, &now(), None);
+        assert_eq!(active, 1);
+        assert_eq!(keys(&value), ["198.51.100.3"]);
+        assert_eq!(skips.over_limit, 2);
+        assert_eq!(set.retained_ids(), 2);
+
+        let later = StixTimestamp::parse("2026-08-01T00:00:00.000Z").unwrap();
+        let (value, skips, active) = set.build(&options, &later, Some(&HashSet::new()));
+        assert_eq!(active, 1);
+        assert_eq!(keys(&value), ["198.51.100.2"]);
+        assert_eq!(skips.expired, 1);
+        assert_eq!(skips.over_limit, 0);
+        assert_eq!(set.retained_ids(), 2);
     }
 
     #[test]

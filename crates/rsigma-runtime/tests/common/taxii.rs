@@ -161,35 +161,40 @@ impl Responder {
             .map(|(key, value)| (key.into_owned(), value.into_owned()))
             .collect();
         let added_after = query.get("added_after").cloned();
-        let offset = query
+        // `next` is an index into the stored collection. Later pages of one
+        // poll send `next` and omit `added_after`.
+        let start = query
             .get("next")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(0);
         let stored = self.state.objects.lock().expect("objects").clone();
-        let filtered: Vec<Stored> = stored
+        let filtered: Vec<(usize, Stored)> = stored
             .into_iter()
-            .filter(|item| match &added_after {
-                Some(cursor) => item.added.as_str() > cursor.as_str(),
-                None => true,
+            .enumerate()
+            .filter(|(index, item)| {
+                *index >= start
+                    && match &added_after {
+                        Some(cursor) => item.added.as_str() > cursor.as_str(),
+                        None => true,
+                    }
             })
             .collect();
         let limit = query
             .get("limit")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(filtered.len().max(1));
-        let start = offset.min(filtered.len());
-        let end = (start + limit).min(filtered.len());
-        let page = &filtered[start..end];
+        let end = limit.min(filtered.len());
+        let page = &filtered[..end];
         let more = end < filtered.len();
         let mut body = json!({
             "more": more,
-            "objects": page.iter().map(|item| item.object.clone()).collect::<Vec<_>>(),
+            "objects": page.iter().map(|(_, item)| item.object.clone()).collect::<Vec<_>>(),
         });
         if more {
-            body["next"] = json!(end.to_string());
+            body["next"] = json!(filtered[end].0.to_string());
         }
         let mut response = taxii(200, body);
-        if let Some(added) = page.last().map(|item| item.added.clone()) {
+        if let Some(added) = page.last().map(|(_, item)| item.added.clone()) {
             response = response.insert_header("X-TAXII-Date-Added-Last", added);
         }
         response

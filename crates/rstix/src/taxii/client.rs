@@ -222,27 +222,59 @@ struct TaxiiClientInner {
     https_policy: HttpsPolicy,
 }
 
-/// Page and object bounds for [`TaxiiClient::poll_objects`].
+/// Page and object bounds for one [`TaxiiClient::poll_object_pages`] call.
+///
+/// The struct is non-exhaustive. Build it with [`PollBudget::new`] or
+/// [`PollBudget::for_indicators`].
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PollBudget {
     /// Maximum objects pages fetched in one poll.
     pub max_pages: usize,
-    /// Maximum objects accumulated in one poll.
+    /// Maximum objects delivered in one poll.
     pub max_objects: usize,
 }
 
+/// One objects page delivered by [`TaxiiClient::poll_object_pages`].
+#[derive(Debug)]
+pub struct PolledPage {
+    /// Objects on this page.
+    pub objects: Vec<StixObject>,
+    /// `X-TAXII-Date-Added-Last` for this page, when the server sent it.
+    pub date_added_last: Option<crate::core::TaxiiTimestamp>,
+}
+
+/// Why [`TaxiiClient::poll_object_pages`] returned after the pages it delivered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PollStop {
+    /// The server reported no further pages.
+    Finished,
+    /// The budget was reached and the server still has more.
+    Budget,
+}
+
 impl PollBudget {
-    /// Enough objects to fill `max_indicators`, plus one page so a collection
-    /// of that size can end. The page budget is that many objects divided by
-    /// `page_size`.
-    pub fn for_indicators(page_size: usize, max_indicators: usize) -> Self {
-        let page_size = page_size.max(1);
-        let max_objects = max_indicators.saturating_add(page_size).max(1);
-        let max_pages = max_objects.div_ceil(page_size).max(1);
+    /// A budget that fails the poll before a request when either bound is zero.
+    pub fn new(max_pages: usize, max_objects: usize) -> Self {
         Self {
             max_pages,
             max_objects,
         }
+    }
+
+    /// One poll of work for a source that keeps at most `max_indicators`.
+    ///
+    /// `max_objects` is `max_indicators` plus one page, and `max_pages` is that
+    /// many objects divided by `page_size`. A larger collection continues on
+    /// the next poll. [`TaxiiClient::poll_object_pages`] returns
+    /// [`PollStop::Budget`] after the last page it applied.
+    /// [`TaxiiClient::poll_objects`] reports that stop as
+    /// [`TaxiiError::PollBudgetExceeded`].
+    pub fn for_indicators(page_size: usize, max_indicators: usize) -> Self {
+        let page_size = page_size.max(1);
+        let max_objects = max_indicators.saturating_add(page_size).max(1);
+        let max_pages = max_objects.div_ceil(page_size).max(1);
+        Self::new(max_pages, max_objects)
     }
 }
 
@@ -416,16 +448,15 @@ impl TaxiiClient {
         Ok(TaxiiPaged::new(envelope, &response))
     }
 
-    /// Drain `objects_stream` pagination and return the last page's
-    /// `X-TAXII-Date-Added-Last`.
+    /// Drain objects pages until the collection ends.
     ///
     /// The header is consumed while advancing pages. Callers that poll with
     /// `added_after` use the returned timestamp as the next cursor. A failed
-    /// page returns the error and no objects. The poll stops with
-    /// [`TaxiiError::PollBudgetExceeded`] when `budget` is exhausted while the
-    /// server still has more, with [`TaxiiError::RepeatedPaginationCursor`]
-    /// when a page does not advance the filter, and with the 416 error when
-    /// recovery would request that same filter again.
+    /// page returns the error and no objects. [`PollStop::Budget`] from
+    /// [`TaxiiClient::poll_object_pages`] is [`TaxiiError::PollBudgetExceeded`]
+    /// here, because this method cannot resume. A page that does not advance
+    /// the filter is [`TaxiiError::RepeatedPaginationCursor`]. HTTP 416 recovery
+    /// that would request the same filter returns that 416 error.
     pub async fn poll_objects(
         &self,
         api_root_url: &str,
@@ -433,6 +464,47 @@ impl TaxiiClient {
         filter: TaxiiFilter,
         budget: PollBudget,
     ) -> Result<(Vec<StixObject>, Option<crate::core::TaxiiTimestamp>), TaxiiError> {
+        let mut objects = Vec::new();
+        let mut date_added_last = None;
+        let stop = self
+            .poll_object_pages(api_root_url, collection_id, filter, budget, |page| {
+                if page.date_added_last.is_some() {
+                    date_added_last = page.date_added_last.clone();
+                }
+                objects.extend(page.objects);
+            })
+            .await?;
+        match stop {
+            PollStop::Finished => Ok((objects, date_added_last)),
+            PollStop::Budget => Err(TaxiiError::PollBudgetExceeded {
+                max_pages: budget.max_pages,
+                max_objects: budget.max_objects,
+            }),
+        }
+    }
+
+    /// Deliver each objects page, then stop at `budget` or at the end.
+    ///
+    /// `on_page` runs after the page is fetched and before the next request.
+    /// [`PollStop::Budget`] means the pages already delivered are complete and
+    /// the server still has more. The last page's `X-TAXII-Date-Added-Last`
+    /// is the cursor a later poll passes as `added_after`. A zero budget
+    /// returns [`TaxiiError::PollBudgetExceeded`] before a request. A page that
+    /// does not advance the filter is [`TaxiiError::RepeatedPaginationCursor`].
+    /// HTTP 416 recovery that would request the same filter returns that 416
+    /// error. Either error can follow pages already passed to `on_page`; the
+    /// caller decides whether to keep them.
+    pub async fn poll_object_pages<F>(
+        &self,
+        api_root_url: &str,
+        collection_id: &str,
+        filter: TaxiiFilter,
+        budget: PollBudget,
+        mut on_page: F,
+    ) -> Result<PollStop, TaxiiError>
+    where
+        F: FnMut(PolledPage) + Send,
+    {
         if budget.max_pages == 0 || budget.max_objects == 0 {
             return Err(TaxiiError::PollBudgetExceeded {
                 max_pages: budget.max_pages,
@@ -440,46 +512,41 @@ impl TaxiiClient {
             });
         }
         let mut pagination = ObjectPaginationState::new(filter);
-        let mut objects = Vec::new();
         let mut pages = 0usize;
+        let mut objects_seen = 0usize;
         loop {
-            if let Some(object) = pagination.pending_objects.pop_front() {
-                if objects.len() >= budget.max_objects {
-                    return Err(TaxiiError::PollBudgetExceeded {
-                        max_pages: budget.max_pages,
-                        max_objects: budget.max_objects,
-                    });
-                }
-                objects.push(object);
-                continue;
-            }
             if pagination.finished {
-                return Ok((objects, pagination.date_added_last));
+                return Ok(PollStop::Finished);
             }
-            if objects.len() >= budget.max_objects || pages >= budget.max_pages {
-                return Err(TaxiiError::PollBudgetExceeded {
-                    max_pages: budget.max_pages,
-                    max_objects: budget.max_objects,
-                });
+            if pages >= budget.max_pages || objects_seen >= budget.max_objects {
+                return Ok(PollStop::Budget);
             }
             let sent = pagination.filter.clone();
-            pages += 1;
             match self
                 .fetch_objects_page(api_root_url, collection_id, &pagination.filter)
                 .await
             {
                 Ok((envelope, response)) => {
+                    let date_added_last =
+                        TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
+                            .headers
+                            .date_added_last;
                     pagination.apply_page(
                         envelope.more,
                         envelope.next.clone(),
-                        TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
-                            .headers
-                            .date_added_last,
+                        date_added_last.clone(),
                         envelope.objects,
                     )?;
                     if !pagination.finished && pagination.filter == sent {
                         return Err(TaxiiError::RepeatedPaginationCursor);
                     }
+                    let objects: Vec<_> = pagination.pending_objects.drain(..).collect();
+                    objects_seen += objects.len();
+                    pages += 1;
+                    on_page(PolledPage {
+                        objects,
+                        date_added_last,
+                    });
                 }
                 Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                     recover_from_range_not_satisfiable(

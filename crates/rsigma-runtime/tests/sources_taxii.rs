@@ -367,3 +367,70 @@ async fn missing_auth_env_names_the_variable() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn collection_larger_than_the_budget_loads_across_polls() {
+    let server = Server::start(COLLECTION).await;
+    for n in 1..=20u8 {
+        server.push(
+            &stamp(u32::from(n)),
+            taxii::indicator(
+                n,
+                "2024-01-01T00:00:00.000Z",
+                "[ipv4-addr:value = '198.51.100.99']",
+                r#","valid_until":"2021-01-01T00:00:00.000Z""#,
+            ),
+        );
+    }
+    for n in 21..=30u8 {
+        let octet = n - 20;
+        server.push(
+            &stamp(u32::from(n)),
+            taxii::indicator(
+                n,
+                "2024-01-01T00:00:00.000Z",
+                &format!("[ipv4-addr:value = '198.51.100.{octet}']"),
+                "",
+            ),
+        );
+    }
+    let mut stix = options();
+    stix.max_indicators = 10;
+    let declared = DynamicSource {
+        id: "ti".to_owned(),
+        source_type: SourceType::Taxii {
+            url: server.url.clone(),
+            collection: COLLECTION.to_owned(),
+            auth: TaxiiAuthConfig::default(),
+            page_size: 5,
+            stix,
+        },
+        refresh: RefreshPolicy::Interval(Duration::from_secs(60)),
+        timeout: Some(Duration::from_secs(5)),
+        on_error: ErrorPolicy::Fail,
+        required: true,
+        default: None,
+    };
+    let mut resolver = DefaultSourceResolver::new().with_stix_clock(clock());
+    resolver
+        .prepare_taxii_with(
+            std::slice::from_ref(&declared),
+            EgressPolicy::permissive(),
+            true,
+        )
+        .expect("prepare");
+    let first = resolver.resolve(&declared).await.expect("first window");
+    assert_eq!(ipv4(&first.data), Vec::<String>::new());
+    let second = resolver.resolve(&declared).await.expect("second window");
+    let mut expected: Vec<String> = (1..=10).map(|n| format!("198.51.100.{n}")).collect();
+    expected.sort();
+    assert_eq!(ipv4(&second.data), expected);
+    assert!(
+        server
+            .object_requests()
+            .iter()
+            .any(|url| url.contains("added_after=")),
+        "later poll continues: {:?}",
+        server.object_requests()
+    );
+}

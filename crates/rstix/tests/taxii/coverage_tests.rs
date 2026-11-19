@@ -8,7 +8,7 @@ use rstix::core::StixId;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rstix::taxii::{
-    ObjectByIdFilter, PollBudget, PostSubmitPolicy, StatusState, TaxiiClient, TaxiiError,
+    ObjectByIdFilter, PollBudget, PollStop, PostSubmitPolicy, StatusState, TaxiiClient, TaxiiError,
     TaxiiFilter,
 };
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
@@ -482,10 +482,27 @@ async fn objects_server(mode: ObjectMode) -> (MockServer, Objects) {
 }
 
 fn small_budget() -> PollBudget {
-    PollBudget {
-        max_pages: 2,
-        max_objects: 8,
-    }
+    PollBudget::new(2, 8)
+}
+
+#[tokio::test]
+async fn poll_object_pages_reports_budget_after_delivering_pages() {
+    let (server, responder) = objects_server(ObjectMode::Endless).await;
+    let client = wiremock_client_no_preflight(&server);
+    let mut seen = 0usize;
+    let stop = client
+        .poll_object_pages(
+            &api_root_url(&server),
+            "col1",
+            TaxiiFilter::new(),
+            small_budget(),
+            |page| seen += page.objects.len(),
+        )
+        .await
+        .expect("poll");
+    assert_eq!(stop, PollStop::Budget);
+    assert_eq!(seen, 2);
+    assert_eq!(responder.hits.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

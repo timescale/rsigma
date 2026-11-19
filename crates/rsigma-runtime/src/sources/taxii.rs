@@ -1,7 +1,9 @@
 //! Poll a TAXII 2.1 collection into a dynamic-source value.
 //!
 //! Poll state is not persisted. After a restart the next resolve is a full poll.
-//! A failed poll leaves the previous indicator set and cursor unchanged.
+//! A failed poll leaves the previous indicator set and cursor unchanged. A poll
+//! that stops at its budget keeps the pages it applied and advances the cursor
+//! when the last page carried `X-TAXII-Date-Added-Last`.
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -12,8 +14,8 @@ use rsigma_eval::pipeline::sources::{DynamicSource, SourceType, StixOptions, Tax
 use rstix::core::{StixTimestamp, TaxiiTimestamp};
 use rstix::model::sdo::SdoObject;
 use rstix::{
-    ApiKeyHeader, BasicAuth, BearerAuth, ParseOptions, PollBudget, StixObject, TaxiiClient,
-    TaxiiClientConfig, TaxiiError, TaxiiFilter,
+    ApiKeyHeader, BasicAuth, BearerAuth, ParseOptions, PollBudget, PollStop, StixObject,
+    TaxiiClient, TaxiiClientConfig, TaxiiError, TaxiiFilter,
 };
 
 use super::stix::{IndicatorSet, StixBuild};
@@ -118,12 +120,15 @@ impl TaxiiSources {
 /// Poll, then return the state that should be stored and the build.
 ///
 /// On failure the state is the one passed in, unchanged. On success it is the
-/// merged set. `None` means there was no state and the poll failed.
+/// merged set. A budget stop is success when the last page has an added-date
+/// the next poll can continue from. `None` means there was no state and the
+/// poll failed.
 pub(crate) async fn poll(
     prepared: &Prepared,
     previous: Option<PollState>,
     now: &StixTimestamp,
 ) -> (Option<PollState>, Result<StixBuild, SourceError>) {
+    let rollback = previous.clone();
     let previous_cursor = previous
         .as_ref()
         .and_then(|state| state.added_after.clone());
@@ -135,29 +140,62 @@ pub(crate) async fn poll(
         filter = filter.added_after(cursor);
     }
     let budget = PollBudget::for_indicators(prepared.page_size, prepared.options.max_indicators);
-    let polled = prepared
-        .client
-        .poll_objects(&prepared.url, &prepared.collection, filter, budget)
-        .await;
-    let (objects, date_added_last) = match polled {
-        Ok(value) => value,
-        Err(err) => return (previous, Err(fetch_error(err))),
-    };
     let mut set = previous.map(|state| state.set).unwrap_or_default();
     let mut received_ids = HashSet::new();
-    let received = objects.len();
-    for object in objects {
-        if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {
-            received_ids.insert(indicator.common.id.to_string());
-            set.upsert(indicator);
-        }
+    let mut received = 0usize;
+    let mut expired = 0u64;
+    let mut revoked = 0u64;
+    let mut last_page_date = None;
+    let mut latest_date = None;
+    let polled = prepared
+        .client
+        .poll_object_pages(
+            &prepared.url,
+            &prepared.collection,
+            filter,
+            budget,
+            |page| {
+                received += page.objects.len();
+                for object in page.objects {
+                    if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {
+                        received_ids.insert(indicator.common.id.to_string());
+                        set.upsert(indicator);
+                    }
+                }
+                let (page_expired, page_revoked) = set.tombstone_terminal(&prepared.options, now);
+                expired += page_expired;
+                revoked += page_revoked;
+                last_page_date = page.date_added_last.clone();
+                if last_page_date.is_some() {
+                    latest_date = last_page_date.clone();
+                }
+            },
+        )
+        .await;
+    let stop = match polled {
+        Ok(stop) => stop,
+        Err(err) => return (rollback, Err(fetch_error(err))),
+    };
+    if matches!(stop, PollStop::Budget)
+        && (last_page_date.is_none() || last_page_date == previous_cursor)
+    {
+        return (
+            rollback,
+            Err(fetch_error(TaxiiError::PollBudgetExceeded {
+                max_pages: budget.max_pages,
+                max_objects: budget.max_objects,
+            })),
+        );
     }
-    let (value, skips, active) = set.build(&prepared.options, now, Some(&received_ids));
+    let (value, mut skips, active) = set.build(&prepared.options, now, Some(&received_ids));
+    skips.expired += expired;
+    skips.revoked += revoked;
+    let added_after = match stop {
+        PollStop::Budget => last_page_date,
+        PollStop::Finished => latest_date.or(previous_cursor),
+    };
     (
-        Some(PollState {
-            set,
-            added_after: date_added_last.or(previous_cursor),
-        }),
+        Some(PollState { set, added_after }),
         Ok(StixBuild {
             value,
             skips,

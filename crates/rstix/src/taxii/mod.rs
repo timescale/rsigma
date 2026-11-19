@@ -30,7 +30,7 @@ mod www_authenticate;
 pub mod auth;
 
 pub use auth::{ApiKeyHeader, AuthError, BasicAuth, BearerAuth, TaxiiAuthProvider};
-pub use client::{PollBudget, TaxiiClient, TaxiiClientConfig};
+pub use client::{PollBudget, PollStop, PolledPage, TaxiiClient, TaxiiClientConfig};
 pub use dane::TlsaRecord;
 pub use dns::{
     DnsLookupOptions, TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with,
