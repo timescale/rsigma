@@ -458,6 +458,48 @@ level: high
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: tenant-keyed correlation state
+// ---------------------------------------------------------------------------
+
+fn bench_correlation_tenants(c: &mut Criterion) {
+    let mut group = c.benchmark_group("correlation_tenants");
+    group.sample_size(10);
+
+    let yaml = datagen::gen_rules_with_event_count_correlations(20, 5);
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+    let event_values = datagen::gen_event_values(1_000);
+    let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
+
+    for n_tenants in [1usize, 100, 1_000] {
+        let tenants: Vec<Option<rsigma_eval::TenantId>> = (0..events.len())
+            .map(|i| Some(rsigma_eval::TenantId::new(&format!("t{}", i % n_tenants)).unwrap()))
+            .collect();
+        group.throughput(criterion::Throughput::Elements(events.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("tenants", n_tenants),
+            &tenants,
+            |b, tenants| {
+                b.iter_with_setup(
+                    || {
+                        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                        engine.add_collection(&collection).unwrap();
+                        engine
+                    },
+                    |mut engine| {
+                        let refs: Vec<&JsonEvent> = events.iter().collect();
+                        let results =
+                            engine.process_batch_for_tenants(black_box(&refs), black_box(tenants));
+                        black_box(results);
+                    },
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -470,5 +512,6 @@ criterion_group!(
     bench_correlation_state_pressure,
     bench_correlation_window_modes,
     bench_correlation_numeric_window,
+    bench_correlation_tenants,
 );
 criterion_main!(benches);

@@ -300,6 +300,52 @@ fn scenario_mode(window: &'static str) -> RunStats {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Scenario D: the same workload spread across many tenants
+// ---------------------------------------------------------------------------
+
+fn scenario_tenants(n_tenants: usize, n_events: usize) -> RunStats {
+    let yaml = rules_yaml("event_count", "session", "2h", Some("5m"));
+    let mut engine = engine_for(&yaml, 1_000_000);
+
+    let baseline = live_bytes();
+    reset_peak();
+    let start = Instant::now();
+    let mut alerts = 0usize;
+
+    let mut tenants = Vec::with_capacity(n_events);
+    for i in 0..n_events {
+        tenants.push(Some(
+            rsigma_eval::TenantId::new(&format!("t{}", i % n_tenants)).unwrap(),
+        ));
+    }
+    let values: Vec<serde_json::Value> = (0..n_events)
+        .map(|i| {
+            serde_json::json!({
+                "EventType": "process_create",
+                "User": format!("user_{:08}", i % 1_000),
+                "CommandLine": "whoami /all",
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+            })
+        })
+        .collect();
+    let events: Vec<JsonEvent> = values.iter().map(JsonEvent::borrow).collect();
+    let refs: Vec<&JsonEvent> = events.iter().collect();
+    let results = engine.process_batch_for_tenants(&refs, &tenants);
+    for result in &results {
+        alerts += result.correlation_count();
+    }
+
+    RunStats {
+        events: n_events,
+        secs: start.elapsed().as_secs_f64(),
+        peak_delta: peak_bytes().saturating_sub(baseline),
+        settled_delta: live_bytes().saturating_sub(baseline),
+        groups: engine.state_count(),
+        alerts,
+    }
+}
+
 fn main() {
     println!(
         "\n=== A. High-cardinality session windows (1 event/key, event_count, gap 5m, cap 2h) ==="
@@ -319,6 +365,12 @@ fn main() {
     ] {
         let stats = scenario_cardinality(n_keys, cap);
         report(&format!("session  {label}"), &stats);
+    }
+
+    println!("\n=== D. Tenant-keyed state (1, 100, 1000 tenants) ===");
+    for &n_tenants in &[1usize, 100, 1_000] {
+        let stats = scenario_tenants(n_tenants, 100_000);
+        report(&format!("tenants {n_tenants}"), &stats);
     }
 
     println!("\n=== B. Long-lived chatty sessions ===");
