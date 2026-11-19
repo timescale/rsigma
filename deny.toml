@@ -28,6 +28,13 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# psm, which every crate reaches through pest's stack guard, builds its
+# assembly archive with ar_archive_writer. It is a build dependency only, and
+# the LLVM exception adds a permission to Apache-2.0 without restricting it.
+[[licenses.exceptions]]
+crate = "ar_archive_writer"
+allow = ["Apache-2.0 WITH LLVM-exception"]
+
 [bans]
 multiple-versions = "warn"
 # Refuse wildcard dependencies. `version = "*"` in a workspace member
