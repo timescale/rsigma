@@ -6,7 +6,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::taxii::{self, Server};
+use common::taxii::{self, DateHeader, Server};
 use rsigma_eval::pipeline::sources::{
     DynamicSource, ErrorPolicy, RefreshPolicy, SourceType, StixOptions, TaxiiAuthConfig,
 };
@@ -394,15 +394,38 @@ async fn collection_larger_than_the_budget_loads_across_polls() {
             ),
         );
     }
+    let (declared, resolver) = capped(&server, 10, 5);
+    let first = resolver.resolve(&declared).await.expect("first window");
+    assert_eq!(ipv4(&first.data), Vec::<String>::new());
+    let second = resolver.resolve(&declared).await.expect("second window");
+    assert_eq!(ipv4(&second.data), sorted_ipv4(1..=9));
+    let third = resolver.resolve(&declared).await.expect("third window");
+    assert_eq!(ipv4(&third.data), sorted_ipv4(1..=10));
+    assert!(
+        server
+            .object_requests()
+            .iter()
+            .any(|url| url.contains("added_after=")),
+        "later poll continues: {:?}",
+        server.object_requests()
+    );
+}
+
+/// A source capped at `max_indicators`, whose poll budget is that plus one page.
+fn capped(
+    server: &Server,
+    max_indicators: usize,
+    page_size: usize,
+) -> (DynamicSource, DefaultSourceResolver) {
     let mut stix = options();
-    stix.max_indicators = 10;
+    stix.max_indicators = max_indicators;
     let declared = DynamicSource {
         id: "ti".to_owned(),
         source_type: SourceType::Taxii {
             url: server.url.clone(),
             collection: COLLECTION.to_owned(),
             auth: TaxiiAuthConfig::default(),
-            page_size: 5,
+            page_size,
             stix,
         },
         refresh: RefreshPolicy::Interval(Duration::from_secs(60)),
@@ -419,18 +442,128 @@ async fn collection_larger_than_the_budget_loads_across_polls() {
             true,
         )
         .expect("prepare");
+    (declared, resolver)
+}
+
+fn push_ipv4(server: &Server, n: u8, added: u32, confidence: u8) {
+    server.push(
+        &stamp(added),
+        taxii::indicator(
+            n,
+            "2024-01-01T00:00:00.000Z",
+            &format!("[ipv4-addr:value = '198.51.100.{n}']"),
+            &format!(r#","confidence":{confidence}"#),
+        ),
+    );
+}
+
+fn sorted_ipv4(octets: impl IntoIterator<Item = u8>) -> Vec<String> {
+    let mut values: Vec<String> = octets
+        .into_iter()
+        .map(|n| format!("198.51.100.{n}"))
+        .collect();
+    values.sort();
+    values
+}
+
+#[tokio::test]
+async fn budget_stop_inside_a_shared_added_date_reads_the_rest_next_poll() {
+    let server = Server::start(COLLECTION).await;
+    for n in 1..=12u8 {
+        push_ipv4(&server, n, u32::from(n), 10);
+    }
+    for n in 13..=20u8 {
+        push_ipv4(&server, n, 13, 90);
+    }
+    let (declared, resolver) = capped(&server, 10, 5);
     let first = resolver.resolve(&declared).await.expect("first window");
-    assert_eq!(ipv4(&first.data), Vec::<String>::new());
+    assert_eq!(
+        ipv4(&first.data),
+        sorted_ipv4([1, 2, 3, 4, 5, 6, 7, 13, 14, 15])
+    );
     let second = resolver.resolve(&declared).await.expect("second window");
-    let mut expected: Vec<String> = (1..=10).map(|n| format!("198.51.100.{n}")).collect();
-    expected.sort();
-    assert_eq!(ipv4(&second.data), expected);
+    assert_eq!(
+        ipv4(&second.data),
+        sorted_ipv4([1, 2, 13, 14, 15, 16, 17, 18, 19, 20])
+    );
+}
+
+#[tokio::test]
+async fn added_date_run_longer_than_the_budget_fails() {
+    let server = Server::start(COLLECTION).await;
+    for n in 1..=20u8 {
+        push_ipv4(&server, n, 1, 10);
+    }
+    let (declared, resolver) = capped(&server, 10, 5);
+    resolver.resolve(&declared).await.expect("first window");
+    let err = resolver
+        .resolve(&declared)
+        .await
+        .expect_err("the cursor cannot move");
     assert!(
-        server
-            .object_requests()
-            .iter()
-            .any(|url| url.contains("added_after=")),
-        "later poll continues: {:?}",
-        server.object_requests()
+        err.to_string()
+            .contains("did not advance X-TAXII-Date-Added-Last"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn budget_stop_without_an_added_date_fails() {
+    let server = Server::start(COLLECTION).await;
+    server.date_header(DateHeader::Never);
+    for n in 1..=20u8 {
+        push_ipv4(&server, n, u32::from(n), 10);
+    }
+    let (declared, resolver) = capped(&server, 10, 5);
+    let err = resolver
+        .resolve(&declared)
+        .await
+        .expect_err("no cursor to continue from");
+    assert!(
+        err.to_string()
+            .contains("did not advance X-TAXII-Date-Added-Last"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn finished_poll_keeps_the_latest_added_date_when_the_last_page_has_none() {
+    let server = Server::start(COLLECTION).await;
+    server.date_header(DateHeader::NotOnLastPage);
+    for n in 1..=3u8 {
+        push_ipv4(&server, n, u32::from(n), 10);
+    }
+    let (declared, resolver) = capped(&server, 100, 2);
+    resolver.resolve(&declared).await.expect("first poll");
+    resolver.resolve(&declared).await.expect("second poll");
+    let requests = server.object_requests();
+    assert!(
+        requests
+            .last()
+            .is_some_and(|url| url.contains("added_after=2024-01-01T00%3A00%3A00.000002Z")),
+        "cursor from the last page that had a date: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn failed_poll_keeps_the_cursor_after_applying_a_page() {
+    let server = Server::start(COLLECTION).await;
+    for n in 1..=2u8 {
+        push_ipv4(&server, n, u32::from(n), 10);
+    }
+    server.unauthorized_after(1);
+    let (declared, resolver) = capped(&server, 100, 1);
+    resolver
+        .resolve(&declared)
+        .await
+        .expect_err("second page is unauthorized");
+    server.unauthorized_after(usize::MAX);
+    let value = resolver.resolve(&declared).await.expect("retry");
+    assert_eq!(ipv4(&value.data), sorted_ipv4([1, 2]));
+    let requests = server.object_requests();
+    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert!(
+        !requests[2].contains("added_after="),
+        "the retry starts from the old cursor: {requests:?}"
     );
 }

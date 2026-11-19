@@ -1,9 +1,9 @@
 //! Poll a TAXII 2.1 collection into a dynamic-source value.
 //!
 //! Poll state is not persisted. After a restart the next resolve is a full poll.
-//! A failed poll leaves the previous indicator set and cursor unchanged. A poll
-//! that stops at its budget keeps the pages it applied and advances the cursor
-//! when the last page carried `X-TAXII-Date-Added-Last`.
+//! A failed poll keeps the pages it applied and leaves the cursor unchanged. A
+//! poll that stops at its budget keeps the pages it applied and moves the cursor
+//! to just before the last page's `X-TAXII-Date-Added-Last`.
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -26,6 +26,7 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct Prepared {
+    source_id: String,
     client: TaxiiClient,
     url: String,
     collection: String,
@@ -81,6 +82,7 @@ impl TaxiiSources {
             prepared.insert(
                 source.id.clone(),
                 Prepared {
+                    source_id: source.id.clone(),
                     client,
                     url: url.clone(),
                     collection: collection.clone(),
@@ -119,19 +121,19 @@ impl TaxiiSources {
 
 /// Poll, then return the state that should be stored and the build.
 ///
-/// On failure the state is the one passed in, unchanged. On success it is the
-/// merged set. A budget stop is success when the last page has an added-date
-/// the next poll can continue from. `None` means there was no state and the
-/// poll failed.
+/// Pages applied before a failure stay in the set and the cursor stays where it
+/// was, so the next poll reads them again and the upsert ignores the repeats.
+/// A budget stop is success when it moves the cursor, and the build covers the
+/// pages applied so far.
 pub(crate) async fn poll(
     prepared: &Prepared,
     previous: Option<PollState>,
     now: &StixTimestamp,
-) -> (Option<PollState>, Result<StixBuild, SourceError>) {
-    let rollback = previous.clone();
-    let previous_cursor = previous
-        .as_ref()
-        .and_then(|state| state.added_after.clone());
+) -> (PollState, Result<StixBuild, SourceError>) {
+    let (mut set, previous_cursor) = match previous {
+        Some(state) => (state.set, state.added_after),
+        None => (IndicatorSet::default(), None),
+    };
     let mut filter = TaxiiFilter::new()
         .object_type("indicator")
         .spec_version("2.1")
@@ -140,11 +142,8 @@ pub(crate) async fn poll(
         filter = filter.added_after(cursor);
     }
     let budget = PollBudget::for_indicators(prepared.page_size, prepared.options.max_indicators);
-    let mut set = previous.map(|state| state.set).unwrap_or_default();
     let mut received_ids = HashSet::new();
     let mut received = 0usize;
-    let mut expired = 0u64;
-    let mut revoked = 0u64;
     let mut last_page_date = None;
     let mut latest_date = None;
     let polled = prepared
@@ -162,40 +161,52 @@ pub(crate) async fn poll(
                         set.upsert(indicator);
                     }
                 }
-                let (page_expired, page_revoked) = set.tombstone_terminal(&prepared.options, now);
-                expired += page_expired;
-                revoked += page_revoked;
-                last_page_date = page.date_added_last.clone();
+                last_page_date = page.date_added_last;
                 if last_page_date.is_some() {
                     latest_date = last_page_date.clone();
                 }
             },
         )
         .await;
-    let stop = match polled {
-        Ok(stop) => stop,
-        Err(err) => return (rollback, Err(fetch_error(err))),
+    let kept = |set: IndicatorSet| PollState {
+        set,
+        added_after: previous_cursor.clone(),
     };
-    if matches!(stop, PollStop::Budget)
-        && (last_page_date.is_none() || last_page_date == previous_cursor)
-    {
-        return (
-            rollback,
-            Err(fetch_error(TaxiiError::PollBudgetExceeded {
-                max_pages: budget.max_pages,
-                max_objects: budget.max_objects,
-            })),
-        );
-    }
-    let (value, mut skips, active) = set.build(&prepared.options, now, Some(&received_ids));
-    skips.expired += expired;
-    skips.revoked += revoked;
-    let added_after = match stop {
-        PollStop::Budget => last_page_date,
-        PollStop::Finished => latest_date.or(previous_cursor),
+    let added_after = match polled {
+        Err(err) => return (kept(set), Err(fetch_error(err.to_string()))),
+        Ok(PollStop::Finished) => latest_date.or(previous_cursor.clone()),
+        Ok(PollStop::Budget) => {
+            // `added_after` is exclusive and objects on the next page can share
+            // the last page's date, so the cursor sits one microsecond before it.
+            let resume = last_page_date.map(|date| date.adjust_micros(-1));
+            match resume {
+                Some(cursor) if previous_cursor.as_ref().is_none_or(|prev| cursor > *prev) => {
+                    tracing::warn!(
+                        source_id = %prepared.source_id,
+                        objects = received,
+                        added_after = %cursor.to_rfc3339(),
+                        "TAXII poll stopped at its budget; the next refresh continues from the cursor"
+                    );
+                    Some(cursor)
+                }
+                _ => {
+                    let err = TaxiiError::PollBudgetExceeded {
+                        max_pages: budget.max_pages,
+                        max_objects: budget.max_objects,
+                    };
+                    return (
+                        kept(set),
+                        Err(fetch_error(format!(
+                            "{err}, and the last page did not advance X-TAXII-Date-Added-Last, so the next poll cannot continue"
+                        ))),
+                    );
+                }
+            }
+        }
     };
+    let (value, skips, active) = set.build(&prepared.options, now, Some(&received_ids));
     (
-        Some(PollState { set, added_after }),
+        PollState { set, added_after },
         Ok(StixBuild {
             value,
             skips,
@@ -205,10 +216,10 @@ pub(crate) async fn poll(
     )
 }
 
-fn fetch_error(err: TaxiiError) -> SourceError {
+fn fetch_error(message: String) -> SourceError {
     SourceError {
         source_id: String::new(),
-        kind: SourceErrorKind::Fetch(err.to_string()),
+        kind: SourceErrorKind::Fetch(message),
     }
 }
 

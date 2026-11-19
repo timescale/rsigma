@@ -199,44 +199,6 @@ impl IndicatorSet {
         }
     }
 
-    /// Tombstone revoked and expired indicators and return how many moved.
-    ///
-    /// The caller adds the counts. A later [`IndicatorSet::build`] no longer
-    /// sees those ids, so it does not count them again.
-    pub(crate) fn tombstone_terminal(
-        &mut self,
-        options: &StixOptions,
-        now: &StixTimestamp,
-    ) -> (u64, u64) {
-        let configured: BTreeSet<&str> = options.observables.iter().map(String::as_str).collect();
-        let ids: Vec<String> = self.by_id.keys().cloned().collect();
-        let mut expired = 0u64;
-        let mut revoked = 0u64;
-        let mut tomb = Vec::new();
-        for id in ids {
-            let Some(candidate) = self.by_id.get(&id) else {
-                continue;
-            };
-            let modified = candidate.modified.clone();
-            match keep(&candidate.indicator, options, now, &configured) {
-                Err(SkipReason::Expired) => {
-                    expired += 1;
-                    tomb.push((id, modified));
-                }
-                Err(SkipReason::Revoked) => {
-                    revoked += 1;
-                    tomb.push((id, modified));
-                }
-                _ => {}
-            }
-        }
-        for (id, modified) in tomb {
-            self.by_id.remove(&id);
-            self.tombstones.insert(id, modified);
-        }
-        (expired, revoked)
-    }
-
     /// Apply the lifecycle at `now`, then the cap, and build the source value.
     ///
     /// `None` counts every id still stored. `Some` counts a not-yet-valid id,

@@ -1,6 +1,6 @@
 //! In-process TAXII 2.1 collection for source tests.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -21,7 +21,16 @@ struct State {
     object_hits: AtomicUsize,
     unauthorized_after: AtomicUsize,
     over_count: AtomicBool,
+    date_header: AtomicU8,
     collection: String,
+}
+
+/// When the objects endpoint sends `X-TAXII-Date-Added-Last`.
+#[derive(Clone, Copy)]
+pub enum DateHeader {
+    Always = 0,
+    Never = 1,
+    NotOnLastPage = 2,
 }
 
 /// API root, collection, and paginated objects.
@@ -45,6 +54,7 @@ impl Server {
             object_hits: AtomicUsize::new(0),
             unauthorized_after: AtomicUsize::new(usize::MAX),
             over_count: AtomicBool::new(false),
+            date_header: AtomicU8::new(DateHeader::Always as u8),
             collection: collection.to_owned(),
         });
         Mock::given(wiremock::matchers::method("GET"))
@@ -93,6 +103,10 @@ impl Server {
 
     pub fn over_count(&self, enabled: bool) {
         self.state.over_count.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn date_header(&self, mode: DateHeader) {
+        self.state.date_header.store(mode as u8, Ordering::SeqCst);
     }
 }
 
@@ -194,7 +208,12 @@ impl Responder {
             body["next"] = json!(filtered[end].0.to_string());
         }
         let mut response = taxii(200, body);
-        if let Some(added) = page.last().map(|(_, item)| item.added.clone()) {
+        let send_date = match self.state.date_header.load(Ordering::SeqCst) {
+            mode if mode == DateHeader::Never as u8 => false,
+            mode if mode == DateHeader::NotOnLastPage as u8 => more,
+            _ => true,
+        };
+        if send_date && let Some(added) = page.last().map(|(_, item)| item.added.clone()) {
             response = response.insert_header("X-TAXII-Date-Added-Last", added);
         }
         response
