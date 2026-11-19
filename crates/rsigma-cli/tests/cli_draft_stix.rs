@@ -281,7 +281,10 @@ fn a_url_question_mark_stays_literal() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_golden("draft-stix/url.yml", &String::from_utf8(out.stdout).unwrap());
+    assert_golden(
+        "draft-stix/url.yml",
+        &String::from_utf8(out.stdout).unwrap(),
+    );
 }
 
 #[cfg(feature = "stix-draft")]
