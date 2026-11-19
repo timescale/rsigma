@@ -86,3 +86,10 @@ updates:
           - "minor"
     cooldown:
       default-days: 7
+    # `vsce package` refuses an @types/vscode newer than engines.vscode, so
+    # the two move together by hand.
+    ignore:
+      - dependency-name: "@types/vscode"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
