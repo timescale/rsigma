@@ -3803,9 +3803,44 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-async fn list_rules(State(state): State<AppState>) -> impl IntoResponse {
+/// Resolve the tenant an API read should be scoped to. `Ok(None)` means every
+/// tenant, `Ok(Some)` means exactly one.
+fn read_tenant(
+    state: &AppState,
+    identity: Option<&AuthIdentity>,
+    requested: Option<&str>,
+) -> Result<Option<TenantId>, Response> {
+    match super::tenancy::tenant_filter(state.tenancy_enabled, identity, requested)? {
+        super::tenancy::TenantFilter::All => Ok(None),
+        super::tenancy::TenantFilter::Only(tenant) => Ok(Some(tenant)),
+    }
+}
+
+fn incident_visible(incident: &IncidentResult, tenant: Option<&TenantId>) -> bool {
+    tenant.is_none_or(|tenant| incident.tenant_id.as_ref() == Some(tenant))
+}
+
+/// `GET /api/v1/rules` — loaded rule counts and per-ruleset statistics.
+async fn list_rules(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let stats = state.processor.stats();
-    let rulesets = state.processor.ruleset_stats();
+    let mut rulesets = state.processor.ruleset_stats();
+    if let Some(tenant) = &tenant {
+        rulesets.retain(|ruleset| {
+            ruleset.tenants.is_empty() || ruleset.tenants.iter().any(|t| t == tenant)
+        });
+    }
     let mut value = serde_json::json!({
         "detection_rules": stats.detection_rules,
         "correlation_rules": stats.correlation_rules,
@@ -3815,7 +3850,7 @@ async fn list_rules(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         value["rulesets"] = serde_json::json!(rulesets);
     }
-    Json(value)
+    Json(value).into_response()
 }
 
 #[derive(Serialize)]
@@ -3843,7 +3878,19 @@ struct DynamicSourcesSummary {
 }
 
 /// `GET /api/v1/incidents` — open incidents from the grouping stage.
-async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_incidents(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let include = state
         .alert_pipeline_swap
         .load_full()
@@ -3853,10 +3900,14 @@ async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
         .unwrap_or(IncludeMode::Refs);
     let incidents = {
         let st = state.alert_state.read().unwrap_or_else(|e| e.into_inner());
-        st.incidents.snapshot(include)
+        st.incidents
+            .snapshot(include)
+            .into_iter()
+            .filter(|incident| incident_visible(incident, tenant.as_ref()))
+            .collect::<Vec<_>>()
     };
     let count = incidents.len();
-    Json(serde_json::json!({ "incidents": incidents, "count": count }))
+    Json(serde_json::json!({ "incidents": incidents, "count": count })).into_response()
 }
 
 /// The 503 body returned by the per-incident routes when grouping is off.
@@ -3891,14 +3942,26 @@ fn incident_include(state: &AppState) -> Option<IncludeMode> {
 /// list entry.
 async fn get_incident(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    Query(query): Query<super::tenancy::TenantQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let Some(include) = incident_include(&state) else {
         return grouping_disabled();
     };
     match snapshot_incident(&state, &id, include) {
-        Some(incident) => Json(incident).into_response(),
-        None => incident_not_found(&id),
+        Some(incident) if incident_visible(&incident, tenant.as_ref()) => {
+            Json(incident).into_response()
+        }
+        Some(_) | None => incident_not_found(&id),
     }
 }
 
@@ -3907,15 +3970,26 @@ async fn get_incident(
 struct BundleQuery {
     /// `json` (default) or `markdown`.
     format: Option<String>,
+    /// Narrow the read to one tenant.
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/incidents/{id}/bundle` — the incident joined to its rules'
 /// documentation and the risk entities it overlaps.
 async fn get_incident_bundle(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     Query(query): Query<BundleQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let format = match query.format.as_deref() {
         None => BundleFormat::Json,
         Some(requested) => match BundleFormat::parse(requested) {
@@ -3939,6 +4013,9 @@ async fn get_incident_bundle(
     let Some(incident) = snapshot_incident(&state, &id, include) else {
         return incident_not_found(&id);
     };
+    if !incident_visible(&incident, tenant.as_ref()) {
+        return incident_not_found(&id);
+    }
     if incident.bundle_ready == Some(false) {
         return (
             StatusCode::CONFLICT,
@@ -4007,30 +4084,61 @@ fn incident_not_found(id: &str) -> Response {
 /// `GET /api/v1/risk` — open entities tracked by the risk accumulator, with
 /// their current window score, distinct tactic count, source count, and window
 /// bounds. Empty when no risk accumulator is configured.
-async fn list_risk_entities(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_risk_entities(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let snapshot = state.risk_swap.load_full();
     let entities = match snapshot.as_ref().as_ref().and_then(|l| l.incident_config()) {
         Some(cfg) => {
             let now = chrono::Utc::now().timestamp();
             let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
             st.views(cfg, now)
+                .into_iter()
+                .filter(|entity| {
+                    tenant
+                        .as_ref()
+                        .is_none_or(|tenant| entity.tenant_id.as_ref() == Some(tenant))
+                })
+                .collect::<Vec<_>>()
         }
         None => Vec::new(),
     };
     let count = entities.len();
-    Json(serde_json::json!({ "entities": entities, "count": count }))
+    Json(serde_json::json!({ "entities": entities, "count": count })).into_response()
 }
 
 /// `GET /api/v1/correlations` — the compiled correlation list with per-group
 /// counts (no window contents). Empty when the engine has no correlation rules.
-async fn list_correlations(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_correlations(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let correlations = state
         .processor
-        .introspect_correlations(None, None)
+        .introspect_correlations_for_tenant(None, None, tenant.as_ref())
         .map(|s| s.correlations)
         .unwrap_or_default();
     let count = correlations.len();
-    Json(serde_json::json!({ "correlations": correlations, "count": count }))
+    Json(serde_json::json!({ "correlations": correlations, "count": count })).into_response()
 }
 
 /// Query parameters for `GET /api/v1/correlations/state`.
@@ -4041,6 +4149,8 @@ struct CorrelationStateQuery {
     /// Keep only groups whose rendered key (`field=value, ...`) contains this
     /// substring.
     group: Option<String>,
+    /// Narrow the read to one tenant.
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/correlations/state` — the live per-group window snapshot
@@ -4049,11 +4159,22 @@ struct CorrelationStateQuery {
 /// engine has no correlation rules.
 async fn correlations_state(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<CorrelationStateQuery>,
-) -> impl IntoResponse {
-    let snapshot = state
-        .processor
-        .introspect_correlations(query.id.as_deref(), query.group.as_deref());
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    let snapshot = state.processor.introspect_correlations_for_tenant(
+        query.id.as_deref(),
+        query.group.as_deref(),
+        tenant.as_ref(),
+    );
     match snapshot {
         Some(s) => {
             let count = s.groups.len();
@@ -4062,8 +4183,10 @@ async fn correlations_state(
                 "groups": s.groups,
                 "count": count,
             }))
+            .into_response()
         }
-        None => Json(serde_json::json!({ "correlations": [], "groups": [], "count": 0 })),
+        None => Json(serde_json::json!({ "correlations": [], "groups": [], "count": 0 }))
+            .into_response(),
     }
 }
 
@@ -4099,19 +4222,33 @@ struct AuditQuery {
     offset: Option<u64>,
     since: Option<i64>,
     until: Option<i64>,
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/audit` — paginated control-plane mutation audit log.
 async fn list_audit(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<AuditQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let Some(audit) = state.audit.as_ref() else {
         return audit_disabled();
     };
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);
-    match audit.query(limit, offset, query.since, query.until).await {
+    let tenant = tenant.map(|tenant| tenant.as_str().to_string());
+    match audit
+        .query(limit, offset, query.since, query.until, tenant)
+        .await
+    {
         Ok((count, entries)) => Json(serde_json::json!({
             "count": count,
             "entries": entries,
@@ -4127,11 +4264,40 @@ async fn list_audit(
 
 /// `POST /api/v1/dispositions` — ingest one or more analyst dispositions (a
 /// single object, a JSON array, or NDJSON). Returns the ingest summary.
-async fn ingest_dispositions(State(state): State<AppState>, body: String) -> Response {
+async fn ingest_dispositions(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    body: String,
+) -> Response {
     let Some(dispositions) = state.disposition_state.as_ref() else {
         return dispositions_disabled();
     };
-    match dispositions.ingest(&body, "api") {
+    // A body `tenant` is read only to validate it against the token; the token
+    // wins. `write_tenant` refuses a foreign tenant with 403.
+    let body_tenant = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| match value {
+            serde_json::Value::Object(map) => map
+                .get("tenant")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            serde_json::Value::Array(items) => items
+                .first()
+                .and_then(serde_json::Value::as_object)
+                .and_then(|map| map.get("tenant"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        });
+    let tenant = match super::tenancy::write_tenant(
+        state.tenancy_enabled,
+        identity.as_ref().map(|e| &e.0),
+        body_tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    match dispositions.ingest_with_tenant(&body, "api", tenant) {
         Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -4142,27 +4308,55 @@ async fn ingest_dispositions(State(state): State<AppState>, body: String) -> Res
 }
 
 /// `GET /api/v1/dispositions` — the per-rule false-positive ratio view.
-async fn list_dispositions(State(state): State<AppState>) -> Response {
+async fn list_dispositions(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     match state.disposition_state.as_ref() {
-        Some(dispositions) => Json(dispositions.view()).into_response(),
+        Some(dispositions) => Json(dispositions.view_for_tenant(tenant.as_ref())).into_response(),
         None => dispositions_disabled(),
     }
 }
 
 /// `GET /api/v1/silences` — operator silences and their state.
-async fn list_silences(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_silences(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let now = chrono::Utc::now().timestamp();
     let silences = {
         let st = state.alert_state.read().unwrap_or_else(|e| e.into_inner());
-        st.silences.snapshot(now)
+        st.silences.snapshot_scoped(now, tenant.as_ref())
     };
     let count = silences.len();
-    Json(serde_json::json!({ "silences": silences, "count": count }))
+    Json(serde_json::json!({ "silences": silences, "count": count })).into_response()
 }
 
 /// `POST /api/v1/silences` — create a silence. Returns the assigned id.
-async fn create_silence(State(state): State<AppState>, body: String) -> Response {
-    let spec: SilenceSpec = match serde_json::from_str(&body) {
+async fn create_silence(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    body: String,
+) -> Response {
+    let mut spec: SilenceSpec = match serde_json::from_str(&body) {
         Ok(spec) => spec,
         Err(e) => {
             return (
@@ -4172,6 +4366,16 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                 .into_response();
         }
     };
+    let body_tenant = spec.tenant.as_ref().map(|t| t.as_str().to_string());
+    let tenant = match super::tenancy::write_tenant(
+        state.tenancy_enabled,
+        identity.as_ref().map(|e| &e.0),
+        body_tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    spec.tenant = tenant;
     let Some((max_silences, limits)) = state
         .alert_pipeline_swap
         .load_full()
@@ -4236,22 +4440,34 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
 /// `DELETE /api/v1/silences/{id}` — expire (remove) a silence.
 async fn delete_silence(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> impl IntoResponse {
+) -> Response {
+    let tenant = match super::tenancy::tenant_filter(
+        state.tenancy_enabled,
+        identity.as_ref().map(|e| &e.0),
+        None,
+    ) {
+        Ok(super::tenancy::TenantFilter::All) => None,
+        Ok(super::tenancy::TenantFilter::Only(tenant)) => Some(tenant),
+        Err(response) => return response,
+    };
     let removed = {
         let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-        st.silences.remove(&id)
+        st.silences.remove_scoped(&id, tenant.as_ref())
     };
     if removed {
         (
             StatusCode::OK,
             Json(serde_json::json!({ "status": "deleted", "id": id })),
         )
+            .into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such silence", "id": id })),
         )
+            .into_response()
     }
 }
 
@@ -4865,6 +5081,7 @@ async fn fields_observer_reset(State(state): State<AppState>) -> Response {
 /// captured / dropped counts so consumers can detect gaps.
 async fn tap_stream(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<super::tap::TapQuery>,
 ) -> Response {
     let Some(tap) = state.tap.as_ref() else {
@@ -4888,8 +5105,16 @@ async fn tap_stream(
                 .into_response();
         }
     };
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
 
-    let Some(handle) = tap.registry.register(params.stage, None) else {
+    let Some(handle) = tap.registry.register(params.stage, tenant) else {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
@@ -4909,6 +5134,7 @@ async fn tap_stream(
 /// reports the streamed / dropped counts.
 async fn detections_stream(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<super::tail::TailQuery>,
 ) -> Response {
     let Some(tail) = state.tail.as_ref() else {
@@ -4932,8 +5158,16 @@ async fn detections_stream(
                 .into_response();
         }
     };
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
 
-    match super::tail::stream_response(&tail.registry, params, tail.metrics.clone()) {
+    match super::tail::stream_response(&tail.registry, params, tenant, tail.metrics.clone()) {
         Some(response) => response,
         None => (
             StatusCode::CONFLICT,

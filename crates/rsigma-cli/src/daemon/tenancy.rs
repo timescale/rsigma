@@ -416,9 +416,9 @@ mod tests {
     #[test]
     fn subjects_overlap_examples() {
         assert!(subjects_overlap("a.>", "a.b"));
-        assert!(subjects_overlap("a.*", "a.b.c"));
+        assert!(!subjects_overlap("a.*", "a.b.c"));
         assert!(subjects_overlap("a.*.c", "a.b.*"));
-        assert!(subjects_overlap("a", "a.>"));
+        assert!(!subjects_overlap("a", "a.>"));
         assert!(subjects_overlap(">", "anything.at.all"));
         assert!(subjects_overlap("a.b", "a.b"));
         assert!(!subjects_overlap("a.b", "a.c"));

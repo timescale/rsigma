@@ -169,6 +169,43 @@ pub fn required_access(method: &Method, path: &str) -> Access {
     }
 }
 
+/// The tenancy class of an API route, enforced at the edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TenancyClass {
+    /// No tenant needed (`/healthz`, `/readyz`).
+    Open,
+    /// Requires a token bound to exactly one tenant.
+    Ingest,
+    /// Reads and writes the handler scopes to the token's tenant.
+    TenantScoped,
+    /// Spans tenants, so it requires an `all_tenants` token.
+    OperatorOnly,
+}
+
+/// Map a method + route pattern to its tenancy class. Unknown routes fail
+/// closed as [`TenancyClass::OperatorOnly`].
+pub(crate) fn tenancy_class(method: &Method, path: &str) -> TenancyClass {
+    use TenancyClass::{Ingest, Open, OperatorOnly, TenantScoped};
+    match (method, path) {
+        (&Method::GET, "/healthz" | "/readyz") => Open,
+        (&Method::POST, "/api/v1/events" | "/v1/logs") => Ingest,
+        (&Method::GET, "/api/v1/rules") => TenantScoped,
+        (&Method::GET, "/api/v1/correlations" | "/api/v1/correlations/state") => TenantScoped,
+        (&Method::GET, "/api/v1/incidents" | "/api/v1/incidents/{id}") => TenantScoped,
+        (&Method::GET, "/api/v1/incidents/{id}/bundle") => TenantScoped,
+        (&Method::GET, "/api/v1/risk") => TenantScoped,
+        (&Method::GET, "/api/v1/silences") => TenantScoped,
+        (&Method::POST, "/api/v1/silences") => TenantScoped,
+        (&Method::DELETE, "/api/v1/silences/{id}") => TenantScoped,
+        (&Method::GET, "/api/v1/dispositions") => TenantScoped,
+        (&Method::POST, "/api/v1/dispositions") => TenantScoped,
+        (&Method::GET, "/api/v1/audit") => TenantScoped,
+        (&Method::GET, "/api/v1/tap") => TenantScoped,
+        (&Method::GET, "/api/v1/detections/stream") => TenantScoped,
+        _ => OperatorOnly,
+    }
+}
+
 /// The built-in role names and their permission sets.
 pub const BUILTIN_ROLES: &[(&str, &[&str])] = &[
     ("reader", &["*:read"]),
@@ -484,7 +521,41 @@ pub async fn api_auth_middleware(
                     }
                 }
             }
-            request.extensions_mut().insert(identity);
+            request.extensions_mut().insert(identity.clone());
+            if state.tenancy {
+                let class = tenancy_class(request.method(), &path);
+                let denied = match class {
+                    TenancyClass::Open | TenancyClass::TenantScoped => false,
+                    TenancyClass::Ingest => identity.tenant.is_none(),
+                    TenancyClass::OperatorOnly => !identity.all_tenants,
+                };
+                if denied {
+                    state
+                        .metrics
+                        .api_auth_failures
+                        .with_label_values(&["forbidden"])
+                        .inc();
+                    tracing::warn!(
+                        path = %path,
+                        token = ?identity.token,
+                        "API auth failure: tenancy route class denied"
+                    );
+                    let response = (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(serde_json::json!({
+                            "error": match class {
+                                TenancyClass::Ingest =>
+                                    "ingest requires a token bound to exactly one tenant",
+                                TenancyClass::OperatorOnly =>
+                                    "this endpoint spans tenants; use an all_tenants token",
+                                _ => "forbidden",
+                            }
+                        })),
+                    )
+                        .into_response();
+                    return drain_then_respond(request, response).await;
+                }
+            }
             next.run(request).await
         }
         Decision::Unauthorized => {
@@ -679,6 +750,80 @@ mod tests {
                 "route {method} {path} fell through to the fail-closed catch-all"
             );
         }
+    }
+
+    #[test]
+    fn every_route_has_a_tenancy_class() {
+        // The routes mounted in server.rs. The catch-all is OperatorOnly, so a
+        // route added without a class is fail-closed; this list pins the
+        // classes the handlers rely on.
+        let cases: &[(Method, &str, TenancyClass)] = &[
+            (Method::GET, "/healthz", TenancyClass::Open),
+            (Method::GET, "/readyz", TenancyClass::Open),
+            (Method::POST, "/api/v1/events", TenancyClass::Ingest),
+            (Method::POST, "/v1/logs", TenancyClass::Ingest),
+            (Method::GET, "/api/v1/rules", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/correlations",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/correlations/state",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/incidents", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/incidents/{id}",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/incidents/{id}/bundle",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/risk", TenancyClass::TenantScoped),
+            (Method::GET, "/api/v1/silences", TenancyClass::TenantScoped),
+            (Method::POST, "/api/v1/silences", TenancyClass::TenantScoped),
+            (
+                Method::DELETE,
+                "/api/v1/silences/{id}",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/dispositions",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::POST,
+                "/api/v1/dispositions",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/audit", TenancyClass::TenantScoped),
+            (Method::GET, "/api/v1/tap", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/detections/stream",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/metrics", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/status", TenancyClass::OperatorOnly),
+            (Method::POST, "/api/v1/reload", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/fields", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/schemas", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/sources", TenancyClass::OperatorOnly),
+        ];
+        for (method, path, expected) in cases {
+            assert_eq!(tenancy_class(method, path), *expected, "{method} {path}");
+        }
+        assert_eq!(
+            tenancy_class(&Method::GET, "/api/v1/unknown"),
+            TenancyClass::OperatorOnly,
+            "unknown routes fail closed"
+        );
     }
 
     #[test]

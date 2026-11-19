@@ -116,8 +116,11 @@ impl AuditLog {
         offset: u64,
         since: Option<i64>,
         until: Option<i64>,
+        tenant: Option<String>,
     ) -> Result<(u64, Vec<AuditRecord>), String> {
-        self.store.query_audit(limit, offset, since, until).await
+        self.store
+            .query_audit(limit, offset, since, until, tenant)
+            .await
     }
 
     pub async fn prune(&self) {

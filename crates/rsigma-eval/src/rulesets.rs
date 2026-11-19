@@ -613,12 +613,27 @@ impl RulesetEngines {
         id: Option<&str>,
         group: Option<&str>,
     ) -> BTreeMap<String, CorrelationIntrospection> {
+        self.introspect_filtered_for_tenant(id, group, None)
+    }
+
+    /// Like [`introspect_filtered`](Self::introspect_filtered), keeping only
+    /// groups owned by `tenant` when it is set.
+    pub fn introspect_filtered_for_tenant(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+        tenant: Option<&TenantId>,
+    ) -> BTreeMap<String, CorrelationIntrospection> {
         let mut out = BTreeMap::new();
         for unit in &self.units {
             let snapshot = match &unit.engine {
                 UnitEngine::Detection(_) => None,
-                UnitEngine::Correlation(engine) => Some(engine.introspect_filtered(id, group)),
-                UnitEngine::Routed(router) => router.correlation_introspect(id, group),
+                UnitEngine::Correlation(engine) => {
+                    Some(engine.introspect_for_tenant(id, group, tenant))
+                }
+                UnitEngine::Routed(router) => {
+                    router.correlation_introspect_for_tenant(id, group, tenant)
+                }
             };
             if let Some(snapshot) = snapshot {
                 out.insert(unit.name.to_string(), snapshot);

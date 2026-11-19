@@ -350,12 +350,17 @@ impl SqliteStateStore {
         offset: u64,
         since: Option<i64>,
         until: Option<i64>,
+        tenant: Option<String>,
     ) -> Result<(u64, Vec<super::audit::AuditRecord>), String> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().map_err(|_| "state store lock poisoned")?;
             let mut clauses = Vec::new();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(tenant) = tenant {
+                clauses.push("tenant = ?");
+                params.push(Box::new(tenant));
+            }
             if let Some(s) = since {
                 clauses.push("ts >= ?");
                 params.push(Box::new(s));
@@ -404,7 +409,7 @@ impl SqliteStateStore {
                         token: row.get(4)?,
                         tenant: row.get(5)?,
                         payload_digest: row.get(6)?,
-                        status: row.get::<_, i64>(6)? as u16,
+                        status: row.get::<_, i64>(7)? as u16,
                     })
                 })
                 .map_err(|e| format!("query audit rows: {e}"))?;
@@ -957,7 +962,7 @@ mod tests {
         };
         store.insert_audit(&rec).await.unwrap();
 
-        let (count, entries) = store.query_audit(10, 0, None, None).await.unwrap();
+        let (count, entries) = store.query_audit(10, 0, None, None, None).await.unwrap();
         assert_eq!(count, 1);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].method, "POST");
@@ -977,7 +982,7 @@ mod tests {
         store.insert_audit(&old).await.unwrap();
         store.prune_audit(1, 500).await.unwrap();
 
-        let (count, entries) = store.query_audit(10, 0, None, None).await.unwrap();
+        let (count, entries) = store.query_audit(10, 0, None, None, None).await.unwrap();
         assert_eq!(count, 1);
         assert_eq!(entries[0].endpoint, "/api/v1/silences");
     }

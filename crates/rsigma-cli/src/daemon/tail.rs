@@ -58,10 +58,17 @@ pub(crate) struct TailFilter {
     min_level: Option<Level>,
     /// Case-insensitive substring matched against the rule title or id.
     rule: Option<String>,
+    /// Only results of this tenant when set.
+    tenant: Option<rsigma_eval::TenantId>,
 }
 
 impl TailFilter {
     fn matches(&self, result: &EvaluationResult) -> bool {
+        if let Some(tenant) = &self.tenant
+            && result.header.tenant_id.as_ref() != Some(tenant)
+        {
+            return false;
+        }
         if let Some(min) = self.min_level {
             match result.header.level {
                 Some(level) if level_rank(level) >= level_rank(min) => {}
@@ -204,6 +211,7 @@ pub(crate) struct TailQuery {
     limit: Option<u64>,
     level: Option<String>,
     rule: Option<String>,
+    pub(crate) tenant: Option<String>,
 }
 
 /// Validated tail parameters.
@@ -242,7 +250,11 @@ pub(crate) fn parse_params(query: &TailQuery) -> Result<ParsedParams, String> {
     Ok(ParsedParams {
         duration,
         limit: query.limit,
-        filter: TailFilter { min_level, rule },
+        filter: TailFilter {
+            min_level,
+            rule,
+            tenant: None,
+        },
     })
 }
 
@@ -250,9 +262,11 @@ pub(crate) fn parse_params(query: &TailQuery) -> Result<ParsedParams, String> {
 /// when the concurrent-session cap is reached (the caller maps this to `409`).
 pub(crate) fn stream_response(
     registry: &Arc<TailRegistry>,
-    params: ParsedParams,
+    mut params: ParsedParams,
+    tenant: Option<rsigma_eval::TenantId>,
     metrics: Arc<Metrics>,
 ) -> Option<Response> {
+    params.filter.tenant = tenant;
     let handle = registry.register(params.filter)?;
 
     metrics.tail_active_sessions.inc();
@@ -375,6 +389,7 @@ mod tests {
         let f = TailFilter {
             min_level: Some(Level::High),
             rule: None,
+            tenant: None,
         };
         assert!(f.matches(&detection("a", Some(Level::High))));
         assert!(f.matches(&detection("a", Some(Level::Critical))));
@@ -387,6 +402,7 @@ mod tests {
         let f = TailFilter {
             min_level: None,
             rule: Some("whoami".to_string()),
+            tenant: None,
         };
         assert!(f.matches(&detection("Detect WHOAMI usage", None)));
         assert!(!f.matches(&detection("Detect netcat", None)));
@@ -412,6 +428,7 @@ mod tests {
             .register(TailFilter {
                 min_level: Some(Level::High),
                 rule: None,
+                tenant: None,
             })
             .expect("registered");
 

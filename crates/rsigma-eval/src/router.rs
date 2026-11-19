@@ -464,6 +464,19 @@ impl<L> SchemaRouter<L> {
             .map(|c| c.introspect_filtered(id, group))
     }
 
+    /// Like [`correlation_introspect`](Self::correlation_introspect), keeping
+    /// only groups owned by `tenant` when it is set.
+    pub fn correlation_introspect_for_tenant(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+        tenant: Option<&crate::tenant::TenantId>,
+    ) -> Option<CorrelationStateSnapshot> {
+        self.correlation
+            .as_ref()
+            .map(|c| c.introspect_for_tenant(id, group, tenant))
+    }
+
     /// Export the shared correlation state, if any, for hot-reload carry-over.
     pub fn export_state(&self) -> Option<CorrelationSnapshot> {
         self.correlation.as_ref().map(|c| c.export_state())

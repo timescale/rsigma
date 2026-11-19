@@ -984,6 +984,12 @@ daemon:
     batch_max: 64
   input:
     source: nats://127.0.0.1:4222/events
+    tenant: tenant-a
+    nats_tenants:
+      - subject: tenants.tenant-b.>
+        tenant: tenant-b
+  tenancy:
+    enabled: true
   nats:
     consumer_group: another-deployment
   state:
@@ -1028,7 +1034,10 @@ daemon:
         let output = daemon.output.unwrap();
         assert!(output.sinks.is_none() && output.dlq.is_none() && output.webhooks.is_none());
         assert_eq!(output.batch_max, Some(64));
-        assert!(daemon.input.unwrap().source.is_none());
+        let input = daemon.input.unwrap();
+        assert!(input.source.is_none());
+        assert!(input.tenant.is_none() && input.nats_tenants.is_none());
+        assert!(daemon.tenancy.is_none());
         assert!(daemon.nats.unwrap().consumer_group.is_none());
         let state = daemon.state.unwrap();
         assert!(state.db.is_none());

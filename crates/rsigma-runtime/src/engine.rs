@@ -867,16 +867,32 @@ impl RuntimeEngine {
         id: Option<&str>,
         group: Option<&str>,
     ) -> Option<CorrelationStateSnapshot> {
+        self.introspect_correlations_for_tenant(id, group, None)
+    }
+
+    /// Like [`introspect_correlations`](Self::introspect_correlations), keeping
+    /// only groups owned by `tenant` when it is set.
+    pub fn introspect_correlations_for_tenant(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+        tenant: Option<&rsigma_eval::TenantId>,
+    ) -> Option<CorrelationStateSnapshot> {
         match &self.engine {
             EngineVariant::DetectionOnly(_) => None,
-            EngineVariant::WithCorrelations(engine) => Some(engine.introspect_filtered(id, group)),
-            EngineVariant::Routed(router) => router.correlation_introspect(id, group),
+            EngineVariant::WithCorrelations(engine) => {
+                Some(engine.introspect_for_tenant(id, group, tenant))
+            }
+            EngineVariant::Routed(router) => {
+                router.correlation_introspect_for_tenant(id, group, tenant)
+            }
             EngineVariant::Rulesets(engines) => {
                 let mut snapshot = CorrelationStateSnapshot {
                     correlations: Vec::new(),
                     groups: Vec::new(),
                 };
-                for (ruleset, mut part) in engines.introspect_filtered(id, group) {
+                for (ruleset, mut part) in engines.introspect_filtered_for_tenant(id, group, tenant)
+                {
                     for row in &mut part.correlations {
                         row.ruleset = Some(ruleset.clone());
                     }

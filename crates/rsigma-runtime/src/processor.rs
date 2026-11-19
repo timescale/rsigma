@@ -744,9 +744,20 @@ impl LogProcessor {
         id: Option<&str>,
         group: Option<&str>,
     ) -> Option<rsigma_eval::CorrelationStateSnapshot> {
+        self.introspect_correlations_for_tenant(id, group, None)
+    }
+
+    /// Like [`introspect_correlations`](Self::introspect_correlations), keeping
+    /// only groups owned by `tenant` when it is set.
+    pub fn introspect_correlations_for_tenant(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+        tenant: Option<&rsigma_eval::TenantId>,
+    ) -> Option<rsigma_eval::CorrelationStateSnapshot> {
         let snapshot = self.engine.load();
         let engine = snapshot.read();
-        engine.introspect_correlations(id, group)
+        engine.introspect_correlations_for_tenant(id, group, tenant)
     }
 
     /// Resolve several rule keys to their documentation in one pass.

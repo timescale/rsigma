@@ -111,8 +111,28 @@ impl DispositionState {
     /// labeling metrics with `source` (`api`, `file`, `http`, or `nats`).
     /// Returns `Err` only when the whole payload fails to parse.
     pub fn ingest(&self, body: &str, source: &str) -> Result<IngestSummary, String> {
+        self.ingest_inner(body, source, None)
+    }
+
+    /// Ingest a batch and bind every disposition to `tenant`, overriding any
+    /// `tenant` in the body.
+    pub fn ingest_with_tenant(
+        &self,
+        body: &str,
+        source: &str,
+        tenant: Option<rsigma_eval::TenantId>,
+    ) -> Result<IngestSummary, String> {
+        self.ingest_inner(body, source, tenant)
+    }
+
+    fn ingest_inner(
+        &self,
+        body: &str,
+        source: &str,
+        tenant: Option<rsigma_eval::TenantId>,
+    ) -> Result<IngestSummary, String> {
         let now = chrono::Utc::now().timestamp();
-        let raws = match parse_dispositions(body) {
+        let mut raws = match parse_dispositions(body) {
             Ok(r) => r,
             Err(e) => {
                 self.metrics
@@ -122,6 +142,11 @@ impl DispositionState {
                 return Err(e.to_string());
             }
         };
+        if let Some(tenant) = &tenant {
+            for raw in &mut raws {
+                raw.tenant = Some(tenant.as_str().to_string());
+            }
+        }
         let mut summary = IngestSummary::default();
         for raw in raws {
             match Disposition::from_raw(raw, now) {
@@ -398,7 +423,13 @@ impl DispositionState {
     }
 
     /// The per-rule ratio view served by `GET /api/v1/dispositions`.
+    #[allow(dead_code)]
     pub fn view(&self) -> serde_json::Value {
+        self.view_for_tenant(None)
+    }
+
+    /// The per-rule view scoped to `tenant`. `None` shows every tenant.
+    pub fn view_for_tenant(&self, tenant: Option<&rsigma_eval::TenantId>) -> serde_json::Value {
         let Ok(store) = self.store.read() else {
             return json!({ "error": "store lock poisoned" });
         };
@@ -406,9 +437,14 @@ impl DispositionState {
         let rules: Vec<serde_json::Value> = store
             .summaries()
             .into_iter()
+            .filter(|s| match tenant {
+                None => true,
+                Some(tenant) => s.tenant.as_ref() == Some(tenant),
+            })
             .map(|s| {
                 json!({
                     "rule_id": s.rule_id,
+                    "tenant_id": s.tenant.as_ref().map(|t| t.as_str()),
                     "true_positives": s.true_positives,
                     "false_positives": s.false_positives,
                     "benign_true_positives": s.benign_true_positives,
