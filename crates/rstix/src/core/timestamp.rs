@@ -146,6 +146,11 @@ impl TaxiiTimestamp {
         Self(self.0 + time::Duration::seconds(delta))
     }
 
+    /// Shift by `delta` microseconds, the precision TAXII timestamps carry.
+    pub fn adjust_micros(&self, delta: i64) -> Self {
+        Self(self.0 + time::Duration::microseconds(delta))
+    }
+
     /// Format with exactly six fractional digits.
     pub fn to_rfc3339(&self) -> String {
         let date = self.0.date();
@@ -182,6 +187,16 @@ mod tests {
     fn taxii_timestamp_normalizes_to_six_digits() {
         let ts = TaxiiTimestamp::parse("2024-01-01T00:00:00.000Z").expect("valid");
         assert_eq!(ts.to_rfc3339(), "2024-01-01T00:00:00.000000Z");
+    }
+
+    #[test]
+    fn taxii_timestamp_adjust_micros_crosses_a_second() {
+        let ts = TaxiiTimestamp::parse("2024-01-01T00:00:01.000000Z").expect("valid");
+        assert_eq!(
+            ts.adjust_micros(-1).to_rfc3339(),
+            "2024-01-01T00:00:00.999999Z"
+        );
+        assert!(ts.adjust_micros(-1) < ts);
     }
 
     #[test]
