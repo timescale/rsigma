@@ -225,26 +225,16 @@ fn draft_stix(raw: &str, options: &DraftStixOptions) -> Result<DraftStixOutcome,
     let bundle = Bundle::parse_with_options(&text, &parse_options)
         .map_err(|error| format!("failed to parse STIX: {error}"))?;
 
-    let mut chosen: BTreeMap<String, rstix::model::sdo::Indicator> = BTreeMap::new();
-    for object in bundle.objects() {
-        let StixObject::Sdo(SdoObject::Indicator(indicator)) = object else {
-            continue;
-        };
-        let id = indicator.common.id.to_string();
-        match chosen.get(&id) {
-            Some(existing) if existing.common.modified >= indicator.common.modified => {}
-            _ => {
-                chosen.insert(id, indicator.clone());
-            }
-        }
-    }
-
     let filter: BTreeSet<&str> = options.observables.iter().map(String::as_str).collect();
     let mut buckets: BTreeMap<&'static str, Bucket> = BTreeMap::new();
     let mut used: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
     let mut skipped = Vec::new();
 
-    for (id, indicator) in &chosen {
+    for object in bundle.objects() {
+        let StixObject::Sdo(SdoObject::Indicator(indicator)) = object else {
+            continue;
+        };
+        let id = indicator.common.id.to_string();
         if indicator.common.revoked == Some(true) {
             skipped.push(SkippedIndicator {
                 id: id.clone(),
