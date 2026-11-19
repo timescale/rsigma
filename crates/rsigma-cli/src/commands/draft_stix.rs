@@ -449,10 +449,6 @@ const REGISTRY_HIVES: &[&str] = &[
     "HKU",
 ];
 
-/// `TargetObject|contains` needle. The hive is dropped and the remaining key
-/// is wrapped in backslashes, so a Sysmon value that uses a short hive and
-/// appends the value name still matches. A key with no known hive keeps its
-/// whole path, wrapped the same way. A hive with no key path is not drafted.
 fn canonical_ipv6(value: &str) -> String {
     value
         .parse::<std::net::Ipv6Addr>()
@@ -460,6 +456,10 @@ fn canonical_ipv6(value: &str) -> String {
         .unwrap_or_else(|_| value.to_string())
 }
 
+/// `TargetObject|contains` needle. The hive is dropped and the remaining key
+/// is wrapped in backslashes, so a Sysmon value that uses a short hive and
+/// appends the value name still matches. A key with no known hive keeps its
+/// whole path, wrapped the same way. A hive with no key path is not drafted.
 fn registry_contains_value(key: &str) -> Option<String> {
     let rest = strip_registry_hive(key).unwrap_or(key);
     let rest = rest.trim_matches('\\');
