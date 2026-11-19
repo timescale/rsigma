@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### VS Code extension declares VS Code 1.91 and packages again
+### VS Code extension declares VS Code 1.91 and packages again (#725)
 
 `npm run package` in `editors/vscode` failed because `@types/vscode` had moved past the `^1.75.0` engine requirement, which `vsce` refuses. `vscode-languageclient` 11 already needs VS Code 1.91, so `engines.vscode` is now `^1.91.0` and `@types/vscode` is pinned to `~1.91.0`, which also makes the compiler reject APIs newer than the declared minimum. Dependabot no longer proposes minor or major `@types/vscode` updates; raise it together with the engine. The editor docs state the 1.91 requirement.
 
