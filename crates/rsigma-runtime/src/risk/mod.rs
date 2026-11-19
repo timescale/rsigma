@@ -61,6 +61,8 @@ pub struct RiskEvent {
     pub level: Option<String>,
     pub risk_score: i64,
     pub risk_object: RiskObject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<rsigma_eval::TenantId>,
 }
 
 /// Output of [`RiskLayer::process`]: the annotated pass-through results and the
@@ -403,6 +405,7 @@ fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i
         level: result.header.level.map(|l| l.as_str().to_string()),
         risk_score: score,
         risk_object: object.clone(),
+        tenant_id: result.header.tenant_id.clone(),
     }
 }
 

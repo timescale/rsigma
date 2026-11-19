@@ -682,6 +682,7 @@ fn risk_event_is_a_create_finding() {
             object_type: "src_ip".to_string(),
             value: "203.0.113.4".to_string(),
         },
+        tenant_id: None,
     };
     check_both_versions("risk_event", |opts| {
         risk_event_finding_with_opts(&event, &FixedSource::new(), opts)

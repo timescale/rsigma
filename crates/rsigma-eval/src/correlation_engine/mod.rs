@@ -745,6 +745,12 @@ impl<L> CorrelationEngine<L> {
         self.untenanted_skipped
     }
 
+    /// Events skipped by `require_tenant` since the previous call, draining the
+    /// counter.
+    pub fn take_untenanted_skipped(&mut self) -> u64 {
+        std::mem::take(&mut self.untenanted_skipped)
+    }
+
     /// Set the per-tenant state cap. `None` leaves only the global cap.
     pub fn set_max_state_entries_per_tenant(&mut self, max: Option<usize>) {
         self.config.max_state_entries_per_tenant = max;

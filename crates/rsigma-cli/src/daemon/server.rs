@@ -807,6 +807,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     }
 
     let processor = Arc::new(LogProcessor::new(engine, metrics.clone()));
+    processor.set_tenant_allowlist(config.tenancy.metrics_tenant_allowlist.clone());
+    for tenant in &config.tenancy.metrics_tenant_allowlist {
+        metrics.register_tenant(tenant.as_str());
+    }
 
     // Initial rule load
     match processor.reload_rules() {
@@ -2667,10 +2671,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     &[]
                                 };
                                 let env = with_ocsf_lines(
-                                    FormattedIncidentEnvelope::new(IncidentEnvelope::new(
-                                        json,
-                                        subject.clone(),
-                                    )),
+                                    FormattedIncidentEnvelope::new(
+                                        IncidentEnvelope::new(json, subject.clone())
+                                            .with_tenant(tenant_from_json(&event)),
+                                    ),
                                     ocsf,
                                     "risk event",
                                     |opts| {
@@ -2693,7 +2697,8 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     Ok(json) => {
                                         let env = with_ocsf_lines(
                                             FormattedIncidentEnvelope::new(
-                                                IncidentEnvelope::new(json, subject.clone()),
+                                                IncidentEnvelope::new(json, subject.clone())
+                                                    .with_tenant(incident.tenant_id.clone()),
                                             ),
                                             &ocsf_options,
                                             "risk incident",
@@ -2820,7 +2825,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 }
                             };
                             let env = with_ocsf_lines(
-                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None)),
+                                FormattedIncidentEnvelope::new(
+                                    IncidentEnvelope::new(json, None)
+                                        .with_tenant(tenant_from_json(line)),
+                                ),
                                 &ocsf_options,
                                 "dedup summary",
                                 |opts| Ok(rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts)),
@@ -2833,10 +2841,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                             match serde_json::to_string(&incident) {
                                 Ok(json) => {
                                     let env = with_ocsf_lines(
-                                        FormattedIncidentEnvelope::new(IncidentEnvelope::new(
-                                            json,
-                                            subject.clone(),
-                                        )),
+                                        FormattedIncidentEnvelope::new(
+                                            IncidentEnvelope::new(json, subject.clone())
+                                                .with_tenant(incident.tenant_id.clone()),
+                                        ),
                                         &ocsf_options,
                                         "incident",
                                         |opts| {
@@ -3136,6 +3144,14 @@ async fn shutdown_signal(
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("Shutdown signal received");
+}
+
+/// Extract a tenant id from a serialized result or incident.
+fn tenant_from_json(value: &serde_json::Value) -> Option<TenantId> {
+    value
+        .get("tenant_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| TenantId::new(raw).ok())
 }
 
 /// Attach one OCSF line per distinct sink option set to an incident-path
@@ -3448,6 +3464,58 @@ fn otlp_timeout_from_params(
 }
 
 /// Build a single Sink from an output spec string, plus its full-queue policy.
+/// Parse the `tenant=` query parameter on a sink spec.
+fn tenant_filter_from_params(params: &[(&str, &str)]) -> Option<TenantId> {
+    let value = params
+        .iter()
+        .find(|(key, _)| *key == "tenant")
+        .map(|(_, value)| *value)?;
+    if value.is_empty() {
+        eprintln!("error: sink 'tenant=' needs a tenant id");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    match TenantId::new(value) {
+        Ok(tenant) => Some(tenant),
+        Err(error) => {
+            eprintln!("error: sink tenant=: {error}");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Split a file path around a whole-component `{tenant}` token.
+fn tenant_file_template(path: &str) -> Option<(String, String)> {
+    let Some(start) = path.find("{tenant}") else {
+        return None;
+    };
+    let end = start + "{tenant}".len();
+    let before_ok = start == 0 || path.as_bytes().get(start - 1) == Some(&b'/');
+    let after_ok = end == path.len() || path.as_bytes().get(end) == Some(&b'/');
+    if !before_ok || !after_ok {
+        eprintln!("error: file sink path '{path}' must use '{{tenant}}' as a whole path component");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    Some((path[..start].to_string(), path[end..].to_string()))
+}
+
+/// Parse `?max_open=` for a per-tenant file sink (default 64).
+fn max_open_from_params(params: &[(&str, &str)]) -> usize {
+    match params
+        .iter()
+        .find(|(key, _)| *key == "max_open")
+        .map(|(_, value)| *value)
+    {
+        None => 64,
+        Some(value) => match value.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!("error: sink 'max_open=' must be a positive integer");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        },
+    }
+}
+
 async fn build_sink(
     spec: &str,
     pretty: bool,
@@ -3459,25 +3527,53 @@ async fn build_sink(
     let resolved = resolve_sink_format(&params, base, role);
     let format = resolved.format;
     let ocsf = resolved.ocsf;
+    let tenant_filter = tenant_filter_from_params(&params);
 
     if base == "stdout" || base == "stdout://" {
         return (
             Sink::Stdout(
                 StdoutSink::new(pretty)
                     .with_format(format)
-                    .with_ocsf_options(ocsf),
+                    .with_ocsf_options(ocsf)
+                    .with_tenant_filter(tenant_filter),
             ),
             on_full,
         );
     }
 
     if let Some(path) = base.strip_prefix("file://") {
+        if let Some((before, after)) = tenant_file_template(path) {
+            let max_open = max_open_from_params(&params);
+            return match FileSink::open_template(before, after, max_open) {
+                Ok(file_sink) => {
+                    tracing::info!(path = %path, max_open, "Per-tenant file sink opened");
+                    (
+                        Sink::File(
+                            file_sink
+                                .with_format(format)
+                                .with_ocsf_options(ocsf)
+                                .with_tenant_filter(tenant_filter),
+                        ),
+                        on_full,
+                    )
+                }
+                Err(e) => {
+                    tracing::error!(path, error = %e, "Failed to build per-tenant file sink");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            };
+        }
         let path = std::path::Path::new(path);
         return match FileSink::open(path) {
             Ok(file_sink) => {
                 tracing::info!(path = %path.display(), "File sink opened");
                 (
-                    Sink::File(file_sink.with_format(format).with_ocsf_options(ocsf)),
+                    Sink::File(
+                        file_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
+                    ),
                     on_full,
                 )
             }
@@ -3498,7 +3594,10 @@ async fn build_sink(
                 tracing::info!(url = url, subject = subject, "NATS sink started");
                 (
                     Sink::Nats(Box::new(
-                        nats_sink.with_format(format).with_ocsf_options(ocsf),
+                        nats_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
                     )),
                     on_full,
                 )
@@ -3542,7 +3641,10 @@ async fn build_sink(
             });
             return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip, tls) {
                 Ok(sink) => {
-                    let sink = sink.with_format(format).with_ocsf_options(ocsf);
+                    let sink = sink
+                        .with_format(format)
+                        .with_ocsf_options(ocsf)
+                        .with_tenant_filter(tenant_filter);
                     let sink = match timeout {
                         Some(t) => sink.with_timeout(t),
                         None => sink,
@@ -3573,7 +3675,10 @@ async fn build_sink(
                 tracing::info!(path, "Unix socket sink started");
                 (
                     Sink::Unix(Box::new(
-                        unix_sink.with_format(format).with_ocsf_options(ocsf),
+                        unix_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
                     )),
                     on_full,
                 )
@@ -5229,7 +5334,10 @@ async fn ingest_events(
 ) -> Response {
     let tenant = match ingest_tenant(state.tenancy_enabled, identity.as_ref().map(|e| &e.0)) {
         Ok(tenant) => tenant,
-        Err(response) => return response,
+        Err(response) => {
+            state.metrics.on_tenant_rejected("rest", "no_tenant");
+            return response;
+        }
     };
     let event_tx = match &state.event_tx {
         Some(tx) => tx,
@@ -5325,7 +5433,10 @@ async fn otlp_http_logs(
 ) -> Response {
     let tenant = match ingest_tenant(state.tenancy_enabled, identity.as_ref().map(|e| &e.0)) {
         Ok(tenant) => tenant,
-        Err(response) => return response,
+        Err(response) => {
+            state.metrics.on_tenant_rejected("otlp_http", "no_tenant");
+            return response;
+        }
     };
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -5590,6 +5701,7 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
                         .api_auth_failures
                         .with_label_values(&["forbidden"])
                         .inc();
+                    self.metrics.on_tenant_rejected("otlp_grpc", "no_tenant");
                     return Err(tonic::Status::permission_denied(
                         "tenancy is enabled; the token must name exactly one tenant to ingest",
                     ));

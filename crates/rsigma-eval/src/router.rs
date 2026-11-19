@@ -490,6 +490,14 @@ impl<L> SchemaRouter<L> {
             .map_or(0, |c| c.take_tenant_quota_evictions())
     }
 
+    /// Events skipped by `require_tenant` since the previous call, draining the
+    /// counter.
+    pub fn take_untenanted_skipped(&mut self) -> u64 {
+        self.correlation
+            .as_mut()
+            .map_or(0, |c| c.take_untenanted_skipped())
+    }
+
     /// Import previously exported correlation state into the shared store.
     /// No-op (returns `true`) when there is no correlation store.
     pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {

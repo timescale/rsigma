@@ -81,6 +81,7 @@ pub struct OtlpSink {
     timeout: Duration,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
+    tenant_filter: Option<rsigma_eval::TenantId>,
 }
 
 impl OtlpSink {
@@ -128,6 +129,7 @@ impl OtlpSink {
             timeout: DEFAULT_OTLP_TIMEOUT,
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
+            tenant_filter: None,
         })
     }
 
@@ -169,6 +171,13 @@ impl OtlpSink {
         self.timeout
     }
 
+    /// Only export results of `tenant`.
+    #[must_use]
+    pub fn with_tenant_filter(mut self, tenant: Option<rsigma_eval::TenantId>) -> Self {
+        self.tenant_filter = tenant;
+        self
+    }
+
     /// Serialize and export a batch of results to the collector.
     pub async fn send(&mut self, result: &ProcessResult) -> Result<(), RuntimeError> {
         self.send_inner(result, None).await
@@ -192,11 +201,23 @@ impl OtlpSink {
         if result.is_empty() {
             return Ok(());
         }
+        let filtered: ProcessResult = result
+            .iter()
+            .filter(|r| {
+                self.tenant_filter
+                    .as_ref()
+                    .is_none_or(|tenant| r.header.tenant_id.as_ref() == Some(tenant))
+            })
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            return Ok(());
+        }
         let request = match self.format {
-            SinkFormat::Ndjson => evaluation_results_to_logs_request(result),
+            SinkFormat::Ndjson => evaluation_results_to_logs_request(&filtered),
             SinkFormat::Ocsf => {
                 let ocsf = &self.ocsf;
-                ocsf_findings_to_logs_request(result, |index, r| {
+                ocsf_findings_to_logs_request(&filtered, |index, r| {
                     ocsf_finding(r, ctx.map(|c| (c, index)), ocsf)
                 })
             }

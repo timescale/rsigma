@@ -221,6 +221,32 @@ impl FileSink {
             None => Ok(()),
         }
     }
+
+    /// Write a pre-serialized line to the file for `tenant`. With a `{tenant}`
+    /// path template this opens the tenant's file; otherwise it applies the
+    /// configured tenant filter.
+    pub fn send_raw_for_tenant(
+        &mut self,
+        json: &str,
+        tenant: Option<&TenantId>,
+    ) -> Result<(), RuntimeError> {
+        if self.tenant_path.is_some() {
+            let Some(tenant) = tenant else {
+                return Err(RuntimeError::Permanent(
+                    "a {tenant} file sink received a line without a tenant".to_string(),
+                ));
+            };
+            let path = self.render_path(tenant);
+            self.writer_for(tenant, &path)?.write_line(json)?;
+            return Ok(());
+        }
+        if let Some(filter) = &self.tenant_filter
+            && tenant != Some(filter)
+        {
+            return Ok(());
+        }
+        self.send_raw(json)
+    }
 }
 
 /// NDJSON writer over a byte stream that keeps lines whole across failures.

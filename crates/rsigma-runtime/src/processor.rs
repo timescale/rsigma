@@ -60,6 +60,9 @@ pub struct LogProcessor {
     /// session is active), the hot path performs one `ArcSwap` load and
     /// skips capture entirely.
     event_tap: ArcSwap<Option<Arc<TapRegistry>>>,
+    /// Tenants whose match counts get their own metric label. Any other
+    /// tenant counts under `other`.
+    tenant_allowlist: ArcSwap<Vec<rsigma_eval::TenantId>>,
 }
 
 impl LogProcessor {
@@ -80,7 +83,14 @@ impl LogProcessor {
             field_observer: ArcSwap::new(Arc::new(None)),
             schema_observer: ArcSwap::new(Arc::new(None)),
             event_tap: ArcSwap::new(Arc::new(None)),
+            tenant_allowlist: ArcSwap::new(Arc::new(Vec::new())),
         }
+    }
+
+    /// Set the tenants whose match counts get their own metric label. Any other
+    /// tenant counts under `other`.
+    pub fn set_tenant_allowlist(&self, tenants: Vec<rsigma_eval::TenantId>) {
+        self.tenant_allowlist.store(Arc::new(tenants));
     }
 
     /// Attach (or detach) the opt-in field observer.
@@ -470,20 +480,21 @@ impl LogProcessor {
         };
 
         let start = Instant::now();
-        let (batch_results, state_entries, skipped, quota_evictions) = if concurrent {
+        let (batch_results, state_entries, skipped, quota_evictions, untenanted) = if concurrent {
             let engine = engine_guard.read();
             let results = engine
                 .process_batch_shared_for_tenants(&event_refs, &event_tenants)
                 .expect("concurrent path requires shared detection");
             let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries, engine.take_ruleset_skipped(), 0)
+            (results, state_entries, engine.take_ruleset_skipped(), 0, 0)
         } else {
             let mut engine = engine_guard.write();
             let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
             let state_entries = engine.stats().state_entries as u64;
             let skipped = engine.take_ruleset_skipped();
             let quota = engine.take_tenant_quota_evictions();
-            (results, state_entries, skipped, quota)
+            let untenanted = engine.take_untenanted_skipped();
+            (results, state_entries, skipped, quota, untenanted)
         };
         let elapsed = start.elapsed().as_secs_f64();
         self.metrics
@@ -494,6 +505,10 @@ impl LogProcessor {
         for _ in 0..quota_evictions {
             self.metrics.on_tenant_quota_eviction("correlation_state");
         }
+        for _ in 0..untenanted {
+            self.metrics
+                .on_tenant_rejected("engine", "untenanted_event");
+        }
 
         // Merge results per input line and update metrics.
         let merge_results_start = Instant::now();
@@ -503,6 +518,19 @@ impl LogProcessor {
             let tenant = tenant_at(tenants, *line_idx).cloned();
             for r in &mut result {
                 r.header.tenant_id = tenant.clone();
+            }
+            if let Some(tenant) = &tenant {
+                let label = {
+                    let allowlist = self.tenant_allowlist.load();
+                    if allowlist.iter().any(|allowed| allowed == tenant) {
+                        tenant.as_str().to_string()
+                    } else {
+                        "other".to_string()
+                    }
+                };
+                for _ in &result {
+                    self.metrics.on_tenant_match(&label);
+                }
             }
             self.metrics.on_events_processed(1);
             self.metrics.observe_processing_latency(per_event_latency);

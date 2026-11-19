@@ -569,7 +569,9 @@ impl Sink {
         Box::pin(async move {
             match self {
                 Sink::Stdout(s) => blocking_write(|| s.send_raw(&env.json)),
-                Sink::File(s) => blocking_write(|| s.send_raw(&env.json)),
+                Sink::File(s) => {
+                    blocking_write(|| s.send_raw_for_tenant(&env.json, env.tenant.as_ref()))
+                }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
                     s.send_incident(&env.json, env.nats_subject.as_deref(), env.tenant.as_ref())
@@ -612,7 +614,7 @@ impl Sink {
                 }
                 Sink::File(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    blocking_write(|| s.send_raw(&line))
+                    blocking_write(|| s.send_raw_for_tenant(&line, env.native().tenant.as_ref()))
                 }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
