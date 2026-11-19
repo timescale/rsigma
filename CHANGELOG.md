@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Draft rules from STIX indicators
+### Draft rules from STIX indicators (#731)
 
 `rsigma rule draft --from-stix` reads a STIX 2.1 bundle, or a single indicator, and prints one Sigma rule per logsource. It needs the `stix-draft` feature. The Docker image includes it, because that image is built with `--all-features`.
 
