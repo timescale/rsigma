@@ -1,4 +1,5 @@
-//! `rule draft`: draft a Sigma detection rule from exemplar events.
+//! `rule draft`: draft a Sigma detection rule from exemplar events, or from a
+//! STIX indicator bundle when the `stix-draft` feature is enabled.
 //!
 //! Reads exemplar events (the malicious or noteworthy ones), optionally
 //! contrasted against a `--baseline` corpus of normal traffic, and prints a
@@ -129,6 +130,25 @@ pub(crate) struct DraftArgs {
     #[arg(long)]
     pub title: Option<String>,
 
+    /// Calendar date written into the draft (`YYYY-MM-DD`). Defaults to today (UTC).
+    #[arg(long)]
+    pub date: Option<String>,
+
+    /// STIX 2.1 bundle, or one indicator object. `-` reads stdin.
+    #[cfg(feature = "stix-draft")]
+    #[arg(long, value_name = "PATH")]
+    pub from_stix: Option<String>,
+
+    /// Observable kind to draft. Repeatable. Defaults to every mapped kind.
+    #[cfg(feature = "stix-draft")]
+    #[arg(long = "observable", value_name = "KIND")]
+    pub observable: Vec<String>,
+
+    /// Keep expired and not-yet-valid indicators. Revoked indicators are still skipped.
+    #[cfg(feature = "stix-draft")]
+    #[arg(long)]
+    pub include_expired: bool,
+
     /// Keep the baseline for contrastive scoring but skip the final baseline
     /// evaluation pass (no hit count/rate in the report).
     #[arg(long)]
@@ -140,6 +160,11 @@ pub(crate) struct DraftArgs {
 }
 
 pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
+    #[cfg(feature = "stix-draft")]
+    if args.from_stix.is_some() {
+        super::draft_stix::run(args, ctx);
+        return;
+    }
     if args.groups.is_some() {
         cmd_correlation_draft(args, ctx);
         return;
@@ -198,6 +223,7 @@ pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
         logsource_product: args.logsource_product,
         logsource_service: args.logsource_service,
         evaluate_baseline: !args.skip_baseline_eval,
+        date: args.date,
         ..DraftConfig::default()
     };
 
@@ -314,6 +340,7 @@ fn cmd_correlation_draft(args: DraftArgs, ctx: OutputCtx) {
         logsource_product: args.logsource_product,
         logsource_service: args.logsource_service,
         evaluate_baseline: false,
+        date: args.date.clone(),
         ..DraftConfig::default()
     };
     let config = CorrelationDraftConfig {
