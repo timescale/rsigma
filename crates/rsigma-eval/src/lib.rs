@@ -113,6 +113,7 @@ pub mod rule_tune;
 pub mod rulesets;
 pub mod schema;
 pub mod schema_discovery;
+pub mod tenant;
 mod timestamp;
 mod witness;
 
@@ -184,3 +185,4 @@ pub use schema_discovery::{
     CandidateSource, DiscoveryCandidate, DiscoveryConfig, DiscoveryReport, DiscoveryStats,
     FieldProfile, cluster_count, mine_events, mine_shapes,
 };
+pub use tenant::{TenantId, TenantIdError, tenant_at};

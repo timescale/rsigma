@@ -672,6 +672,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious PowerShell".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::High),
                 tags: vec!["attack.t1059".to_string()],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -743,6 +744,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "SSH brute force".to_string(),
                 rule_id: Some("corr-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::Critical),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -787,6 +789,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious PowerShell".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::Medium),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),

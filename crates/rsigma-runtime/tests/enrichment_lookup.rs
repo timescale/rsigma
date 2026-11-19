@@ -28,6 +28,7 @@ fn detection_with_field(field: &str, value: serde_json::Value) -> EvaluationResu
         header: RuleHeader {
             rule_title: "ip_seen".to_string(),
             rule_id: Some("rule-ip".to_string()),
+            tenant_id: None,
             level: Some(Level::Medium),
             tags: vec!["attack.t1078".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -47,6 +48,7 @@ fn correlation_for_ip(ip: &str) -> EvaluationResult {
         header: RuleHeader {
             rule_title: "ip_corr".to_string(),
             rule_id: Some("corr-ip".to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1110".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

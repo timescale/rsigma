@@ -25,6 +25,7 @@ fn detection(ip: &str) -> EvaluationResult {
         header: RuleHeader {
             rule_title: "Suspicious activity".to_string(),
             rule_id: Some("rule-1".to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.execution".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

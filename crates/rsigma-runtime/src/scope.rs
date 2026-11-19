@@ -182,6 +182,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: title.to_string(),
                 rule_id: id.map(|s| s.to_string()),
+                tenant_id: None,
                 level,
                 tags: tags.into_iter().map(|s| s.to_string()).collect(),
                 custom_attributes: Arc::new(HashMap::new()),

@@ -169,6 +169,7 @@ fn header(enrichments: Option<serde_json::Map<String, Value>>) -> RuleHeader {
     RuleHeader {
         rule_title: "Suspicious PowerShell".to_string(),
         rule_id: Some("rule-1".to_string()),
+        tenant_id: None,
         level: Some(Level::High),
         tags: vec![
             "attack.t1059.001".to_string(),
@@ -238,6 +239,7 @@ fn correlation_with_group_key() {
         header: RuleHeader {
             rule_title: "SSH brute force".to_string(),
             rule_id: Some("corr-1".to_string()),
+            tenant_id: None,
             level: Some(Level::Critical),
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -613,6 +615,7 @@ fn correlation_detection() -> EvaluationResult {
         header: RuleHeader {
             rule_title: "SSH brute force".to_string(),
             rule_id: Some("corr-1".to_string()),
+            tenant_id: None,
             level: Some(Level::Critical),
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(attributes),
@@ -649,6 +652,7 @@ fn enriched_detection() -> EvaluationResult {
         header: RuleHeader {
             rule_title: "Malware execution".to_string(),
             rule_id: Some("rule-1".to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

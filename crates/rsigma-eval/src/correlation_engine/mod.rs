@@ -1039,6 +1039,7 @@ impl<L> CorrelationEngine<L> {
                     header: RuleHeader {
                         rule_title: corr.title.clone(),
                         rule_id: corr.id.clone(),
+                        tenant_id: None,
                         level,
                         tags: corr.tags.clone(),
                         custom_attributes: corr.custom_attributes.clone(),
@@ -1207,6 +1208,7 @@ impl<L> CorrelationEngine<L> {
                         header: RuleHeader {
                             rule_title: corr.title.clone(),
                             rule_id: corr.id.clone(),
+                            tenant_id: None,
                             level,
                             tags: corr.tags.clone(),
                             custom_attributes: corr.custom_attributes.clone(),

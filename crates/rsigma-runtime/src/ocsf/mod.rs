@@ -25,6 +25,7 @@
 //! #     header: RuleHeader {
 //! #         rule_title: "Suspicious PowerShell".to_string(),
 //! #         rule_id: Some("rule-1".to_string()),
+//! #         tenant_id: None,
 //! #         level: Some(rsigma_parser::Level::High),
 //! #         tags: vec!["attack.t1059.001".to_string()],
 //! #         custom_attributes: Arc::new(HashMap::new()),

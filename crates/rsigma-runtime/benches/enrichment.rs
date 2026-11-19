@@ -23,6 +23,7 @@ fn detection(i: usize) -> EvaluationResult {
         header: RuleHeader {
             rule_title: "Suspicious activity".to_string(),
             rule_id: Some(format!("rule-{}", i % 10)),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.execution".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

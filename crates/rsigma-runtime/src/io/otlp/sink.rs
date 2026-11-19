@@ -361,6 +361,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Test Rule".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::High),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),

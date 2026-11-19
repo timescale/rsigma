@@ -84,6 +84,7 @@ fn detection(rule_id: &str, command_line: &str) -> EvaluationResult {
         header: RuleHeader {
             rule_title: format!("rule-{rule_id}"),
             rule_id: Some(rule_id.to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -103,6 +104,7 @@ fn correlation(rule_id: &str, source_ip: &str, count: u64) -> EvaluationResult {
         header: RuleHeader {
             rule_title: format!("corr-{rule_id}"),
             rule_id: Some(rule_id.to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1110".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

@@ -390,6 +390,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious activity".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(level),
                 tags: tags.into_iter().map(str::to_string).collect(),
                 custom_attributes: Arc::new(HashMap::new()),

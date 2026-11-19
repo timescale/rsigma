@@ -32,6 +32,7 @@ fn header(rule_id: &str) -> RuleHeader {
     RuleHeader {
         rule_title: "integration rule".into(),
         rule_id: Some(rule_id.into()),
+        tenant_id: None,
         level: Some(Level::High),
         tags: vec![],
         custom_attributes: Arc::new(HashMap::new()),

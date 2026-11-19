@@ -80,6 +80,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "t".to_string(),
                 rule_id: Some("r".to_string()),
+                tenant_id: None,
                 level: Some(Level::High),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),

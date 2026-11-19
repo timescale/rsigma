@@ -803,6 +803,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: rule.to_string(),
                 rule_id: Some(rule.to_string()),
+                tenant_id: None,
                 level: Some(level),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
