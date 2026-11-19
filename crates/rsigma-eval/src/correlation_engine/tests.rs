@@ -680,7 +680,7 @@ fn test_hard_cap_evicts_the_stalest_groups() {
     let users: std::collections::HashSet<String> = engine
         .state
         .keys()
-        .filter_map(|(_, key)| key.0[0].clone())
+        .filter_map(|key| key.group_key.0[0].clone())
         .collect();
     assert_eq!(users.len(), 19);
     assert!(users.contains("newcomer"));
@@ -4350,4 +4350,194 @@ score: 42
         Some(&serde_json::json!(42))
     );
     assert!(!det.header.custom_attributes.contains_key("title"));
+}
+// =========================================================================
+// Tenant isolation
+// =========================================================================
+
+const TENANT_RULES: &str = r#"
+title: Login
+id: login-tenant
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many logins
+id: many-logins-tenant
+correlation:
+    type: event_count
+    rules:
+        - login-tenant
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+
+fn tenant_engine(require_tenant: bool) -> CorrelationEngine {
+    let collection = parse_sigma_yaml(TENANT_RULES).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        require_tenant,
+        ..Default::default()
+    });
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+#[test]
+fn tenant_keyed_windows_fire_separately() {
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let b = crate::tenant::TenantId::new("b").unwrap();
+    let mut engine = tenant_engine(false);
+    let value = json!({"EventType": "login", "User": "admin"});
+    let event = JsonEvent::borrow(&value);
+
+    assert_eq!(
+        engine
+            .process_event_at_for_tenant(&event, 1000, Some(&a))
+            .correlation_count(),
+        0
+    );
+    assert_eq!(
+        engine
+            .process_event_at_for_tenant(&event, 1001, Some(&b))
+            .correlation_count(),
+        0
+    );
+    let fired = engine.process_event_at_for_tenant(&event, 1002, Some(&a));
+    assert_eq!(fired.correlation_count(), 1);
+    assert_eq!(
+        fired
+            .correlations()
+            .next()
+            .unwrap()
+            .header
+            .tenant_id
+            .as_ref(),
+        Some(&a)
+    );
+    assert_eq!(engine.state_count(), 2, "one window per tenant");
+}
+
+#[test]
+fn chained_correlation_keeps_the_tenant() {
+    let yaml = r#"
+title: Failed login
+id: failed-login-chain-tenant
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: failed_login
+    condition: selection
+---
+title: Successful login
+id: success-login-chain-tenant
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: success_login
+    condition: selection
+---
+title: Multiple failed logins
+id: many-failed-chain-tenant
+correlation:
+    type: event_count
+    rules:
+        - failed-login-chain-tenant
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 3
+---
+title: Brute Force Followed by Login
+id: brute-force-chain-tenant
+correlation:
+    type: temporal_ordered
+    rules:
+        - many-failed-chain-tenant
+        - success-login-chain-tenant
+    group-by:
+        - User
+    timespan: 120s
+    condition:
+        gte: 2
+level: critical
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let failed = json!({"EventType": "failed_login", "User": "victim"});
+    let failed = JsonEvent::borrow(&failed);
+    for i in 0..3 {
+        engine.process_event_at_for_tenant(&failed, 1000 + i, Some(&a));
+    }
+    let success = json!({"EventType": "success_login", "User": "victim"});
+    let success = JsonEvent::borrow(&success);
+    let fired = engine.process_event_at_for_tenant(&success, 1030, Some(&a));
+    let chained = fired
+        .correlations()
+        .find(|c| c.header.rule_title == "Brute Force Followed by Login")
+        .expect("chained correlation fires");
+    assert_eq!(chained.header.tenant_id.as_ref(), Some(&a));
+}
+
+#[test]
+fn evict_all_keeps_tenant_state_separate() {
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let b = crate::tenant::TenantId::new("b").unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        max_state_entries: 2,
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(TENANT_RULES).unwrap())
+        .unwrap();
+
+    let first = json!({"EventType": "login", "User": "user_1"});
+    let first = JsonEvent::borrow(&first);
+    engine.process_event_at_for_tenant(&first, 100, Some(&a));
+    engine.process_event_at_for_tenant(&first, 250, Some(&b));
+
+    let second = json!({"EventType": "login", "User": "user_2"});
+    let second = JsonEvent::borrow(&second);
+    engine.process_event_at_for_tenant(&second, 300, Some(&a));
+
+    assert_eq!(engine.state_count(), 2);
+    let snapshot = engine.introspect_for_tenant(None, None, Some(&a));
+    assert_eq!(snapshot.groups.len(), 1);
+    assert_eq!(snapshot.groups[0].tenant.as_ref(), Some(&a));
+    assert_eq!(snapshot.groups[0].group_key_display, "User=user_2");
+
+    let snapshot = engine.introspect_for_tenant(None, None, Some(&b));
+    assert_eq!(snapshot.groups.len(), 1);
+    assert_eq!(snapshot.groups[0].tenant.as_ref(), Some(&b));
+    assert_eq!(snapshot.groups[0].group_key_display, "User=user_1");
+}
+
+#[test]
+fn require_tenant_skips_untenanted_events_and_counts_them() {
+    let mut engine = tenant_engine(true);
+    let value = json!({"EventType": "login", "User": "admin"});
+    let event = JsonEvent::borrow(&value);
+
+    let result = engine.process_event_at(&event, 1000);
+    assert_eq!(result.correlation_count(), 0);
+    assert_eq!(engine.untenanted_skipped(), 1);
+    assert_eq!(engine.state_count(), 0);
+
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    engine.process_event_at_for_tenant(&event, 1001, Some(&a));
+    engine.process_event_at_for_tenant(&event, 1002, Some(&a));
+    assert_eq!(engine.untenanted_skipped(), 1);
+    assert_eq!(engine.state_count(), 1);
 }

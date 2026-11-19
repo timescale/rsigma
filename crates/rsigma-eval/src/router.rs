@@ -38,6 +38,7 @@ use crate::pipeline::transformations::Transformation;
 use crate::result::MatchDetailLevel;
 use crate::rule_metadata::RuleMetadataLookup;
 use crate::schema::{OnUnknown, RouteDecision, RoutingPlan, SchemaClassifier};
+use crate::tenant::{TenantId, tenant_at};
 
 /// Per-schema logsource pruning summary: how many rules a schema's events
 /// evaluate versus how many are pruned by its implied logsource. A static view
@@ -528,8 +529,37 @@ impl<L> SchemaRouter<L> {
     where
         L: ExtractLogSource<E> + Sync,
     {
+        self.process_batch_for_tenants(events, &[])
+    }
+
+    /// Route a batch of events with a parallel tenant slice, feeding each
+    /// detection into the shared correlation store under its tenant.
+    ///
+    /// `tenants` is empty (untenanted) or exactly parallel to `events`.
+    pub fn process_batch_for_tenants<E: Event + Sync>(
+        &mut self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Vec<ProcessResult>
+    where
+        L: ExtractLogSource<E> + Sync,
+    {
         if self.correlation.is_none() {
             return self.detect_batch(events);
+        }
+        if !tenants.is_empty() && tenants.len() != events.len() {
+            debug_assert!(
+                false,
+                "tenants must be empty or parallel to events: {} tenants for {} events",
+                tenants.len(),
+                events.len()
+            );
+            log::error!(
+                "tenant slice length mismatch: {} tenants for {} events; returning empty results",
+                tenants.len(),
+                events.len()
+            );
+            return vec![ProcessResult::new(); events.len()];
         }
 
         // Stateless phase: classify + route + detect. Borrows only `&self`
@@ -564,11 +594,16 @@ impl<L> SchemaRouter<L> {
         phase1
             .into_iter()
             .zip(events)
-            .map(|(routed, event)| match routed {
+            .enumerate()
+            .map(|(index, (routed, event))| match routed {
                 Routed1::Skip => Vec::new(),
                 Routed1::Eval { set, detections } => {
                     let mapped = MappedEvent::new(*event, &field_maps[set]);
-                    correlation.correlate_identified_detections(&mapped, detections)
+                    correlation.correlate_identified_detections_for_tenant(
+                        &mapped,
+                        detections,
+                        tenant_at(tenants, index),
+                    )
                 }
             })
             .collect()
@@ -576,6 +611,18 @@ impl<L> SchemaRouter<L> {
 
     /// Classify and route one event.
     pub fn route<E: Event>(&mut self, event: &E) -> RouteResult
+    where
+        L: ExtractLogSource<E>,
+    {
+        self.route_for_tenant(event, None)
+    }
+
+    /// Classify and route one event as `tenant`.
+    pub fn route_for_tenant<E: Event>(
+        &mut self,
+        event: &E,
+        tenant: Option<&TenantId>,
+    ) -> RouteResult
     where
         L: ExtractLogSource<E>,
     {
@@ -605,7 +652,7 @@ impl<L> SchemaRouter<L> {
                 let results = match &mut self.correlation {
                     Some(ce) => {
                         let mapped = MappedEvent::new(event, &self.field_maps[set]);
-                        ce.correlate_identified_detections(&mapped, detections)
+                        ce.correlate_identified_detections_for_tenant(&mapped, detections, tenant)
                     }
                     None => detections
                         .into_iter()

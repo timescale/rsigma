@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::correlation::EventBuffer;
 use crate::correlation::{EventRefBuffer, GroupKey, WindowState};
 use crate::result::EvaluationResult;
+use crate::tenant::TenantId;
 
 // =============================================================================
 // Configuration
@@ -171,6 +172,24 @@ pub struct CorrelationConfig {
     /// Bounds memory at: `max_correlation_events × cost_per_event × active_groups`.
     /// Default: 10.
     pub max_correlation_events: usize,
+
+    /// Skip correlation for events that carry no tenant, counting them in
+    /// [`CorrelationEngine::untenanted_skipped`].
+    ///
+    /// Set when tenancy is enabled so a bug that lets an untenanted event
+    /// through cannot form a shared `None` bucket. Default: `false`.
+    pub require_tenant: bool,
+}
+
+/// Key identifying one correlation window: tenant, correlation index, and the
+/// resolved group values.
+///
+/// Tenants never share a window even when their group keys are identical.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct StateKey {
+    pub(crate) tenant: Option<TenantId>,
+    pub(crate) corr_idx: usize,
+    pub(crate) group_key: GroupKey,
 }
 
 impl Default for CorrelationConfig {
@@ -191,6 +210,7 @@ impl Default for CorrelationConfig {
             emit_detections: false,
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
+            require_tenant: false,
         }
     }
 }
