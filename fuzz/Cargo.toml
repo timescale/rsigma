@@ -40,6 +40,11 @@ path = "fuzz_targets/fuzz_stix_source.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_stix_draft"
+path = "fuzz_targets/fuzz_stix_draft.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_parse_yaml"
 path = "fuzz_targets/fuzz_parse_yaml.rs"
 doc = false
