@@ -198,7 +198,7 @@ An indicator that has at least one mapped kind is used. Unmapped kinds on that s
 
 One document is emitted per mapped logsource. Several documents are joined with `---`. `--logsource-category`, `--logsource-product`, and `--logsource-service` are written onto every document. The split follows the mapped category, so two documents stay two documents when an override makes the printed categories the same. The rule `id` is computed from the mapped category, not from the override.
 
-`ipv4` and `ipv6` are separate selections on `DestinationIp`. A CIDR value is its own selection with `|cidr`. The four hash kinds share one `Hashes|contains` list. Values in a selection are deduplicated and sorted. Domain names and hashes are lowercased. IPv6 is kept as written.
+`ipv4` and `ipv6` are separate selections on `DestinationIp`. A CIDR value is its own selection with `|cidr`. The four hash kinds share one `Hashes|contains` list. Values in a selection are deduplicated and sorted. Domain names and hashes are lowercased. An IPv6 address is written in RFC 5952 form, the form Sysmon records, so `2001:0DB8:0000:0000:0000:0000:0000:0001` becomes `2001:db8::1`. A value that is not an IPv6 address is kept as written. An `ipv6_cidr` value is kept as written, because `|cidr` compares addresses numerically.
 
 | Observable | Logsource category | Detection |
 |------------|--------------------|-----------|

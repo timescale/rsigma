@@ -463,6 +463,13 @@ const REGISTRY_HIVES: &[&str] = &[
 /// is wrapped in backslashes, so a Sysmon value that uses a short hive and
 /// appends the value name still matches. A key with no known hive keeps its
 /// whole path, wrapped the same way. A hive with no key path is not drafted.
+fn canonical_ipv6(value: &str) -> String {
+    value
+        .parse::<std::net::Ipv6Addr>()
+        .map(|address| address.to_string())
+        .unwrap_or_else(|_| value.to_string())
+}
+
 fn registry_contains_value(key: &str) -> Option<String> {
     let rest = strip_registry_hive(key).unwrap_or(key);
     let rest = rest.trim_matches('\\');
@@ -489,7 +496,7 @@ fn strip_registry_hive(key: &str) -> Option<&str> {
 fn mapped(kind: ObservableKind, value: &str) -> Option<(Slot, String)> {
     Some(match kind {
         ObservableKind::Ipv4 => (Slot::Ipv4, value.to_string()),
-        ObservableKind::Ipv6 => (Slot::Ipv6, value.to_string()),
+        ObservableKind::Ipv6 => (Slot::Ipv6, canonical_ipv6(value)),
         ObservableKind::Ipv4Cidr => (Slot::Ipv4Cidr, value.to_string()),
         ObservableKind::Ipv6Cidr => (Slot::Ipv6Cidr, value.to_string()),
         ObservableKind::Domain => (Slot::Domain, value.to_string()),
@@ -678,7 +685,7 @@ mod tests {
         assert_eq!(outcome.rules.len(), 6);
         let yaml = outcome.rules.join("\n");
         assert!(yaml.contains("DestinationIp: 198.51.100.7"));
-        assert!(yaml.contains("DestinationIp: '2001:DB8::1'"));
+        assert!(yaml.contains("DestinationIp: '2001:db8::1'"));
         assert!(yaml.contains("DestinationIp|cidr: '198.51.100.0/24'"));
         assert!(yaml.contains("QueryName: bad.example"));
         assert!(yaml.contains("c-uri: 'https://bad.example/a'"));
@@ -868,6 +875,24 @@ mod tests {
         let outcome = draft_stix(&object.to_string(), &options()).unwrap();
         assert!(outcome.rules[0].contains("title: Beacon address"));
         assert!(outcome.rules[0].contains("id: 68e70f9d-8a24-5a4b-8718-7f20315e9734"));
+    }
+
+    #[test]
+    fn ipv6_is_written_in_canonical_form_and_cidr_is_not() {
+        let outcome = draft_stix(
+            &bundle(vec![indicator(
+                "indicator--00000000-0000-4000-8000-000000000024",
+                "Address",
+                "[ipv6-addr:value = '2001:0DB8:0000:0000:0000:0000:0000:0001'] OR \
+                 [ipv6-addr:value = '2001:0DB8::/32']",
+            )]),
+            &options(),
+        )
+        .unwrap();
+        let yaml = outcome.rules.join("\n");
+        assert!(yaml.contains("DestinationIp: '2001:db8::1'"), "{yaml}");
+        assert!(yaml.contains("'2001:0DB8::/32'"), "{yaml}");
+        assert!(!yaml.contains("2001:0DB8:0000"), "{yaml}");
     }
 
     #[test]
