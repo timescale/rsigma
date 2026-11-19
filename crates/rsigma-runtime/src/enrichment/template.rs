@@ -18,12 +18,14 @@
 //!
 //! Detection paths:
 //! - `rule.title` / `rule.id` / `rule.level`
+//! - `tenant` (empty when the result is untenanted)
 //! - `tags` (joined with `,`)
 //! - `fields.<name>` (the matched value of `<name>` from `matched_fields`)
 //! - `event.<dotted.path>` (navigate `DetectionBody::event` by JSON segment)
 //!
 //! Correlation paths:
 //! - `rule.title` / `rule.id` / `rule.level`
+//! - `tenant` (empty when the result is untenanted)
 //! - `tags` (joined with `,`)
 //! - `type` (`event_count`, `temporal`, …)
 //! - `aggregated_value` / `timespan_secs`
@@ -175,6 +177,37 @@ pub fn validate_template_namespace(
     field: &'static str,
 ) -> Result<(), TemplateError> {
     validate_references(text, enricher_kind, enricher_id, field, false)
+}
+
+/// Reject a URL template whose tenant reference lands in the authority.
+///
+/// A `${detection.tenant}` or `${correlation.tenant}` reference changes the
+/// rendered value per result. It may appear only after the first `/` that
+/// follows the scheme and authority, so the destination host stays fixed for
+/// the webhook or HTTP enricher's client, cache, and rate limiter.
+pub fn validate_url_tenant_position(url: &str) -> Result<(), String> {
+    let tenant_refs = ["${detection.tenant}", "${correlation.tenant}"];
+    if !tenant_refs.iter().any(|needle| url.contains(needle)) {
+        return Ok(());
+    }
+    let Some(scheme_end) = url.find("://") else {
+        return Ok(());
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = url[authority_start..]
+        .find('/')
+        .map(|offset| authority_start + offset);
+    let invalid = match authority_end {
+        Some(end) => tenant_refs.iter().any(|needle| url[..end].contains(needle)),
+        None => true,
+    };
+    if invalid {
+        return Err(format!(
+            "url '{url}' uses a tenant reference in the scheme or authority; \
+             ${{detection.tenant}} and ${{correlation.tenant}} are only valid in the path"
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a webhook body template: the namespace rules of
@@ -450,6 +483,14 @@ fn render_detection_path(path: &str, result: &EvaluationResult) -> String {
         Some(b) => b,
         None => return String::new(),
     };
+    if path == "tenant" {
+        return result
+            .header
+            .tenant_id
+            .as_ref()
+            .map(|tenant| tenant.as_str().to_string())
+            .unwrap_or_default();
+    }
     if let Some(rest) = path.strip_prefix("rule.") {
         return render_rule_field(rest, result);
     }
@@ -483,6 +524,14 @@ fn render_correlation_path(path: &str, result: &EvaluationResult) -> String {
         Some(b) => b,
         None => return String::new(),
     };
+    if path == "tenant" {
+        return result
+            .header
+            .tenant_id
+            .as_ref()
+            .map(|tenant| tenant.as_str().to_string())
+            .unwrap_or_default();
+    }
     if let Some(rest) = path.strip_prefix("rule.") {
         return render_rule_field(rest, result);
     }
@@ -827,5 +876,33 @@ mod tests {
             );
             assert_eq!(parsed.path_segments().unwrap().count(), 3, "{value:?}");
         }
+    }
+
+    #[test]
+    fn tenant_paths_render_the_header_tenant() {
+        let mut r = detection("Whoami", "CommandLine", serde_json::json!("whoami"));
+        r.header.tenant_id = Some(rsigma_eval::TenantId::new("tenant-a").unwrap());
+        assert_eq!(render_template("${detection.tenant}", &r), "tenant-a");
+        assert_eq!(
+            render_template_url("${detection.tenant}", &r),
+            "tenant-a",
+            "a tenant id is URL-safe"
+        );
+        r.header.tenant_id = None;
+        assert_eq!(render_template("${detection.tenant}", &r), "");
+    }
+
+    #[test]
+    fn a_tenant_reference_in_a_url_authority_is_refused() {
+        assert!(
+            validate_url_tenant_position("https://example.test/${detection.tenant}/hook").is_ok()
+        );
+        assert!(
+            validate_url_tenant_position("https://${detection.tenant}.example.test/hook").is_err()
+        );
+        assert!(
+            validate_url_tenant_position("https://${correlation.tenant}.example.test").is_err()
+        );
+        assert!(validate_url_tenant_position("https://example.test/hook").is_ok());
     }
 }

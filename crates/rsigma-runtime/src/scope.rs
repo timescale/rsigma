@@ -18,7 +18,7 @@
 //! `tags: []` does not exclude every result; it means "no tag constraint").
 
 use globset::{Glob, GlobMatcher};
-use rsigma_eval::EvaluationResult;
+use rsigma_eval::{EvaluationResult, TenantId};
 use rsigma_parser::Level;
 
 /// Scope filter applied per result before a post-engine stage acts.
@@ -31,6 +31,7 @@ pub struct Scope {
     rule_title_globs: Vec<GlobMatcher>,
     tag_globs: Vec<TagPattern>,
     levels: Vec<Level>,
+    tenants: Vec<TenantId>,
 }
 
 /// A single tag-pattern entry. Either a literal tag (case-sensitive
@@ -92,7 +93,16 @@ impl Scope {
             rule_title_globs,
             tag_globs,
             levels: parsed_levels,
+            tenants: Vec::new(),
         })
+    }
+
+    /// Restrict this scope to the listed tenants. An empty list leaves it
+    /// unrestricted.
+    #[must_use]
+    pub fn with_tenants(mut self, tenants: Vec<TenantId>) -> Self {
+        self.tenants = tenants;
+        self
     }
 
     /// True when no axis is populated. The driver can fast-path past
@@ -102,6 +112,7 @@ impl Scope {
             && self.rule_title_globs.is_empty()
             && self.tag_globs.is_empty()
             && self.levels.is_empty()
+            && self.tenants.is_empty()
     }
 
     /// True when this scope admits the given result.
@@ -143,6 +154,13 @@ impl Scope {
             match result.header.level {
                 Some(lvl) if self.levels.contains(&lvl) => {}
                 _ => return false,
+            }
+        }
+
+        if !self.tenants.is_empty() {
+            let tenant = result.header.tenant_id.as_ref();
+            if !tenant.is_some_and(|tenant| self.tenants.iter().any(|t| t == tenant)) {
+                return false;
             }
         }
 
@@ -279,5 +297,21 @@ mod tests {
     fn invalid_level_rejected() {
         let err = Scope::new(vec![], vec![], vec!["super-high".to_string()]).unwrap_err();
         assert!(err.contains("invalid scope.levels"));
+    }
+
+    #[test]
+    fn tenant_axis_matches_only_listed_tenants() {
+        use rsigma_eval::TenantId;
+
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let scope = Scope::default().with_tenants(vec![a.clone()]);
+        let mut result = det("X", None, vec![], None);
+        result.header.tenant_id = Some(a.clone());
+        assert!(scope.matches(&result));
+        result.header.tenant_id = Some(b);
+        assert!(!scope.matches(&result));
+        result.header.tenant_id = None;
+        assert!(!scope.matches(&result));
     }
 }

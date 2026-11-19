@@ -213,12 +213,25 @@ pub struct IncidentEnvelope {
     pub json: String,
     /// Optional NATS subject override for incident consumers.
     pub nats_subject: Option<String>,
+    /// Tenant that owns the incident, when tenancy is enabled.
+    pub tenant: Option<TenantId>,
 }
 
 impl IncidentEnvelope {
     /// Build an envelope from the native NDJSON line.
     pub fn new(json: String, nats_subject: Option<String>) -> Self {
-        IncidentEnvelope { json, nats_subject }
+        IncidentEnvelope {
+            json,
+            nats_subject,
+            tenant: None,
+        }
+    }
+
+    /// Attach the incident's tenant for tenant-routed sinks.
+    #[must_use]
+    pub fn with_tenant(mut self, tenant: Option<TenantId>) -> Self {
+        self.tenant = tenant;
+        self
     }
 }
 
@@ -559,7 +572,7 @@ impl Sink {
                 Sink::File(s) => blocking_write(|| s.send_raw(&env.json)),
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
-                    s.send_incident(&env.json, env.nats_subject.as_deref())
+                    s.send_incident(&env.json, env.nats_subject.as_deref(), env.tenant.as_ref())
                         .await
                 }
                 #[cfg(feature = "otlp")]
@@ -604,8 +617,12 @@ impl Sink {
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    s.send_incident(&line, env.native().nats_subject.as_deref())
-                        .await
+                    s.send_incident(
+                        &line,
+                        env.native().nats_subject.as_deref(),
+                        env.native().tenant.as_ref(),
+                    )
+                    .await
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
@@ -852,6 +869,7 @@ mod tests {
         let env = IncidentEnvelope {
             json: "native".to_string(),
             nats_subject: None,
+            tenant: None,
         };
         assert_eq!(env.json, "native");
     }

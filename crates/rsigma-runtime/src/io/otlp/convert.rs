@@ -847,3 +847,41 @@ mod tests {
         assert!(events[0].tenant.is_none());
     }
 }
+
+#[cfg(test)]
+mod tenant_tests {
+    use super::*;
+    use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn tenant_id_becomes_a_log_attribute() {
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Tenanted".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                tenant_id: Some(TenantId::new("tenant-a").unwrap()),
+                level: None,
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+                ruleset: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec![],
+                matched_fields: vec![],
+                event: None,
+            }),
+        };
+        let request = evaluation_results_to_logs_request(&[result]);
+        let records = &request.resource_logs[0].scope_logs[0].log_records;
+        let attr = records[0]
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "tenant_id")
+            .expect("tenant_id attribute");
+        let value = attr.value.as_ref().and_then(|value| value.value.as_ref());
+        assert!(matches!(value, Some(any_value::Value::StringValue(s)) if s == "tenant-a"));
+    }
+}

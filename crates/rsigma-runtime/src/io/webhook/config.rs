@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+
+use rsigma_eval::TenantId;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -28,7 +30,7 @@ use zeroize::Zeroizing;
 
 use crate::enrichment::{
     EnricherKind, HttpEnricherClient, Scope, TemplateError, build_default_http_client,
-    validate_template_namespace, validate_webhook_body_template,
+    validate_template_namespace, validate_url_tenant_position, validate_webhook_body_template,
 };
 use crate::io::DeliveryConfig;
 use crate::metrics::MetricsHook;
@@ -224,6 +226,8 @@ pub struct ScopeConfig {
     pub tags: Vec<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    #[serde(default)]
+    pub tenants: Vec<String>,
 }
 
 /// Parsed `kind:` discriminator.
@@ -322,6 +326,12 @@ pub enum WebhookConfigError {
     InvalidRateLimit { webhook_id: String, message: String },
     /// `scope` failed to compile.
     Scope { webhook_id: String, message: String },
+    /// A field was invalid for a reason specific to its content.
+    InvalidField {
+        webhook_id: String,
+        field: &'static str,
+        message: String,
+    },
     /// `tls` material was invalid or unreadable.
     Tls { webhook_id: String, message: String },
     /// A signing `secret_env` was unset or empty in the environment.
@@ -394,6 +404,11 @@ impl std::fmt::Display for WebhookConfigError {
                 webhook_id,
                 message,
             } => write!(f, "webhook '{webhook_id}': {message}"),
+            WebhookConfigError::InvalidField {
+                webhook_id,
+                field,
+                message,
+            } => write!(f, "webhook '{webhook_id}': field '{field}': {message}"),
             WebhookConfigError::Tls {
                 webhook_id,
                 message,
@@ -462,6 +477,11 @@ fn build_one(
 
     let ek = kind.as_enricher_kind();
     check_template(&cfg.url, ek, &cfg.id, "url")?;
+    validate_url_tenant_position(&cfg.url).map_err(|message| WebhookConfigError::InvalidField {
+        webhook_id: cfg.id.clone(),
+        field: "url",
+        message,
+    })?;
     for (name, value) in &cfg.headers {
         let field: &'static str = Box::leak(format!("headers.{name}").into_boxed_str());
         check_template(value, ek, &cfg.id, field)?;
@@ -483,16 +503,26 @@ fn build_one(
         None => reqwest::Method::POST,
     };
 
-    let scope =
-        match &cfg.scope {
-            Some(s) => Scope::new(s.rules.clone(), s.tags.clone(), s.levels.clone()).map_err(
-                |message| WebhookConfigError::Scope {
+    let scope = match &cfg.scope {
+        Some(s) => {
+            let tenants = s
+                .tenants
+                .iter()
+                .map(|tenant| TenantId::new(tenant))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| WebhookConfigError::Scope {
+                    webhook_id: cfg.id.clone(),
+                    message: error.to_string(),
+                })?;
+            Scope::new(s.rules.clone(), s.tags.clone(), s.levels.clone())
+                .map_err(|message| WebhookConfigError::Scope {
                     webhook_id: cfg.id.clone(),
                     message,
-                },
-            )?,
-            None => Scope::default(),
-        };
+                })?
+                .with_tenants(tenants)
+        }
+        None => Scope::default(),
+    };
 
     let limiter = match &cfg.rate_limit {
         Some(rl) => {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
-use rsigma_eval::ProcessResult;
+use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::io::lines::{LineBatch, ResumePoint};
@@ -26,6 +26,7 @@ pub struct UnixSocketSink {
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
     resume: ResumePoint,
+    tenant_filter: Option<TenantId>,
 }
 
 impl UnixSocketSink {
@@ -38,7 +39,15 @@ impl UnixSocketSink {
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
             resume: ResumePoint::default(),
+            tenant_filter: None,
         })
+    }
+
+    /// Only deliver results of `tenant`.
+    #[must_use]
+    pub fn with_tenant_filter(mut self, tenant: Option<TenantId>) -> Self {
+        self.tenant_filter = tenant;
+        self
     }
 
     /// Select the wire format this sink serializes results into.
@@ -81,17 +90,26 @@ impl UnixSocketSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        if result.is_empty() {
+        let filtered: Vec<(usize, &rsigma_eval::EvaluationResult)> = result
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                self.tenant_filter
+                    .as_ref()
+                    .is_none_or(|t| m.header.tenant_id.as_ref() == Some(t))
+            })
+            .collect();
+        if filtered.is_empty() {
             return Ok(());
         }
         let start = self.resume.start(ctx);
         let mut batch = LineBatch::default();
-        for (index, m) in result.iter().enumerate().skip(start) {
+        for (original_index, m) in filtered.iter().skip(start) {
             batch.push(&serialize_result(
                 m,
                 self.format,
                 false,
-                ctx.map(|ctx| (ctx, index)),
+                ctx.map(|ctx| (ctx, *original_index)),
                 &self.ocsf,
             )?);
         }

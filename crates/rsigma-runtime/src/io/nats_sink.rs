@@ -4,13 +4,49 @@ use async_nats::jetstream;
 use async_nats::subject::Subject;
 use parking_lot::Mutex;
 
-use rsigma_eval::ProcessResult;
+use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 use super::nats_config::NatsConnectConfig;
 use super::nats_source::derive_nats_name;
+
+/// A NATS subject that may carry a `{tenant}` token rendered per result.
+pub(crate) enum SubjectTemplate {
+    /// A literal subject.
+    Static(String),
+    /// A subject with `{tenant}` as one dot-separated token.
+    PerTenant { before: String, after: String },
+}
+
+impl SubjectTemplate {
+    fn parse(subject: &str) -> Self {
+        let tokens: Vec<&str> = subject.split('.').collect();
+        if let Some(position) = tokens.iter().position(|token| *token == "{tenant}") {
+            let before = tokens[..position].join(".");
+            let after = tokens[position + 1..].join(".");
+            SubjectTemplate::PerTenant { before, after }
+        } else {
+            SubjectTemplate::Static(subject.to_string())
+        }
+    }
+
+    fn render(&self, tenant: Option<&TenantId>) -> Option<String> {
+        match self {
+            SubjectTemplate::Static(subject) => Some(subject.clone()),
+            SubjectTemplate::PerTenant { before, after } => {
+                let tenant = tenant?;
+                Some(match (before.is_empty(), after.is_empty()) {
+                    (true, true) => tenant.as_str().to_string(),
+                    (true, false) => format!("{}.{}", tenant.as_str(), after),
+                    (false, true) => format!("{}.{}", before, tenant.as_str()),
+                    (false, false) => format!("{}.{}.{}", before, tenant.as_str(), after),
+                })
+            }
+        }
+    }
+}
 
 /// Publishes ProcessResult as NDJSON to a NATS JetStream subject.
 ///
@@ -20,42 +56,48 @@ use super::nats_source::derive_nats_name;
 /// publish is confirmed.
 pub struct NatsSink {
     jetstream: jetstream::Context,
-    subject: Subject,
+    subject: SubjectTemplate,
     /// Subjects whose JetStream stream has been ensured, so an incident subject
     /// override only triggers stream creation once.
     ensured: Mutex<HashSet<String>>,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
+    tenant_filter: Option<TenantId>,
 }
 
 impl NatsSink {
     /// Connect to NATS and prepare to publish to a JetStream subject.
     ///
-    /// Creates or reuses the JetStream stream for the given subject, then
-    /// publishes via `jetstream::Context::publish` for server-confirmed delivery.
+    /// Creates or reuses the JetStream stream for a literal subject. A
+    /// `{tenant}` subject creates one stream per rendered subject on first
+    /// publish.
     pub async fn connect(
         config: &NatsConnectConfig,
         subject: &str,
     ) -> Result<Self, async_nats::Error> {
         let client = config.connect().await?;
         let js = jetstream::new(client);
+        let template = SubjectTemplate::parse(subject);
 
-        let stream_name = derive_nats_name("rsigma", subject);
+        let mut ensured = HashSet::new();
+        if let SubjectTemplate::Static(subject) = &template {
+            let stream_name = derive_nats_name("rsigma", subject);
+            js.get_or_create_stream(jetstream::stream::Config {
+                name: stream_name,
+                subjects: vec![subject.clone()],
+                ..Default::default()
+            })
+            .await?;
+            ensured.insert(subject.clone());
+        }
 
-        js.get_or_create_stream(jetstream::stream::Config {
-            name: stream_name,
-            subjects: vec![subject.to_string()],
-            ..Default::default()
-        })
-        .await?;
-
-        let ensured = Mutex::new(HashSet::from([subject.to_string()]));
         Ok(NatsSink {
             jetstream: js,
-            subject: Subject::from(subject),
-            ensured,
+            subject: template,
+            ensured: Mutex::new(ensured),
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
+            tenant_filter: None,
         })
     }
 
@@ -69,6 +111,13 @@ impl NatsSink {
     #[must_use]
     pub fn with_ocsf_options(mut self, ocsf: crate::ocsf::OcsfOptions) -> Self {
         self.ocsf = ocsf;
+        self
+    }
+
+    /// Only deliver results of `tenant`.
+    #[must_use]
+    pub fn with_tenant_filter(mut self, tenant: Option<TenantId>) -> Self {
+        self.tenant_filter = tenant;
         self
     }
 
@@ -102,12 +151,19 @@ impl NatsSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        if result.is_empty() {
-            return Ok(());
-        }
-
         let mut published = 0_usize;
         for (index, m) in result.iter().enumerate() {
+            if let Some(filter) = &self.tenant_filter
+                && m.header.tenant_id.as_ref() != Some(filter)
+            {
+                continue;
+            }
+            let Some(subject) = self.subject.render(m.header.tenant_id.as_ref()) else {
+                return Err(RuntimeError::Permanent(format!(
+                    "subject '{}' needs a tenant but the result has none",
+                    self.subject_label()
+                )));
+            };
             let json = serialize_result(
                 m,
                 self.format,
@@ -115,40 +171,64 @@ impl NatsSink {
                 ctx.map(|ctx| (ctx, index)),
                 &self.ocsf,
             )?;
-            self.publish_one(&self.subject, &json).await?;
+            self.ensure_stream(&subject).await?;
+            self.publish_one(&subject, &json).await?;
             published += 1;
         }
 
-        tracing::debug!(
-            subject = %self.subject,
-            messages = published,
-            "NATS messages published",
-        );
+        if published > 0 {
+            tracing::debug!(messages = published, "NATS messages published");
+        }
         Ok(())
+    }
+
+    fn subject_label(&self) -> String {
+        match &self.subject {
+            SubjectTemplate::Static(subject) => subject.clone(),
+            SubjectTemplate::PerTenant { before, after } => format!("{before}.{{tenant}}.{after}"),
+        }
     }
 
     /// Publish a pre-serialized JSON string directly to the JetStream subject.
     pub async fn send_raw(&self, json: &str) -> Result<(), RuntimeError> {
-        self.publish_one(&self.subject, json).await?;
-        tracing::debug!(subject = %self.subject, "NATS message published (raw)");
+        let Some(subject) = self.subject.render(None) else {
+            return Err(RuntimeError::Permanent(format!(
+                "subject '{}' needs a tenant but a raw line has none",
+                self.subject_label()
+            )));
+        };
+        self.ensure_stream(&subject).await?;
+        self.publish_one(&subject, json).await?;
+        tracing::debug!(subject = %subject, "NATS message published (raw)");
         Ok(())
     }
 
     /// Publish an incident line, optionally to a dedicated subject override so
     /// incident consumers can subscribe without filtering the detection stream.
+    /// A `{tenant}` token in either subject is rendered from `tenant`.
     pub async fn send_incident(
         &self,
         json: &str,
         subject_override: Option<&str>,
+        tenant: Option<&TenantId>,
     ) -> Result<(), RuntimeError> {
-        match subject_override {
-            Some(subject) => {
-                self.ensure_stream(subject).await?;
-                self.publish_one(&Subject::from(subject.to_string()), json)
-                    .await
-            }
-            None => self.publish_one(&self.subject, json).await,
-        }
+        let template = match subject_override {
+            Some(subject) => SubjectTemplate::parse(subject),
+            None => match &self.subject {
+                SubjectTemplate::Static(subject) => SubjectTemplate::Static(subject.clone()),
+                SubjectTemplate::PerTenant { before, after } => SubjectTemplate::PerTenant {
+                    before: before.clone(),
+                    after: after.clone(),
+                },
+            },
+        };
+        let Some(subject) = template.render(tenant) else {
+            return Err(RuntimeError::Permanent(
+                "an incident subject needs a tenant but the incident has none".to_string(),
+            ));
+        };
+        self.ensure_stream(&subject).await?;
+        self.publish_one(&subject, json).await
     }
 
     /// Ensure a JetStream stream exists for `subject`, once per subject.
@@ -173,19 +253,54 @@ impl NatsSink {
     }
 
     /// Publish a single JSON payload to `subject`, logging on failure.
-    async fn publish_one(&self, subject: &Subject, json: &str) -> Result<(), RuntimeError> {
+    async fn publish_one(&self, subject: &str, json: &str) -> Result<(), RuntimeError> {
         let ack = self
             .jetstream
-            .publish(subject.clone(), json.to_string().into())
+            .publish(Subject::from(subject.to_string()), json.to_string().into())
             .await
             .map_err(|e| {
-                tracing::warn!(subject = %subject, error = %e, "NATS publish failed");
+                tracing::warn!(subject, error = %e, "NATS publish failed");
                 RuntimeError::Io(std::io::Error::other(e))
             })?;
         ack.await.map_err(|e| {
-            tracing::warn!(subject = %subject, error = %e, "NATS publish ack failed");
+            tracing::warn!(subject, error = %e, "NATS publish ack failed");
             RuntimeError::Io(std::io::Error::other(e))
         })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_literal_subject_is_static() {
+        let template = SubjectTemplate::parse("rsigma.detections");
+        assert!(matches!(template, SubjectTemplate::Static(_)));
+        assert_eq!(
+            template.render(Some(&TenantId::new("a").unwrap())),
+            Some("rsigma.detections".to_string())
+        );
+    }
+
+    #[test]
+    fn a_tenant_token_is_rendered_per_tenant() {
+        let template = SubjectTemplate::parse("rsigma.detections.{tenant}");
+        assert!(matches!(template, SubjectTemplate::PerTenant { .. }));
+        assert_eq!(
+            template.render(Some(&TenantId::new("a").unwrap())),
+            Some("rsigma.detections.a".to_string())
+        );
+        assert_eq!(template.render(None), None);
+    }
+
+    #[test]
+    fn a_tenant_token_in_the_middle_keeps_its_neighbours() {
+        let template = SubjectTemplate::parse("tenants.{tenant}.detections");
+        assert_eq!(
+            template.render(Some(&TenantId::new("tenant-a").unwrap())),
+            Some("tenants.tenant-a.detections".to_string())
+        );
     }
 }

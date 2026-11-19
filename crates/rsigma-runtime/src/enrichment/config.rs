@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use rsigma_eval::TenantId;
+
 #[cfg(feature = "dns-enrich")]
 use super::dns::{
     DEFAULT_DNS_CACHE_MAX_ENTRIES, DEFAULT_DNS_CACHE_TTL, DEFAULT_DNS_NEGATIVE_CACHE_TTL,
@@ -273,6 +275,8 @@ pub struct ScopeConfig {
     pub tags: Vec<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    #[serde(default)]
+    pub tenants: Vec<String>,
 }
 
 /// Errors produced while loading or validating an enrichers config.
@@ -462,16 +466,26 @@ fn build_one(
     let on_error: OnError = cfg.on_error.into();
     let timeout = cfg.timeout.unwrap_or(DEFAULT_ENRICHER_TIMEOUT);
 
-    let scope =
-        match &cfg.scope {
-            Some(s) => Scope::new(s.rules.clone(), s.tags.clone(), s.levels.clone()).map_err(
-                |message| EnrichersConfigError::Scope {
+    let scope = match &cfg.scope {
+        Some(s) => {
+            let tenants = s
+                .tenants
+                .iter()
+                .map(|tenant| TenantId::new(tenant))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| EnrichersConfigError::Scope {
+                    enricher_id: cfg.id.clone(),
+                    message: error.to_string(),
+                })?;
+            Scope::new(s.rules.clone(), s.tags.clone(), s.levels.clone())
+                .map_err(|message| EnrichersConfigError::Scope {
                     enricher_id: cfg.id.clone(),
                     message,
-                },
-            )?,
-            None => Scope::default(),
-        };
+                })?
+                .with_tenants(tenants)
+        }
+        None => Scope::default(),
+    };
 
     // Validate template-namespace references on every templated field.
     // The full set of templated fields is type-dependent, but every
@@ -858,6 +872,10 @@ fn validate_templated_fields(
     }
     if let Some(u) = &cfg.url {
         check(u, "url")?;
+        crate::validate_url_tenant_position(u).map_err(|message| EnrichersConfigError::Scope {
+            enricher_id: id.to_string(),
+            message,
+        })?;
     }
     for (k, v) in &cfg.headers {
         // Headers are key/value; we only template the value (the
