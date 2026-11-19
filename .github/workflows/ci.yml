@@ -67,8 +67,14 @@ jobs:
           # drops the slow per-PR cache upload (notably ~3 min on the Windows
           # runner) and keeps the shared cache from thrashing across branches.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            fuzz -> target
       # Compile tests, examples, and benches against the pinned MSRV too.
       - run: cargo check --workspace --all-targets --all-features --locked
+      # The fuzz crate is its own workspace and only the weekly fuzz workflow
+      # builds it, so check it here to fail the PR that breaks a target.
+      - run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
       # The CLI README documents `cargo build --no-default-features` for a
       # build without the daemon dependencies.
       - run: cargo check -p rsigma --no-default-features --all-targets --locked
