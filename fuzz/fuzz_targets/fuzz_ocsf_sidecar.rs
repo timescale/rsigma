@@ -71,5 +71,6 @@ fn header() -> RuleHeader {
         tags: Vec::new(),
         custom_attributes: Arc::new(HashMap::new()),
         enrichments: None,
+        ruleset: None,
     }
 }
