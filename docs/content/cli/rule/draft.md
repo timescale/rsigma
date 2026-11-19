@@ -210,7 +210,7 @@ One document is emitted per mapped logsource. Several documents are joined with 
 | `url` | `proxy` | `c-uri` |
 | `md5`, `sha1`, `sha256`, `sha512` | `process_creation` | one `Hashes\|contains` selection, values `MD5=<hex>`, `SHA1=<hex>`, `SHA256=<hex>`, `SHA512=<hex>` |
 | `file_name` | `file_event` | `TargetFilename\|endswith`. Each value gains one leading `\`, so `evil.exe` is matched as `\evil.exe` |
-| `registry_key` | `registry_set` | `TargetObject` |
+| `registry_key` | `registry_set` | `TargetObject\|contains`. The hive is removed: `HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`, `HKEY_USERS`, `HKEY_CLASSES_ROOT`, `HKEY_CURRENT_CONFIG`, and the short forms `HKLM`, `HKCU`, `HKU`, `HKCR`, `HKCC`. The comparison ignores case. The remaining key is wrapped in backslashes, so `HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run` is `\Software\Microsoft\Windows\CurrentVersion\Run\`. That matches a Sysmon `TargetObject`, which uses the short hive and appends the value name (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\evil`), and a current-user key under `HKU\<SID>\`. A key that does not start with one of those hives keeps its whole path, wrapped the same way. A hive with no key path is not drafted. |
 | `email`, `mutex`, `mac`, `asn` | none | not drafted |
 
 `status` is `experimental`. `author` stays `TODO: your name`. `falsepositives` stays `TODO: list known benign triggers.` Edit both before you commit the rule. Literal `*`, `?`, and a backslash that would become a wildcard are escaped in detection values.

@@ -445,6 +445,47 @@ fn bundle_text(raw: &str) -> Result<String, String> {
     }
 }
 
+/// Hives Sysmon abbreviates, longest first so `HKCU` is not read as `HKU`.
+const REGISTRY_HIVES: &[&str] = &[
+    "HKEY_LOCAL_MACHINE",
+    "HKEY_CURRENT_USER",
+    "HKEY_CURRENT_CONFIG",
+    "HKEY_CLASSES_ROOT",
+    "HKEY_USERS",
+    "HKLM",
+    "HKCU",
+    "HKCR",
+    "HKCC",
+    "HKU",
+];
+
+/// `TargetObject|contains` needle. The hive is dropped and the remaining key
+/// is wrapped in backslashes, so a Sysmon value that uses a short hive and
+/// appends the value name still matches. A key with no known hive keeps its
+/// whole path, wrapped the same way. A hive with no key path is not drafted.
+fn registry_contains_value(key: &str) -> Option<String> {
+    let rest = strip_registry_hive(key).unwrap_or(key);
+    let rest = rest.trim_matches('\\');
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("\\{rest}\\"))
+}
+
+fn strip_registry_hive(key: &str) -> Option<&str> {
+    let trimmed = key.trim();
+    for hive in REGISTRY_HIVES {
+        if trimmed.len() < hive.len() || !trimmed[..hive.len()].eq_ignore_ascii_case(hive) {
+            continue;
+        }
+        let rest = &trimmed[hive.len()..];
+        if rest.is_empty() || rest.starts_with('\\') {
+            return Some(rest);
+        }
+    }
+    None
+}
+
 fn mapped(kind: ObservableKind, value: &str) -> Option<(Slot, String)> {
     Some(match kind {
         ObservableKind::Ipv4 => (Slot::Ipv4, value.to_string()),
@@ -458,7 +499,10 @@ fn mapped(kind: ObservableKind, value: &str) -> Option<(Slot, String)> {
         ObservableKind::Sha256 => (Slot::Hashes, format!("SHA256={value}")),
         ObservableKind::Sha512 => (Slot::Hashes, format!("SHA512={value}")),
         ObservableKind::FileName => (Slot::FileName, format!("\\{value}")),
-        ObservableKind::RegistryKey => (Slot::RegistryKey, value.to_string()),
+        ObservableKind::RegistryKey => match registry_contains_value(value) {
+            Some(formatted) => (Slot::RegistryKey, formatted),
+            None => return None,
+        },
         _ => return None,
     })
 }
@@ -488,7 +532,7 @@ fn selection_meta(slot: Slot) -> (&'static str, &'static str, &'static [&'static
         Slot::Url => ("selection_c_uri", "c-uri", &[]),
         Slot::Hashes => ("selection_hashes", "Hashes", &["contains"]),
         Slot::FileName => ("selection_target_filename", "TargetFilename", &["endswith"]),
-        Slot::RegistryKey => ("selection_target_object", "TargetObject", &[]),
+        Slot::RegistryKey => ("selection_target_object", "TargetObject", &["contains"]),
     }
 }
 
@@ -641,7 +685,7 @@ mod tests {
         assert!(yaml.contains("'MD5=aabb'"));
         assert!(yaml.contains("'SHA256=eeff'"));
         assert!(yaml.contains("TargetFilename|endswith: '\\evil.exe'"));
-        assert!(yaml.contains("TargetObject: HKLM-Software"));
+        assert!(yaml.contains(r"TargetObject|contains: '\HKLM-Software\\'"));
         assert!(!yaml.contains("a@bad.example"));
         assert!(!yaml.contains("Global-Lock"));
         assert!(yaml.contains("attack.command_and_control"));
@@ -824,5 +868,58 @@ mod tests {
         let outcome = draft_stix(&object.to_string(), &options()).unwrap();
         assert!(outcome.rules[0].contains("title: Beacon address"));
         assert!(outcome.rules[0].contains("id: 68e70f9d-8a24-5a4b-8718-7f20315e9734"));
+    }
+
+    #[test]
+    fn registry_key_drops_the_hive_and_uses_contains() {
+        let cases = [
+            (
+                "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                r"\Software\Microsoft\Windows\CurrentVersion\Run\\",
+            ),
+            ("HKLM\\Software\\Run", r"\Software\Run\\"),
+            ("HKEY_CURRENT_USER\\Software\\Run", r"\Software\Run\\"),
+            ("HKCU\\Software\\Run", r"\Software\Run\\"),
+            (
+                "HKEY_USERS\\S-1-5-21\\Software\\Run",
+                r"\S-1-5-21\Software\Run\\",
+            ),
+            ("HKU\\S-1-5-21\\Software\\Run", r"\S-1-5-21\Software\Run\\"),
+            ("HKEY_CLASSES_ROOT\\Software\\Run", r"\Software\Run\\"),
+            ("HKCR\\Software\\Run", r"\Software\Run\\"),
+            ("HKEY_CURRENT_CONFIG\\Software\\Run", r"\Software\Run\\"),
+            ("HKCC\\Software\\Run", r"\Software\Run\\"),
+            ("hkey_local_machine\\Software\\Run", r"\Software\Run\\"),
+        ];
+        for (key, needle) in cases {
+            let pattern = format!(
+                "[windows-registry-key:key = '{}']",
+                key.replace('\\', "\\\\")
+            );
+            let outcome = draft_stix(
+                &bundle(vec![indicator(
+                    "indicator--00000000-0000-4000-8000-000000000023",
+                    "Run key",
+                    &pattern,
+                )]),
+                &options(),
+            )
+            .unwrap();
+            let yaml = &outcome.rules[0];
+            assert!(yaml.contains("TargetObject|contains:"), "{key}\n{yaml}");
+            assert!(yaml.contains(needle), "{key}\n{yaml}");
+        }
+
+        let hive_only = draft_stix(
+            &bundle(vec![indicator(
+                "indicator--00000000-0000-4000-8000-000000000025",
+                "Hive",
+                "[windows-registry-key:key = 'HKEY_LOCAL_MACHINE']",
+            )]),
+            &options(),
+        )
+        .unwrap();
+        assert!(hive_only.rules.is_empty());
+        assert_eq!(hive_only.report.skipped[0].reason, "unmapped_observable");
     }
 }

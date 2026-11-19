@@ -250,6 +250,73 @@ fn unknown_observable_and_conflicting_flags_exit_3() {
 
 #[cfg(feature = "stix-draft")]
 #[test]
+fn a_registry_key_matches_a_sysmon_event() {
+    let path = fixture("registry.json");
+    let drafted = draft(&[
+        "rule",
+        "draft",
+        "--from-stix",
+        path.to_str().unwrap(),
+        "--date",
+        "2026-06-01",
+    ]);
+    assert!(
+        drafted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&drafted.stderr)
+    );
+    let yaml = String::from_utf8(drafted.stdout).unwrap();
+    assert_golden("draft-stix/registry.yml", &yaml);
+    let rule = temp_file(".yml", &yaml);
+
+    let hit = r#"{"EventID":13,"TargetObject":"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\evil"}"#;
+    let long = r#"{"EventID":13,"TargetObject":"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\evil"}"#;
+    let miss = r#"{"EventID":13,"TargetObject":"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce\\evil"}"#;
+    let exact = r#"{"EventID":13,"TargetObject":"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"}"#;
+    for event in [hit, long] {
+        let out = rsigma()
+            .args([
+                "engine",
+                "eval",
+                "--rules",
+                rule.path().to_str().unwrap(),
+                "--event",
+                event,
+            ])
+            .output()
+            .expect("engine eval");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        assert!(stdout.contains("Run key"), "{event}\n{stdout}");
+    }
+    for event in [miss, exact] {
+        let out = rsigma()
+            .args([
+                "engine",
+                "eval",
+                "--rules",
+                rule.path().to_str().unwrap(),
+                "--event",
+                event,
+            ])
+            .output()
+            .expect("engine eval");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains("No matches"), "{event}\n{stderr}");
+    }
+}
+
+#[cfg(feature = "stix-draft")]
+#[test]
 fn help_lists_from_stix() {
     let out = draft(&["rule", "draft", "--help"]);
     assert!(out.status.success());

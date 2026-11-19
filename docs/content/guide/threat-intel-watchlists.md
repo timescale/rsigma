@@ -150,7 +150,7 @@ Field-by-field rules, the observable keys, and the JSON shape are in [Dynamic So
 
 {{ added "unreleased" }}
 
-A STIX bundle can also become a Sigma rule, instead of a pipeline value. `rsigma rule draft --from-stix` reads the bundle, or one indicator object, and prints one rule per logsource. Addresses, CIDR ranges, domains, URLs, file hashes, file names, and registry keys are drafted. Email addresses, mutexes, MAC addresses, and ASNs are not. A pattern that is not a simple `=` or `IN` comparison is skipped, and so is a revoked indicator. Expired and not-yet-valid indicators are skipped unless you pass `--include-expired`.
+A STIX bundle can also become a Sigma rule, instead of a pipeline value. `rsigma rule draft --from-stix` reads the bundle, or one indicator object, and prints one rule per logsource. Addresses, CIDR ranges, domains, URLs, file hashes, file names, and registry keys are drafted. Email addresses, mutexes, MAC addresses, and ASNs are not. A pattern that is not a simple `=` or `IN` comparison is skipped, and so is a revoked indicator. Expired and not-yet-valid indicators are skipped unless you pass `--include-expired`. A registry key drops its hive and matches `TargetObject` with `|contains`, so a Sysmon event that records the short hive and appends the value name still matches.
 
 The command needs the `stix-draft` feature. A default `cargo install rsigma` build does not have the flag: `rsigma rule draft --help` will not list it. Release binaries and the Docker image include it. `rsigma --features` prints `stix-draft` when this binary has it.
 

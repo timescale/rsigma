@@ -1,0 +1,15 @@
+title: Run key
+id: de382f74-f64b-5730-9c9f-59a3df365683
+status: experimental
+description: 'Run key'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: registry_set
+detection:
+    selection_target_object:
+        TargetObject|contains: '\Software\Microsoft\Windows\CurrentVersion\Run\\'
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium
