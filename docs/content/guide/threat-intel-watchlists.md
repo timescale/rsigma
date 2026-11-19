@@ -140,9 +140,9 @@ sources:
       observables: [ipv4, domain]
 ```
 
-`${source.ti.ipv4}` is the sorted address list. `${source.ti.indicators}` is the metadata map. A lookup enricher can read one entry with `extract: '.indicators."${detection.fields.DestinationIp}"'`.
+`${source.ti.ipv4}` is the sorted address list. Values in those arrays escape `\`, `*`, and `?`, so a Sigma `|expand` comparison stays exact. `${source.ti.indicators}` is the metadata map, keyed by the raw value. A lookup enricher can read one entry with `extract: '.indicators."${detection.fields.DestinationIp}"'`.
 
-The first poll reads the collection. Later polls ask only for objects added since the last page. A failed poll keeps the previous value. The cursor is not stored, so a restart reads the collection again. An indicator stays in the value until the refresh after its `valid_until`.
+The first poll reads the collection. Later polls ask only for objects added since the last page. A poll that keeps saying there is another page, or that answers 416 for the same filter, fails instead of running without a bound. A failed poll keeps the previous value. The cursor is not stored, so a restart reads the collection again. An indicator stays in the value until the refresh after its `valid_until`. Expired and revoked ids are remembered only so an older copy cannot return.
 
 Field-by-field rules, the observable keys, and the JSON shape are in [Dynamic Sources](../reference/dynamic-sources.md#format-stix).
 

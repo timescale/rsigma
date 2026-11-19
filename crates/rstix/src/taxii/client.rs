@@ -222,6 +222,30 @@ struct TaxiiClientInner {
     https_policy: HttpsPolicy,
 }
 
+/// Page and object bounds for [`TaxiiClient::poll_objects`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PollBudget {
+    /// Maximum objects pages fetched in one poll.
+    pub max_pages: usize,
+    /// Maximum objects accumulated in one poll.
+    pub max_objects: usize,
+}
+
+impl PollBudget {
+    /// Enough objects to fill `max_indicators`, plus one page so a collection
+    /// of that size can end. The page budget is that many objects divided by
+    /// `page_size`.
+    pub fn for_indicators(page_size: usize, max_indicators: usize) -> Self {
+        let page_size = page_size.max(1);
+        let max_objects = max_indicators.saturating_add(page_size).max(1);
+        let max_pages = max_objects.div_ceil(page_size).max(1);
+        Self {
+            max_pages,
+            max_objects,
+        }
+    }
+}
+
 /// TAXII 2.1 HTTP client.
 #[derive(Clone)]
 pub struct TaxiiClient {
@@ -397,23 +421,49 @@ impl TaxiiClient {
     ///
     /// The header is consumed while advancing pages. Callers that poll with
     /// `added_after` use the returned timestamp as the next cursor. A failed
-    /// page returns the error and no cursor.
+    /// page returns the error and no objects. The poll stops with
+    /// [`TaxiiError::PollBudgetExceeded`] when `budget` is exhausted while the
+    /// server still has more, with [`TaxiiError::RepeatedPaginationCursor`]
+    /// when a page does not advance the filter, and with the 416 error when
+    /// recovery would request that same filter again.
     pub async fn poll_objects(
         &self,
         api_root_url: &str,
         collection_id: &str,
         filter: TaxiiFilter,
+        budget: PollBudget,
     ) -> Result<(Vec<StixObject>, Option<crate::core::TaxiiTimestamp>), TaxiiError> {
+        if budget.max_pages == 0 || budget.max_objects == 0 {
+            return Err(TaxiiError::PollBudgetExceeded {
+                max_pages: budget.max_pages,
+                max_objects: budget.max_objects,
+            });
+        }
         let mut pagination = ObjectPaginationState::new(filter);
         let mut objects = Vec::new();
+        let mut pages = 0usize;
         loop {
             if let Some(object) = pagination.pending_objects.pop_front() {
+                if objects.len() >= budget.max_objects {
+                    return Err(TaxiiError::PollBudgetExceeded {
+                        max_pages: budget.max_pages,
+                        max_objects: budget.max_objects,
+                    });
+                }
                 objects.push(object);
                 continue;
             }
             if pagination.finished {
                 return Ok((objects, pagination.date_added_last));
             }
+            if objects.len() >= budget.max_objects || pages >= budget.max_pages {
+                return Err(TaxiiError::PollBudgetExceeded {
+                    max_pages: budget.max_pages,
+                    max_objects: budget.max_objects,
+                });
+            }
+            let sent = pagination.filter.clone();
+            pages += 1;
             match self
                 .fetch_objects_page(api_root_url, collection_id, &pagination.filter)
                 .await
@@ -427,12 +477,18 @@ impl TaxiiClient {
                             .date_added_last,
                         envelope.objects,
                     )?;
+                    if !pagination.finished && pagination.filter == sent {
+                        return Err(TaxiiError::RepeatedPaginationCursor);
+                    }
                 }
-                Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                     recover_from_range_not_satisfiable(
                         &mut pagination.filter,
                         pagination.baseline_added_after.clone(),
                     );
+                    if pagination.filter == sent {
+                        return Err(err);
+                    }
                 }
                 Err(err) => return Err(err),
             }

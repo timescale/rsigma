@@ -213,7 +213,7 @@ The full reusable-source spec (types, data formats, extract languages, refresh p
 
 `LogProcessor::rebuild_from_sources` loads rules again from cached source values (`SourceFetch::CacheFirst`) and leaves the current engine in place when that load fails. `WatchlistRegistry` holds the unexpired indicators for `type: watchlist` sources. After a successful reload or rebuild, `apply_reference_limits` sets each watchlist's cap from the pipelines that loaded, and `restore` reports how many saved rows were left out because the source was already at that cap. `SourceResolver::cached` and `store_cached` let a push update the cache that a later rebuild or lookup reads. {{ added "unreleased" }}
 
-With the `stix-source` feature, `DefaultSourceResolver::prepare_taxii` builds the TAXII clients before the first resolve. `with_stix_clock` fixes the clock used for indicator lifecycle. File and HTTP sources with `format: stix` use the same build. The feature-off resolver rejects both with an error that names `stix-source`. {{ added "unreleased" }}
+With the `stix-source` feature, `DefaultSourceResolver::prepare_taxii` builds the TAXII clients before the first resolve. `with_stix_clock` fixes the clock used for indicator lifecycle. File and HTTP sources with `format: stix` use the same build. Array values escape `\`, `*`, and `?`, and the `indicators` keys stay raw. A TAXII poll stops at a `PollBudget` derived from `max_indicators` and `page_size`. The feature-off resolver rejects both with an error that names `stix-source`. {{ added "unreleased" }}
 
 ## Error handling
 

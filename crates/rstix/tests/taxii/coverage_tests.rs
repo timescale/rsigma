@@ -5,11 +5,14 @@ use std::time::Duration;
 use base64::Engine;
 use futures::StreamExt;
 use rstix::core::StixId;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use rstix::taxii::{
-    ObjectByIdFilter, PostSubmitPolicy, StatusState, TaxiiClient, TaxiiError, TaxiiFilter,
+    ObjectByIdFilter, PollBudget, PostSubmitPolicy, StatusState, TaxiiClient, TaxiiError,
+    TaxiiFilter,
 };
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use super::support::{
     api_root_url, minimal_indicator, readable_collection, taxii_json, wiremock_client,
@@ -418,4 +421,126 @@ async fn api_key_injects_custom_header() {
     )
     .expect("client");
     client.discover().await.expect("discover");
+}
+
+#[derive(Clone)]
+struct Objects {
+    mode: ObjectMode,
+    hits: std::sync::Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy)]
+enum ObjectMode {
+    /// `more: true` and a new `next` on every page.
+    Endless,
+    /// `more: true` and the same `next` on every page.
+    SameCursor,
+    /// HTTP 416 for every request.
+    Range,
+}
+
+impl Respond for Objects {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        let hit = self.hits.fetch_add(1, Ordering::SeqCst);
+        match self.mode {
+            ObjectMode::Endless => taxii_json(
+                200,
+                serde_json::json!({
+                    "more": true,
+                    "next": format!("page-{hit}"),
+                    "objects": [minimal_indicator()]
+                }),
+            ),
+            ObjectMode::SameCursor => taxii_json(
+                200,
+                serde_json::json!({
+                    "more": true,
+                    "next": "same",
+                    "objects": [minimal_indicator()]
+                }),
+            ),
+            ObjectMode::Range => taxii_json(
+                416,
+                serde_json::json!({ "title": "range", "description": "bad cursor" }),
+            ),
+        }
+    }
+}
+
+async fn objects_server(mode: ObjectMode) -> (MockServer, Objects) {
+    let server = MockServer::builder().start().await;
+    let responder = Objects {
+        mode,
+        hits: std::sync::Arc::new(AtomicUsize::new(0)),
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("{API_ROOT}collections/col1/objects/")))
+        .respond_with(responder.clone())
+        .mount(&server)
+        .await;
+    (server, responder)
+}
+
+fn small_budget() -> PollBudget {
+    PollBudget {
+        max_pages: 2,
+        max_objects: 8,
+    }
+}
+
+#[tokio::test]
+async fn poll_objects_stops_when_more_never_clears() {
+    let (server, responder) = objects_server(ObjectMode::Endless).await;
+    let client = wiremock_client_no_preflight(&server);
+    let err = client
+        .poll_objects(
+            &api_root_url(&server),
+            "col1",
+            TaxiiFilter::new(),
+            small_budget(),
+        )
+        .await
+        .expect_err("budget");
+    assert!(
+        matches!(err, TaxiiError::PollBudgetExceeded { .. }),
+        "{err}"
+    );
+    assert_eq!(responder.hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn poll_objects_stops_when_the_cursor_repeats() {
+    let (server, responder) = objects_server(ObjectMode::SameCursor).await;
+    let client = wiremock_client_no_preflight(&server);
+    let err = client
+        .poll_objects(
+            &api_root_url(&server),
+            "col1",
+            TaxiiFilter::new(),
+            small_budget(),
+        )
+        .await
+        .expect_err("cursor");
+    assert!(matches!(err, TaxiiError::RepeatedPaginationCursor), "{err}");
+    assert!(responder.hits.load(Ordering::SeqCst) <= 2);
+}
+
+#[tokio::test]
+async fn poll_objects_stops_when_416_repeats_the_same_filter() {
+    let (server, responder) = objects_server(ObjectMode::Range).await;
+    let client = wiremock_client_no_preflight(&server);
+    let err = client
+        .poll_objects(
+            &api_root_url(&server),
+            "col1",
+            TaxiiFilter::new(),
+            small_budget(),
+        )
+        .await
+        .expect_err("416");
+    assert!(
+        matches!(err, TaxiiError::RequestedRangeNotSatisfiable { .. }),
+        "{err}"
+    );
+    assert_eq!(responder.hits.load(Ordering::SeqCst), 1);
 }

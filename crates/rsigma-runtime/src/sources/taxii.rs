@@ -3,7 +3,7 @@
 //! Poll state is not persisted. After a restart the next resolve is a full poll.
 //! A failed poll leaves the previous indicator set and cursor unchanged.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,8 +12,8 @@ use rsigma_eval::pipeline::sources::{DynamicSource, SourceType, StixOptions, Tax
 use rstix::core::{StixTimestamp, TaxiiTimestamp};
 use rstix::model::sdo::SdoObject;
 use rstix::{
-    ApiKeyHeader, BasicAuth, BearerAuth, ParseOptions, StixObject, TaxiiClient, TaxiiClientConfig,
-    TaxiiError, TaxiiFilter,
+    ApiKeyHeader, BasicAuth, BearerAuth, ParseOptions, PollBudget, StixObject, TaxiiClient,
+    TaxiiClientConfig, TaxiiError, TaxiiFilter,
 };
 
 use super::stix::{IndicatorSet, StixBuild};
@@ -92,8 +92,11 @@ impl TaxiiSources {
         Ok(())
     }
 
-    pub(crate) fn poll_inputs(
-        &self,
+    /// Remove the poll state so the caller can poll without cloning the set.
+    ///
+    /// The client stays in `prepared`. On failure the caller puts the state back.
+    pub(crate) fn take_poll(
+        &mut self,
         source_id: &str,
     ) -> Result<(Prepared, Option<PollState>), SourceError> {
         let prepared = self
@@ -104,7 +107,7 @@ impl TaxiiSources {
                 source_id: source_id.to_owned(),
                 kind: SourceErrorKind::Fetch("TAXII source is not prepared".into()),
             })?;
-        Ok((prepared, self.polls.get(source_id).cloned()))
+        Ok((prepared, self.polls.remove(source_id)))
     }
 
     pub(crate) fn commit(&mut self, source_id: &str, state: PollState) {
@@ -112,11 +115,15 @@ impl TaxiiSources {
     }
 }
 
+/// Poll, then return the state that should be stored and the build.
+///
+/// On failure the state is the one passed in, unchanged. On success it is the
+/// merged set. `None` means there was no state and the poll failed.
 pub(crate) async fn poll(
     prepared: &Prepared,
     previous: Option<PollState>,
     now: &StixTimestamp,
-) -> Result<(PollState, StixBuild), SourceError> {
+) -> (Option<PollState>, Result<StixBuild, SourceError>) {
     let previous_cursor = previous
         .as_ref()
         .and_then(|state| state.added_after.clone());
@@ -127,31 +134,37 @@ pub(crate) async fn poll(
     if let Some(cursor) = previous_cursor.clone() {
         filter = filter.added_after(cursor);
     }
-    let (objects, date_added_last) = prepared
+    let budget = PollBudget::for_indicators(prepared.page_size, prepared.options.max_indicators);
+    let polled = prepared
         .client
-        .poll_objects(&prepared.url, &prepared.collection, filter)
-        .await
-        .map_err(fetch_error)?;
+        .poll_objects(&prepared.url, &prepared.collection, filter, budget)
+        .await;
+    let (objects, date_added_last) = match polled {
+        Ok(value) => value,
+        Err(err) => return (previous, Err(fetch_error(err))),
+    };
     let mut set = previous.map(|state| state.set).unwrap_or_default();
+    let mut received_ids = HashSet::new();
     let received = objects.len();
     for object in objects {
         if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {
+            received_ids.insert(indicator.common.id.to_string());
             set.upsert(indicator);
         }
     }
-    let (value, skips, active) = set.build(&prepared.options, now);
-    Ok((
-        PollState {
+    let (value, skips, active) = set.build(&prepared.options, now, Some(&received_ids));
+    (
+        Some(PollState {
             set,
             added_after: date_added_last.or(previous_cursor),
-        },
-        StixBuild {
+        }),
+        Ok(StixBuild {
             value,
             skips,
             active,
             objects: received,
-        },
-    ))
+        }),
+    )
 }
 
 fn fetch_error(err: TaxiiError) -> SourceError {

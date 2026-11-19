@@ -147,7 +147,7 @@ pub use model::{
 pub use taxii::{
     ApiKeyHeader, AuthChallenge, BasicAuth, BearerAuth, CapabilityPolicy, ClientCertificate,
     DeleteObjectFilter, DnsLookupOptions, HttpsPolicy, ManifestRecord, ManifestResponse,
-    ObjectByIdFilter, ObjectVersion, PostSubmitPolicy, PreflightPolicy, RetryPolicy,
+    ObjectByIdFilter, ObjectVersion, PollBudget, PostSubmitPolicy, PreflightPolicy, RetryPolicy,
     ServerTrustPolicy, SpkiPin, StatusDetail, StatusState, TAXII2_SRV_SERVICE, TaxiiApiRoot,
     TaxiiAuthProvider, TaxiiClient, TaxiiClientConfig, TaxiiCollection, TaxiiDiscovery,
     TaxiiEnvelope, TaxiiError, TaxiiFilter, TaxiiPageHeaders, TaxiiPaged, TaxiiStatus, TlsaCache,

@@ -455,7 +455,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery |
 | `api_root(url)` | `GET {api_root}/` |
 | `collections(url)` / `collection(url, id)` | List / get collection |
-| `objects` / `objects_stream` / `poll_objects` | Paginated GET objects. `poll_objects` returns the objects and the last page's `X-TAXII-Date-Added-Last`. |
+| `objects` / `objects_stream` / `poll_objects` | Paginated GET objects. `poll_objects` takes a [`PollBudget`](taxii::PollBudget) and returns the objects and the last page's `X-TAXII-Date-Added-Last`. |
 | `get_object` / `object_stream` | GET object-by-id (section 5.6) |
 | `add_objects` | POST envelope → 202 + status (auto-polls by default) |
 | `delete_object` | DELETE with version filter |
@@ -714,8 +714,8 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
 | Capability checks | With `Enforce`: collection `media_types` must include TAXII 2.1 and/or STIX 2.1 object types; API Root `versions` must include TAXII 2.1; `max_content_length` must be integer **> 0** | `CapabilityPolicy::Disabled` skips checks (interop only); wire JSON is never coerced |
 | POST status | Poll until complete by default (`PostSubmitPolicy`) | `ReturnInitial` for one-shot 202 |
-| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last` | `MissingPaginationHeaders` |
-| HTTP 416 recovery | Streams reset cursor and restore baseline `added_after` | Pagination streams |
+| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last`. `poll_objects` also stops when the page or object budget is exhausted or the filter does not advance | `MissingPaginationHeaders`, `PollBudgetExceeded`, `RepeatedPaginationCursor` |
+| HTTP 416 recovery | Streams reset the cursor and restore baseline `added_after`. `poll_objects` does that once, then returns the 416 when recovery would repeat the same filter | Pagination streams and `PollBudget` |
 | Clock skew | When a prior response cached skew seconds, adjust `added_after` by that delta; **when skew is unset, leave `added_after` unchanged** (do not drop the filter) | `with_clock_skew_*`; unit-tested |
 | HTTP 401 | `WWW-Authenticate` challenges parsed on `Unauthorized`; auth-params must not become fake schemes (CSD01 Table 2 multi-challenge) | `AuthChallenge`, `parse_www_authenticate` |
 | SRV selection | RFC 2782 weighted random; `"."` targets skipped | `resolve_taxii_srv` |

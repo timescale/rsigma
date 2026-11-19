@@ -29,6 +29,8 @@ pub struct Server {
     pub url: String,
     pub collection: String,
     state: Arc<State>,
+    // A bare `MockServer` stops accepting connections when dropped.
+    _server: MockServer,
 }
 
 impl Server {
@@ -55,6 +57,7 @@ impl Server {
             url: format!("{}/api1/", server.uri().trim_end_matches('/')),
             collection: collection.to_owned(),
             state,
+            _server: server,
         }
     }
 

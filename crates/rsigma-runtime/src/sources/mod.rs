@@ -348,13 +348,15 @@ impl DefaultSourceResolver {
         #[cfg(feature = "stix-source")]
         {
             let (prepared, previous) = {
-                let taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
-                taxii.poll_inputs(&source.id)?
+                let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+                taxii.take_poll(&source.id)?
             };
-            let (state, built) = taxii::poll(&prepared, previous, &self.stix_now()).await?;
-            let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
-            taxii.commit(&source.id, state);
-            Ok(self.finish_stix(&source.id, built))
+            let (state, built) = taxii::poll(&prepared, previous, &self.stix_now()).await;
+            if let Some(state) = state {
+                let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+                taxii.commit(&source.id, state);
+            }
+            Ok(self.finish_stix(&source.id, built?))
         }
     }
 

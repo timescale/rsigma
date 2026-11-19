@@ -47,6 +47,16 @@ fn options_for(name: &str) -> StixOptions {
             observables: vec!["ipv4".to_owned(), "domain".to_owned()],
             max_indicators: 100_000,
         }
+    } else if name == "escaped" {
+        StixOptions {
+            min_confidence: None,
+            observables: vec![
+                "url".to_owned(),
+                "domain".to_owned(),
+                "file_name".to_owned(),
+            ],
+            max_indicators: 100_000,
+        }
     } else if name == "mixed" {
         StixOptions {
             min_confidence: None,
@@ -110,7 +120,7 @@ async fn resolve(name: &str) -> Value {
 
 #[tokio::test]
 async fn golden_values_match_the_fixed_clock() {
-    for name in ["mixed", "lifecycle", "unsupported", "selected"] {
+    for name in ["mixed", "lifecycle", "unsupported", "selected", "escaped"] {
         let value = resolve(name).await;
         check(name, &value);
     }

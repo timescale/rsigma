@@ -2,9 +2,12 @@
 //!
 //! Lifecycle is evaluated at each resolve against the caller's clock. An
 //! indicator whose `valid_until` has passed stays in the value until the next
-//! refresh, so the source refresh interval is the expiry granularity.
+//! refresh, so the source refresh interval is the expiry granularity. Expired
+//! and revoked indicators are not kept as objects. Array values escape `\`,
+//! `*`, and `?` so a Sigma comparison stays exact. The `indicators` map uses
+//! the raw value as its key.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rsigma_eval::pipeline::sources::StixOptions;
 use rstix::core::StixTimestamp;
@@ -138,9 +141,14 @@ struct Kept {
 }
 
 /// Latest version of each indicator id, then the lifecycle and the cap.
+///
+/// Revoked and expired ids stay as a modified time so an older copy cannot
+/// return. That list, and the indicators kept in memory, are bounded by
+/// `max_indicators`.
 #[derive(Clone, Debug)]
 pub struct IndicatorSet {
     by_id: HashMap<String, Candidate>,
+    tombstones: HashMap<String, StixTimestamp>,
 }
 
 #[derive(Clone, Debug)]
@@ -154,19 +162,30 @@ impl IndicatorSet {
     pub fn new() -> Self {
         Self {
             by_id: HashMap::new(),
+            tombstones: HashMap::new(),
         }
+    }
+
+    fn retained_ids(&self) -> usize {
+        self.by_id.len() + self.tombstones.len()
     }
 
     /// Keep `indicator` when it is newer than the copy already stored for its id.
     ///
     /// An older version that arrives later does not replace the newer one.
-    /// A revoked newer version replaces an older active one, and the lifecycle
-    /// then removes it.
+    /// A revoked or expired id remembers its `modified`, and an older copy of
+    /// that id is ignored. A newer `modified` replaces the remembered one.
     pub fn upsert(&mut self, indicator: rstix::model::sdo::Indicator) {
         let id = indicator.common.id.to_string();
+        if let Some(modified) = self.tombstones.get(&id)
+            && *modified >= indicator.common.modified
+        {
+            return;
+        }
         match self.by_id.get(&id) {
             Some(existing) if existing.modified >= indicator.common.modified => {}
             _ => {
+                self.tombstones.remove(&id);
                 let modified = indicator.common.modified.clone();
                 self.by_id.insert(
                     id,
@@ -180,23 +199,57 @@ impl IndicatorSet {
     }
 
     /// Apply the lifecycle at `now`, then the cap, and build the source value.
+    ///
+    /// `None` counts every id still stored. `Some` counts a not-yet-valid id,
+    /// and unmapped comparisons on an id that stays, only when the id is in
+    /// the set. Ids this call drops are counted once, because a later call no
+    /// longer has them.
     pub fn build(
-        &self,
+        &mut self,
         options: &StixOptions,
         now: &StixTimestamp,
+        received: Option<&HashSet<String>>,
     ) -> (serde_json::Value, SkipCounts, usize) {
         let mut skips = SkipCounts::default();
         let configured: BTreeSet<&str> = options.observables.iter().map(String::as_str).collect();
         let mut kept = Vec::new();
         let mut unmapped = 0u64;
-        for candidate in self.by_id.values() {
+        let mut tomb: Vec<(String, StixTimestamp)> = Vec::new();
+        let mut waiting: Vec<(String, StixTimestamp)> = Vec::new();
+        let mut drop_ids: Vec<String> = Vec::new();
+        let ids: Vec<String> = self.by_id.keys().cloned().collect();
+        for id in ids {
+            let Some(candidate) = self.by_id.get(&id) else {
+                continue;
+            };
+            let modified = candidate.modified.clone();
+            let valid_from = candidate.indicator.valid_from.clone();
+            let count = received.is_none_or(|ids| ids.contains(&id));
             match keep(&candidate.indicator, options, now, &configured) {
                 Ok(accepted) => {
-                    unmapped += accepted.unmapped;
+                    if count {
+                        unmapped += accepted.unmapped;
+                    }
                     kept.push(accepted.item);
                 }
-                Err(reason) => skips.add(reason, 1),
+                Err(SkipReason::NotYetValid) => {
+                    if count {
+                        skips.add(SkipReason::NotYetValid, 1);
+                    }
+                    waiting.push((id, valid_from));
+                }
+                Err(reason @ (SkipReason::Revoked | SkipReason::Expired)) => {
+                    skips.add(reason, 1);
+                    tomb.push((id, modified));
+                }
+                Err(reason) => {
+                    skips.add(reason, 1);
+                    drop_ids.push(id);
+                }
             }
+        }
+        for id in drop_ids {
+            self.by_id.remove(&id);
         }
         if unmapped > 0 {
             skips.add(SkipReason::UnmappedObservable, unmapped);
@@ -209,9 +262,26 @@ impl IndicatorSet {
         });
         if kept.len() > options.max_indicators {
             let extra = kept.len() - options.max_indicators;
-            kept.truncate(options.max_indicators);
+            let dropped = kept.split_off(options.max_indicators);
             skips.add(SkipReason::OverLimit, extra as u64);
+            for item in dropped {
+                self.by_id.remove(&item.id);
+            }
         }
+        for (id, modified) in tomb {
+            self.by_id.remove(&id);
+            self.tombstones.insert(id, modified);
+        }
+        self.evict_tombstones(options.max_indicators);
+        let id_cap = options.max_indicators.saturating_mul(2);
+        waiting.sort_by(|left, right| right.1.cmp(&left.1));
+        while self.retained_ids() > id_cap {
+            let Some((id, _)) = waiting.pop() else {
+                break;
+            };
+            self.by_id.remove(&id);
+        }
+        self.evict_tombstones(id_cap.saturating_sub(self.by_id.len()));
         let mut values: BTreeMap<String, BTreeSet<String>> = options
             .observables
             .iter()
@@ -221,7 +291,7 @@ impl IndicatorSet {
         for item in &kept {
             for (key, value) in &item.observables {
                 if let Some(bucket) = values.get_mut(key) {
-                    bucket.insert(value.clone());
+                    bucket.insert(escape_sigma_literal(value));
                     let entries = metadata.entry(value.clone()).or_default();
                     if entries.iter().all(|existing| existing.id != item.id) {
                         entries.push(item.clone());
@@ -266,6 +336,22 @@ impl IndicatorSet {
         );
         let active = kept.len();
         (serde_json::Value::Object(object), skips, active)
+    }
+
+    fn evict_tombstones(&mut self, cap: usize) {
+        if self.tombstones.len() <= cap {
+            return;
+        }
+        let mut ranked: Vec<(StixTimestamp, String)> = self
+            .tombstones
+            .iter()
+            .map(|(id, modified)| (modified.clone(), id.clone()))
+            .collect();
+        ranked.sort();
+        let extra = ranked.len() - cap;
+        for (_, id) in ranked.into_iter().take(extra) {
+            self.tombstones.remove(&id);
+        }
     }
 }
 
@@ -326,6 +412,9 @@ fn keep(
             _ => unmapped += 1,
         }
     }
+    if selected.is_empty() {
+        return Err(SkipReason::UnmappedObservable);
+    }
     Ok(Accepted {
         unmapped,
         item: Kept {
@@ -342,6 +431,18 @@ fn keep(
             observables: selected,
         },
     })
+}
+
+/// Escape `\`, `*`, and `?` so Sigma treats them as literal characters.
+fn escape_sigma_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '*' | '?') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn metadata_json(item: &Kept) -> serde_json::Value {
@@ -411,7 +512,7 @@ pub fn build(
             set.upsert(indicator.clone());
         }
     }
-    let (value, skips, active) = set.build(options, now);
+    let (value, skips, active) = set.build(options, now, None);
     Ok(StixBuild {
         value,
         skips,
@@ -556,7 +657,7 @@ mod tests {
         let mut set = IndicatorSet::new();
         set.upsert(newer);
         set.upsert(older);
-        let (value, _, active) = set.build(&StixOptions::all(), &now());
+        let (value, _, active) = set.build(&StixOptions::all(), &now(), None);
         assert_eq!(active, 1);
         assert_eq!(keys(&value), ["198.51.100.8"]);
 
@@ -567,7 +668,7 @@ mod tests {
             r#","revoked":true"#,
         )]));
         set.upsert(revoked);
-        let (_, skips, active) = set.build(&StixOptions::all(), &now());
+        let (_, skips, active) = set.build(&StixOptions::all(), &now(), None);
         assert_eq!(active, 0);
         assert_eq!(skips.revoked, 1);
     }
@@ -634,6 +735,169 @@ mod tests {
         assert_eq!(built.skips.unmapped_observable, 1);
         assert_eq!(built.value["ipv4"], serde_json::json!([]));
         assert!(built.value.get("domain").is_none());
+        assert_eq!(built.active, 0);
+    }
+
+    #[test]
+    fn unmapped_indicator_does_not_take_a_cap_slot() {
+        let mut options = StixOptions::all();
+        options.observables = vec!["ipv4".to_owned()];
+        options.max_indicators = 1;
+        let unmapped = indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[file:size = 12]",
+            r#","confidence":90"#,
+        );
+        let mapped = indicator(
+            2,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            r#","confidence":10"#,
+        );
+        let built = build(&bundle(&[&unmapped, &mapped]), &options, &now()).unwrap();
+        assert_eq!(keys(&built.value), ["198.51.100.7"]);
         assert_eq!(built.active, 1);
+        assert_eq!(built.skips.unmapped_observable, 1);
+        assert_eq!(built.skips.over_limit, 0);
+    }
+
+    #[test]
+    fn escapes_sigma_wildcards_in_arrays_and_keeps_raw_indicator_keys() {
+        let pattern = r"[url:value = 'http://bad.example/a.php?id=1'] OR [domain-name:value = '*'] OR [file:name = 'C:\\\\Windows\\\\a*b']";
+        let mut options = StixOptions::all();
+        options.observables = vec![
+            "url".to_owned(),
+            "domain".to_owned(),
+            "file_name".to_owned(),
+        ];
+        let built = build(
+            &bundle(&[&indicator(1, "2024-01-01T00:00:00.000Z", pattern, "")]),
+            &options,
+            &now(),
+        )
+        .unwrap();
+        assert_eq!(
+            built.value["url"],
+            serde_json::json!(["http://bad.example/a.php\\?id=1"])
+        );
+        assert_eq!(built.value["domain"], serde_json::json!(["\\*"]));
+        assert_eq!(
+            built.value["file_name"],
+            serde_json::json!(["C:\\\\Windows\\\\a\\*b"])
+        );
+        let indicators = built.value["indicators"].as_object().unwrap();
+        assert!(indicators.contains_key("http://bad.example/a.php?id=1"));
+        assert!(indicators.contains_key("*"));
+        assert!(indicators.contains_key(r"C:\Windows\a*b"));
+        assert!(!indicators.contains_key(r"\*"));
+    }
+
+    #[test]
+    fn expired_and_revoked_ids_do_not_come_back_or_get_counted_again() {
+        let expired = load(&bundle(&[&indicator(
+            1,
+            "2025-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            r#","valid_until":"2026-01-01T00:00:00.000Z""#,
+        )]));
+        let expired_id = expired.common.id.to_string();
+        let mut set = IndicatorSet::new();
+        set.upsert(expired);
+        let received = HashSet::from([expired_id]);
+        let (_, skips, active) = set.build(&StixOptions::all(), &now(), Some(&received));
+        assert_eq!(active, 0);
+        assert_eq!(skips.expired, 1);
+        assert_eq!(set.retained_ids(), 1);
+
+        let older = load(&bundle(&[&indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            "",
+        )]));
+        set.upsert(older);
+        let (_, skips, active) = set.build(&StixOptions::all(), &now(), Some(&HashSet::new()));
+        assert_eq!(active, 0);
+        assert_eq!(skips.expired, 0);
+
+        let revoked = load(&bundle(&[&indicator(
+            2,
+            "2025-06-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.8']",
+            r#","revoked":true"#,
+        )]));
+        let revoked_id = revoked.common.id.to_string();
+        set.upsert(revoked);
+        let received = HashSet::from([revoked_id]);
+        let (_, skips, active) = set.build(&StixOptions::all(), &now(), Some(&received));
+        assert_eq!(active, 0);
+        assert_eq!(skips.revoked, 1);
+        let older_revoked = load(&bundle(&[&indicator(
+            2,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.8']",
+            "",
+        )]));
+        set.upsert(older_revoked);
+        let (value, skips, active) = set.build(&StixOptions::all(), &now(), Some(&HashSet::new()));
+        assert_eq!(active, 0);
+        assert_eq!(skips.revoked, 0);
+        assert_eq!(keys(&value), Vec::<String>::new());
+    }
+
+    #[test]
+    fn tombstones_keep_the_newest_modified_within_the_cap() {
+        let mut options = StixOptions::all();
+        options.max_indicators = 1;
+        let mut set = IndicatorSet::new();
+        for (n, modified) in [
+            (1u8, "2024-01-01T00:00:00.000Z"),
+            (2, "2025-01-01T00:00:00.000Z"),
+            (3, "2026-01-01T00:00:00.000Z"),
+        ] {
+            set.upsert(load(&bundle(&[&indicator(
+                n,
+                modified,
+                "[ipv4-addr:value = '198.51.100.7']",
+                r#","valid_until":"2026-01-01T00:00:00.000Z""#,
+            )])));
+        }
+        let _ = set.build(&options, &now(), None);
+        assert_eq!(set.retained_ids(), 1);
+        set.upsert(load(&bundle(&[&indicator(
+            3,
+            "2025-06-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.9']",
+            "",
+        )])));
+        let (_, _, active) = set.build(&options, &now(), None);
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn not_yet_valid_is_counted_for_the_poll_that_received_it() {
+        let body = indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            "",
+        )
+        .replacen(
+            r#""valid_from":"2020-01-01T00:00:00.000Z""#,
+            r#""valid_from":"2027-01-01T00:00:00.000Z""#,
+            1,
+        );
+        let future = load(&bundle(&[&body]));
+        let id = future.common.id.to_string();
+        let mut set = IndicatorSet::new();
+        set.upsert(future);
+        let received = HashSet::from([id]);
+        let (_, skips, active) = set.build(&StixOptions::all(), &now(), Some(&received));
+        assert_eq!(active, 0);
+        assert_eq!(skips.not_yet_valid, 1);
+        let (_, skips, _) = set.build(&StixOptions::all(), &now(), Some(&HashSet::new()));
+        assert_eq!(skips.not_yet_valid, 0);
+        assert_eq!(set.retained_ids(), 1);
     }
 }

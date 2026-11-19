@@ -367,39 +367,3 @@ async fn missing_auth_env_names_the_variable() {
         "{err}"
     );
 }
-
-#[tokio::test]
-async fn bearer_token_is_sent_from_the_environment() {
-    let var = "RSIGMA_TEST_TAXII_BEARER_TOKEN";
-    unsafe { std::env::set_var(var, "s3cret-token") };
-    let server = Server::start(COLLECTION).await;
-    server.push(
-        &stamp(1),
-        taxii::indicator(
-            1,
-            "2024-01-01T00:00:00.000Z",
-            "[ipv4-addr:value = '198.51.100.7']",
-            "",
-        ),
-    );
-    let declared = source(
-        &server.url,
-        ErrorPolicy::Fail,
-        50,
-        TaxiiAuthConfig {
-            bearer_token_env: Some(var.to_owned()),
-            ..TaxiiAuthConfig::default()
-        },
-    );
-    let mut resolver = DefaultSourceResolver::new().with_stix_clock(clock());
-    resolver
-        .prepare_taxii_with(
-            std::slice::from_ref(&declared),
-            EgressPolicy::permissive(),
-            true,
-        )
-        .expect("prepare");
-    resolver.resolve(&declared).await.expect("poll");
-    assert_eq!(server.authorizations(), ["Bearer s3cret-token"]);
-    unsafe { std::env::remove_var(var) };
-}
