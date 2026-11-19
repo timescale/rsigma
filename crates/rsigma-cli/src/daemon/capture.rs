@@ -104,7 +104,12 @@ impl CaptureSpool {
                 .filter(|_| original.scope == DispositionScope::Detection),
         );
         let id = bundle_id(&identity);
-        let dest = dest_dir(&self.spool_dir, original.verdict, &id);
+        let dest = dest_dir(
+            &self.spool_dir,
+            original.tenant.as_ref(),
+            original.verdict,
+            &id,
+        );
         if dest.join("manifest.json").is_file() {
             self.metrics
                 .capture_spool_jobs_total
@@ -200,12 +205,20 @@ fn rules_from_snapshot(snapshot: &CaptureSnapshot, accepted_rules: &[String]) ->
     rules
 }
 
-fn dest_dir(spool_dir: &Path, verdict: Verdict, bundle_id: &str) -> PathBuf {
+fn dest_dir(
+    spool_dir: &Path,
+    tenant: Option<&rsigma_eval::TenantId>,
+    verdict: Verdict,
+    bundle_id: &str,
+) -> PathBuf {
     let kind = match verdict {
         Verdict::FalsePositive => "fp",
         Verdict::TruePositive | Verdict::BenignTruePositive => "tp",
     };
-    spool_dir.join(kind).join(bundle_id)
+    match tenant {
+        Some(tenant) => spool_dir.join(tenant.as_str()).join(kind).join(bundle_id),
+        None => spool_dir.join(kind).join(bundle_id),
+    }
 }
 
 fn scope_str(scope: DispositionScope) -> &'static str {
@@ -574,7 +587,7 @@ mod tests {
     fn job(dir: &Path) -> SpoolJob {
         let id = bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}");
         SpoolJob {
-            dest: dest_dir(dir, Verdict::TruePositive, &id),
+            dest: dest_dir(dir, None, Verdict::TruePositive, &id),
             verdict: Verdict::TruePositive,
             snapshot: snapshot(),
             manifest: BundleManifest {
@@ -610,6 +623,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );
@@ -649,6 +663,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let first = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );
@@ -658,6 +673,7 @@ mod tests {
         second.manifest.bundle_id = bundle_id("incident\u{1}true_positive\u{1}other\u{1}\u{1}");
         second.dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &second.manifest.bundle_id,
         );
@@ -678,6 +694,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );

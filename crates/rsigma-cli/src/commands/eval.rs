@@ -834,8 +834,15 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
             crate::config::RulesetEntryPartial::Bound {
                 name,
                 when,
+                tenants,
                 unknown,
             } => {
+                if tenants.as_ref().is_some_and(|t| !t.is_empty()) {
+                    eprintln!(
+                        "error: ruleset '{name}' sets `tenants`, which is only valid under daemon.rulesets"
+                    );
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
                 if !unknown.is_empty() {
                     eprintln!(
                         "error: ruleset '{name}' has unknown keys: {}",
@@ -2485,6 +2492,7 @@ mod tests {
             crate::config::RulesetEntryPartial::Bound {
                 name,
                 when,
+                tenants: _,
                 unknown,
             } => {
                 assert_eq!(name, "a");

@@ -895,11 +895,22 @@ impl RuntimeEngine {
     /// Returns `true` if the import succeeded, `false` if the snapshot version
     /// is incompatible. No-op (returns `true`) if the engine is detection-only.
     pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) -> bool {
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the restored and
+    /// discarded entry counts.
+    pub fn import_state_detailed(
+        &mut self,
+        snapshot: &CorrelationSnapshot,
+    ) -> Option<rsigma_eval::ImportStats> {
         match &mut self.engine {
-            EngineVariant::WithCorrelations(engine) => engine.import_state(snapshot.clone()),
-            EngineVariant::Routed(router) => router.import_state(snapshot.clone()),
-            EngineVariant::DetectionOnly(_) => true,
-            EngineVariant::Rulesets(engines) => engines.import_state(snapshot),
+            EngineVariant::WithCorrelations(engine) => {
+                engine.import_state_detailed(snapshot.clone())
+            }
+            EngineVariant::Routed(router) => router.import_state_detailed(snapshot.clone()),
+            EngineVariant::DetectionOnly(_) => Some(rsigma_eval::ImportStats::default()),
+            EngineVariant::Rulesets(engines) => engines.import_state_detailed(snapshot),
         }
     }
 }

@@ -84,6 +84,7 @@ impl SqliteStateStore {
                 method TEXT NOT NULL,
                 endpoint TEXT NOT NULL,
                 token TEXT,
+                tenant TEXT,
                 payload_digest TEXT,
                 status INTEGER NOT NULL
             );
@@ -136,6 +137,23 @@ impl SqliteStateStore {
                 added_columns = "source_sequence,source_timestamp",
                 "State store schema migrated",
             );
+        }
+
+        let audit_has_tenant = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(rsigma_audit_log)")
+                .map_err(|e| format!("pragma table_info audit: {e}"))?;
+            let names: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| format!("query pragma audit: {e}"))?
+                .filter_map(|r| r.ok())
+                .collect();
+            names.iter().any(|name| name == "tenant")
+        };
+        if !audit_has_tenant {
+            conn.execute_batch("ALTER TABLE rsigma_audit_log ADD COLUMN tenant TEXT;")
+                .map_err(|e| format!("migrate audit tenant column: {e}"))?;
+            tracing::debug!(added_columns = "tenant", "Audit log schema migrated");
         }
 
         Ok(())
@@ -306,6 +324,7 @@ impl SqliteStateStore {
         let method = rec.method.clone();
         let endpoint = rec.endpoint.clone();
         let token = rec.token.clone();
+        let tenant = rec.tenant.clone();
         let payload_digest = rec.payload_digest.clone();
         let ts = rec.ts;
         let status = i64::from(rec.status);
@@ -313,9 +332,9 @@ impl SqliteStateStore {
             let c = conn.lock().map_err(|_| "state store lock poisoned")?;
             c.execute(
                 "INSERT INTO rsigma_audit_log
-                    (ts, method, endpoint, token, payload_digest, status)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![ts, method, endpoint, token, payload_digest, status],
+                    (ts, method, endpoint, token, tenant, payload_digest, status)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![ts, method, endpoint, token, tenant, payload_digest, status],
             )
             .map_err(|e| format!("insert audit record: {e}"))?;
             Ok(())
@@ -362,7 +381,7 @@ impl SqliteStateStore {
             };
             let count = count as u64;
             let select_sql = format!(
-                "SELECT id, ts, method, endpoint, token, payload_digest, status
+                "SELECT id, ts, method, endpoint, token, tenant, payload_digest, status
                  FROM rsigma_audit_log{where_sql}
                  ORDER BY id DESC
                  LIMIT ? OFFSET ?"
@@ -383,7 +402,8 @@ impl SqliteStateStore {
                         method: row.get(2)?,
                         endpoint: row.get(3)?,
                         token: row.get(4)?,
-                        payload_digest: row.get(5)?,
+                        tenant: row.get(5)?,
+                        payload_digest: row.get(6)?,
                         status: row.get::<_, i64>(6)? as u16,
                     })
                 })
@@ -931,6 +951,7 @@ mod tests {
             method: "POST".into(),
             endpoint: "/api/v1/silences".into(),
             token: Some("op".into()),
+            tenant: None,
             payload_digest: Some("abc123".into()),
             status: 201,
         };
@@ -949,6 +970,7 @@ mod tests {
             method: "POST".into(),
             endpoint: "/api/v1/reload".into(),
             token: None,
+            tenant: None,
             payload_digest: None,
             status: 200,
         };

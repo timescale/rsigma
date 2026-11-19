@@ -47,6 +47,8 @@ pub struct AuditRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_digest: Option<String>,
     pub status: u16,
 }
@@ -235,6 +237,11 @@ pub async fn audit_middleware(
         .get::<AuthIdentity>()
         .map(|id| id.token.clone())
         .unwrap_or(None);
+    let tenant = request
+        .extensions()
+        .get::<AuthIdentity>()
+        .and_then(|id| id.tenant.clone())
+        .map(|tenant| tenant.as_str().to_string());
 
     // Records the outcome once we know the status. Digest is `None` for
     // bodyless or rejected requests.
@@ -245,6 +252,7 @@ pub async fn audit_middleware(
             method: method.to_string(),
             endpoint: path.clone(),
             token: token.clone(),
+            tenant: tenant.clone(),
             payload_digest,
             status,
         });

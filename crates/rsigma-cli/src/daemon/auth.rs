@@ -197,6 +197,10 @@ pub struct TokenSpec {
     pub role: Option<String>,
     pub permissions: Option<Vec<String>>,
     pub token_env: String,
+    /// Tenant this token is bound to.
+    pub tenant: Option<rsigma_eval::TenantId>,
+    /// Token may see every tenant.
+    pub all_tenants: bool,
 }
 
 /// A resolved token: name, permission set, and the secret bytes.
@@ -205,6 +209,8 @@ struct AuthToken {
     name: String,
     permissions: Vec<Permission>,
     secret: Vec<u8>,
+    tenant: Option<rsigma_eval::TenantId>,
+    all_tenants: bool,
 }
 
 /// The identity established by the auth middleware, inserted into request
@@ -214,6 +220,10 @@ pub struct AuthIdentity {
     /// The token name, or `None` for a request admitted via
     /// `anonymous_permissions`.
     pub token: Option<String>,
+    /// Tenant the authenticated token is bound to.
+    pub tenant: Option<rsigma_eval::TenantId>,
+    /// Token may see every tenant. Never implied by a role.
+    pub all_tenants: bool,
 }
 
 /// Outcome of checking a request's credentials against a required permission.
@@ -339,6 +349,8 @@ impl ApiAuth {
                 name: spec.name.clone(),
                 permissions,
                 secret: secret.into_bytes(),
+                tenant: spec.tenant.clone(),
+                all_tenants: spec.all_tenants,
             });
         }
 
@@ -373,6 +385,8 @@ impl ApiAuth {
                         if token.permissions.iter().any(|p| p.grants(&required)) {
                             Decision::Allowed(AuthIdentity {
                                 token: Some(token.name.clone()),
+                                tenant: token.tenant.clone(),
+                                all_tenants: token.all_tenants,
                             })
                         } else {
                             Decision::Forbidden {
@@ -385,7 +399,11 @@ impl ApiAuth {
             }
             None => {
                 if self.anonymous.iter().any(|p| p.grants(&required)) {
-                    Decision::Allowed(AuthIdentity { token: None })
+                    Decision::Allowed(AuthIdentity {
+                        token: None,
+                        tenant: None,
+                        all_tenants: false,
+                    })
                 } else {
                     Decision::Unauthorized
                 }
@@ -401,6 +419,8 @@ pub struct AuthLayerState {
     pub metrics: Arc<Metrics>,
     /// When capture is enabled, `POST /api/v1/dispositions` also requires this.
     pub extra_disposition_perm: Option<RequiredPermission>,
+    /// Whether tenancy route classes are enforced.
+    pub tenancy: bool,
 }
 
 /// Axum middleware enforcing [`ApiAuth`] on every matched route. Mounted via
@@ -563,6 +583,8 @@ mod tests {
             role: Some(role.into()),
             permissions: None,
             token_env: env_var.into(),
+            tenant: None,
+            all_tenants: false,
         }
     }
 
@@ -717,7 +739,7 @@ mod tests {
         let write = Permission::required("silences", "write");
         assert!(matches!(
             auth.check(Some("Bearer secret-a"), read),
-            Decision::Allowed(AuthIdentity { token: Some(name) }) if name == "grafana"
+            Decision::Allowed(AuthIdentity { token: Some(name), .. }) if name == "grafana"
         ));
         assert!(matches!(
             auth.check(Some("Bearer secret-a"), write),
@@ -776,6 +798,8 @@ mod tests {
                 role: Some("reader".into()),
                 permissions: Some(vec!["*:read".into()]),
                 token_env: "TOK".into(),
+                tenant: None,
+                all_tenants: false,
             }],
             &[],
             env_of(&[("TOK", "x")]),
@@ -796,7 +820,7 @@ mod tests {
 
         assert!(matches!(
             auth.check(None, Permission::required("metrics", "read")),
-            Decision::Allowed(AuthIdentity { token: None })
+            Decision::Allowed(AuthIdentity { token: None, .. })
         ));
         assert_eq!(
             auth.check(None, Permission::required("rules", "read")),

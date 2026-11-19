@@ -81,16 +81,30 @@ impl DispositionState {
 
     /// Restore a persisted snapshot at `now`, pruning entries past the window,
     /// then refresh the ratio gauges. Returns `false` on a version mismatch.
-    pub fn restore(&self, snapshot: rsigma_runtime::DispositionSnapshot, now: i64) -> bool {
-        let restored = self
+    pub fn restore(
+        &self,
+        snapshot: rsigma_runtime::DispositionSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> bool {
+        let stats = self
             .store
             .write()
-            .map(|mut s| s.restore(snapshot, now))
-            .unwrap_or(false);
-        if restored {
+            .map(|mut s| s.restore_detailed(snapshot, now, tenancy))
+            .unwrap_or(None);
+        if let Some(stats) = &stats {
+            if stats.discarded_untenanted > 0 || stats.discarded_tenanted > 0 {
+                tracing::warn!(
+                    untenanted = stats.discarded_untenanted,
+                    tenanted = stats.discarded_tenanted,
+                    "Discarded disposition buckets that do not match the tenancy mode"
+                );
+            }
             self.refresh_all_gauges();
+            true
+        } else {
+            false
         }
-        restored
     }
 
     /// Ingest a batch from `body` (a single object, a JSON array, or NDJSON),
@@ -550,7 +564,7 @@ mod tests {
 
         let restored = state(1);
         let now = chrono::Utc::now().timestamp();
-        assert!(restored.restore(snap, now));
+        assert!(restored.restore(snap, now, false));
 
         // The restored view matches and the gauge was refreshed on restore.
         assert_eq!(restored.view()["rules"][0]["total"], 2);

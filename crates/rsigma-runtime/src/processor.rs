@@ -714,10 +714,19 @@ impl LogProcessor {
 
     /// Import correlation state into the current engine.
     pub fn import_state(&self, snapshot: &rsigma_eval::CorrelationSnapshot) -> bool {
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the restored and
+    /// discarded entry counts.
+    pub fn import_state_detailed(
+        &self,
+        snapshot: &rsigma_eval::CorrelationSnapshot,
+    ) -> Option<rsigma_eval::ImportStats> {
         let _order_guard = self.processing_order.lock();
         let guard = self.engine.load();
         let mut engine = guard.write();
-        engine.import_state(snapshot)
+        engine.import_state_detailed(snapshot)
     }
 
     /// Return summary statistics about the current engine.

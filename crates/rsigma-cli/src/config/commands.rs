@@ -181,14 +181,23 @@ fn ruleset_list_errors(
     let path = format!("{section}.rulesets");
     let mut seen = HashSet::new();
     for entry in entries {
-        let (name, when, unknown) = match entry {
-            super::RulesetEntryPartial::Name(name) => (name, None, None),
+        let (name, when, tenants, unknown) = match entry {
+            super::RulesetEntryPartial::Name(name) => (name, None, None, None),
             super::RulesetEntryPartial::Bound {
                 name,
                 when,
+                tenants,
                 unknown,
-            } => (name, when.as_ref(), Some(unknown)),
+            } => (name, when.as_ref(), tenants.as_ref(), Some(unknown)),
         };
+        if section != "daemon" && tenants.is_some_and(|t| !t.is_empty()) {
+            errors.push(SemanticError::new(
+                &path,
+                format!(
+                    "ruleset '{name}' sets `tenants`, which is only valid under daemon.rulesets"
+                ),
+            ));
+        }
         if !seen.insert(name.as_str()) {
             errors.push(SemanticError::new(
                 &path,
