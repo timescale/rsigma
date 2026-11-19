@@ -33,7 +33,7 @@ The extension is distributed from the repository under `editors/vscode/`. Instal
     rsigma-lsp --version
     ```
 
-2. Have a recent VS Code or Cursor (the extension requires VS Code 1.75+).
+2. Have a recent VS Code or Cursor (the extension requires VS Code 1.91+).
 
 ### Build and install the VSIX
 
