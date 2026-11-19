@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Fuzz crate builds again and is checked on every PR (#724)
+
+`fuzz_ocsf_sidecar` stopped compiling when `RuleHeader` gained its `ruleset` field (#712), which broke the weekly fuzz workflow. The target sets the field again, and the CI `Check` job now runs `cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked`, so a change that breaks a fuzz target fails its own PR instead of the next scheduled run.
+
 ### STIX indicator sources (#722)
 
 A dynamic source can turn STIX 2.1 indicators into a value the daemon already knows how to use. `type: taxii` polls a TAXII 2.1 collection. `format: stix` on a file or HTTP source reads a STIX bundle. Both need the `stix-source` feature. Without it, the daemon exits 3 and names the feature.
