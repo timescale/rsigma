@@ -55,7 +55,7 @@ Point `--daemon-url` at a running daemon when the task is live triage (incidents
 ## Which command
 
 - One-shot check against a file or a few events: `engine eval`. A long-running process with reload, metrics, and sinks: `engine daemon`. Pass the daemon's config with `--config`: a discovered `./rsigma.yaml` or `.rsigmarc` cannot set its sources, enrichers, sinks, or API auth.
-- A rule from exemplar events (optional baseline, or `--groups` for a temporal correlation): `rule draft`. A rule the user already described in words: write the YAML with sigma-rules, then lint and evaluate it here.
+- A rule from exemplar events (optional baseline, or `--groups` for a temporal correlation) or from a STIX bundle (`rule draft --from-stix`, `stix-draft` feature): `rule draft`. Flag detail is on [rule draft](https://rsigma.io/cli/rule/draft/). A rule the user already described in words: write the YAML with sigma-rules, then lint and evaluate it here.
 - A noisy rule with known false positives and true positives that must still fire: `rule tune`.
 - Embedded `rsigma.exemplars`: `rule test`. A separate corpus and expectations file: `rule backtest`.
 - Why a rule missed: `engine explain`. How a pipeline rewrote fields: `pipeline diff`.

@@ -141,11 +141,12 @@ Turns exemplar events into complete draft Sigma detection and temporal correlati
 | Type / function | Description |
 |-----------------|-------------|
 | `draft_rule(exemplars, baseline, &DraftConfig)` | Profile the exemplars, drop volatile fields (timestamps, GUIDs, counters, high-entropy uniques), score by stability times baseline rarity, infer value forms and modifiers (equals, OR list, `endswith`/`startswith`/`contains` with Sigma wildcard escaping), infer the logsource via `SchemaClassifier`, and emit + verify the rule (every exemplar must match; bounded relaxation with a minimum-field floor) |
+| `draft_rule_from_values(&ValueDraftSpec)` | Emit and compile one rule from explicit selections (`ValueSelection`: a `selection_*` name, a field, modifiers, and values). Selections are OR-ed with `1 of selection_*`. A blank description, and the author and false-positive lines, use the same TODO placeholders as `draft_rule`. Empty title, no selections, and a bad selection are `EmptyTitle`, `NoSelections`, and `BadSelection`. This function does not parse STIX, and this crate does not depend on `rstix` |
 | `DraftConfig` | Tunables: `max_fields`, `min_fields`, `min_prevalence`, `max_value_cardinality`, `min_token_len`, `max_baseline_token_prevalence`, include/exclude fields, title/logsource overrides, `rule_id` (caller-supplied; the core is deterministic and never generates one), `date`, `evaluate_baseline` |
 | `DraftReport` | `rule_yaml` (parse- and lint-checked), ranked `fields` (`DraftFieldReport` with score, `Stability` class, chosen modifier, values, baseline prevalence), `exemplar_matched`, `baseline_hits`/`baseline_hit_rate`, warnings |
 | `rule_draft::correlation::draft_correlation(groups, negatives, baseline, &CorrelationDraftConfig)` | Validate grouped timed events, infer recurring slots, grouping entity, order, and window, emit named detection documents plus a temporal correlation, and verify every group in an isolated `CorrelationEngine` |
 | `CorrelationDraftReport` | Multi-document YAML, correlation type, group-by fields, chosen timespan, observed spans/gaps, per-slot support and selected forms, isolated verification rows, warnings |
-| `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped) |
+| `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped), `NoSelections`, `BadSelection`, `EmptyTitle` |
 
 ### Rule exemplars (`exemplar` module)
 

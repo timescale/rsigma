@@ -8,7 +8,7 @@ Author Sigma YAML with the sigma-rules skill. Use the steps below to check and r
 
 Prefer the MCP tool when `rsigma mcp serve` is connected. Otherwise use the CLI.
 
-1. **Draft.** Hand-authored YAML (sigma-rules), `rule draft` from exemplar events, or `reverse_convert` / `rule reverse` from a Lucene query, which needs at least one logsource product, category, or service. Call `parse_rule` (or `rule parse`) and stop if the rule is invalid. Parse errors cover a missing logsource, conflicting modifiers, values of the wrong type, invalid regexes, and undefined detections, and each names the field.
+1. **Draft.** Hand-authored YAML (sigma-rules), `rule draft` from exemplar events, `rule draft --from-stix` from a STIX 2.1 bundle (needs the `stix-draft` feature; flags are on [rule draft](https://rsigma.io/cli/rule/draft/#draft-from-a-stix-indicator)), or `reverse_convert` / `rule reverse` from a Lucene query, which needs at least one logsource product, category, or service. Call `parse_rule` (or `rule parse`) and stop if the rule is invalid. Parse errors cover a missing logsource, conflicting modifiers, values of the wrong type, invalid regexes, and undefined detections, and each names the field.
 2. **Lint.** `lint_rules` or `rule lint`. Each finding has a rule id and a `fixable` flag. Apply a known-safe fix with `fix_rules` or `rule lint --fix`. Rewrite the rest by hand. Do not treat a count of checks as stable. The catalogue is the [linting guide](https://rsigma.io/guide/linting-rules/).
 3. **Format.** `format_rules` or `rule fmt --write` rewrites the file into the canonical layout and keeps comments. Run `format_rules` or `rule fmt --check` in CI. The formatter refuses any rewrite that would change what the rule means. Guide: [Formatting Rules](https://rsigma.io/guide/formatting-rules/).
 4. **Evaluate.** `evaluate_events` or `engine eval` against a few positive and negative events. Pass the schema pipeline when the events are not Sysmon-shaped (see [Match the event schema](../SKILL.md#match-the-event-schema)). `match_detail` of `summary` or `full` explains why an event matched. When the events live on the rule as `rsigma.exemplars`, `test_exemplars` or `rule test` is the closed runner.
@@ -37,7 +37,7 @@ Guide: [Evaluating rules](https://rsigma.io/guide/evaluating-rules/), [Streaming
 
 ## Draft versus a rule you already know
 
-`rule draft` proposes a detection from exemplar events, optionally contrasted with a baseline. `rule draft --groups` proposes a temporal correlation from grouped, timed exemplars. Use draft when the user has events and wants a rule inferred from them.
+`rule draft` proposes a detection from exemplar events, optionally contrasted with a baseline. `rule draft --groups` proposes a temporal correlation from grouped, timed exemplars. `rule draft --from-stix` proposes one rule per logsource from a STIX 2.1 bundle. Use draft when the user has events or indicators and wants a rule inferred from them.
 
 When the user describes the behavior in words, write the YAML with sigma-rules. Then run the loop above. Do not ask draft to invent a rule from a sentence.
 
