@@ -1,0 +1,12 @@
+{
+  "type": "indicator",
+  "spec_version": "2.1",
+  "id": "indicator--00000000-0000-4000-8000-000000000022",
+  "created": "2020-01-01T00:00:00.000Z",
+  "modified": "2024-01-01T00:00:00.000Z",
+  "name": "Callback URL",
+  "indicator_types": ["malicious-activity"],
+  "pattern": "[url:value = 'http://bad.example/a.php?id=1']",
+  "pattern_type": "stix",
+  "valid_from": "2020-01-01T00:00:00.000Z"
+}

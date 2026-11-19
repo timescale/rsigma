@@ -1808,6 +1808,34 @@ mod tests {
     }
 
     #[test]
+    fn value_draft_escapes_a_single_value() {
+        let yaml = draft_rule_from_values(&ValueDraftSpec {
+            title: "Callback URL".into(),
+            description: None,
+            references: Vec::new(),
+            tags: Vec::new(),
+            rule_id: None,
+            date: Some("2026-06-01".into()),
+            logsource_category: Some("proxy".into()),
+            logsource_product: None,
+            logsource_service: None,
+            level: None,
+            selections: vec![ValueSelection {
+                name: "selection_c_uri".into(),
+                field: "c-uri".into(),
+                modifiers: Vec::new(),
+                values: vec!["http://bad.example/a.php?id=1".into()],
+            }],
+        })
+        .unwrap();
+        assert!(
+            yaml.contains(r"c-uri: 'http://bad.example/a.php\?id=1'"),
+            "{yaml}"
+        );
+        assert!(!yaml.contains("a.php?id=1"), "{yaml}");
+    }
+
+    #[test]
     fn value_draft_rejects_empty_input() {
         let empty = ValueDraftSpec {
             title: " ".into(),

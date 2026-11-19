@@ -250,6 +250,26 @@ fn unknown_observable_and_conflicting_flags_exit_3() {
 
 #[cfg(feature = "stix-draft")]
 #[test]
+fn a_url_question_mark_stays_literal() {
+    let path = fixture("url.json");
+    let out = draft(&[
+        "rule",
+        "draft",
+        "--from-stix",
+        path.to_str().unwrap(),
+        "--date",
+        "2026-06-01",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_golden("draft-stix/url.yml", &String::from_utf8(out.stdout).unwrap());
+}
+
+#[cfg(feature = "stix-draft")]
+#[test]
 fn a_registry_key_matches_a_sysmon_event() {
     let path = fixture("registry.json");
     let drafted = draft(&[
