@@ -354,6 +354,7 @@ fn draft_stix(raw: &str, options: &DraftStixOptions) -> Result<DraftStixOutcome,
         let yaml = emit_category(category, bucket, options)?;
         rules.push(yaml);
     }
+    skipped.sort_by(|left, right| left.id.cmp(&right.id));
     let report = StixDraftReport {
         rules: rules.clone(),
         used: used
