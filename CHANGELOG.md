@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### pySigma 2.1.0 and dependency follow-up for #723 (#730)
+
+Rolls up the Dependabot PRs that opened after #723. The pySigma engine image moves to pySigma 2.1.0 (#728), with `requirements.txt` re-resolved for Python 3.13 against packages released on or before 2026-11-12, which also brings `jq` 1.13.0, `certifi` 2026.10.23, and `types-pyyaml` 6.0.12.20261111. The `test` backend still matches pySigma's output. CI: `taiki-e/install-action` v2.90.3, repinned by commit SHA (#729). Held back: the `python:3.15-slim` base image (#727), because `google-re2` publishes no Python 3.15 wheel and the slim image has no compiler to build it from source; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
+
 ### `cargo deny` accepts `ar_archive_writer`, and `psm` moves to 0.1.32 (#726)
 
 `psm` 0.1.28 and later build their assembly archive with `ar_archive_writer`, licensed `Apache-2.0 WITH LLVM-exception`, which `cargo deny` rejected because it matches license expressions literally. `deny.toml` now allows that license for `ar_archive_writer` alone, and `psm`, which every crate reaches through `pest`'s stack guard, moves from 0.1.27 to 0.1.32 in all three lockfiles. `ar_archive_writer` is a build dependency of `psm`, so nothing from it is linked into rsigma, and the LLVM exception only adds a permission to Apache-2.0.
