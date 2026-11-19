@@ -398,6 +398,7 @@ fn make_ruleset_processor(ruleset_count: usize, n_rules: usize) -> (LogProcessor
             },
             pipelines: Vec::new(),
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
         });
     }
     let mut engine = RuntimeEngine::with_rulesets(bindings, CorrelationConfig::default(), false);

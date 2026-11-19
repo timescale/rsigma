@@ -5,6 +5,7 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource,
 };
 use rsigma_eval::EvaluationResult;
+use rsigma_eval::TenantId;
 use serde_json::{Map, Value};
 
 use crate::io::{AckToken, RawEvent};
@@ -19,6 +20,15 @@ use crate::io::{AckToken, RawEvent};
 /// - Scope metadata goes to `scope.name` / `scope.version`
 /// - Timestamps are ISO 8601, trace/span IDs are lowercase hex
 pub fn logs_request_to_raw_events(request: &ExportLogsServiceRequest) -> Vec<RawEvent> {
+    logs_request_to_raw_events_for(request, None)
+}
+
+/// Like [`logs_request_to_raw_events`] but stamps every event with `tenant`,
+/// which comes from the authenticated ingest principal.
+pub fn logs_request_to_raw_events_for(
+    request: &ExportLogsServiceRequest,
+    tenant: Option<&TenantId>,
+) -> Vec<RawEvent> {
     let mut events = Vec::new();
 
     for resource_logs in &request.resource_logs {
@@ -37,6 +47,7 @@ pub fn logs_request_to_raw_events(request: &ExportLogsServiceRequest) -> Vec<Raw
                 events.push(RawEvent {
                     payload,
                     ack_token: AckToken::Noop,
+                    tenant: tenant.cloned(),
                 });
             }
         }
@@ -822,5 +833,17 @@ mod tests {
         };
         let parsed: Value = serde_json::from_str(&raw).expect("finding JSON");
         assert_eq!(parsed, golden, "the string body is the finding");
+    }
+
+    #[test]
+    fn logs_request_stamps_the_tenant() {
+        let tenant = TenantId::new("tenant-a").unwrap();
+        let request = make_request(vec![], None, vec![LogRecord::default()]);
+        let events = logs_request_to_raw_events_for(&request, Some(&tenant));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tenant.as_ref(), Some(&tenant));
+
+        let events = logs_request_to_raw_events(&request);
+        assert!(events[0].tenant.is_none());
     }
 }

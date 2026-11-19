@@ -111,6 +111,7 @@ impl EventSource for NatsSource {
                         return Some(RawEvent {
                             payload,
                             ack_token: AckToken::Nats(Box::new(msg)),
+                            tenant: None,
                         });
                     }
                 }

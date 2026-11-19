@@ -8,7 +8,7 @@ use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
     RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier, SchemaPruning,
-    SchemaRouter, UnitEngine, parse_pipeline_file,
+    SchemaRouter, TenantId, UnitEngine, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
@@ -302,6 +302,19 @@ impl RuntimeEngine {
         self.match_detail = level;
     }
 
+    /// Require a tenant on every event before correlation updates.
+    ///
+    /// Applies on the next `load_rules()`; pre-load callers should set this
+    /// before calling `load_rules()`.
+    pub fn set_require_tenant(&mut self, require: bool) {
+        self.corr_config.require_tenant = require;
+    }
+
+    /// Whether correlation skips untenanted events.
+    pub fn require_tenant(&self) -> bool {
+        self.corr_config.require_tenant
+    }
+
     /// Return the current match-detail verbosity. Used by hot-reload to
     /// carry the setting across a `RuntimeEngine` swap.
     pub fn match_detail(&self) -> MatchDetailLevel {
@@ -522,7 +535,7 @@ impl RuntimeEngine {
             units.push(RulesetUnit {
                 name: Arc::from(binding.name.as_str()),
                 when_schemas: binding.when_schemas.clone(),
-                tenants: Vec::new(),
+                tenants: binding.tenants.clone(),
                 engine: into_unit(variant),
                 field_set,
             });
@@ -710,13 +723,23 @@ impl RuntimeEngine {
         &self,
         events: &[&E],
     ) -> Option<Vec<ProcessResult>> {
+        self.process_batch_shared_for_tenants(events, &[])
+    }
+
+    /// Like [`process_batch_shared`](Self::process_batch_shared) with a
+    /// parallel tenant slice.
+    pub fn process_batch_shared_for_tenants<E: Event + Sync>(
+        &self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Option<Vec<ProcessResult>> {
         match &self.engine {
             EngineVariant::DetectionOnly(engine) => Some(engine.evaluate_batch(events)),
             EngineVariant::Routed(router) if !router.has_correlations() => {
                 Some(router.detect_batch(events))
             }
             EngineVariant::WithCorrelations(_) | EngineVariant::Routed(_) => None,
-            EngineVariant::Rulesets(engines) => engines.detect_batch(events),
+            EngineVariant::Rulesets(engines) => engines.detect_batch_for_tenants(events, tenants),
         }
     }
 
@@ -725,11 +748,22 @@ impl RuntimeEngine {
     /// Delegates to `Engine::evaluate_batch` or `CorrelationEngine::process_batch`
     /// depending on whether correlation rules are loaded.
     pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
+        self.process_batch_for_tenants(events, &[])
+    }
+
+    /// Like [`process_batch`](Self::process_batch) with a parallel tenant slice.
+    pub fn process_batch_for_tenants<E: Event + Sync>(
+        &mut self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Vec<ProcessResult> {
         match &mut self.engine {
             EngineVariant::DetectionOnly(engine) => engine.evaluate_batch(events),
-            EngineVariant::WithCorrelations(engine) => engine.process_batch(events),
-            EngineVariant::Routed(router) => router.process_batch(events),
-            EngineVariant::Rulesets(engines) => engines.process_batch(events),
+            EngineVariant::WithCorrelations(engine) => {
+                engine.process_batch_for_tenants(events, tenants)
+            }
+            EngineVariant::Routed(router) => router.process_batch_for_tenants(events, tenants),
+            EngineVariant::Rulesets(engines) => engines.process_batch_for_tenants(events, tenants),
         }
     }
 
@@ -1252,6 +1286,7 @@ transformations:
             },
             pipelines,
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
         }
     }
 

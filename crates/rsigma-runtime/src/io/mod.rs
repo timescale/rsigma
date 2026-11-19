@@ -42,7 +42,7 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use rsigma_eval::{EvaluationResult, ProcessResult};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::metrics::MetricsHook;
@@ -335,6 +335,9 @@ impl FormattedIncidentEnvelope {
 pub struct RawEvent {
     pub payload: String,
     pub ack_token: AckToken,
+    /// Tenant bound to this event by its source or ingest principal. `None`
+    /// when tenancy is off.
+    pub tenant: Option<TenantId>,
 }
 
 /// Contract for event input adapters.
@@ -347,6 +350,30 @@ pub trait EventSource: Send + 'static {
     /// Receive the next event with its ack token.
     /// Returns `None` when the source is exhausted or shutting down.
     fn recv(&mut self) -> impl std::future::Future<Output = Option<RawEvent>> + Send;
+}
+
+/// Stamps every event from `inner` with one tenant.
+pub struct WithTenant<S> {
+    inner: S,
+    tenant: TenantId,
+}
+
+impl<S> WithTenant<S> {
+    /// Wrap `inner` so every event it yields carries `tenant`.
+    pub fn new(inner: S, tenant: TenantId) -> Self {
+        WithTenant { inner, tenant }
+    }
+}
+
+impl<S: EventSource> EventSource for WithTenant<S> {
+    fn recv(&mut self) -> impl std::future::Future<Output = Option<RawEvent>> + Send {
+        let tenant = self.tenant.clone();
+        async move {
+            let mut raw = self.inner.recv().await?;
+            raw.tenant = Some(tenant);
+            Some(raw)
+        }
+    }
 }
 
 /// Run a synchronous sink write from async code.
@@ -882,5 +909,31 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "{\"a\":1}\n{\"b\":2}\n"
         );
+    }
+
+    struct OneShot {
+        events: Vec<RawEvent>,
+    }
+
+    impl EventSource for OneShot {
+        async fn recv(&mut self) -> Option<RawEvent> {
+            self.events.pop()
+        }
+    }
+
+    #[tokio::test]
+    async fn with_tenant_stamps_every_event() {
+        let tenant = TenantId::new("tenant-a").unwrap();
+        let source = OneShot {
+            events: vec![RawEvent {
+                payload: "{}".to_string(),
+                ack_token: AckToken::Noop,
+                tenant: None,
+            }],
+        };
+        let mut source = WithTenant::new(source, tenant.clone());
+        let raw = source.recv().await.expect("one event");
+        assert_eq!(raw.tenant.as_ref(), Some(&tenant));
+        assert!(source.recv().await.is_none());
     }
 }

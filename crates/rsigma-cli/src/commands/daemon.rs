@@ -1831,6 +1831,7 @@ fn build_ruleset_bindings(
             spec: spec.clone(),
             pipelines,
             when_schemas,
+            tenants: Vec::new(),
         });
     }
 

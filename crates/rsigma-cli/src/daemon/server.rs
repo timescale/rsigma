@@ -4725,7 +4725,7 @@ async fn tap_stream(
         }
     };
 
-    let Some(handle) = tap.registry.register(params.stage) else {
+    let Some(handle) = tap.registry.register(params.stage, None) else {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
@@ -4819,6 +4819,7 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
         let raw_event = RawEvent {
             payload: line.to_string(),
             ack_token: AckToken::Noop,
+            tenant: None,
         };
         // Mirror `spawn_source`'s accounting so the input-queue-depth and
         // back-pressure metrics are accurate for the HTTP push source too,

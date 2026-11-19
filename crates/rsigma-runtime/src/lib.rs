@@ -119,7 +119,7 @@ pub use io::webhook::{
 pub use io::{
     AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
     EventSource, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, OnFull, RawEvent, Sink,
-    SinkFormat, StdinSource, StdoutSink, spawn_source,
+    SinkFormat, StdinSource, StdoutSink, WithTenant, spawn_source,
 };
 #[cfg(all(unix, feature = "uds"))]
 pub use io::{
@@ -140,7 +140,7 @@ pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 pub use rsigma_eval::{
     FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult,
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
-    SchemaObserver, SchemaPruning, UnknownShapeEntry, load_schema_signatures,
+    SchemaObserver, SchemaPruning, TenantId, UnknownShapeEntry, load_schema_signatures,
 };
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
