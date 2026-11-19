@@ -4,6 +4,8 @@ use libfuzzer_sys::fuzz_target;
 use rsigma_eval::{ValueDraftSpec, ValueSelection, draft_rule_from_values};
 use rstix::{Bundle, ObservableExtraction, ParseOptions, SdoObject, StixObject};
 
+const MODIFIERS: &[&str] = &["contains", "endswith", "cidr"];
+
 fuzz_target!(|data: &[u8]| {
     let Ok(raw) = std::str::from_utf8(data) else {
         return;
@@ -28,6 +30,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let mut title = String::from("draft");
+    let mut description = None;
+    let mut references = Vec::new();
+    let mut tags = Vec::new();
     let mut selections = Vec::new();
     for object in bundle.objects() {
         let StixObject::Sdo(SdoObject::Indicator(indicator)) = object else {
@@ -37,6 +42,30 @@ fuzz_target!(|data: &[u8]| {
             && let Some(name) = indicator.name.as_deref().filter(|name| !name.trim().is_empty())
         {
             title = name.to_string();
+        }
+        if description.is_none()
+            && let Some(text) = indicator
+                .description
+                .as_deref()
+                .filter(|text| !text.trim().is_empty())
+        {
+            description = Some(text.chars().take(1_000).collect());
+        }
+        for reference in &indicator.common.external_references {
+            if references.len() == 8 {
+                break;
+            }
+            if let Some(url) = reference.url.as_deref().filter(|url| !url.trim().is_empty()) {
+                references.push(url.to_string());
+            }
+        }
+        for phase in &indicator.kill_chain_phases {
+            if tags.len() == 8 {
+                break;
+            }
+            if !phase.phase_name.trim().is_empty() {
+                tags.push(phase.phase_name.clone());
+            }
         }
         let Ok(pattern) = indicator.pattern.parsed_pattern() else {
             continue;
@@ -49,10 +78,11 @@ fuzz_target!(|data: &[u8]| {
                 break;
             }
             let field = item.kind.map(|kind| kind.key()).unwrap_or("value");
+            let modifier = MODIFIERS[selections.len() % MODIFIERS.len()];
             selections.push(ValueSelection {
                 name: format!("selection_{}", selections.len()),
                 field: field.to_string(),
-                modifiers: Vec::new(),
+                modifiers: vec![modifier.to_string()],
                 values: vec![item.value.clone()],
             });
         }
@@ -62,9 +92,9 @@ fuzz_target!(|data: &[u8]| {
     }
     let Ok(yaml) = draft_rule_from_values(&ValueDraftSpec {
         title,
-        description: None,
-        references: Vec::new(),
-        tags: Vec::new(),
+        description,
+        references,
+        tags,
         rule_id: None,
         date: Some("2026-06-01".to_string()),
         logsource_category: Some("network_connection".to_string()),
