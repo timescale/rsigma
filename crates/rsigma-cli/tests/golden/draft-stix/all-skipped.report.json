@@ -1,0 +1,30 @@
+{
+  "rules": [],
+  "used": [],
+  "skipped": [
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000007",
+      "reason": "revoked"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000008",
+      "reason": "expired"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000009",
+      "reason": "unmapped_observable"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-00000000000a",
+      "reason": "unsupported_pattern"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-00000000000b",
+      "reason": "pattern_type"
+    },
+    {
+      "id": "indicator--00000000-0000-4000-8000-00000000000c",
+      "reason": "not_yet_valid"
+    }
+  ]
+}

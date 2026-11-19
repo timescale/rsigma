@@ -1,0 +1,19 @@
+title: Beacon address
+id: 68e70f9d-8a24-5a4b-8718-7f20315e9734
+status: experimental
+description: 'Beacon address: C2 callback address'
+references:
+    - 'https://example.com/report'
+author: 'TODO: your name'
+date: 2026-06-01
+tags:
+    - attack.command_and_control
+logsource:
+    category: network_connection
+detection:
+    selection_destination_ip:
+        DestinationIp: 198.51.100.7
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: high

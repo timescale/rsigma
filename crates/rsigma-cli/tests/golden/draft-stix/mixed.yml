@@ -1,0 +1,51 @@
+title: Bad domain
+id: 498446a7-3aca-53ae-9552-023503f5a9b2
+status: experimental
+description: 'Bad domain: DNS callback'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: dns_query
+detection:
+    selection_query_name:
+        QueryName: bad.example
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium
+---
+title: 'Indicators: network_connection (2)'
+id: 3110de92-5237-569d-af16-8eb9e207a119
+status: experimental
+description: 'First address Second address'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: network_connection
+detection:
+    selection_destination_ip:
+        DestinationIp:
+            - 198.51.100.8
+            - 198.51.100.9
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: high
+---
+title: Bad file
+id: a6afac56-60a4-580c-b17d-a4b1b60fa05f
+status: experimental
+description: 'Bad file'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: process_creation
+detection:
+    selection_hashes:
+        Hashes|contains:
+            - 'MD5=d41d8cd98f00b204e9800998ecf8427e'
+            - 'SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium
