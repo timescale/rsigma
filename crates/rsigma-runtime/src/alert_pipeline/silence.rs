@@ -13,6 +13,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use rsigma_eval::EvaluationResult;
+use rsigma_eval::TenantId;
 
 use super::matcher::{MatchOp, MatcherError, MatcherSet, MatcherSpec};
 use crate::selector::Selector;
@@ -129,6 +130,9 @@ pub struct SilenceSpec {
     /// Free-text comment (recorded).
     #[serde(default)]
     pub comment: Option<String>,
+    /// Tenant this silence is bound to. `None` applies to every tenant.
+    #[serde(default)]
+    pub tenant: Option<TenantId>,
 }
 
 /// The serialized view of a silence (the GET response shape).
@@ -144,6 +148,8 @@ pub struct SilenceView {
     pub created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
     pub origin: SilenceOrigin,
     pub state: SilenceState,
 }
@@ -157,6 +163,8 @@ pub struct SilenceSnap {
     pub ends_at: Option<i64>,
     pub created_by: Option<String>,
     pub comment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
 }
 
 /// Errors building a silence from a spec.
@@ -224,6 +232,7 @@ pub struct Silence {
     created_by: Option<String>,
     comment: Option<String>,
     origin: SilenceOrigin,
+    tenant: Option<TenantId>,
 }
 
 impl Silence {
@@ -248,6 +257,7 @@ impl Silence {
             created_by: spec.created_by,
             comment: spec.comment,
             origin,
+            tenant: spec.tenant,
         })
     }
 
@@ -279,9 +289,23 @@ impl Silence {
         }
     }
 
-    /// True when active and every matcher matches the result.
+    /// True when active, every matcher matches the result, and the silence's
+    /// tenant (when set) is the result's tenant.
     fn mutes(&self, result: &EvaluationResult, now: i64) -> bool {
+        if let Some(tenant) = &self.tenant
+            && result.header.tenant_id.as_ref() != Some(tenant)
+        {
+            return false;
+        }
         self.state(now) == SilenceState::Active && self.matchers.matches(result)
+    }
+
+    /// Whether this silence is visible to a caller scoped to `tenant`.
+    fn visible_to(&self, tenant: Option<&TenantId>) -> bool {
+        match tenant {
+            None => true,
+            Some(tenant) => self.tenant.as_ref().is_none_or(|own| own == tenant),
+        }
     }
 
     /// Persisted form (for API-origin silences).
@@ -293,6 +317,7 @@ impl Silence {
             ends_at: self.ends_at,
             created_by: self.created_by.clone(),
             comment: self.comment.clone(),
+            tenant: self.tenant.clone(),
         }
     }
 
@@ -310,6 +335,7 @@ impl Silence {
             created_by: snap.created_by,
             comment: snap.comment,
             origin: SilenceOrigin::Api,
+            tenant: snap.tenant,
         })
     }
 
@@ -321,6 +347,7 @@ impl Silence {
             ends_at: self.ends_at.map(unix_to_rfc3339),
             created_by: self.created_by.clone(),
             comment: self.comment.clone(),
+            tenant: self.tenant.clone(),
             origin: self.origin,
             state: self.state(now),
         }
@@ -373,6 +400,15 @@ impl SilenceStore {
         self.silences.len() != before
     }
 
+    /// Remove a silence by id when it is visible to `tenant`. A silence bound
+    /// to another tenant is left in place and reported as not removed.
+    pub fn remove_scoped(&mut self, id: &str, tenant: Option<&TenantId>) -> bool {
+        let before = self.silences.len();
+        self.silences
+            .retain(|s| !(s.id == id && s.visible_to(tenant)));
+        self.silences.len() != before
+    }
+
     /// Replace all `static`-origin silences with `statics`, keeping `api` ones.
     /// Used on config load and hot-reload.
     pub fn set_static(&mut self, statics: Vec<Silence>) {
@@ -405,6 +441,16 @@ impl SilenceStore {
     /// A snapshot of every silence for the API.
     pub fn snapshot(&self, now: i64) -> Vec<SilenceView> {
         self.silences.iter().map(|s| s.view(now)).collect()
+    }
+
+    /// A snapshot of the silences visible to `tenant`: those bound to it plus
+    /// the untenanted ones that apply to every tenant.
+    pub fn snapshot_scoped(&self, now: i64, tenant: Option<&TenantId>) -> Vec<SilenceView> {
+        self.silences
+            .iter()
+            .filter(|s| s.visible_to(tenant))
+            .map(|s| s.view(now))
+            .collect()
     }
 
     /// Persisted form of the dynamic (API) silences only; static ones come from
@@ -759,5 +805,66 @@ mod tests {
             2
         ));
         assert_eq!(store.dynamic_count(), 2);
+    }
+
+    fn tenant_detection(ip: &str, tenant: &str) -> EvaluationResult {
+        let mut r = detection(ip);
+        r.header.tenant_id = Some(TenantId::new(tenant).unwrap());
+        r
+    }
+
+    #[test]
+    fn a_tenant_silence_mutes_only_its_tenant() {
+        let a = TenantId::new("a").unwrap();
+        let mut bound = spec("10.0.0.1");
+        bound.tenant = Some(a);
+        let mut store = SilenceStore::default();
+        store.add(Silence::build(bound, SilenceOrigin::Api).unwrap());
+
+        assert!(
+            store
+                .active_match(&tenant_detection("10.0.0.1", "a"), 100)
+                .is_some()
+        );
+        assert!(
+            store
+                .active_match(&tenant_detection("10.0.0.1", "b"), 100)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_untenanted_silence_mutes_every_tenant() {
+        let mut store = SilenceStore::default();
+        store.add(Silence::build(spec("10.0.0.1"), SilenceOrigin::Static).unwrap());
+        assert!(
+            store
+                .active_match(&tenant_detection("10.0.0.1", "a"), 100)
+                .is_some()
+        );
+        assert!(
+            store
+                .active_match(&tenant_detection("10.0.0.1", "b"), 100)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn listing_and_removal_respect_the_tenant_scope() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut store = SilenceStore::default();
+        let mut bound = spec("10.0.0.1");
+        bound.id = Some("a-silence".to_string());
+        bound.tenant = Some(a.clone());
+        store.add(Silence::build(bound, SilenceOrigin::Api).unwrap());
+        store.add(Silence::build(spec("10.0.0.2"), SilenceOrigin::Static).unwrap());
+
+        assert_eq!(store.snapshot_scoped(0, Some(&a)).len(), 2);
+        assert_eq!(store.snapshot_scoped(0, Some(&b)).len(), 1);
+        assert_eq!(store.snapshot_scoped(0, None).len(), 2);
+
+        assert!(!store.remove_scoped("a-silence", Some(&b)));
+        assert!(store.remove_scoped("a-silence", Some(&a)));
     }
 }

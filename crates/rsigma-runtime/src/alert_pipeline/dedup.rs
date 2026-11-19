@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
+use rsigma_eval::TenantId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -58,6 +59,9 @@ pub(crate) struct ActiveAlert {
     sample: Value,
     /// Resolved fingerprint selector values, surfaced on the summary records.
     fields: Vec<(String, Value)>,
+    /// Tenant that owns this alert, when tenancy is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tenant: Option<TenantId>,
 }
 
 /// In-memory active-alert store, owned single-threaded by the sink task.
@@ -106,6 +110,7 @@ impl DedupStore {
         now: i64,
         sample: Value,
         fields: Vec<(String, Value)>,
+        tenant: Option<TenantId>,
     ) {
         self.alerts.insert(
             fingerprint,
@@ -117,6 +122,7 @@ impl DedupStore {
                 emitted_count: 1,
                 sample,
                 fields,
+                tenant,
             },
         );
     }
@@ -214,6 +220,11 @@ pub(crate) fn fingerprint(selectors: &[Selector], result: &EvaluationResult) -> 
         .unwrap_or(result.header.rule_title.as_str());
 
     let mut buf = String::with_capacity(64);
+    if let Some(tenant) = &result.header.tenant_id {
+        buf.push_str("tenant=");
+        buf.push_str(tenant.as_str());
+        buf.push('\u{1f}');
+    }
     buf.push_str("rule=");
     buf.push_str(rule);
     for sel in selectors {
@@ -364,6 +375,7 @@ mod tests {
             100,
             sample_of(&r),
             resolve_fields(&c.fingerprint, &r),
+            None,
         );
         assert_eq!(store.len(), 1);
 
@@ -396,6 +408,7 @@ mod tests {
             0,
             sample_of(&r),
             resolve_fields(&c.fingerprint, &r),
+            None,
         );
 
         // No new fires since insert: a repeat tick is a no-op.
@@ -427,6 +440,7 @@ mod tests {
             0,
             sample_of(&r),
             resolve_fields(&c.fingerprint, &r),
+            None,
         );
         store.fold(&fp, 10);
         // No repeats ever, even with new fires.
@@ -435,5 +449,39 @@ mod tests {
         let records = store.tick(&c, 200);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].state, "resolved");
+    }
+
+    fn tenant_result(ip: &str, tenant: &str) -> EvaluationResult {
+        let mut r = result(ip);
+        r.header.tenant_id = Some(TenantId::new(tenant).unwrap());
+        r
+    }
+
+    #[test]
+    fn the_same_value_in_two_tenants_is_two_alerts() {
+        let c = cfg(0, 60);
+        let mut store = DedupStore::default();
+        let a = tenant_result("10.0.0.1", "a");
+        let b = tenant_result("10.0.0.1", "b");
+        let fa = fingerprint(&c.fingerprint, &a);
+        let fb = fingerprint(&c.fingerprint, &b);
+        assert_ne!(fa, fb, "tenant is part of the fingerprint");
+        store.insert(
+            fa.clone(),
+            0,
+            sample_of(&a),
+            resolve_fields(&c.fingerprint, &a),
+            a.header.tenant_id.clone(),
+        );
+        store.insert(
+            fb.clone(),
+            0,
+            sample_of(&b),
+            resolve_fields(&c.fingerprint, &b),
+            b.header.tenant_id.clone(),
+        );
+        assert_eq!(store.len(), 2);
+        assert!(store.contains(&fa));
+        assert!(store.contains(&fb));
     }
 }

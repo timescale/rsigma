@@ -308,7 +308,13 @@ impl AlertPipeline {
                 if state.dedup.len() < cfg.max_active_alerts {
                     let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
                     let sample = dedup::sample_of(&result);
-                    state.dedup.insert(fingerprint, now, sample, fields);
+                    state.dedup.insert(
+                        fingerprint,
+                        now,
+                        sample,
+                        fields,
+                        result.header.tenant_id.clone(),
+                    );
                 }
                 metrics.on_alert_pipeline_result("emitted");
             }
@@ -395,6 +401,7 @@ impl AlertPipeline {
         pending.push(PendingCapture::Admit(PendingAdmit {
             is_fresh_generation: !incidents.contains(&incident_id),
             incident_id,
+            tenant: result.header.tenant_id.clone(),
             event,
             match_: AdmittedMatch {
                 rule_id,
@@ -470,34 +477,104 @@ impl AlertPipeline {
         state: &mut AlertPipelineState,
         snap: AlertPipelineSnapshot,
         now: i64,
+        tenancy: bool,
     ) -> bool {
-        if snap.version != SNAPSHOT_VERSION {
-            return false;
+        self.restore_detailed(state, snap, now, tenancy).is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts. Accepts versions 1 and 2 and applies the tenant attribution rule
+    /// to every store: with `tenancy`, untenanted entries are discarded; without
+    /// it, tenanted ones are.
+    pub fn restore_detailed(
+        &self,
+        state: &mut AlertPipelineState,
+        snap: AlertPipelineSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        if !matches!(snap.version, 1 | 2) {
+            return None;
         }
+        let mut stats = rsigma_eval::ImportStats::default();
+        let keep = |tenant: Option<&rsigma_eval::TenantId>| {
+            if tenancy {
+                tenant.is_some()
+            } else {
+                tenant.is_none()
+            }
+        };
+        let mut count = |tenant: Option<&rsigma_eval::TenantId>| {
+            if !keep(tenant) {
+                if tenant.is_none() {
+                    stats.discarded_untenanted += 1;
+                } else {
+                    stats.discarded_tenanted += 1;
+                }
+            }
+        };
+
         // Silences are independent of the configured stages.
-        state.silences.restore_api(snap.silences, now);
+        let silences: Vec<_> = snap
+            .silences
+            .into_iter()
+            .filter(|s| {
+                count(s.tenant.as_ref());
+                keep(s.tenant.as_ref())
+            })
+            .collect();
+        state.silences.restore_api(silences, now);
         self.warn_over_limit_silences(state, now, "restore");
+
+        let dedup: Vec<_> = snap
+            .dedup
+            .into_iter()
+            .filter(|(_, alert)| {
+                count(alert.tenant.as_ref());
+                keep(alert.tenant.as_ref())
+            })
+            .collect();
+        let incidents: Vec<_> = snap
+            .incidents
+            .into_iter()
+            .filter(|inc| {
+                count(inc.tenant.as_ref());
+                keep(inc.tenant.as_ref())
+            })
+            .collect();
+        let inhibit_sources: Vec<_> = snap
+            .inhibit_sources
+            .into_iter()
+            .filter(|source| {
+                count(source.tenant.as_ref());
+                keep(source.tenant.as_ref())
+            })
+            .collect();
+
         let mut trim = CapTrim::default();
         if let Some(cfg) = self.dedup.as_ref() {
+            stats.restored += dedup.len();
             state
                 .dedup
-                .restore(snap.dedup, now, cfg.resolve_timeout.as_secs() as i64);
+                .restore(dedup, now, cfg.resolve_timeout.as_secs() as i64);
             trim.dedup_alerts = state.dedup.enforce_cap(cfg.max_active_alerts);
         }
         if let Some(g) = self.group.as_ref() {
+            stats.restored += incidents.len();
             trim.incidents = state.incidents.restore(
-                snap.incidents,
+                incidents,
                 now,
                 g.resolve_timeout.as_secs() as i64,
                 &g.caps,
             );
         }
         if let Some(icfg) = self.inhibit.as_ref() {
-            state.inhibit.restore(snap.inhibit_sources, icfg, now);
+            stats.restored += inhibit_sources.len();
+            state.inhibit.restore(inhibit_sources, icfg, now);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
         trim.log("restore");
-        true
+        Some(stats)
     }
 
     /// Trim carried-over state to this pipeline's caps: the least recently
@@ -804,7 +881,7 @@ mod tests {
 
         // Restore within the window: state comes back.
         let mut fresh = AlertPipelineState::default();
-        assert!(p.restore(&mut fresh, snap, 200));
+        assert!(p.restore(&mut fresh, snap, 200, false));
         assert_eq!(fresh.dedup.len(), 1, "dedup alert restored");
         assert_eq!(fresh.incidents.len(), 1, "incident restored");
         assert_eq!(
@@ -819,7 +896,7 @@ mod tests {
         let snap2: AlertPipelineSnapshot =
             serde_json::from_str(&serde_json::to_string(&p.snapshot(&st)).unwrap()).unwrap();
         let mut aged = AlertPipelineState::default();
-        assert!(p.restore(&mut aged, snap2, 100 + 3600 + 5));
+        assert!(p.restore(&mut aged, snap2, 100 + 3600 + 5, false));
         assert!(aged.dedup.is_empty(), "stale dedup alert pruned on restore");
         assert!(
             aged.incidents.is_empty(),
@@ -896,7 +973,7 @@ mod tests {
         let snap = uncapped().snapshot(&six_alerts());
         let capped = capped();
         let mut st = AlertPipelineState::default();
-        assert!(capped.restore(&mut st, snap, 10));
+        assert!(capped.restore(&mut st, snap, 10, false));
         assert_keeps_newest_three(&capped, &mut st);
     }
 
@@ -1167,5 +1244,47 @@ mod tests {
             Some(&mut sink),
         );
         assert!(!sink.admits[1].is_fresh_generation);
+    }
+
+    fn tenant_run(
+        p: &AlertPipeline,
+        ip: &str,
+        tenant: &str,
+        state: &mut AlertPipelineState,
+        now: i64,
+    ) -> ProcessResult {
+        let mut d = detection(ip, Level::High);
+        d.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+        p.process(vec![d], state, now, &NoopMetrics)
+    }
+
+    #[test]
+    fn snapshot_attribution_discards_the_other_mode() {
+        let p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let mut st = AlertPipelineState::default();
+        tenant_run(&p, "10.0.0.1", "a", &mut st, 100);
+        run(&p, "10.0.0.2", Level::High, &mut st, 100);
+        assert_eq!((st.dedup.len(), st.incidents.len()), (2, 2));
+        let snap = p.snapshot(&st);
+
+        let mut tenanted = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut tenanted, snap.clone(), 100, true)
+            .unwrap();
+        assert_eq!(stats.restored, 2);
+        assert_eq!(stats.discarded_untenanted, 2);
+        assert_eq!(tenanted.dedup.len(), 1);
+        assert_eq!(tenanted.incidents.len(), 1);
+
+        let mut untenanted = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut untenanted, snap, 100, false)
+            .unwrap();
+        assert_eq!(stats.restored, 2);
+        assert_eq!(stats.discarded_tenanted, 2);
+        assert_eq!(untenanted.dedup.len(), 1);
+        assert_eq!(untenanted.incidents.len(), 1);
     }
 }

@@ -952,7 +952,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let now = chrono::Utc::now().timestamp();
                             let restored = alert_state
                                 .write()
-                                .map(|mut state| pipeline.restore(&mut state, snap, now))
+                                .map(|mut state| pipeline.restore(&mut state, snap, now, false))
                                 .unwrap_or(false);
                             if restored {
                                 tracing::info!("Alert-pipeline state restored from database");
@@ -1028,7 +1028,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let now = chrono::Utc::now().timestamp();
                             let restored = risk_state
                                 .write()
-                                .map(|mut state| layer.restore(&mut state, snap, now))
+                                .map(|mut state| layer.restore(&mut state, snap, now, false))
                                 .unwrap_or(false);
                             if restored {
                                 tracing::info!("Risk state restored from database");

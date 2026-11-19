@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use rsigma_eval::TenantId;
+
 use super::incident::{IncludeMode, RiskEntityView, RiskIncidentResult, RiskRef};
 use super::snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
@@ -185,7 +187,7 @@ fn window_stats<'a>(
 /// behind an `RwLock` so `GET /api/v1/risk` can read it).
 #[derive(Debug, Default)]
 pub struct RiskState {
-    entities: HashMap<(String, String), EntityWindow>,
+    entities: HashMap<(Option<TenantId>, String, String), EntityWindow>,
 }
 
 /// The outcome of recording one contribution.
@@ -219,12 +221,17 @@ impl RiskState {
     pub fn record(
         &mut self,
         cfg: &IncidentConfig,
+        tenant: Option<&TenantId>,
         entity_type: &str,
         entity_value: &str,
         contribution: Contribution,
         now: i64,
     ) -> RecordOutcome {
-        let key = (entity_type.to_string(), entity_value.to_string());
+        let key = (
+            tenant.cloned(),
+            entity_type.to_string(),
+            entity_value.to_string(),
+        );
         let cutoff = now - cfg.window_secs();
 
         if !self.entities.contains_key(&key) && self.entities.len() >= cfg.caps.max_open_entities {
@@ -270,6 +277,7 @@ impl RiskState {
             entity.last_fired = Some(now);
             Some(build_incident(
                 cfg,
+                tenant,
                 entity_type,
                 entity_value,
                 trigger,
@@ -307,13 +315,16 @@ impl RiskState {
         let entities = self
             .entities
             .iter()
-            .map(|((entity_type, entity_value), window)| EntitySnapshot {
-                entity_type: entity_type.clone(),
-                entity_value: entity_value.clone(),
-                last_fired: window.last_fired,
-                last_seen: window.last_seen,
-                contributions: window.contributions.iter().cloned().collect(),
-            })
+            .map(
+                |((tenant, entity_type, entity_value), window)| EntitySnapshot {
+                    tenant: tenant.clone(),
+                    entity_type: entity_type.clone(),
+                    entity_value: entity_value.clone(),
+                    last_fired: window.last_fired,
+                    last_seen: window.last_seen,
+                    contributions: window.contributions.iter().cloned().collect(),
+                },
+            )
             .collect();
         RiskStateSnapshot {
             version: SNAPSHOT_VERSION,
@@ -331,12 +342,43 @@ impl RiskState {
         window_secs: i64,
         max_open_entities: usize,
         now: i64,
+        tenancy: bool,
     ) -> bool {
-        if snap.version != SNAPSHOT_VERSION {
-            return false;
+        self.restore_detailed(snap, window_secs, max_open_entities, now, tenancy)
+            .is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts. Accepts versions 1 and 2 and applies the tenant attribution rule:
+    /// with `tenancy`, untenanted entities are discarded; without it, tenanted
+    /// ones are.
+    pub fn restore_detailed(
+        &mut self,
+        snap: RiskStateSnapshot,
+        window_secs: i64,
+        max_open_entities: usize,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        if !matches!(snap.version, 1 | 2) {
+            return None;
         }
+        let mut stats = rsigma_eval::ImportStats::default();
         let cutoff = now - window_secs;
         for entity in snap.entities {
+            let keep = if tenancy {
+                entity.tenant.is_some()
+            } else {
+                entity.tenant.is_none()
+            };
+            if !keep {
+                if entity.tenant.is_none() {
+                    stats.discarded_untenanted += 1;
+                } else {
+                    stats.discarded_tenanted += 1;
+                }
+                continue;
+            }
             if self.entities.len() >= max_open_entities {
                 break;
             }
@@ -349,28 +391,30 @@ impl RiskState {
                 continue;
             }
             self.entities.insert(
-                (entity.entity_type, entity.entity_value),
+                (entity.tenant, entity.entity_type, entity.entity_value),
                 EntityWindow {
                     contributions,
                     last_fired: entity.last_fired,
                     last_seen: entity.last_seen,
                 },
             );
+            stats.restored += 1;
         }
-        true
+        Some(stats)
     }
 
     /// A read-only view of every open entity at `now`, for the admin API.
     pub fn views(&self, cfg: &IncidentConfig, now: i64) -> Vec<RiskEntityView> {
         let cutoff = now - cfg.window_secs();
         let mut out = Vec::new();
-        for ((entity_type, entity_value), entity) in &self.entities {
+        for ((tenant, entity_type, entity_value), entity) in &self.entities {
             let live = entity.contributions.iter().filter(|c| c.ts > cutoff);
             let stats = window_stats(live, cfg.caps.max_sources_per_entity);
             if stats.result_count == 0 {
                 continue;
             }
             out.push(RiskEntityView {
+                tenant_id: tenant.clone(),
                 entity_type: entity_type.clone(),
                 entity_value: entity_value.clone(),
                 score: stats.score,
@@ -387,8 +431,10 @@ impl RiskState {
 }
 
 /// Build a [`RiskIncidentResult`] from the current window state.
+#[allow(clippy::too_many_arguments)]
 fn build_incident<'a>(
     cfg: &IncidentConfig,
+    tenant: Option<&TenantId>,
     entity_type: &str,
     entity_value: &str,
     trigger: &'static str,
@@ -438,6 +484,7 @@ fn build_incident<'a>(
     (
         RiskIncidentResult {
             risk_incident_id: Uuid::new_v4().to_string(),
+            tenant_id: tenant.cloned(),
             entity_type: entity_type.to_string(),
             entity_value: entity_value.to_string(),
             trigger,
@@ -490,10 +537,18 @@ mod tests {
     fn fires_on_score_threshold() {
         let mut st = RiskState::default();
         let c = cfg(Some(100), None);
-        let a = st.record(&c, "user", "alice", contrib(0, 60, &["execution"], "r1"), 0);
+        let a = st.record(
+            &c,
+            None,
+            "user",
+            "alice",
+            contrib(0, 60, &["execution"], "r1"),
+            0,
+        );
         assert!(a.incident.is_none());
         let b = st.record(
             &c,
+            None,
             "user",
             "alice",
             contrib(10, 60, &["persistence"], "r2"),
@@ -510,9 +565,30 @@ mod tests {
     fn fires_on_tactic_count_threshold() {
         let mut st = RiskState::default();
         let c = cfg(None, Some(3));
-        st.record(&c, "host", "dc01", contrib(0, 1, &["execution"], "r1"), 0);
-        st.record(&c, "host", "dc01", contrib(1, 1, &["persistence"], "r2"), 1);
-        let third = st.record(&c, "host", "dc01", contrib(2, 1, &["impact"], "r3"), 2);
+        st.record(
+            &c,
+            None,
+            "host",
+            "dc01",
+            contrib(0, 1, &["execution"], "r1"),
+            0,
+        );
+        st.record(
+            &c,
+            None,
+            "host",
+            "dc01",
+            contrib(1, 1, &["persistence"], "r2"),
+            1,
+        );
+        let third = st.record(
+            &c,
+            None,
+            "host",
+            "dc01",
+            contrib(2, 1, &["impact"], "r3"),
+            2,
+        );
         let inc = third.incident.expect("three distinct tactics");
         assert_eq!(inc.trigger, "tactic_count");
         assert_eq!(inc.tactic_count, 3);
@@ -522,11 +598,19 @@ mod tests {
     fn cooldown_suppresses_refire() {
         let mut st = RiskState::default();
         let c = cfg(Some(50), None);
-        let first = st.record(&c, "user", "bob", contrib(0, 50, &["execution"], "r1"), 0);
+        let first = st.record(
+            &c,
+            None,
+            "user",
+            "bob",
+            contrib(0, 50, &["execution"], "r1"),
+            0,
+        );
         assert!(first.incident.is_some());
         // Within cooldown: no re-fire even though still over threshold.
         let second = st.record(
             &c,
+            None,
             "user",
             "bob",
             contrib(100, 50, &["execution"], "r1"),
@@ -536,6 +620,7 @@ mod tests {
         // After cooldown: fires again.
         let third = st.record(
             &c,
+            None,
             "user",
             "bob",
             contrib(700, 50, &["execution"], "r1"),
@@ -548,10 +633,18 @@ mod tests {
     fn window_prunes_old_contributions() {
         let mut st = RiskState::default();
         let c = cfg(Some(100), None);
-        st.record(&c, "user", "carol", contrib(0, 60, &["execution"], "r1"), 0);
+        st.record(
+            &c,
+            None,
+            "user",
+            "carol",
+            contrib(0, 60, &["execution"], "r1"),
+            0,
+        );
         // The first contribution ages out of the 3600s window by t=4000.
         let later = st.record(
             &c,
+            None,
             "user",
             "carol",
             contrib(4000, 60, &["execution"], "r1"),
@@ -568,9 +661,9 @@ mod tests {
         let mut st = RiskState::default();
         let mut c = cfg(Some(1), None);
         c.caps.max_open_entities = 1;
-        let a = st.record(&c, "user", "a", contrib(0, 1, &[], "r1"), 0);
+        let a = st.record(&c, None, "user", "a", contrib(0, 1, &[], "r1"), 0);
         assert!(a.incident.is_some());
-        let b = st.record(&c, "user", "b", contrib(0, 1, &[], "r1"), 0);
+        let b = st.record(&c, None, "user", "b", contrib(0, 1, &[], "r1"), 0);
         assert!(b.evicted, "second distinct entity rejected at capacity");
         assert_eq!(st.len(), 1);
     }
@@ -579,7 +672,14 @@ mod tests {
     fn tick_evicts_fully_aged_entities() {
         let mut st = RiskState::default();
         let c = cfg(Some(1000), None);
-        st.record(&c, "user", "dan", contrib(0, 10, &["execution"], "r1"), 0);
+        st.record(
+            &c,
+            None,
+            "user",
+            "dan",
+            contrib(0, 10, &["execution"], "r1"),
+            0,
+        );
         assert_eq!(st.len(), 1);
         let removed = st.tick(&c, 4000);
         assert_eq!(removed, 1);
@@ -592,6 +692,7 @@ mod tests {
         let c = cfg(Some(100), None);
         st.record(
             &c,
+            None,
             "user",
             "erin",
             contrib(100, 50, &["execution"], "r1"),
@@ -608,11 +709,13 @@ mod tests {
             snap,
             c.window.as_secs() as i64,
             c.caps.max_open_entities,
-            200
+            200,
+            false
         ));
         assert_eq!(fresh.len(), 1);
         let again = fresh.record(
             &c,
+            None,
             "user",
             "erin",
             contrib(200, 50, &["execution"], "r1"),
@@ -628,7 +731,8 @@ mod tests {
             snap2,
             c.window.as_secs() as i64,
             c.caps.max_open_entities,
-            100 + 3600 + 5
+            100 + 3600 + 5,
+            false
         ));
         assert!(aged.is_empty(), "stale entity pruned on restore");
     }
@@ -640,6 +744,7 @@ mod tests {
         for i in 0..5 {
             src.record(
                 &c,
+                None,
                 "user",
                 &format!("u{i}"),
                 contrib(0, 10, &["execution"], "r1"),
@@ -650,7 +755,7 @@ mod tests {
 
         let mut restored = RiskState::default();
         // Cap the restore at 3; the remaining snapshot entities are dropped.
-        assert!(restored.restore(snap, c.window.as_secs() as i64, 3, 0));
+        assert!(restored.restore(snap, c.window.as_secs() as i64, 3, 0, false));
         assert_eq!(restored.len(), 3);
     }
 
@@ -661,6 +766,90 @@ mod tests {
             version: SNAPSHOT_VERSION + 1,
             entities: vec![],
         };
-        assert!(!st.restore(snap, 3600, usize::MAX, 0));
+        assert!(!st.restore(snap, 3600, usize::MAX, 0, false));
+    }
+
+    #[test]
+    fn the_same_entity_in_two_tenants_is_two_entities() {
+        let c = cfg(Some(100), None);
+        let mut st = RiskState::default();
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        st.record(
+            &c,
+            Some(&a),
+            "user",
+            "alice",
+            contrib(0, 60, &["execution"], "r1"),
+            0,
+        );
+        st.record(
+            &c,
+            Some(&b),
+            "user",
+            "alice",
+            contrib(0, 60, &["execution"], "r1"),
+            0,
+        );
+        assert_eq!(st.len(), 2);
+        let views = st.views(&c, 0);
+        assert_eq!(views.len(), 2);
+        assert!(views.iter().all(|v| v.tenant_id.is_some()));
+    }
+
+    #[test]
+    fn a_tenanted_incident_carries_the_tenant() {
+        let c = cfg(Some(50), None);
+        let mut st = RiskState::default();
+        let a = TenantId::new("a").unwrap();
+        let out = st.record(
+            &c,
+            Some(&a),
+            "user",
+            "bob",
+            contrib(0, 50, &["execution"], "r1"),
+            0,
+        );
+        assert_eq!(out.incident.unwrap().tenant_id.as_ref(), Some(&a));
+    }
+
+    #[test]
+    fn snapshot_attribution_discards_the_other_mode() {
+        let c = cfg(Some(1000), None);
+        let mut st = RiskState::default();
+        let a = TenantId::new("a").unwrap();
+        st.record(
+            &c,
+            Some(&a),
+            "user",
+            "alice",
+            contrib(0, 10, &["execution"], "r1"),
+            0,
+        );
+        st.record(
+            &c,
+            None,
+            "user",
+            "bob",
+            contrib(0, 10, &["execution"], "r1"),
+            0,
+        );
+        let snap = st.snapshot();
+
+        let mut tenanted = RiskState::default();
+        let stats = tenanted
+            .restore_detailed(snap.clone(), 3600, usize::MAX, 0, true)
+            .unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(stats.discarded_untenanted, 1);
+        assert_eq!(tenanted.len(), 1);
+
+        let mut untenanted = RiskState::default();
+        let stats = untenanted
+            .restore_detailed(snap, 3600, usize::MAX, 0, false)
+            .unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(stats.discarded_tenanted, 1);
+        assert_eq!(untenanted.len(), 1);
     }
 }

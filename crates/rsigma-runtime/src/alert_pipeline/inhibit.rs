@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
+use rsigma_eval::TenantId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -33,6 +34,8 @@ pub struct InhibitSourceSnap {
     pub rule: String,
     pub equal_key: String,
     pub last_seen: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
 }
 
 /// A validated inhibition rule.
@@ -60,10 +63,10 @@ pub struct InhibitConfig {
     pub max_sources: usize,
 }
 
-/// Active-source index: `(rule_name, equal_key) -> last_seen`.
+/// Active-source index: `(rule_name, tenant, equal_key) -> last_seen`.
 #[derive(Debug, Default)]
 pub struct InhibitStore {
-    sources: HashMap<(String, String), i64>,
+    sources: HashMap<(String, Option<TenantId>, String), i64>,
 }
 
 impl InhibitStore {
@@ -84,12 +87,17 @@ impl InhibitStore {
         now: i64,
         mut on_refused: impl FnMut(&str),
     ) -> Option<String> {
+        let tenant = result.header.tenant_id.clone();
         // 1. Inhibited target? Checked against sources from prior results.
         for rule in &cfg.rules {
             // Self-inhibition guard: a result that is itself a source of this
             // rule is never inhibited by it.
             if rule.target_match.matches(result) && !rule.source_match.matches(result) {
-                let key = (rule.name.clone(), equal_key(&rule.equal, result));
+                let key = (
+                    rule.name.clone(),
+                    tenant.clone(),
+                    equal_key(&rule.equal, result),
+                );
                 if let Some(&last) = self.sources.get(&key)
                     && now - last < rule.duration.as_secs() as i64
                 {
@@ -100,7 +108,11 @@ impl InhibitStore {
         // 2. Not inhibited: record as a source where applicable.
         for rule in &cfg.rules {
             if rule.source_match.matches(result) {
-                let key = (rule.name.clone(), equal_key(&rule.equal, result));
+                let key = (
+                    rule.name.clone(),
+                    tenant.clone(),
+                    equal_key(&rule.equal, result),
+                );
                 if let Some(last) = self.sources.get_mut(&key) {
                     *last = now;
                 } else if self.sources.len() < cfg.max_sources {
@@ -116,7 +128,7 @@ impl InhibitStore {
     /// Drop sources older than their rule's `duration` (or whose rule no longer
     /// exists after a reload).
     pub fn gc(&mut self, cfg: &InhibitConfig, now: i64) {
-        self.sources.retain(|(name, _), &mut last| {
+        self.sources.retain(|(name, _, _), &mut last| {
             cfg.rules
                 .iter()
                 .find(|r| &r.name == name)
@@ -128,11 +140,14 @@ impl InhibitStore {
     pub(crate) fn snapshot(&self) -> Vec<InhibitSourceSnap> {
         self.sources
             .iter()
-            .map(|((rule, equal_key), &last_seen)| InhibitSourceSnap {
-                rule: rule.clone(),
-                equal_key: equal_key.clone(),
-                last_seen,
-            })
+            .map(
+                |((rule, tenant, equal_key), &last_seen)| InhibitSourceSnap {
+                    rule: rule.clone(),
+                    equal_key: equal_key.clone(),
+                    last_seen,
+                    tenant: tenant.clone(),
+                },
+            )
             .collect()
     }
 
@@ -144,7 +159,7 @@ impl InhibitStore {
                 && now - snap.last_seen < rule.duration.as_secs() as i64
             {
                 self.sources
-                    .insert((snap.rule, snap.equal_key), snap.last_seen);
+                    .insert((snap.rule, snap.tenant, snap.equal_key), snap.last_seen);
             }
         }
     }
@@ -156,7 +171,8 @@ impl InhibitStore {
         if excess == 0 {
             return 0;
         }
-        let mut by_age: Vec<(i64, (String, String))> = self
+        #[allow(clippy::type_complexity)]
+        let mut by_age: Vec<(i64, (String, Option<TenantId>, String))> = self
             .sources
             .iter()
             .map(|(key, &last_seen)| (last_seen, key.clone()))
@@ -372,5 +388,42 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    fn tenant_detection(ip: &str, level: Level, tenant: &str) -> EvaluationResult {
+        let mut r = detection(ip, level);
+        r.header.tenant_id = Some(TenantId::new(tenant).unwrap());
+        r
+    }
+
+    #[test]
+    fn inhibition_stays_within_a_tenant() {
+        let cfg = cfg();
+        let mut store = InhibitStore::default();
+        store.evaluate(
+            &cfg,
+            &tenant_detection("10.0.0.1", Level::Critical, "a"),
+            0,
+            |_| {},
+        );
+        assert_eq!(
+            store.evaluate(
+                &cfg,
+                &tenant_detection("10.0.0.1", Level::High, "b"),
+                1,
+                |_| {}
+            ),
+            None,
+            "tenant b has no critical source"
+        );
+        assert_eq!(
+            store.evaluate(
+                &cfg,
+                &tenant_detection("10.0.0.1", Level::High, "a"),
+                1,
+                |_| {}
+            ),
+            Some("critical-inhibits-high".to_string())
+        );
     }
 }

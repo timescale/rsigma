@@ -1510,6 +1510,7 @@ mod tests {
     ) -> IncidentResult {
         IncidentResult {
             incident_id: "i-1".to_string(),
+            tenant_id: None,
             state: "open",
             trigger: "group_wait",
             first_seen: 10,
@@ -1681,6 +1682,7 @@ mod tests {
     fn risk_incident_titles_name_what_crossed() {
         let mut incident = RiskIncidentResult {
             risk_incident_id: "r-1".to_string(),
+            tenant_id: None,
             entity_type: "user".to_string(),
             entity_value: "alice".to_string(),
             trigger: "score",

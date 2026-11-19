@@ -93,6 +93,7 @@ impl CaptureSpool {
             return SpoolStatus::Miss;
         };
         let identity = disposition_identity(
+            original.tenant.as_ref(),
             scope_str(original.scope),
             original.verdict.as_str(),
             original.incident_id.as_deref(),
@@ -169,7 +170,7 @@ fn lookup_snapshot(ring: &Mutex<CaptureRing>, original: &Disposition) -> Option<
         return Some(snap);
     }
     if let (Some(rule), Some(fp)) = (original.rule_id.as_deref(), original.fingerprint.as_deref()) {
-        return ring.snapshot_fingerprint(rule, fp);
+        return ring.snapshot_fingerprint(original.tenant.as_ref(), rule, fp);
     }
     None
 }
@@ -696,6 +697,7 @@ mod tests {
         ring.admit(
             rsigma_runtime::AdmittedEvent {
                 incident_id: "inc".into(),
+                tenant: None,
                 is_fresh_generation: true,
                 event: json!({"user":"a"}),
                 matches: vec![AdmittedMatch {
@@ -717,6 +719,7 @@ mod tests {
             timestamp: 1,
             analyst: None,
             note: None,
+            tenant: None,
         };
         assert!(lookup_snapshot(&ring, &disp).is_some());
     }

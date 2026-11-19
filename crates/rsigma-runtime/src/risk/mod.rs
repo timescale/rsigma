@@ -276,7 +276,14 @@ impl RiskLayer {
                 result: stored_result.clone(),
                 finding_uid: finding_uid.map(str::to_string),
             };
-            let outcome = state.record(cfg, &object.object_type, &object.value, contribution, now);
+            let outcome = state.record(
+                cfg,
+                result.header.tenant_id.as_ref(),
+                &object.object_type,
+                &object.value,
+                contribution,
+                now,
+            );
             if outcome.evicted {
                 metrics.on_risk_eviction();
             }
@@ -310,15 +317,32 @@ impl RiskLayer {
     /// Restore a snapshot into `state`, pruning entries past the window at
     /// `now`. Returns `false` on a version mismatch, or when no accumulator is
     /// configured to restore into (the caller starts fresh).
-    pub fn restore(&self, state: &mut RiskState, snap: RiskStateSnapshot, now: i64) -> bool {
-        let Some(cfg) = self.incident.as_ref() else {
-            return false;
-        };
-        state.restore(
+    pub fn restore(
+        &self,
+        state: &mut RiskState,
+        snap: RiskStateSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> bool {
+        self.restore_detailed(state, snap, now, tenancy).is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts.
+    pub fn restore_detailed(
+        &self,
+        state: &mut RiskState,
+        snap: RiskStateSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        let cfg = self.incident.as_ref()?;
+        state.restore_detailed(
             snap,
             cfg.window.as_secs() as i64,
             cfg.caps.max_open_entities,
             now,
+            tenancy,
         )
     }
 }

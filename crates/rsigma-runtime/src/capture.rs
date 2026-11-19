@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use rsigma_eval::TenantId;
+
 use crate::MetricsHook;
 
 /// One source-event payload admitted for a `group_by` incident, with every
@@ -41,6 +43,8 @@ use crate::MetricsHook;
 pub struct AdmittedEvent {
     /// Deterministic `group_by` incident id.
     pub incident_id: String,
+    /// Tenant that owns this incident, when tenancy is enabled.
+    pub tenant: Option<TenantId>,
     /// True when this incident id is not currently open in the incident store.
     pub is_fresh_generation: bool,
     /// The retained source-event payload.
@@ -137,6 +141,7 @@ pub trait CaptureSink {
 /// ring.admit(
 ///     AdmittedEvent {
 ///         incident_id: "inc-1".into(),
+///         tenant: None,
 ///         is_fresh_generation: true,
 ///         event: serde_json::json!({"user": "alice"}),
 ///         matches: vec![AdmittedMatch {
@@ -155,7 +160,7 @@ pub struct CaptureRing {
     config: CaptureConfig,
     incidents: HashMap<String, RingIncident>,
     order: VecDeque<String>,
-    fingerprint_index: HashMap<(String, String), String>,
+    fingerprint_index: HashMap<(Option<TenantId>, String, String), String>,
     total_bytes: usize,
 }
 
@@ -292,7 +297,7 @@ struct RingIncident {
     last_seen: i64,
     events: Vec<CapturedEvent>,
     bytes: usize,
-    fingerprint_keys: Vec<(String, String)>,
+    fingerprint_keys: Vec<(Option<TenantId>, String, String)>,
 }
 
 impl CaptureRing {
@@ -330,12 +335,15 @@ impl CaptureRing {
     /// Snapshot the incident indexed by a detection-scoped fingerprint.
     pub fn snapshot_fingerprint(
         &self,
+        tenant: Option<&TenantId>,
         rule_id: &str,
         fingerprint: &str,
     ) -> Option<CaptureSnapshot> {
-        let incident_id = self
-            .fingerprint_index
-            .get(&(rule_id.to_string(), fingerprint.to_string()))?;
+        let incident_id = self.fingerprint_index.get(&(
+            tenant.cloned(),
+            rule_id.to_string(),
+            fingerprint.to_string(),
+        ))?;
         self.snapshot_incident(incident_id)
     }
 
@@ -421,6 +429,7 @@ impl CaptureRing {
                 &mut self.fingerprint_index,
                 &mut inc.fingerprint_keys,
                 &event.incident_id,
+                event.tenant.as_ref(),
                 &event.matches,
             );
         } else {
@@ -429,6 +438,7 @@ impl CaptureRing {
                 &mut self.fingerprint_index,
                 &mut fingerprint_keys,
                 &event.incident_id,
+                event.tenant.as_ref(),
                 &event.matches,
             );
             self.incidents.insert(
@@ -534,16 +544,21 @@ fn digest_bytes(bytes: &[u8]) -> String {
 }
 
 fn index_matches(
-    index: &mut HashMap<(String, String), String>,
-    keys: &mut Vec<(String, String)>,
+    index: &mut HashMap<(Option<TenantId>, String, String), String>,
+    keys: &mut Vec<(Option<TenantId>, String, String)>,
     incident_id: &str,
+    tenant: Option<&TenantId>,
     matches: &[AdmittedMatch],
 ) {
     for matched in matches {
         let Some(fingerprint) = matched.fingerprint.as_deref() else {
             continue;
         };
-        let key = (matched.rule_id.clone(), fingerprint.to_string());
+        let key = (
+            tenant.cloned(),
+            matched.rule_id.clone(),
+            fingerprint.to_string(),
+        );
         if !keys.contains(&key) {
             keys.push(key.clone());
         }
@@ -554,6 +569,7 @@ fn index_matches(
 /// Internal pending admit used by the pipeline before coalescing.
 pub(crate) struct PendingAdmit {
     pub incident_id: String,
+    pub tenant: Option<TenantId>,
     pub is_fresh_generation: bool,
     pub event: Value,
     pub match_: AdmittedMatch,
@@ -594,6 +610,7 @@ fn coalesce_admits(pending: Vec<PendingAdmit>) -> Vec<AdmittedEvent> {
                 key,
                 AdmittedEvent {
                     incident_id: item.incident_id,
+                    tenant: item.tenant,
                     is_fresh_generation: item.is_fresh_generation,
                     event: item.event,
                     matches: vec![item.match_],
@@ -614,6 +631,7 @@ mod tests {
     fn admit(incident: &str, event: Value, rule: &str) -> PendingAdmit {
         PendingAdmit {
             incident_id: incident.to_string(),
+            tenant: None,
             is_fresh_generation: true,
             event,
             match_: AdmittedMatch {
@@ -650,6 +668,7 @@ mod tests {
     fn event(id: &str, n: u8) -> AdmittedEvent {
         AdmittedEvent {
             incident_id: id.to_string(),
+            tenant: None,
             is_fresh_generation: false,
             event: serde_json::json!({"n": n}),
             matches: vec![AdmittedMatch {
@@ -698,7 +717,7 @@ mod tests {
         ring.admit(ev, 0, &crate::NoopMetrics);
         assert_eq!(ring.stats().incidents, 1);
         assert!(ring.snapshot_incident("a").is_some());
-        assert!(ring.snapshot_fingerprint("r1", "fp-a").is_some());
+        assert!(ring.snapshot_fingerprint(None, "r1", "fp-a").is_some());
     }
 
     #[test]
@@ -737,7 +756,7 @@ mod tests {
         assert!(ring.snapshot_incident("a").is_none());
         assert!(ring.snapshot_incident("b").is_some());
         assert!(ring.snapshot_incident("c").is_some());
-        assert!(ring.snapshot_fingerprint("r1", "fp-a").is_none());
+        assert!(ring.snapshot_fingerprint(None, "r1", "fp-a").is_none());
     }
 
     #[test]
@@ -766,5 +785,32 @@ mod tests {
         assert_eq!(ring.stats().incidents, 1);
         ring.expire(10, &crate::NoopMetrics);
         assert_eq!(ring.stats().incidents, 0);
+    }
+
+    #[test]
+    fn the_same_fingerprint_in_two_tenants_is_two_keys() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut ring = CaptureRing::new(tiny_config());
+        let mut ev_a = event("a", 1);
+        ev_a.tenant = Some(a.clone());
+        ev_a.is_fresh_generation = true;
+        let mut ev_b = event("b", 1);
+        ev_b.tenant = Some(b.clone());
+        ev_b.is_fresh_generation = true;
+        // Force the same rule/fingerprint across tenants.
+        ev_a.matches[0].fingerprint = Some("shared".into());
+        ev_b.matches[0].fingerprint = Some("shared".into());
+
+        ring.admit(ev_a, 0, &crate::NoopMetrics);
+        ring.admit(ev_b, 1, &crate::NoopMetrics);
+        assert!(
+            ring.snapshot_fingerprint(Some(&a), "r1", "shared")
+                .is_some()
+        );
+        assert!(
+            ring.snapshot_fingerprint(Some(&b), "r1", "shared")
+                .is_some()
+        );
     }
 }

@@ -264,6 +264,7 @@ fn correlation_with_group_key() {
 fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
     IncidentResult {
         incident_id: "f8bcd62a829b1126".to_string(),
+        tenant_id: None,
         state,
         trigger,
         first_seen: 1_767_225_000,
@@ -397,6 +398,7 @@ fn class_2005_injected_builders_match_the_fixture_and_reject_a_missing_group() {
 fn risk_incident() -> RiskIncidentResult {
     RiskIncidentResult {
         risk_incident_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        tenant_id: None,
         entity_type: "user".to_string(),
         entity_value: "alice".to_string(),
         trigger: "score",
