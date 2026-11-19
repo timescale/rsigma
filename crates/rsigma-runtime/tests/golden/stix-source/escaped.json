@@ -1,0 +1,46 @@
+{
+  "domain": [
+    "\\*"
+  ],
+  "file_name": [
+    "C:\\\\Windows\\\\a\\*b"
+  ],
+  "indicators": {
+    "*": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "wild"
+      }
+    ],
+    "C:\\Windows\\a*b": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "wild"
+      }
+    ],
+    "http://bad.example/a.php?id=1": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "wild"
+      }
+    ]
+  },
+  "url": [
+    "http://bad.example/a.php\\?id=1"
+  ]
+}

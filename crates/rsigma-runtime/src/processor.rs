@@ -1792,6 +1792,7 @@ transformations:
                 path: dir.path().join("unused.json"),
                 format: rsigma_eval::pipeline::sources::DataFormat::Json,
                 extract: None,
+                stix: None,
             },
             refresh: rsigma_eval::pipeline::sources::RefreshPolicy::Once,
             timeout: None,

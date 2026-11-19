@@ -1,0 +1,32 @@
+{
+  "domain": [
+    "kept.example"
+  ],
+  "indicators": {
+    "198.51.100.8": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000002",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "addr"
+      }
+    ],
+    "kept.example": [
+      {
+        "confidence": 90,
+        "id": "indicator--00000000-0000-4000-8000-000000000003",
+        "kill_chain_phases": [],
+        "labels": [
+          "anomalous-activity"
+        ],
+        "name": "name"
+      }
+    ]
+  },
+  "ipv4": [
+    "198.51.100.8"
+  ]
+}

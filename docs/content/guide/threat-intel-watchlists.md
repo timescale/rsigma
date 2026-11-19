@@ -91,8 +91,64 @@ enrichers:
 
 The enricher does not by itself rebuild rules. A watchlist that no pipeline references still refreshes the cache when you push, so the next detection sees the new array.
 
+## STIX indicator sources
+
+{{ added "unreleased" }}
+
+A watchlist is the list you push. A STIX source is a list the daemon pulls. Both can feed the same `${source.<id>.…}` expansion and the same lookup enricher. STIX sources need the `stix-source` feature.
+
+Use a watchlist when an analyst or another system posts values to the daemon and you want them to survive in `--state-db`. Use `type: taxii` when a TAXII 2.1 collection is the authority and the daemon should poll it. Use `format: stix` on a file when the bundle is already on disk and `refresh: watch` should rebuild on each write, or on HTTP when a feed publishes a bundle. Use `taxii sync` plus a `type: stix` enricher when you want a local store, relationship walks, and lookup by STIX id. That path does not expand indicators into a Sigma placeholder.
+
+A file bundle:
+
+```yaml
+sources:
+  - id: ti_file
+    type: file
+    path: ./intel/indicators.json
+    format: stix
+    refresh: watch
+    stix:
+      min_confidence: 70
+      observables: [ipv4, domain]
+```
+
+```yaml
+detection:
+  selection:
+    DestinationIp|expand: '%ti_ips%'
+  condition: selection
+```
+
+```yaml
+vars:
+  ti_ips: ["${source.ti_file.ipv4}"]
+```
+
+A TAXII collection. `url` is the API root, not the discovery URL. The token stays in the environment:
+
+```yaml
+sources:
+  - id: ti
+    type: taxii
+    url: https://taxii.example/api1/
+    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+    refresh: 15m
+    auth:
+      bearer_token_env: TAXII_TOKEN
+    stix:
+      observables: [ipv4, domain]
+```
+
+`${source.ti.ipv4}` is the sorted address list. Values in those arrays escape `\`, `*`, and `?`, so a Sigma `|expand` comparison stays exact. `${source.ti.indicators}` is the metadata map, keyed by the raw value. A lookup enricher can read one entry with `extract: '.indicators."${detection.fields.DestinationIp}"'`.
+
+The first poll reads the collection. Later polls ask only for objects added since the last page. One poll reads a bounded number of pages. When the collection is larger, the daemon logs a warning and the next refresh continues from the last page's added date, so give a large collection a `refresh` duration rather than `once`. A poll that repeats its cursor, or that answers 416 for the same filter, fails instead of running without a bound. A failed poll keeps the previous value. The cursor is not stored, so a restart reads the collection again. An indicator stays in the value until the refresh after its `valid_until`. Indicators cut by the cap stay in memory up to twice the cap, so a freed slot can be filled from them. Expired and revoked ids are remembered only so an older copy cannot return.
+
+Field-by-field rules, the observable keys, and the JSON shape are in [Dynamic Sources](../reference/dynamic-sources.md#format-stix).
+
 ## See also
 
 - [Dynamic Sources](../reference/dynamic-sources.md) for the source declaration.
 - [HTTP API](../reference/http-api.md#watchlist-indicators) for status codes and response bodies.
-- [Metrics](../reference/metrics.md) for `rsigma_watchlist_indicators` and `rsigma_watchlist_changes_total`.
+- [Metrics](../reference/metrics.md) for `rsigma_watchlist_indicators`, `rsigma_watchlist_changes_total`, and the `rsigma_stix_source_*` families.
+- [Feature Flags](../reference/feature-flags.md) for `stix-source`.

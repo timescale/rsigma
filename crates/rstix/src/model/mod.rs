@@ -38,6 +38,8 @@ pub mod validation;
 pub use bundle::{Bundle, QueryableContainer};
 pub use cast::BundleObjectCast;
 pub use error::ModelError;
+#[cfg(feature = "taxii")]
+pub(crate) use json_limits::validate_value_limits;
 pub use meta::MetaObject;
 pub use parse_options::{ParseOptions, TypeRegistry};
 pub use sco::ScoObject;

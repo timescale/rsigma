@@ -51,7 +51,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 | `MetricsHook` trait + `NoopMetrics` | The plug-in surface that the daemon uses to wire `prometheus` counters. Reimplement to ship metrics elsewhere (Datadog, OpenTelemetry, custom registry). `register_ruleset`, `on_ruleset_match`, `on_ruleset_events_skipped`, and `on_ruleset_rules_loaded` report named rulesets and default to no-ops. {{ added "unreleased" }} |
 | `input::parse_line(...)` | Format-aware line parser. Auto-detects JSON, syslog, plain text; honors format hints. |
 | `EvtxFileReader` (feature `evtx`) | Streaming `.evtx` reader. |
-| `SourceResolver` trait + `DefaultSourceResolver` | Dynamic source resolution for pipelines and lookup enrichers: HTTP, command, file, NATS, and watchlist. |
+| `SourceResolver` trait + `DefaultSourceResolver` | Dynamic source resolution for pipelines and lookup enrichers: HTTP, command, file, NATS, watchlist, and, with `stix-source`, TAXII and `format: stix`. |
 | `SourceCache` | TTL-aware cache for resolved source values. Optional SQLite backing for cross-restart persistence. |
 | `TemplateExpander`, `RefreshScheduler`, `RefreshTrigger` | Substitutes `${source.X}` references in pipeline `vars:` and runs the refresh policies. |
 | `Enricher` trait + `EnrichmentPipeline` | Post-evaluation enrichment surface. Drives the seven primitives (`TemplateEnricher`, `LookupEnricher`, `HttpEnricher`, `CommandEnricher`, `StixEnricher` with `stix-enrich`, `MmdbEnricher` with `mmdb-enrich`, and `DnsEnricher` with `dns-enrich`) and any bespoke types registered via `register_builtin`. |
@@ -212,6 +212,8 @@ let value = resolver.resolve(&source).await?;
 The full reusable-source spec (types, data formats, extract languages, refresh policies) lives in [Dynamic Sources](../reference/dynamic-sources.md). `RefreshScheduler` runs the periodic refresh policies; `TemplateExpander` substitutes `${source.X}` references into pipelines, and `lookup` enrichers can read the same `SourceCache`.
 
 `LogProcessor::rebuild_from_sources` loads rules again from cached source values (`SourceFetch::CacheFirst`) and leaves the current engine in place when that load fails. `WatchlistRegistry` holds the unexpired indicators for `type: watchlist` sources. After a successful reload or rebuild, `apply_reference_limits` sets each watchlist's cap from the pipelines that loaded, and `restore` reports how many saved rows were left out because the source was already at that cap. `SourceResolver::cached` and `store_cached` let a push update the cache that a later rebuild or lookup reads. {{ added "unreleased" }}
+
+With the `stix-source` feature, `DefaultSourceResolver::prepare_taxii` builds the TAXII clients before the first resolve. `with_stix_clock` fixes the clock used for indicator lifecycle. File and HTTP sources with `format: stix` use the same build. Array values escape `\`, `*`, and `?`, and the `indicators` keys stay raw. A TAXII poll reads a `PollBudget` derived from `max_indicators` and `page_size`, and the next refresh continues when that poll stops with an added-date. Indicators past the cap stay while the retained set is under twice `max_indicators`. The feature-off resolver rejects both with an error that names `stix-source`. {{ added "unreleased" }}
 
 ## Error handling
 

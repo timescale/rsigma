@@ -1,0 +1,8 @@
+sources:
+  - id: bundle
+    type: file
+    path: ./indicators.json
+    format: stix
+    stix:
+      observables:
+        - sha256

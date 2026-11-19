@@ -6,6 +6,7 @@ mod error;
 mod eval;
 mod lexer;
 mod normalize;
+mod observables;
 mod parser;
 mod path;
 mod print;
@@ -16,6 +17,7 @@ pub use ast::{PatternAst, PatternScoType, Span};
 pub use context::{ObservationContext, TimestampedObservation};
 pub use error::{PatternError, PatternMatchError};
 pub use lexer::{MAX_OBSERVATIONS, MAX_PATTERN_BYTES};
+pub use observables::{ObservableExtraction, ObservableKind, SimpleObservable, UnsupportedReason};
 
 use crate::core::ScoKind;
 use crate::model::Bundle;
@@ -112,6 +114,32 @@ impl Pattern {
     /// Render this pattern as a canonical STIX pattern string.
     pub fn canonical(&self) -> String {
         print::print(&self.ast)
+    }
+
+    /// Extract equality and `IN` observables that a watchlist can match exactly.
+    ///
+    /// A pattern is simple when it is one observation, or observations combined only
+    /// with `OR`, and every comparison is a non-negated `=` or `IN` of a string or
+    /// integer constant. Qualifiers, `AND`, `FOLLOWEDBY`, and `NOT` are unsupported.
+    /// `AND` inside one observation is unsupported as well: those comparisons share
+    /// one object and cannot be flattened into independent values.
+    ///
+    /// ```
+    /// use rstix::{ObservableExtraction, Pattern};
+    ///
+    /// let pattern = Pattern::parse(
+    ///     "[ipv4-addr:value = '198.51.100.7'] OR [domain-name:value = 'bad.example.com']",
+    /// )
+    /// .unwrap();
+    /// let ObservableExtraction::Simple(items) = pattern.simple_observables() else {
+    ///     panic!("two equality observations are simple");
+    /// };
+    /// assert_eq!(items.len(), 2);
+    /// assert_eq!(items[0].value, "198.51.100.7");
+    /// assert_eq!(items[1].value, "bad.example.com");
+    /// ```
+    pub fn simple_observables(&self) -> ObservableExtraction {
+        observables::extract(&self.ast)
     }
 }
 

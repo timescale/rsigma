@@ -235,6 +235,7 @@ flowchart LR
 | Path resolver | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle | Done |
 | Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
 | Canonical printer | `Pattern::canonical`, `Display` | Done |
+| Observable extraction | `Pattern::simple_observables` | Done. Exact `=` and `IN` values only. Qualifiers, `AND`, `FOLLOWEDBY`, and `NOT` return `UnsupportedReason`. |
 
 ```rust
 use rstix::Pattern;
@@ -454,7 +455,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery |
 | `api_root(url)` | `GET {api_root}/` |
 | `collections(url)` / `collection(url, id)` | List / get collection |
-| `objects` / `objects_stream` | Paginated GET objects |
+| `objects` / `objects_stream` / `poll_objects` / `poll_object_pages` | Paginated GET objects. `poll_object_pages` takes a [`PollBudget`](taxii::PollBudget) and delivers each page, returning [`PollStop::Budget`](taxii::PollStop) when the server still has more. `poll_objects` collects those pages and returns `PollBudgetExceeded` at that stop. |
 | `get_object` / `object_stream` | GET object-by-id (section 5.6) |
 | `add_objects` | POST envelope → 202 + status (auto-polls by default) |
 | `delete_object` | DELETE with version filter |
@@ -481,6 +482,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `dane_require_dnssec(b)` | `true` | When `server_trust` is `Dane`: DNSSEC-validate TLSA prefetch and SRV; set `false` for unsigned lab DNS only. |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate): mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
+| `address_filter(f)` | none | Keep only destinations `f` accepts. Name lookup drops rejected addresses and fails when none remain. IP literals are checked on every request, including absolute URLs from the server. Redirects and proxies are disabled. With no filter, resolver, redirect, and proxy behavior stay unchanged. |
 | `max_response_bytes(n)` | 512 MiB | Reject oversized bodies (`Content-Length` or streaming cap) → [`TaxiiError::ResponseTooLarge`](taxii::TaxiiError::ResponseTooLarge). |
 | `parse_options(o)` | default | STIX parse options for envelope objects. |
 | `status_poll_interval(d)` | 1s | Delay between status polls. |
@@ -535,6 +537,7 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | [`TaxiiFilter`](taxii::TaxiiFilter) / [`ObjectByIdFilter`](taxii::ObjectByIdFilter) / [`VersionsQueryFilter`](taxii::VersionsQueryFilter) / [`DeleteObjectFilter`](taxii::DeleteObjectFilter) | Query encoding (`match[type]`, `added_after`, `next`, …). |
 | [`VersionFilter`](taxii::VersionFilter) / [`VersionSelector`](taxii::VersionSelector) / [`ObjectVersion`](taxii::ObjectVersion) | Version match encoding. |
 | [`TaxiiEnvelope`](taxii::TaxiiEnvelope) | Wire envelope (not `Bundle`). |
+| [`parse_envelope`](taxii::parse_envelope) | Parse envelope bytes with the same nesting, string, and object-count limits as `Bundle::parse_with_options`. |
 | [`TaxiiPaged<T>`](taxii::TaxiiPaged) / [`TaxiiPageHeaders`](taxii::TaxiiPageHeaders) | Page body + `X-TAXII-Date-Added-*` headers. |
 | [`TaxiiStatus`](taxii::TaxiiStatus) / [`StatusDetail`](taxii::StatusDetail) / [`StatusState`](taxii::StatusState) | POST 202 / status polling. |
 | [`ManifestRecord`](taxii::ManifestRecord) / [`ManifestResponse`](taxii::ManifestResponse) | Manifest entries. |
@@ -702,6 +705,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Area | Enforced behavior | Notes |
 | ---- | ----------------- | ----- |
 | Envelope vs Bundle | POST/GET object pages deserialize `TaxiiEnvelope` | Bundle rejected at API boundary |
+| Envelope parse limits | `parse_envelope` rejects nesting, string length, and `objects` length using the caller's `ParseOptions`, with the same `ParseError` variants as bundle parse | HTTP decoding passes the client's `ParseOptions` |
 | Envelope custom props | Flattened `x_*` on `TaxiiEnvelope` / `TaxiiStatus` | `with_custom`; CSD01 §3.15.1 |
 | Response media type | Success responses must include TAXII JSON `Content-Type` | `MissingContentType` / `InvalidContentType` |
 | TLS | rustls with **TLS 1.2 and TLS 1.3** (no 1.0/1.1); optional SPKI pinning and DANE | `ServerTrustPolicy`, `build_rustls_config`, `SpkiPin`, `TlsaCache`, `resolve_tlsa` |
@@ -710,8 +714,8 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
 | Capability checks | With `Enforce`: collection `media_types` must include TAXII 2.1 and/or STIX 2.1 object types; API Root `versions` must include TAXII 2.1; `max_content_length` must be integer **> 0** | `CapabilityPolicy::Disabled` skips checks (interop only); wire JSON is never coerced |
 | POST status | Poll until complete by default (`PostSubmitPolicy`) | `ReturnInitial` for one-shot 202 |
-| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last` | `MissingPaginationHeaders` |
-| HTTP 416 recovery | Streams reset cursor and restore baseline `added_after` | Pagination streams |
+| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last`. `poll_object_pages` returns `PollStop::Budget` when the page or object budget is exhausted and `RepeatedPaginationCursor` when the filter does not advance. `poll_objects` reports the budget stop as `PollBudgetExceeded` | `MissingPaginationHeaders`, `PollBudgetExceeded`, `RepeatedPaginationCursor` |
+| HTTP 416 recovery | Streams reset the cursor and restore baseline `added_after`. `poll_object_pages` does that once, then returns the 416 when recovery would repeat the same filter. `poll_objects` uses that loop | Pagination streams and `PollBudget` |
 | Clock skew | When a prior response cached skew seconds, adjust `added_after` by that delta; **when skew is unset, leave `added_after` unchanged** (do not drop the filter) | `with_clock_skew_*`; unit-tested |
 | HTTP 401 | `WWW-Authenticate` challenges parsed on `Unauthorized`; auth-params must not become fake schemes (CSD01 Table 2 multi-challenge) | `AuthChallenge`, `parse_www_authenticate` |
 | SRV selection | RFC 2782 weighted random; `"."` targets skipped | `resolve_taxii_srv` |
@@ -722,6 +726,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Auth secrets | `SecretString`; redacted `Debug` | Credentials never in `TaxiiError` messages |
 | Pagination headers | `TaxiiPaged<T>` exposes `X-TAXII-Date-Added-First` / `Last` | One-shot GETs and streams |
 | HTTPS | Required by default; `allow_insecure_http(true)` for tests | Spec section 3.3 |
+| Destination filter | `address_filter` rejects IP literals before the request and drops rejected DNS answers. Redirects and proxies are off while a filter is set | `TaxiiError::DestinationRejected` for a rejected literal. No filter leaves redirects and the default resolver in place |
 | DELETE preflight | Requires both `can_read` and `can_write` | Spec section 5.7 |
 | Manifest Accept | TAXII + STIX media types | Spec section 5.3 |
 | DNS SRV discovery | `resolve_taxii_srv` + `TaxiiClient::discover_via_srv` | `_taxii2._tcp` records |

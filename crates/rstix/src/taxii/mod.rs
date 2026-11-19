@@ -5,6 +5,7 @@
 
 #![allow(clippy::result_large_err)]
 
+mod address_filter;
 mod capability;
 mod client;
 mod dane;
@@ -29,7 +30,7 @@ mod www_authenticate;
 pub mod auth;
 
 pub use auth::{ApiKeyHeader, AuthError, BasicAuth, BearerAuth, TaxiiAuthProvider};
-pub use client::{TaxiiClient, TaxiiClientConfig};
+pub use client::{PollBudget, PollStop, PolledPage, TaxiiClient, TaxiiClientConfig};
 pub use dane::TlsaRecord;
 pub use dns::{
     DnsLookupOptions, TAXII2_SRV_SERVICE, resolve_taxii_srv, resolve_taxii_srv_with,
@@ -37,6 +38,7 @@ pub use dns::{
 };
 pub use envelope::{
     ManifestRecord, ManifestResponse, StatusDetail, StatusState, TaxiiEnvelope, TaxiiStatus,
+    parse_envelope,
 };
 pub use error::TaxiiError;
 pub use filter::{

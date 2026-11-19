@@ -1,0 +1,18 @@
+{
+  "domain": [],
+  "indicators": {
+    "198.51.100.7": [
+      {
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "kept"
+      }
+    ]
+  },
+  "ipv4": [
+    "198.51.100.7"
+  ]
+}

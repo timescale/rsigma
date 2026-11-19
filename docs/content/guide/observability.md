@@ -96,7 +96,7 @@ Spans are emitted alongside events. To capture them in a structured aggregator (
 
 ## Prometheus metrics
 
-The daemon binds `/metrics` on the same `--api-addr` as the REST API. It exposes {{ rsigma.metrics.names }} metric definitions under `--all-features` ({{ rsigma.metrics.always }} always-present plus {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS gated on the matching build features):
+The daemon binds `/metrics` on the same `--api-addr` as the REST API. It exposes {{ rsigma.metrics.names }} metric definitions under `--all-features` ({{ rsigma.metrics.always }} always-present plus {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS + {{ rsigma.metrics.stix }} STIX source, gated on the matching build features):
 
 | Concern | Metrics | What they answer |
 |---------|---------|------------------|

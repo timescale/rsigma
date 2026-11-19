@@ -44,6 +44,12 @@ pub struct Metrics {
     pub source_rebuilds_total: IntCounterVec,
     pub watchlist_indicators: IntGaugeVec,
     pub watchlist_changes_total: IntCounterVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_indicators: IntGaugeVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_objects_total: IntCounterVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_skipped_total: IntCounterVec,
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
@@ -501,6 +507,45 @@ impl Metrics {
         .unwrap();
         registry
             .register(Box::new(watchlist_changes_total.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_indicators = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_stix_source_indicators",
+                "Active indicators in a STIX source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_indicators.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_objects_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_stix_source_objects_total",
+                "STIX objects received while resolving a STIX source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_objects_total.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_stix_source_skipped_total",
+                "STIX indicators or observables left out of a source value",
+            ),
+            &["source_id", "reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_skipped_total.clone()))
             .unwrap();
 
         let enrichment_total = IntCounterVec::new(
@@ -1362,6 +1407,12 @@ impl Metrics {
             source_rebuilds_total,
             watchlist_indicators,
             watchlist_changes_total,
+            #[cfg(feature = "stix-source")]
+            stix_source_indicators,
+            #[cfg(feature = "stix-source")]
+            stix_source_objects_total,
+            #[cfg(feature = "stix-source")]
+            stix_source_skipped_total,
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,
@@ -1980,7 +2031,54 @@ impl MetricsHook for Metrics {
             .with_label_values(&[webhook_id, "rate_limited_wait"])
             .inc();
     }
+
+    #[cfg(feature = "stix-source")]
+    fn register_stix_source(&self, source_id: &str) {
+        let _ = self.stix_source_indicators.with_label_values(&[source_id]);
+        let _ = self
+            .stix_source_objects_total
+            .with_label_values(&[source_id]);
+        for reason in STIX_SKIP_REASONS {
+            let _ = self
+                .stix_source_skipped_total
+                .with_label_values(&[source_id, reason]);
+        }
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn set_stix_source_indicators(&self, source_id: &str, count: u64) {
+        self.stix_source_indicators
+            .with_label_values(&[source_id])
+            .set(count as i64);
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn on_stix_source_objects(&self, source_id: &str, count: u64) {
+        self.stix_source_objects_total
+            .with_label_values(&[source_id])
+            .inc_by(count);
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn on_stix_source_skipped(&self, source_id: &str, reason: &'static str, count: u64) {
+        self.stix_source_skipped_total
+            .with_label_values(&[source_id, reason])
+            .inc_by(count);
+    }
 }
+
+#[cfg(feature = "stix-source")]
+const STIX_SKIP_REASONS: &[&str] = &[
+    "revoked",
+    "expired",
+    "not_yet_valid",
+    "low_confidence",
+    "pattern_type",
+    "unsupported_pattern",
+    "unmapped_observable",
+    "invalid_pattern",
+    "over_limit",
+];
 
 #[cfg(test)]
 mod tests {

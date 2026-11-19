@@ -14,12 +14,16 @@ pub mod include;
 pub mod nats;
 pub mod refresh;
 pub mod registry;
+#[cfg(feature = "stix-source")]
+pub mod stix;
+#[cfg(feature = "stix-source")]
+pub(crate) mod taxii;
 pub mod template;
 pub mod watchlist;
 
 use std::time::{Duration, Instant};
 
-use rsigma_eval::pipeline::sources::{DynamicSource, ErrorPolicy, SourceType};
+use rsigma_eval::pipeline::sources::{DataFormat, DynamicSource, ErrorPolicy, SourceType};
 
 /// Maximum size of a source response body (HTTP, command stdout, NATS payload).
 pub const MAX_SOURCE_RESPONSE_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -120,6 +124,12 @@ pub trait SourceResolver: Send + Sync {
 pub struct DefaultSourceResolver {
     cache: std::sync::Arc<SourceCache>,
     watchlists: Option<std::sync::Arc<WatchlistRegistry>>,
+    metrics: Option<std::sync::Arc<dyn crate::MetricsHook>>,
+    /// Clock used when a STIX source is resolved. Unset uses the wall clock.
+    #[cfg(feature = "stix-source")]
+    stix_now: Option<rstix::core::StixTimestamp>,
+    #[cfg(feature = "stix-source")]
+    taxii: std::sync::Mutex<taxii::TaxiiSources>,
 }
 
 impl DefaultSourceResolver {
@@ -128,6 +138,11 @@ impl DefaultSourceResolver {
         Self {
             cache: std::sync::Arc::new(SourceCache::new()),
             watchlists: None,
+            metrics: None,
+            #[cfg(feature = "stix-source")]
+            stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
         }
     }
 
@@ -136,6 +151,11 @@ impl DefaultSourceResolver {
         Self {
             cache: std::sync::Arc::new(cache),
             watchlists: None,
+            metrics: None,
+            #[cfg(feature = "stix-source")]
+            stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
         }
     }
 
@@ -146,7 +166,73 @@ impl DefaultSourceResolver {
         Self {
             cache,
             watchlists: None,
+            metrics: None,
+            #[cfg(feature = "stix-source")]
+            stix_now: None,
+            #[cfg(feature = "stix-source")]
+            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
         }
+    }
+
+    /// Read TAXII credentials and build clients for `sources`.
+    ///
+    /// A missing environment variable is an error that names the variable.
+    /// Without the `stix-source` feature, a `type: taxii` source is rejected.
+    pub fn prepare_taxii(&mut self, sources: &[DynamicSource]) -> Result<(), SourceError> {
+        self.prepare_taxii_with(sources, crate::default_egress_policy(), false)
+    }
+
+    /// [`prepare_taxii`](Self::prepare_taxii) with an explicit egress policy.
+    ///
+    /// `allow_insecure_http` is for tests. Source YAML has no such field.
+    #[doc(hidden)]
+    pub fn prepare_taxii_with(
+        &mut self,
+        sources: &[DynamicSource],
+        policy: crate::EgressPolicy,
+        allow_insecure_http: bool,
+    ) -> Result<(), SourceError> {
+        #[cfg(feature = "stix-source")]
+        {
+            let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+            taxii.prepare(sources, policy, allow_insecure_http)
+        }
+        #[cfg(not(feature = "stix-source"))]
+        {
+            let _ = (policy, allow_insecure_http);
+            if let Some(source) = sources
+                .iter()
+                .find(|source| matches!(source.source_type, SourceType::Taxii { .. }))
+            {
+                return Err(SourceError {
+                    source_id: source.id.clone(),
+                    kind: SourceErrorKind::Fetch(
+                        "TAXII source requires the stix-source feature".into(),
+                    ),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// Resolve STIX lifecycle checks at `now` instead of the wall clock.
+    #[cfg(feature = "stix-source")]
+    pub fn with_stix_clock(mut self, now: rstix::core::StixTimestamp) -> Self {
+        self.stix_now = Some(now);
+        self
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn stix_now(&self) -> rstix::core::StixTimestamp {
+        self.stix_now
+            .clone()
+            .unwrap_or_else(rstix::core::StixTimestamp::now)
+    }
+
+    /// Record source metrics through `metrics`.
+    pub fn with_metrics(mut self, metrics: std::sync::Arc<dyn crate::MetricsHook>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Resolve `type: watchlist` sources from `registry`.
@@ -172,6 +258,119 @@ impl DefaultSourceResolver {
     pub fn arc_cache(&self) -> std::sync::Arc<SourceCache> {
         self.cache.clone()
     }
+
+    async fn resolve_file_source(
+        &self,
+        source_id: &str,
+        path: &std::path::Path,
+        format: DataFormat,
+        extract: Option<&rsigma_eval::pipeline::sources::ExtractExpr>,
+        stix: Option<&rsigma_eval::pipeline::sources::StixOptions>,
+    ) -> Result<ResolvedValue, SourceError> {
+        #[cfg(feature = "stix-source")]
+        if format == DataFormat::Stix {
+            let contents = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| SourceError {
+                    source_id: String::new(),
+                    kind: SourceErrorKind::Fetch(format!("failed to read {}: {e}", path.display())),
+                })?;
+            let options = stix
+                .cloned()
+                .unwrap_or_else(rsigma_eval::pipeline::sources::StixOptions::all);
+            let built = stix::build(&contents, &options, &self.stix_now())?;
+            return Ok(self.finish_stix(source_id, built));
+        } else {
+            let _ = (source_id, stix);
+        }
+        #[cfg(not(feature = "stix-source"))]
+        let _ = (source_id, stix);
+        file::resolve_file(path, format, extract).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_http_source(
+        &self,
+        source_id: &str,
+        url: &str,
+        method: Option<&str>,
+        headers: &std::collections::HashMap<String, String>,
+        body: Option<&str>,
+        format: DataFormat,
+        extract: Option<&rsigma_eval::pipeline::sources::ExtractExpr>,
+        timeout: Option<Duration>,
+        stix: Option<&rsigma_eval::pipeline::sources::StixOptions>,
+    ) -> Result<ResolvedValue, SourceError> {
+        #[cfg(feature = "stix-source")]
+        if format == DataFormat::Stix {
+            let options = stix
+                .cloned()
+                .unwrap_or_else(rsigma_eval::pipeline::sources::StixOptions::all);
+            let now = self.stix_now();
+            let id = source_id.to_owned();
+            let metrics = self.metrics.clone();
+            return http::resolve_http_with_limit(
+                url,
+                method,
+                headers,
+                body,
+                extract,
+                timeout,
+                MAX_SOURCE_RESPONSE_BYTES,
+                move |text| {
+                    let built = stix::build(text, &options, &now)?;
+                    if let Some(metrics) = &metrics {
+                        stix::observe(metrics.as_ref(), &id, &built);
+                    }
+                    Ok(built.value)
+                },
+            )
+            .await;
+        } else {
+            let _ = (source_id, stix);
+        }
+        #[cfg(not(feature = "stix-source"))]
+        let _ = (source_id, stix);
+        http::resolve_http(url, method, headers, body, format, extract, timeout).await
+    }
+
+    async fn resolve_taxii(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
+        #[cfg(not(feature = "stix-source"))]
+        {
+            let _ = source;
+            return Err(SourceError {
+                source_id: String::new(),
+                kind: SourceErrorKind::Fetch(
+                    "TAXII source requires the stix-source feature".into(),
+                ),
+            });
+        }
+        #[cfg(feature = "stix-source")]
+        {
+            let (prepared, previous) = {
+                let mut taxii = self.taxii.lock().unwrap_or_else(|err| err.into_inner());
+                taxii.take_poll(&source.id)?
+            };
+            let (state, built) = taxii::poll(&prepared, previous, &self.stix_now()).await;
+            self.taxii
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .commit(&source.id, state);
+            Ok(self.finish_stix(&source.id, built?))
+        }
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn finish_stix(&self, source_id: &str, built: stix::StixBuild) -> ResolvedValue {
+        if let Some(metrics) = &self.metrics {
+            stix::observe(metrics.as_ref(), source_id, &built);
+        }
+        ResolvedValue {
+            data: built.value,
+            resolved_at: Instant::now(),
+            from_cache: false,
+        }
+    }
 }
 
 impl Default for DefaultSourceResolver {
@@ -196,7 +395,11 @@ impl SourceResolver for DefaultSourceResolver {
                 path,
                 format,
                 extract,
-            } => file::resolve_file(path, *format, extract.as_ref()).await,
+                stix,
+            } => {
+                self.resolve_file_source(&source.id, path, *format, extract.as_ref(), stix.as_ref())
+                    .await
+            }
             SourceType::Command {
                 command,
                 format,
@@ -209,8 +412,10 @@ impl SourceResolver for DefaultSourceResolver {
                 body,
                 format,
                 extract,
+                stix,
             } => {
-                http::resolve_http(
+                self.resolve_http_source(
+                    &source.id,
                     url,
                     method.as_deref(),
                     headers,
@@ -218,6 +423,7 @@ impl SourceResolver for DefaultSourceResolver {
                     *format,
                     extract.as_ref(),
                     source.timeout,
+                    stix.as_ref(),
                 )
                 .await
             }
@@ -235,6 +441,7 @@ impl SourceResolver for DefaultSourceResolver {
                     kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
                 });
             }
+            SourceType::Taxii { .. } => self.resolve_taxii(source).await,
             SourceType::Watchlist { .. } => {
                 let data = self
                     .watchlists

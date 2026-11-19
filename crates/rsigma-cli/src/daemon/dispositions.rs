@@ -253,13 +253,19 @@ impl DispositionState {
                     SourceType::Nats { .. } => "nats",
                     SourceType::Command { .. } => "command",
                     SourceType::Watchlist { .. } => "watchlist",
+                    SourceType::Taxii { .. } => "taxii",
                 };
                 (s.id.clone(), label)
             })
             .collect();
 
         let scheduler = RefreshScheduler::new();
-        let sub = scheduler.subscribe(sources, Arc::new(DefaultSourceResolver::new()));
+        let mut resolver = DefaultSourceResolver::new();
+        if let Err(err) = resolver.prepare_taxii(&sources) {
+            tracing::error!(error = %err, "Failed to prepare TAXII sources");
+            return;
+        }
+        let sub = scheduler.subscribe(sources, Arc::new(resolver));
         let handle = sub.handle;
         let trigger = sub.trigger.clone();
         let mut results = sub.results;
@@ -596,6 +602,7 @@ mod tests {
                 path,
                 format: DataFormat::Json,
                 extract: None,
+                stix: None,
             },
             refresh: RefreshPolicy::OnDemand,
             timeout: None,

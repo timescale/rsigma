@@ -71,6 +71,16 @@ IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host tha
 
 The policy applies only to those three clients. OTLP sinks, the MCP server's daemon client, and one-shot CLI commands such as `rsigma taxii sync` or `engine status` do not go through it, so point them only at endpoints you trust. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
 
+### STIX indicator sources
+
+{{ added "unreleased" }} A `type: taxii` source uses the same egress policy. The API root is checked before the first poll, and every address the name resolves to is checked again. An IP literal in the API root, or in an absolute URL the server returns, is rejected before the request. While that filter is set the client follows no redirects and uses no proxy, so a proxy variable cannot move the request off the filtered path. `rsigma taxii sync` is a separate command and is not covered by this filter.
+
+TAXII credentials are environment variable names in the source YAML. The values are read when the resolver is built and are not written into the declaration or into errors. A missing variable fails startup and names the variable.
+
+Each TAXII page is limited to 64 MiB and parsed with a finite depth, string length, and object count. A poll reads at most one page and object budget, then the next refresh continues from just before the last page's added date. The poll fails when the cursor does not advance, when HTTP 416 recovery would repeat the same filter, or when a budget stop cannot move the added-date cursor, so a collection that never ends cannot hold one resolve open. A file or HTTP source with `format: stix` uses the same parser limits. HTTP still stops at its 10 MiB body cap. Indicator values are data: they land in the source cache and can be expanded into a rule or returned to a lookup enricher. They are not executed. Array values escape `\`, `*`, and `?`, so that expansion is an exact comparison. The `indicators` map keys stay raw.
+
+A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `watch` or `push` on `type: taxii` are configuration errors.
+
 ### DNS enricher
 
 {{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
@@ -96,7 +106,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, and the conversion backends. Twenty-eight harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, and the conversion backends. Thirty harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -305,6 +315,6 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 - [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
 - [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for observability of limit hits.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

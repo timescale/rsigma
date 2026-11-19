@@ -150,6 +150,12 @@ pub enum TaxiiError {
     /// URL must use HTTPS (spec section 8.5.1).
     #[error("TAXII requires HTTPS: {0}")]
     InsecureUrl(String),
+    /// The address filter rejected every address for this request.
+    #[error("destination address rejected: {host}")]
+    DestinationRejected {
+        /// Host from the request URL.
+        host: String,
+    },
     /// DNS SRV or TLSA lookup failure (non-DNSSEC path, or SRV when not using DANE).
     #[error("DNS SRV discovery failed: {0}")]
     DnsDiscovery(String),
@@ -199,6 +205,17 @@ pub enum TaxiiError {
     /// Paginated response missing required headers (spec section 3.2).
     #[error("missing pagination headers while more=true")]
     MissingPaginationHeaders,
+    /// `poll_objects` hit its page or object budget while the server still had more.
+    #[error("TAXII poll exceeded {max_pages} pages or {max_objects} objects")]
+    PollBudgetExceeded {
+        /// Configured page budget.
+        max_pages: usize,
+        /// Configured object budget.
+        max_objects: usize,
+    },
+    /// A page did not advance `next` or `added_after`.
+    #[error("TAXII pagination cursor did not advance")]
+    RepeatedPaginationCursor,
     /// Invalid server trust / TLS configuration, DANE TLSA mismatch, or DNSSEC-validated DNS
     /// lookup failure when [`TaxiiClientConfig::dane_require_dnssec`](super::client::TaxiiClientConfig::dane_require_dnssec) is enabled.
     #[error("invalid server trust configuration: {reason}")]

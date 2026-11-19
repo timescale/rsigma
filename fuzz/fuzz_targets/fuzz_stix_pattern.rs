@@ -10,5 +10,6 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Ok(pattern) = rstix::Pattern::parse(text) {
         let _ = pattern.to_string();
+        let _ = pattern.simple_observables();
     }
 });

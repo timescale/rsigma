@@ -104,7 +104,10 @@ pub enum ParseError {
 }
 
 #[cfg(feature = "pattern")]
-pub use pattern::{Pattern, PatternAst, PatternError, PatternMatchError, PatternScoType};
+pub use pattern::{
+    ObservableExtraction, ObservableKind, Pattern, PatternAst, PatternError, PatternMatchError,
+    PatternScoType, SimpleObservable, UnsupportedReason,
+};
 
 #[cfg(feature = "validate")]
 pub use validate::{
@@ -144,13 +147,14 @@ pub use model::{
 pub use taxii::{
     ApiKeyHeader, AuthChallenge, BasicAuth, BearerAuth, CapabilityPolicy, ClientCertificate,
     DeleteObjectFilter, DnsLookupOptions, HttpsPolicy, ManifestRecord, ManifestResponse,
-    ObjectByIdFilter, ObjectVersion, PostSubmitPolicy, PreflightPolicy, RetryPolicy,
-    ServerTrustPolicy, SpkiPin, StatusDetail, StatusState, TAXII2_SRV_SERVICE, TaxiiApiRoot,
-    TaxiiAuthProvider, TaxiiClient, TaxiiClientConfig, TaxiiCollection, TaxiiDiscovery,
-    TaxiiEnvelope, TaxiiError, TaxiiFilter, TaxiiPageHeaders, TaxiiPaged, TaxiiStatus, TlsaCache,
-    TlsaRecord, VersionFilter, VersionSelector, VersionsQueryFilter, VersionsResponse,
-    build_rustls_config, parse_www_authenticate, resolve_taxii_srv, resolve_taxii_srv_with_options,
-    resolve_tlsa, resolve_tlsa_with_options,
+    ObjectByIdFilter, ObjectVersion, PollBudget, PollStop, PolledPage, PostSubmitPolicy,
+    PreflightPolicy, RetryPolicy, ServerTrustPolicy, SpkiPin, StatusDetail, StatusState,
+    TAXII2_SRV_SERVICE, TaxiiApiRoot, TaxiiAuthProvider, TaxiiClient, TaxiiClientConfig,
+    TaxiiCollection, TaxiiDiscovery, TaxiiEnvelope, TaxiiError, TaxiiFilter, TaxiiPageHeaders,
+    TaxiiPaged, TaxiiStatus, TlsaCache, TlsaRecord, VersionFilter, VersionSelector,
+    VersionsQueryFilter, VersionsResponse, build_rustls_config, parse_envelope,
+    parse_www_authenticate, resolve_taxii_srv, resolve_taxii_srv_with_options, resolve_tlsa,
+    resolve_tlsa_with_options,
 };
 #[cfg(all(feature = "taxii", feature = "store"))]
 pub use taxii::{
