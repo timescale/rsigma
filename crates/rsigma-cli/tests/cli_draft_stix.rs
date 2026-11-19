@@ -317,6 +317,23 @@ fn a_registry_key_matches_a_sysmon_event() {
 
 #[cfg(feature = "stix-draft")]
 #[test]
+fn invalid_date_exits_3_on_the_stix_path() {
+    let path = fixture("one-ip.json");
+    let out = draft(&[
+        "rule",
+        "draft",
+        "--from-stix",
+        path.to_str().unwrap(),
+        "--date",
+        "not a date",
+    ]);
+    assert_eq!(out.status.code(), Some(3));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("YYYY-MM-DD"), "{stderr}");
+}
+
+#[cfg(feature = "stix-draft")]
+#[test]
 fn help_lists_from_stix() {
     let out = draft(&["rule", "draft", "--help"]);
     assert!(out.status.success());

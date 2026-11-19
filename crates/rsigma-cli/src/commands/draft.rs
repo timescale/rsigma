@@ -160,6 +160,12 @@ pub(crate) struct DraftArgs {
 }
 
 pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
+    if let Some(date) = args.date.as_deref()
+        && chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+    {
+        eprintln!("error: --date must be YYYY-MM-DD, got {date}");
+        process::exit(crate::exit_code::CONFIG_ERROR);
+    }
     #[cfg(feature = "stix-draft")]
     if args.from_stix.is_some() {
         super::draft_stix::run(args, ctx);

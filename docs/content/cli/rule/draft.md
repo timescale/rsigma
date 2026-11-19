@@ -44,7 +44,7 @@ For a draft from events, two things stay yours: the metadata (title, description
 | `--logsource-product <P>` | inferred | Logsource product override. |
 | `--logsource-service <S>` | inferred | Logsource service override. |
 | `--title <TITLE>` | derived | Rule title (derived from the dominant marker when omitted). For a STIX draft, this title is used on every emitted rule. |
-| `--date <YYYY-MM-DD>` | today (UTC) | Calendar date written into the draft. Applies to event drafts, correlation drafts, and `--from-stix`. Omit it and the date is today in UTC, so a file you save today will differ tomorrow. Pass it when the YAML must stay byte-stable. {{ added "unreleased" }} |
+| `--date <YYYY-MM-DD>` | today (UTC) | Calendar date written into the draft. Applies to event drafts, correlation drafts, and `--from-stix`. Omit it and the date is today in UTC, so a file you save today will differ tomorrow. Pass it when the YAML must stay byte-stable. A value that is not `YYYY-MM-DD` exits 3. {{ added "unreleased" }} |
 | `--from-stix <PATH>` | unset | STIX 2.1 bundle, or one indicator object. `-` reads stdin. Requires the `stix-draft` feature. Without that feature the flag is absent from `--help` and passing it fails. {{ added "unreleased" }} |
 | `--observable <KIND>` | every mapped kind | Observable kind to draft. Repeatable. An unknown key exits 3 and the message lists the valid keys. {{ added "unreleased" }} |
 | `--include-expired` | off | Keep indicators whose `valid_until` has passed and indicators whose `valid_from` is still ahead. Revoked indicators are still skipped. {{ added "unreleased" }} |
@@ -250,7 +250,7 @@ One document is emitted per mapped logsource. Several documents are joined with 
 | 0 | At least one rule was emitted. |
 | 1 | The file parsed, and nothing in it was draftable. |
 | 2 | The path could not be read, the JSON is invalid, the top-level type is not a bundle or an indicator, or the STIX parser rejected the bundle. |
-| 3 | `--from-stix` was combined with an event-draft flag, or `--observable` named a key that is not in the list above. |
+| 3 | `--from-stix` was combined with an event-draft flag, `--date` is not `YYYY-MM-DD`, or `--observable` named a key that is not in the list above. |
 
 ### Examples
 
@@ -286,7 +286,7 @@ rsigma rule draft --from-stix indicators.json --include-expired --emit report --
 | `0` | A verified draft was emitted. |
 | `1` | A STIX bundle parsed and nothing in it was draftable. |
 | `2` | Exemplars or STIX input could not be read or parsed, no rule could honestly cover the exemplars, grouped input was invalid, entity/slot inference was ambiguous, or isolated verification failed. |
-| `3` | A `--baseline` value without the `@path` prefix, `--from-stix` combined with an event-draft flag, or an unknown `--observable` key. |
+| `3` | A `--baseline` value without the `@path` prefix, `--from-stix` combined with an event-draft flag, an unknown `--observable` key, or a `--date` that is not `YYYY-MM-DD`. |
 
 ## See also
 
