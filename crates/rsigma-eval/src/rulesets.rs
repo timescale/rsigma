@@ -451,11 +451,12 @@ impl RulesetEngines {
             }
         }
         CorrelationSnapshot {
-            version: 1,
+            version: crate::correlation_engine::SNAPSHOT_VERSION,
             windows: HashMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
+            tenants: Vec::new(),
             rulesets,
         }
     }
@@ -467,34 +468,43 @@ impl RulesetEngines {
     /// Returns `false` when the version is incompatible, when a single-engine
     /// snapshot meets several units, or when any unit rejects its state.
     pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) -> bool {
-        if snapshot.version != 1 {
-            return false;
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the summed counts
+    /// of restored and discarded entries across units.
+    pub fn import_state_detailed(
+        &mut self,
+        snapshot: &CorrelationSnapshot,
+    ) -> Option<crate::ImportStats> {
+        if !matches!(snapshot.version, 1 | 2) {
+            return None;
         }
         if snapshot.rulesets.is_empty() {
             if !snapshot.has_collection_state() {
-                return true;
+                return Some(crate::ImportStats::default());
             }
             let [unit] = self.units.as_mut_slice() else {
-                return false;
+                return None;
             };
-            return import_unit_state(unit, snapshot);
+            return import_unit_state_detailed(unit, snapshot);
         }
         if snapshot.has_collection_state() {
-            return false;
+            return None;
         }
         let mut units: HashMap<String, &mut RulesetUnit> = self
             .units
             .iter_mut()
             .map(|unit| (unit.name.to_string(), unit))
             .collect();
-        let mut imported = true;
+        let mut stats = crate::ImportStats::default();
         for (name, state) in &snapshot.rulesets {
             let Some(unit) = units.get_mut(name.as_str()) else {
                 continue;
             };
-            imported &= import_unit_state(unit, state);
+            stats += import_unit_state_detailed(unit, state)?;
         }
-        imported
+        Some(stats)
     }
 
     /// Introspect correlation state for every unit that has it.
@@ -567,11 +577,14 @@ fn count_skip(skipped: &[AtomicU64], unreported: &[AtomicU64], index: usize) {
     unreported[index].fetch_add(1, Ordering::Relaxed);
 }
 
-fn import_unit_state(unit: &mut RulesetUnit, state: &CorrelationSnapshot) -> bool {
+fn import_unit_state_detailed(
+    unit: &mut RulesetUnit,
+    state: &CorrelationSnapshot,
+) -> Option<crate::ImportStats> {
     match &mut unit.engine {
-        UnitEngine::Detection(_) => true,
-        UnitEngine::Correlation(engine) => engine.import_state(state.clone()),
-        UnitEngine::Routed(router) => router.import_state(state.clone()),
+        UnitEngine::Detection(_) => Some(crate::ImportStats::default()),
+        UnitEngine::Correlation(engine) => engine.import_state_detailed(state.clone()),
+        UnitEngine::Routed(router) => router.import_state_detailed(state.clone()),
     }
 }
 
@@ -979,7 +992,7 @@ correlation:
         let first = whoami_at(0);
         engines.process_event(&JsonEvent::borrow(&first));
         let mut snapshot = engines.export_state();
-        snapshot.rulesets.get_mut("a").unwrap().version = 2;
+        snapshot.rulesets.get_mut("a").unwrap().version = 999;
 
         let mut restored = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
         assert!(!restored.import_state(&snapshot));

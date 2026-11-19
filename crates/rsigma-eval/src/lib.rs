@@ -128,8 +128,8 @@ pub use correlation::{
 };
 pub use correlation_engine::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, CorrelationInfo,
-    CorrelationSnapshot, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo, ProcessResult,
-    TimestampFallback,
+    CorrelationSnapshot, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo, ImportStats,
+    ProcessResult, TenantStateSnapshot, TimestampFallback,
 };
 pub use engine::{Engine, apply_filters};
 pub use error::{EvalError, Result};

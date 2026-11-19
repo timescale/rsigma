@@ -472,9 +472,18 @@ impl<L> SchemaRouter<L> {
     /// Import previously exported correlation state into the shared store.
     /// No-op (returns `true`) when there is no correlation store.
     pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the restored and
+    /// discarded entry counts. No correlation store restores nothing.
+    pub fn import_state_detailed(
+        &mut self,
+        snapshot: CorrelationSnapshot,
+    ) -> Option<crate::ImportStats> {
         match &mut self.correlation {
-            Some(c) => c.import_state(snapshot),
-            None => true,
+            Some(c) => c.import_state_detailed(snapshot),
+            None => Some(crate::ImportStats::default()),
         }
     }
 

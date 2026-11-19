@@ -48,7 +48,7 @@ type RuleIdentity = (Option<String>, Option<String>);
 // =============================================================================
 
 /// Current snapshot schema version. Bump when the serialized format changes.
-const SNAPSHOT_VERSION: u32 = 1;
+pub(crate) const SNAPSHOT_VERSION: u32 = 2;
 
 /// Parent hops evaluated after a first-level correlation fire in one event.
 /// The first-level result is produced by `feed_detections`; each loop
@@ -983,6 +983,7 @@ impl<L> CorrelationEngine<L> {
     }
 
     /// Update a single correlation's state and check its condition.
+    #[allow(clippy::too_many_arguments)]
     fn update_correlation(
         &mut self,
         corr_idx: usize,
@@ -1240,6 +1241,7 @@ impl<L> CorrelationEngine<L> {
         // Chaining only needs which correlation fired and for which group, so
         // `pending` carries that instead of cloning results and their events.
         // Only correlation results chain. Detections never reach here.
+        #[allow(clippy::type_complexity)]
         let mut pending: Vec<(usize, Vec<(String, String)>, Option<TenantId>)> = fired_indices
             .iter()
             .zip(fired)
@@ -1623,40 +1625,50 @@ impl<L> CorrelationEngine<L> {
     ///
     /// The snapshot uses stable correlation identifiers (id > name > title)
     /// instead of internal indices, so it survives rule reloads as long as
-    /// the correlation rules keep the same identifiers.
+    /// the correlation rules keep the same identifiers. State is nested per
+    /// tenant; with tenancy off it is one `tenant: None` entry.
     pub fn export_state(&self) -> CorrelationSnapshot {
-        let mut windows: HashMap<String, Vec<(GroupKey, WindowState)>> = HashMap::new();
+        let mut by_tenant: BTreeMap<Option<TenantId>, TenantStateSnapshot> = BTreeMap::new();
+
         for (key, ws) in &self.state {
             let corr_id = self.correlation_stable_id(key.corr_idx);
-            windows
+            by_tenant
+                .entry(key.tenant.clone())
+                .or_insert_with(|| TenantStateSnapshot::empty(key.tenant.clone()))
+                .windows
                 .entry(corr_id)
                 .or_default()
                 .push((key.group_key.clone(), ws.clone()));
         }
 
-        let mut last_alert: HashMap<String, Vec<(GroupKey, i64)>> = HashMap::new();
         for (key, ts) in &self.last_alert {
             let corr_id = self.correlation_stable_id(key.corr_idx);
-            last_alert
+            by_tenant
+                .entry(key.tenant.clone())
+                .or_insert_with(|| TenantStateSnapshot::empty(key.tenant.clone()))
+                .last_alert
                 .entry(corr_id)
                 .or_default()
                 .push((key.group_key.clone(), *ts));
         }
 
-        let mut event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>> = HashMap::new();
         for (key, buf) in &self.event_buffers {
             let corr_id = self.correlation_stable_id(key.corr_idx);
-            event_buffers
+            by_tenant
+                .entry(key.tenant.clone())
+                .or_insert_with(|| TenantStateSnapshot::empty(key.tenant.clone()))
+                .event_buffers
                 .entry(corr_id)
                 .or_default()
                 .push((key.group_key.clone(), buf.clone()));
         }
 
-        let mut event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>> =
-            HashMap::new();
         for (key, buf) in &self.event_ref_buffers {
             let corr_id = self.correlation_stable_id(key.corr_idx);
-            event_ref_buffers
+            by_tenant
+                .entry(key.tenant.clone())
+                .or_insert_with(|| TenantStateSnapshot::empty(key.tenant.clone()))
+                .event_ref_buffers
                 .entry(corr_id)
                 .or_default()
                 .push((key.group_key.clone(), buf.clone()));
@@ -1664,10 +1676,11 @@ impl<L> CorrelationEngine<L> {
 
         CorrelationSnapshot {
             version: SNAPSHOT_VERSION,
-            windows,
-            last_alert,
-            event_buffers,
-            event_ref_buffers,
+            windows: HashMap::new(),
+            last_alert: HashMap::new(),
+            event_buffers: HashMap::new(),
+            event_ref_buffers: HashMap::new(),
+            tenants: by_tenant.into_values().collect(),
             rulesets: BTreeMap::new(),
         }
     }
@@ -1682,82 +1695,126 @@ impl<L> CorrelationEngine<L> {
     /// Returns `false` (and imports nothing) if the snapshot version is
     /// incompatible with the current schema, or if the snapshot holds state
     /// for several rulesets.
-    pub fn import_state(&mut self, mut snapshot: CorrelationSnapshot) -> bool {
-        if snapshot.version != SNAPSHOT_VERSION {
-            return false;
+    pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the counts of
+    /// restored and discarded entries.
+    ///
+    /// Accepts versions 1 and 2. Attribution follows
+    /// [`CorrelationConfig::require_tenant`]: with it set, untenanted entries
+    /// are discarded; without it, tenanted entries are discarded. Returns
+    /// `None` for an unknown version or a multi-ruleset snapshot that does not
+    /// fit this engine.
+    pub fn import_state_detailed(
+        &mut self,
+        mut snapshot: CorrelationSnapshot,
+    ) -> Option<ImportStats> {
+        if !matches!(snapshot.version, 1 | 2) {
+            return None;
         }
         if !snapshot.rulesets.is_empty() {
             if snapshot.has_collection_state() || snapshot.rulesets.len() != 1 {
-                return false;
+                return None;
             }
-            let Some((_, inner)) = std::mem::take(&mut snapshot.rulesets).pop_first() else {
-                return false;
-            };
-            return self.import_state(inner);
+            let (_, inner) = std::mem::take(&mut snapshot.rulesets).pop_first()?;
+            return self.import_state_detailed(inner);
         }
         let id_to_idx = self.build_id_to_index_map();
+        let require_tenant = self.config.require_tenant;
+        let mut stats = ImportStats::default();
 
-        for (corr_id, groups) in snapshot.windows {
-            if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, ws) in groups {
-                    self.state.insert(
-                        StateKey {
-                            tenant: None,
-                            corr_idx: idx,
-                            group_key: gk,
-                        },
-                        ws,
-                    );
+        let mut tenant_states = std::mem::take(&mut snapshot.tenants);
+        // The version 1 top-level maps are the untenanted bucket.
+        tenant_states.push(TenantStateSnapshot {
+            tenant: None,
+            windows: snapshot.windows,
+            last_alert: snapshot.last_alert,
+            event_buffers: snapshot.event_buffers,
+            event_ref_buffers: snapshot.event_ref_buffers,
+        });
+
+        for tenant_state in tenant_states {
+            let entries = tenant_state.window_entries();
+            let tenant = tenant_state.tenant;
+            let keep = if require_tenant {
+                tenant.is_some()
+            } else {
+                tenant.is_none()
+            };
+            if !keep {
+                if tenant.is_none() {
+                    stats.discarded_untenanted += entries;
+                } else {
+                    stats.discarded_tenanted += entries;
+                }
+                continue;
+            }
+
+            for (corr_id, groups) in tenant_state.windows {
+                if let Some(&idx) = id_to_idx.get(&corr_id) {
+                    for (gk, ws) in groups {
+                        self.state.insert(
+                            StateKey {
+                                tenant: tenant.clone(),
+                                corr_idx: idx,
+                                group_key: gk,
+                            },
+                            ws,
+                        );
+                        stats.restored += 1;
+                    }
+                }
+            }
+
+            for (corr_id, groups) in tenant_state.last_alert {
+                if let Some(&idx) = id_to_idx.get(&corr_id) {
+                    for (gk, ts) in groups {
+                        self.last_alert.insert(
+                            StateKey {
+                                tenant: tenant.clone(),
+                                corr_idx: idx,
+                                group_key: gk,
+                            },
+                            ts,
+                        );
+                    }
+                }
+            }
+
+            for (corr_id, groups) in tenant_state.event_buffers {
+                if let Some(&idx) = id_to_idx.get(&corr_id) {
+                    for (gk, buf) in groups {
+                        self.event_buffers.insert(
+                            StateKey {
+                                tenant: tenant.clone(),
+                                corr_idx: idx,
+                                group_key: gk,
+                            },
+                            buf,
+                        );
+                    }
+                }
+            }
+
+            for (corr_id, groups) in tenant_state.event_ref_buffers {
+                if let Some(&idx) = id_to_idx.get(&corr_id) {
+                    for (gk, buf) in groups {
+                        self.event_ref_buffers.insert(
+                            StateKey {
+                                tenant: tenant.clone(),
+                                corr_idx: idx,
+                                group_key: gk,
+                            },
+                            buf,
+                        );
+                    }
                 }
             }
         }
 
-        for (corr_id, groups) in snapshot.last_alert {
-            if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, ts) in groups {
-                    self.last_alert.insert(
-                        StateKey {
-                            tenant: None,
-                            corr_idx: idx,
-                            group_key: gk,
-                        },
-                        ts,
-                    );
-                }
-            }
-        }
-
-        for (corr_id, groups) in snapshot.event_buffers {
-            if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, buf) in groups {
-                    self.event_buffers.insert(
-                        StateKey {
-                            tenant: None,
-                            corr_idx: idx,
-                            group_key: gk,
-                        },
-                        buf,
-                    );
-                }
-            }
-        }
-
-        for (corr_id, groups) in snapshot.event_ref_buffers {
-            if let Some(&idx) = id_to_idx.get(&corr_id) {
-                for (gk, buf) in groups {
-                    self.event_ref_buffers.insert(
-                        StateKey {
-                            tenant: None,
-                            corr_idx: idx,
-                            group_key: gk,
-                        },
-                        buf,
-                    );
-                }
-            }
-        }
-
-        true
+        Some(stats)
     }
 
     /// Stable identifier for a correlation rule: prefers id, then name, then title.
