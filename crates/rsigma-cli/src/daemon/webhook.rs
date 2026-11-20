@@ -18,15 +18,7 @@ pub fn load_and_build_webhooks(
     paths: &[PathBuf],
     metrics: Arc<dyn MetricsHook>,
 ) -> Result<Vec<BuiltWebhook>, String> {
-    let mut merged = WebhooksFile {
-        webhooks: Vec::new(),
-    };
-    for path in paths {
-        for file in expand(path)? {
-            let parsed = load_webhooks_file(&file).map_err(|e| e.to_string())?;
-            merged.webhooks.extend(parsed.webhooks);
-        }
-    }
+    let merged = load_webhook_paths(paths)?;
 
     // Duplicate ids would collide on the per-sink and webhook metric labels.
     let mut seen = std::collections::HashSet::new();
@@ -37,6 +29,20 @@ pub fn load_and_build_webhooks(
     }
 
     build_webhooks(merged, metrics).map_err(|e| e.to_string())
+}
+
+/// Load and merge every webhook file named by `paths`, expanding directories.
+pub fn load_webhook_paths(paths: &[PathBuf]) -> Result<WebhooksFile, String> {
+    let mut merged = WebhooksFile {
+        webhooks: Vec::new(),
+    };
+    for path in paths {
+        for file in expand(path)? {
+            let parsed = load_webhooks_file(&file).map_err(|e| e.to_string())?;
+            merged.webhooks.extend(parsed.webhooks);
+        }
+    }
+    Ok(merged)
 }
 
 /// Expand one path into the list of YAML files to load: a directory yields its

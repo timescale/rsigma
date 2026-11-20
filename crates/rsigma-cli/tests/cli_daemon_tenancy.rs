@@ -564,6 +564,40 @@ fn a_disabled_daemon_refuses_a_tenant_sink() {
     );
 }
 
+#[test]
+fn a_disabled_daemon_checks_scoped_webhooks_in_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let hooks = dir.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    std::fs::write(
+        hooks.join("scoped.yaml"),
+        "webhooks:\n  - id: scoped\n    kind: detection\n    url: http://127.0.0.1:1/hook\n    scope:\n      tenants: [tenant-a]\n",
+    )
+    .unwrap();
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  output:\n    webhooks: [\"{}\"]\n",
+            rules.display(),
+            hooks.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("scope.tenants is non-empty while daemon.tenancy.enabled is false"),
+        "expected scope refusal, got: {stderr}"
+    );
+}
+
 #[cfg(feature = "daemon-otlp")]
 #[test]
 fn otlp_http_stamps_the_token_tenant() {

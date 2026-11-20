@@ -774,13 +774,9 @@ pub(crate) fn validate_tenancy_from_config(
             }
         }
     }
-    for path in resolved.webhooks {
-        if let Ok(file) = rsigma_runtime::load_webhooks_file(path) {
-            for webhook in &file.webhooks {
-                if let Some(scope) = &webhook.scope {
-                    scope_tenants.push(scope.tenants.clone());
-                }
-            }
+    for webhook in &super::webhook::load_webhook_paths(resolved.webhooks)?.webhooks {
+        if let Some(scope) = &webhook.scope {
+            scope_tenants.push(scope.tenants.clone());
         }
     }
     let input_tenant_str = input_tenant.map(|t| t.as_str().to_string());
