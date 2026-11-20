@@ -1408,3 +1408,32 @@ detection:
         assert!(err.to_string().contains("NUL"), "{value}: {err}");
     }
 }
+
+#[test]
+fn field_names_outside_identifier_syntax_are_rejected() {
+    let field = "ps.name = evil or 1 = 1 or ps.name";
+    for item in [
+        format!("'{field}': whoami"),
+        format!("'{field}|contains': whoami"),
+        format!("'{field}': [a, b]"),
+        format!("'{field}|re': '.*'"),
+        format!("'{field}|cidr': 10.0.0.0/8"),
+        format!("'{field}|gt': 5"),
+        format!("'{field}': null"),
+        format!("'{field}|exists': true"),
+        format!("'{field}|fieldref': ps.exe"),
+        format!("'ps.exe|fieldref': '{field}'"),
+    ] {
+        let yaml = format!(
+            "title: T\nlogsource:\n  category: test\ndetection:\n  s:\n    {item}\n  condition: s\n"
+        );
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let err = FibratusBackend::new()
+            .convert_rule(&collection.rules[0], "expr", &PipelineState::default())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid Fibratus field name"),
+            "{item}: {err}"
+        );
+    }
+}

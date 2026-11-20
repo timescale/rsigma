@@ -293,7 +293,7 @@ impl FibratusBackend {
         if any_wild && (op != IrStrOp::Exact || patterns.iter().any(|p| has_literal_glob_char(p))) {
             return None;
         }
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field).ok()?;
 
         let list_op = match op {
             IrStrOp::Contains => {
@@ -476,7 +476,7 @@ impl Backend for FibratusBackend {
                         )));
                     }
                 }
-                let f = self.escape_and_quote_field(field);
+                let f = shared::field_ident(field)?;
                 return Ok(format!("regex({f}, {}) = true", quoted.join(", ")));
             }
 
@@ -489,7 +489,7 @@ impl Backend for FibratusBackend {
                         _ => None,
                     })
                     .collect();
-                let f = self.escape_and_quote_field(field);
+                let f = shared::field_ident(field)?;
                 return Ok(format!("cidr_contains({f}, {})", masks.join(", ")));
             }
 
@@ -505,7 +505,7 @@ impl Backend for FibratusBackend {
     // --- Field/value escaping ---
 
     fn escape_and_quote_field(&self, field: &str) -> String {
-        shared::sanitize_field(field)
+        field.to_string()
     }
 
     // --- Value-type-specific leaves (IR-native) ---
@@ -519,7 +519,7 @@ impl Backend for FibratusBackend {
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
         reject_nul_pattern("Fibratus", pattern)?;
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let is_cased = self.fibratus.case_sensitive || !case_insensitive;
 
         // A glob has no escape for a literal `*` or `?`, so such a pattern
@@ -571,7 +571,7 @@ impl Backend for FibratusBackend {
                 ConvertError::UnsupportedModifier(format!("string operator for {field}"))
             })?;
             return Ok(ConvertResult::Query(
-                expr.replace("{field}", &f).replace("{value}", &val),
+                expr.replace("{field}", f).replace("{value}", &val),
             ));
         }
 
@@ -600,7 +600,7 @@ impl Backend for FibratusBackend {
             let template = template.ok_or_else(|| {
                 ConvertError::UnsupportedModifier(format!("string operator for {field}"))
             })?;
-            template.replace("{field}", &f).replace("{value}", &val)
+            template.replace("{field}", f).replace("{value}", &val)
         } else {
             let op = if is_cased || field == "evt.name" {
                 "="
@@ -618,7 +618,7 @@ impl Backend for FibratusBackend {
         value: NumericLiteral,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         Ok(format!("{f} = {value}"))
     }
 
@@ -628,7 +628,7 @@ impl Backend for FibratusBackend {
         value: bool,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let v = if value {
             self.config.bool_true
         } else {
@@ -638,8 +638,8 @@ impl Backend for FibratusBackend {
     }
 
     fn convert_field_eq_null(&self, field: &str, _state: &mut ConversionState) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
-        Ok(self.config.field_null_expression.replace("{field}", &f))
+        let f = shared::field_ident(field)?;
+        Ok(self.config.field_null_expression.replace("{field}", f))
     }
 
     fn convert_field_regex(
@@ -655,7 +655,7 @@ impl Backend for FibratusBackend {
             )));
         }
         reject_nul("Fibratus", pattern)?;
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let quoted = shared::quote_plain_str(&format!("{}{pattern}", flags.inline_prefix()));
         Ok(ConvertResult::Query(format!("regex({f}, {quoted}) = true")))
     }
@@ -666,7 +666,7 @@ impl Backend for FibratusBackend {
         cidr: &str,
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let quoted = shared::quote_plain_str(cidr);
         Ok(ConvertResult::Query(format!(
             "cidr_contains({f}, {quoted})"
@@ -680,7 +680,7 @@ impl Backend for FibratusBackend {
         value: NumericLiteral,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let op_name = match op {
             CompareOp::Lt => "lt",
             CompareOp::Lte => "lte",
@@ -704,7 +704,7 @@ impl Backend for FibratusBackend {
         exists: bool,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         let template = if exists {
             self.config.field_exists_expression
         } else {
@@ -713,7 +713,7 @@ impl Backend for FibratusBackend {
         let expr = template.ok_or_else(|| {
             ConvertError::UnsupportedModifier(if exists { "exists" } else { "not exists" }.into())
         })?;
-        Ok(expr.replace("{field}", &f))
+        Ok(expr.replace("{field}", f))
     }
 
     fn convert_field_eq_query_expr(
@@ -723,7 +723,7 @@ impl Backend for FibratusBackend {
         _id: &str,
         _state: &mut ConversionState,
     ) -> Result<String> {
-        let f = self.escape_and_quote_field(field);
+        let f = shared::field_ident(field)?;
         Ok(format!("{f} = {expr}"))
     }
 
@@ -735,8 +735,8 @@ impl Backend for FibratusBackend {
         case_insensitive: bool,
         _state: &mut ConversionState,
     ) -> Result<ConvertResult> {
-        let f1 = self.escape_and_quote_field(field1);
-        let f2 = self.escape_and_quote_field(field2);
+        let f1 = shared::field_ident(field1)?;
+        let f2 = shared::field_ident(field2)?;
         let cased = self.fibratus.case_sensitive || !case_insensitive;
         let token = match (op, cased) {
             (IrStrOp::Exact, false) => "~=",

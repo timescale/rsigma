@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Fibratus output rejects unsafe field names and escapes YAML line breaks (security, #734)
+
+The Fibratus backend passed field names through unchanged, so a field name such as `ps.name = evil or 1 = 1 or ps.name` rewrote the logic of the generated filter expression, in detection rules and in a correlation's `group-by` and `value_count` field ([GHSA-98v4-pmv2-h8qq](https://github.com/timescale/rsigma/security/advisories/GHSA-98v4-pmv2-h8qq)). The YAML rule envelope also split block scalars only on `\n` and wrote label keys unquoted, while YAML loaders such as the one Fibratus uses also break lines on `\r`, NEL, U+2028, and U+2029. A carriage return in a value, field name, or description, or a newline in a tag, could end the `condition`, `description`, or `labels` block and add top-level keys such as an `action` list with `kill` or `isolate` ([GHSA-gx4c-rpx5-2w58](https://github.com/timescale/rsigma/security/advisories/GHSA-gx4c-rpx5-2w58)).
+
+- A field name must be a Fibratus identifier: a letter or `_`, then letters, digits, `_`, `.`, or `$`, with optional `[...]` index segments such as `evt.arg[exe]`. Any other field name fails conversion with `invalid Fibratus field name`. Unmapped Sigma names such as `Image` still convert. In the SigmaHQ rule set, only hyphenated web-log fields such as `cs-uri-query` are affected.
+- A `condition` or `description` that a block scalar cannot carry is written as an escaped double-quoted scalar, and inline values and label keys with a line break or another non-printable character are double-quoted with escapes. Correlation conversion decodes a double-quoted condition from a referenced rule.
+
+**Breaking changes:** `rsigma_convert::backends::fibratus::shared::sanitize_field` is replaced by `field_ident`, which returns `Result<&str>` and rejects names outside Fibratus identifier syntax.
+
 ### STIX ids are validated before they name a store file (security, #733)
 
 `StixId::parse` checked only the `--` delimiter and the UUID, and `FsStore` used the id as a file name under `objects/`. With `--allow-custom`, a bundle passed to `rsigma taxii store` or a collection read by `rsigma taxii sync` could carry an id such as `../../x--<uuid>` or `/tmp/x--<uuid>` and write a JSON file outside the store ([GHSA-g52x-rcvw-c2qw](https://github.com/timescale/rsigma/security/advisories/GHSA-g52x-rcvw-c2qw)).

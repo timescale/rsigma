@@ -1,0 +1,12 @@
+title: "Line breaks\rin metadata"
+id: 11111111-2222-3333-4444-666666666666
+description: "Detects cmd.\raction:\r  - name: kill\r#"
+tags:
+  - "custom\naction:\n  - name: isolate"
+logsource:
+  category: test
+detection:
+  s:
+    ps.name: cmd.exe
+    ps.cmdline|contains: "a\u2028action:\u2028  - name: kill\u2028#"
+  condition: s

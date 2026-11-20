@@ -1,0 +1,8 @@
+name: "Line breaks\rin metadata"
+id: 11111111-2222-3333-4444-666666666666
+version: 1.0.0
+description: "Detects cmd.\raction:\r  - name: kill\r#"
+labels:
+  "tag.custom\naction:\n  - name: isolate": "custom\naction:\n  - name: isolate"
+condition: "ps.name ~= 'cmd.exe' and ps.cmdline icontains 'a\U00002028action:\U00002028  - name: kill\U00002028#'"
+min-engine-version: 3.0.0

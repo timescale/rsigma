@@ -126,7 +126,9 @@ This means a Sigma rule that contains a `'` or `;` or `--` in a value still prod
 
 The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "unreleased" }}
 
-See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
+The Fibratus backend (`backend convert -t fibratus`) renders field names bare. A field name outside Fibratus identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, or `$`, with optional `[...]` index segments) fails conversion instead of reaching the filter expression. Each rule is a YAML document, and any value that a block scalar cannot carry, such as a `\r`, NEL, or U+2028 line break, is written as an escaped double-quoted scalar, so rule content cannot add keys such as `action` to the generated rule. {{ added "unreleased" }}
+
+See [Backends: PostgreSQL](backends/postgres.md), [Backends: LynxDB](backends/lynxdb.md), and [Backends: Fibratus](backends/fibratus.md).
 
 Custom identifiers passed through `-O table=...` or pipeline `set_state` are validated identically; an `-O table='evil; DROP'` is rejected at conversion time, not at execution time.
 
