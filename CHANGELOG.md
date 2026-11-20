@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Multi-tenant daemon
+### Multi-tenant daemon (#732)
 
 `rsigma engine daemon` can serve several tenants in one process while keeping their state apart. A tenant comes only from an operator binding: the bearer token that authenticated a REST or OTLP ingest request, the configured tenant of the single selected pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. A token declares exactly one of `tenant: <id>` or `all_tenants: true`; `all_tenants` is not implied by a role, and an `all_tenants` token cannot ingest because it has no tenant to bind. A tenant id is 1 to 64 ASCII letters, digits, `_`, and `-`; a `.` is refused so an id is always one NATS subject token.
 
