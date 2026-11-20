@@ -497,10 +497,7 @@ fn mapped(kind: ObservableKind, value: &str) -> Option<(Slot, String)> {
         ObservableKind::Sha256 => (Slot::Hashes, format!("SHA256={value}")),
         ObservableKind::Sha512 => (Slot::Hashes, format!("SHA512={value}")),
         ObservableKind::FileName => (Slot::FileName, format!("\\{value}")),
-        ObservableKind::RegistryKey => match registry_contains_value(value) {
-            Some(formatted) => (Slot::RegistryKey, formatted),
-            None => return None,
-        },
+        ObservableKind::RegistryKey => (Slot::RegistryKey, registry_contains_value(value)?),
         _ => return None,
     })
 }
