@@ -1,0 +1,15 @@
+title: CIDR block
+id: 13687949-7dfa-5514-8fbd-f97f7a7a5a24
+status: experimental
+description: 'CIDR block'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: network_connection
+detection:
+    selection_destination_ip_cidr:
+        DestinationIp|cidr: '198.51.100.0/24'
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: high

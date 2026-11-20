@@ -1,0 +1,17 @@
+{
+  "rules": [
+    "title: Beacon address\nid: 68e70f9d-8a24-5a4b-8718-7f20315e9734\nstatus: experimental\ndescription: 'Beacon address: C2 callback address'\nreferences:\n    - 'https://example.com/report'\nauthor: 'TODO: your name'\ndate: 2026-06-01\ntags:\n    - attack.command_and_control\nlogsource:\n    category: network_connection\ndetection:\n    selection_destination_ip:\n        DestinationIp: 198.51.100.7\n    condition: 1 of selection_*\nfalsepositives:\n    - 'TODO: list known benign triggers.'\nlevel: high\n"
+  ],
+  "used": [
+    {
+      "id": "indicator--00000000-0000-4000-8000-000000000001",
+      "kinds": [
+        "ipv4"
+      ],
+      "values": [
+        "198.51.100.7"
+      ]
+    }
+  ],
+  "skipped": []
+}

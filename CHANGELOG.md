@@ -4,6 +4,20 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Draft rules from STIX indicators (#731)
+
+`rsigma rule draft --from-stix` reads a STIX 2.1 bundle, or a single indicator, and prints one Sigma rule per logsource. It needs the `stix-draft` feature. The Docker image includes it, because that image is built with `--all-features`.
+
+A rule is drafted only from simple equality and `IN` comparisons. `ipv4` and `ipv6` become `DestinationIp` on `network_connection`. An IPv6 address is written in RFC 5952 form. An `ipv6_cidr` value is kept as written. CIDR values use `|cidr`. Domains become `QueryName` on `dns_query`. URLs become `c-uri` on `proxy`. File hashes share one `Hashes|contains` selection on `process_creation`. File names become `TargetFilename|endswith` on `file_event`. Registry keys become `TargetObject|contains` on `registry_set`. The hive is removed and the remaining path is wrapped in backslashes, so the rule matches a Sysmon `TargetObject` that uses a short hive and appends the value name. Email, mutex, MAC, and ASN values are not drafted. An indicator that also has a mapped value is still used. Revoked indicators are skipped. Expired and not-yet-valid indicators are skipped unless `--include-expired` is set. An indicator whose `valid_until` equals the clock is expired.
+
+The title comes from `--title`, or from the indicator name when one indicator contributes, or from `Indicators: <category> (<n>)`. The description is built from the indicator names and descriptions and capped at 1,000 characters. References are the external-reference URLs. MITRE ATT&CK kill-chain phases become `attack.<phase>` tags, with hyphens turned into underscores. The level is `high` only when every contributing indicator has confidence of at least 85. The rule id is a UUID v5 of the mapped logsource category and the indicator ids, so the same input yields the same id. `--date` sets the date. When it is omitted, the date is today (UTC), including for drafts from events. A `--date` that is not `YYYY-MM-DD` exits 3. `--observable` and `--include-expired` are rejected when `--from-stix` is absent.
+
+`--emit report` prints JSON with `rules`, `used`, and `skipped`. The command exits 0 when it emits a rule, 1 when the bundle parses and nothing is draftable, 2 when the input cannot be parsed, and 3 when the flags conflict, `--date` is not `YYYY-MM-DD`, or an observable kind is unknown. A bundle that repeats an object id is a parse failure. The parser reports `duplicate bundle object id`, and the command exits 2. It does not pick the newer copy.
+
+`rsigma-eval` adds `draft_rule_from_values`, `ValueDraftSpec`, and `ValueSelection`. The crate does not depend on `rstix`. `DraftError` gains `NoSelections`, `BadSelection`, and `EmptyTitle`.
+
+**Breaking.** Exhaustive matches on `DraftError` must handle the new variants.
+
 ### pySigma 2.1.0 and dependency follow-up for #723 (#730)
 
 Rolls up the Dependabot PRs that opened after #723. The pySigma engine image moves to pySigma 2.1.0 (#728), with `requirements.txt` re-resolved for Python 3.13 against packages released on or before 2026-11-12, which also brings `jq` 1.13.0, `certifi` 2026.10.23, and `types-pyyaml` 6.0.12.20261111. The `test` backend still matches pySigma's output. CI: `taiki-e/install-action` v2.90.3, repinned by commit SHA (#729). Held back: the `python:3.15-slim` base image (#727), because `google-re2` publishes no Python 3.15 wheel and the slim image has no compiler to build it from source; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.

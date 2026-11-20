@@ -1,0 +1,18 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-4000-8000-0000000000aa",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-00000000000d",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Payload hashes",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[file:hashes.'MD5' = 'D41D8CD98F00B204E9800998ECF8427E'] OR [file:hashes.'SHA-256' = 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z"
+    }
+  ]
+}

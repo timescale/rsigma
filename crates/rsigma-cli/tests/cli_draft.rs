@@ -439,3 +439,23 @@ fn grouped_forced_order_uses_sigma_spelling_and_rejects_inversion() {
         .failure()
         .stderr(predicate::str::contains("groups disagree on slot order"));
 }
+
+#[test]
+fn invalid_date_exits_3() {
+    for date in ["not a date", "2026-6-1", "+2026-06-01", "2026-02-30"] {
+        let out = rsigma()
+            .args([
+                "rule",
+                "draft",
+                "--date",
+                date,
+                "--event",
+                r#"{"CommandLine":"whoami"}"#,
+            ])
+            .output()
+            .expect("draft");
+        assert_eq!(out.status.code(), Some(3), "{date}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains("YYYY-MM-DD"), "{date}: {stderr}");
+    }
+}

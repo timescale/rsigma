@@ -51,6 +51,8 @@ rsigma rule fields -r rules/ -p ecs_windows
 # Draft a detection or a grouped temporal correlation
 rsigma rule draft -e @incident.ndjson --baseline @normal.ndjson
 rsigma rule draft --groups @observed.ndjson --negative @benign.ndjson
+# Draft from a STIX 2.1 bundle (stix-draft feature)
+rsigma rule draft --from-stix indicators.json --date 2026-06-01
 
 # Propose a verified filter from classified false-positive and true-positive events
 rsigma rule tune -r rules/ --rule <RULE_ID> --fp @false-positives.ndjson --tp @true-positives.ndjson
@@ -557,7 +559,7 @@ The `tracing` spans installed on hot paths (batch processing, source resolution,
 
 **Consumer groups:** the `--consumer-group` flag sets a shared durable consumer name. Multiple daemon instances using the same group pull from a single JetStream consumer, and NATS distributes messages for load balancing. When not specified, the consumer name is derived from the subject.
 
-**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. `type: taxii` and `format: stix` require the `stix-source` feature. To build without daemon dependencies: `cargo build --no-default-features`.
+**Feature flags:** the daemon subcommand requires the `daemon` feature (enabled by default). NATS flags require the `daemon-nats` feature. OTLP log ingestion (HTTP and gRPC) requires the `daemon-otlp` feature. `type: taxii` and `format: stix` require the `stix-source` feature. `rule draft --from-stix` requires the `stix-draft` feature. Without it, `rsigma rule draft --help` does not list the flag. To build without daemon dependencies: `cargo build --no-default-features`.
 
 ### `engine status`: Query a running daemon
 

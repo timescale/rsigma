@@ -1,0 +1,15 @@
+title: Callback URL
+id: 20ac3d09-df96-5f7d-b50b-bea05fbf79e4
+status: experimental
+description: 'Callback URL'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: proxy
+detection:
+    selection_c_uri:
+        c-uri: 'http://bad.example/a.php\?id=1'
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium

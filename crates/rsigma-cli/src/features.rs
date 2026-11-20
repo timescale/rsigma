@@ -34,6 +34,7 @@ cli_features! {
     "logfmt",
     "mcp",
     "mmdb-enrich",
+    "stix-draft",
     "stix-enrich",
     "stix-source",
     "taxii-sync",

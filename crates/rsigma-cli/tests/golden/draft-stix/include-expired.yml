@@ -1,0 +1,17 @@
+title: 'Indicators: network_connection (2)'
+id: dbbd31ec-7966-5930-92a7-4e8e486a6ae2
+status: experimental
+description: 'Expired address Future address'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: network_connection
+detection:
+    selection_destination_ip:
+        DestinationIp:
+            - 198.51.100.10
+            - 198.51.100.11
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: high

@@ -146,9 +146,33 @@ The first poll reads the collection. Later polls ask only for objects added sinc
 
 Field-by-field rules, the observable keys, and the JSON shape are in [Dynamic Sources](../reference/dynamic-sources.md#format-stix).
 
+## From a TI report to a rule
+
+{{ added "unreleased" }}
+
+A STIX bundle can also become a Sigma rule, instead of a pipeline value. `rsigma rule draft --from-stix` reads the bundle, or one indicator object, and prints one rule per logsource. Addresses, CIDR ranges, domains, URLs, file hashes, file names, and registry keys are drafted. Email addresses, mutexes, MAC addresses, and ASNs are not. A pattern that is not a simple `=` or `IN` comparison is skipped, and so is a revoked indicator. Expired and not-yet-valid indicators are skipped unless you pass `--include-expired`. A registry key drops its hive and matches `TargetObject` with `|contains`, so a Sysmon event that records the short hive and appends the value name still matches. An IPv6 address is written in the shortened form Sysmon records. `--date` must be `YYYY-MM-DD`. `--observable` and `--include-expired` are rejected when `--from-stix` is absent.
+
+The command needs the `stix-draft` feature. A default `cargo install rsigma` build does not have the flag: `rsigma rule draft --help` will not list it. Release binaries and the Docker image include it. `rsigma --features` prints `stix-draft` when this binary has it.
+
+```bash
+rsigma rule draft --from-stix indicators.json --date 2026-06-01 > draft.yml
+rsigma rule lint draft.yml
+```
+
+`--date` writes that calendar day into the rule. Leave it off and the date is today (UTC), so the file changes on the next day. The rule `id` does not. It is a UUID v5 of the logsource and the indicator ids.
+
+To see which indicators were used and which were skipped, ask for the report. It is JSON with `rules`, `used`, and `skipped`. A file that parses but drafts nothing still prints that JSON and exits 1.
+
+```bash
+rsigma rule draft --from-stix indicators.json --emit report --date 2026-06-01
+```
+
+`--observable domain` keeps one kind. Repeat the flag for more than one. The field-by-field mapping, the metadata rules, the skip reasons, and the exit codes are on [rule draft](../cli/rule/draft.md#draft-from-a-stix-indicator).
+
 ## See also
 
 - [Dynamic Sources](../reference/dynamic-sources.md) for the source declaration.
 - [HTTP API](../reference/http-api.md#watchlist-indicators) for status codes and response bodies.
 - [Metrics](../reference/metrics.md) for `rsigma_watchlist_indicators`, `rsigma_watchlist_changes_total`, and the `rsigma_stix_source_*` families.
-- [Feature Flags](../reference/feature-flags.md) for `stix-source`.
+- [Feature Flags](../reference/feature-flags.md) for `stix-source` and `stix-draft`.
+- [`rule draft`](../cli/rule/draft.md#draft-from-a-stix-indicator) for drafting Sigma from a bundle.

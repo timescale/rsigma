@@ -1,0 +1,17 @@
+title: Payload hashes
+id: c5efb373-d86b-59a1-94b7-89fc06949f61
+status: experimental
+description: 'Payload hashes'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: process_creation
+detection:
+    selection_hashes:
+        Hashes|contains:
+            - 'MD5=d41d8cd98f00b204e9800998ecf8427e'
+            - 'SHA256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium

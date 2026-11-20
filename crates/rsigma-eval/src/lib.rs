@@ -160,7 +160,8 @@ pub use result::{
 };
 pub use router::{RouteOutcome, RouteResult, SchemaPruning, SchemaRouter};
 pub use rule_draft::{
-    DraftConfig, DraftError, DraftFieldReport, DraftReport, Stability, draft_rule,
+    DraftConfig, DraftError, DraftFieldReport, DraftReport, Stability, ValueDraftSpec,
+    ValueSelection, draft_rule, draft_rule_from_values,
 };
 pub use rule_metadata::{RuleBundleMetadata, RuleIdentity, RuleKind, RuleMetadataLookup};
 pub use rule_tune::{

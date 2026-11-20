@@ -1,0 +1,80 @@
+{
+  "type": "bundle",
+  "id": "bundle--00000000-0000-4000-8000-0000000000aa",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000007",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Revoked",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '198.51.100.12']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "revoked": true
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000008",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Expired",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '198.51.100.10']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "valid_until": "2020-06-01T00:00:00.000Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000009",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Mailbox",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[email-addr:value = 'a@bad.example']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-00000000000a",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Joined",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '198.51.100.13'] AND [domain-name:value = 'bad.example']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-00000000000b",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Yara rule",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "rule dummy { condition: true }",
+      "pattern_type": "yara",
+      "valid_from": "2020-01-01T00:00:00.000Z"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-00000000000c",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Future",
+      "indicator_types": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '198.51.100.11']",
+      "pattern_type": "stix",
+      "valid_from": "2099-01-01T00:00:00.000Z"
+    }
+  ]
+}
