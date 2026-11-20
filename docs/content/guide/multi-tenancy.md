@@ -158,6 +158,8 @@ Every API route has a tenancy class. Tenant tokens get `403` on operator-only ro
 
 Silences and dispositions written by a tenant token are bound to its tenant. A body `tenant` naming another tenant is `403`. An `all_tenants` token must send `tenant` on a write, or it is `400`.
 
+An MCP bridge (`rsigma mcp serve --daemon-url`) acts with the reach of its daemon token, and incident content carries event fields that a tenant's sources control. Give each tenant's agent its own bridge with a token bound to that tenant. Keep a bridge that holds an `all_tenants` token read-only: give it a `reader` token and leave out `--allow-operate-writes`, so text injected through one tenant's events cannot steer the agent into silencing another tenant's alerts. {{ added "unreleased" }}
+
 ## Ruleset bindings
 
 A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset receives only events whose tenant is listed. An unbound ruleset receives every tenant's events, with its state still keyed per tenant. Path mode (`--rules`) means every rule is shared.

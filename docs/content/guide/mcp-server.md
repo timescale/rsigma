@@ -112,6 +112,8 @@ Three registration tiers:
 
 Against a daemon with tenancy enabled, both write tools take an optional `tenant`. {{ added "unreleased" }} An `all_tenants` daemon token must send it, or the daemon returns `400`. A tenant-bound token may omit it or send its own tenant; naming another tenant comes back as `{ "ok": false }` with the daemon's `403`.
 
+A bridge acts with the reach of its daemon token, and incident content includes event fields that the monitored sources control, so treat it as untrusted input to the agent. Run one bridge per tenant with a tenant-bound token. A bridge that holds an `all_tenants` token should stay read-only (a `reader` token and no `--allow-operate-writes`), so text injected through one tenant's events cannot lead the agent to silence alerts or post verdicts for another tenant. See [Multi-tenancy](multi-tenancy.md#api-scoping).
+
 A typical triage loop calls `list_incidents` (optionally with `min_level` or `limit`), then `get_incident` or `get_incident_bundle`, then `list_risk_entities` and `get_rule_quality`, then `create_silence` with a TTL and `post_disposition`, and finally `tune_rules` if the verdict is a false positive.
 
 ## Resources
