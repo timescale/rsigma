@@ -169,7 +169,9 @@ impl NatsSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        let mut published = 0_usize;
+        // Render every subject before publishing, so an untenanted result
+        // fails the delivery without a partial publish.
+        let mut targets = Vec::new();
         for (index, m) in result.iter().enumerate() {
             if let Some(filter) = &self.tenant_filter
                 && m.header.tenant_id.as_ref() != Some(filter)
@@ -182,6 +184,10 @@ impl NatsSink {
                     self.subject_label()
                 )));
             };
+            targets.push((index, m, subject));
+        }
+        let mut published = 0_usize;
+        for (index, m, subject) in targets {
             let json = serialize_result(
                 m,
                 self.format,
