@@ -18,8 +18,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// A validated tenant identifier.
 ///
 /// Ids are 1 to 64 ASCII characters. The first character is `[A-Za-z0-9]`;
-/// every following character is `[A-Za-z0-9._-]`. Comparison is
-/// case-sensitive.
+/// every following character is `[A-Za-z0-9_-]`. A `.` is refused so an id
+/// is always exactly one NATS subject token. Comparison is case-sensitive.
 ///
 /// # Examples
 ///
@@ -49,7 +49,7 @@ impl TenantId {
             let valid = if index == 0 {
                 ch.is_ascii_alphanumeric()
             } else {
-                ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
+                ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
             };
             if !valid {
                 return Err(TenantIdError::InvalidChar { ch, index });
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn valid_ids_are_accepted() {
-        for id in ["a", "tenant-a", "T1.prod_x", &"x".repeat(64)] {
+        for id in ["a", "tenant-a", "T1-prod_x", &"x".repeat(64)] {
             let tenant = TenantId::new(id).unwrap();
             assert_eq!(tenant.as_str(), id);
         }
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn invalid_characters_are_rejected() {
-        for id in ["a/b", "a b", "a{b", "ténant"] {
+        for id in ["a/b", "a b", "a{b", "ténant", "a.b"] {
             let err = TenantId::new(id).unwrap_err();
             assert!(
                 matches!(err, TenantIdError::InvalidChar { .. }),

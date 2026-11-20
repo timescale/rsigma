@@ -50,7 +50,7 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 
 ### Tenants
 
-`TenantId` validates a tenant identifier (1 to 64 ASCII characters, safe as a NATS subject token and a path component) and `tenant_at` reads a parallel tenant slice. `RuleHeader.tenant_id` carries a result's tenant. The `_for_tenant` and `_for_tenants` variants of `process_event`, `process_event_at`, `process_with_detections`, `process_batch`, and `correlate_detections` take the tenant; the existing methods delegate with no tenant. Correlation state keys include the tenant, `CorrelationConfig.require_tenant` skips untenanted events, and `max_state_entries_per_tenant` caps each tenant's state. Version 2 snapshots nest state under `tenants`; `import_state_detailed` returns restored and discarded counts.
+`TenantId` validates a tenant identifier (1 to 64 ASCII letters, digits, `_`, and `-`, starting with a letter or digit, so an id is one NATS subject token and one path component) and `tenant_at` reads a parallel tenant slice. `RuleHeader.tenant_id` carries a result's tenant. The `_for_tenant` and `_for_tenants` variants of `process_event`, `process_event_at`, `process_with_detections`, `process_batch`, and `correlate_detections` take the tenant; the existing methods delegate with no tenant. Correlation state keys include the tenant, `CorrelationConfig.require_tenant` skips untenanted events, and `max_state_entries_per_tenant` caps each tenant's state. Version 2 snapshots nest state under `tenants`; `import_state_detailed` returns restored and discarded counts.
 
 ### Correlation Engine
 
