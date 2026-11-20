@@ -223,9 +223,11 @@ See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the 
 | `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "unreleased" }} |
 | `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "unreleased" }} |
 | `daemon.rulesets[].tenants` | empty | Tenants admitted to a named ruleset. Empty means every tenant. {{ added "unreleased" }} |
-| sink `tenant=<id>` | unset | Only deliver results of one tenant to this sink. {{ added "unreleased" }} |
-| sink `{tenant}` | unset | Render a NATS subject token or a whole file path component per tenant. {{ added "unreleased" }} |
-| file sink `?max_open=` | `64` | Maximum open per-tenant file handles. {{ added "unreleased" }} |
+| sink `tenant=<id>` | unset | Only deliver results of one tenant to this findings sink. Refused on `--dlq` and `audit.sink`. {{ added "unreleased" }} |
+| sink `{tenant}` | unset | Render a whole NATS subject token or a whole file path component per tenant, once per findings sink. Refused on other schemes, `--dlq`, and `audit.sink`. {{ added "unreleased" }} |
+| file sink `?max_open=` | `64` | Maximum open per-tenant file handles. Only valid on a file path with `{tenant}`. {{ added "unreleased" }} |
+
+Each `daemon.tenancy.quotas` value must be at least 1, and setting any quota (or `--max-tenant-state`) requires `daemon.tenancy.enabled`. {{ added "unreleased" }}
 
 ### Throughput
 

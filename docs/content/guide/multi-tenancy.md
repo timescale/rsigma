@@ -137,6 +137,7 @@ With tenancy enabled, the daemon refuses to start when:
 - `anonymous_permissions` is non-empty.
 - A token sets both `tenant` and `all_tenants: true`, or neither.
 - A configured tenant id is invalid.
+- A `daemon.tenancy.quotas` value is 0.
 - The source is anything other than `http` (including the `--input` flag) and neither `daemon.input.tenant` nor `daemon.input.nats_tenants` binds it. A subject-less NATS URL subscribes to every subject, so it needs one of the two as well.
 - The source is `http` and `daemon.input.tenant` is set.
 - `daemon.dispositions.source` (or `--disposition-source`) is set. A disposition source has no tenant binding, and a record's own `tenant` field is not identity; post dispositions to `/api/v1/dispositions` with a tenant token instead.
@@ -145,7 +146,7 @@ With tenancy enabled, the daemon refuses to start when:
 - A project config layer (`./rsigma.yaml`, `./rsigma.yml`, `.rsigmarc`) was loaded.
 - A ruleset `tenants` binding names a tenant that no token, `input.tenant`, or `nats_tenants` entry can produce.
 
-With tenancy disabled, the daemon refuses to start when a token sets `tenant` or `all_tenants`, `daemon.input.tenant` or `daemon.input.nats_tenants` is set, a ruleset `tenants` binding is set, a sink spec or NATS subject contains `{tenant}` or `tenant=`, or a webhook or enricher `scope.tenants` is non-empty.
+With tenancy disabled, the daemon refuses to start when a token sets `tenant` or `all_tenants`, a `daemon.tenancy.quotas` value or `--max-tenant-state` is set, `daemon.input.tenant` or `daemon.input.nats_tenants` is set, a ruleset `tenants` binding is set, a sink spec or NATS subject contains `{tenant}` or `tenant=`, or a webhook or enricher `scope.tenants` is non-empty.
 
 ## API scoping
 
