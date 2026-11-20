@@ -11,6 +11,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use rsigma_parser::{SigmaString, StringPart};
 
+use crate::error::{ConvertError, Result};
+
 // =============================================================================
 // String quoting
 // =============================================================================
@@ -71,27 +73,28 @@ pub fn has_wildcards(value: &SigmaString) -> bool {
 // Field identifiers
 // =============================================================================
 
-static FIBRATUS_FIELD_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z_][a-z0-9_\.]*$").unwrap());
+static FIBRATUS_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[A-Za-z_][A-Za-z0-9_.$]*(?:\[[A-Za-z0-9_.$]+\][A-Za-z0-9_.$]*)*$").unwrap()
+});
 
-/// Return the field name as the Fibratus filter engine expects it.
+/// Return the field name as a bare Fibratus identifier.
 ///
-/// Fibratus identifiers are bare lowercase dotted paths (`ps.exe`,
-/// `thread.callstack.symbols`). The backend never invents field names on its
-/// own: pipelines like `fibratus_windows` are responsible for renaming
-/// `Image` → `ps.exe`, `TargetFilename` → `file.path`, and friends before
-/// the value reaches conversion. This helper is a defensive identity that
-/// passes through anything already in Fibratus shape and forwards everything
-/// else verbatim so the upstream filter engine can reject it loudly.
-pub fn sanitize_field(name: &str) -> String {
+/// Fibratus identifiers are dotted paths of letters, digits, `_`, `.`, and
+/// `$` (`ps.exe`, `thread.callstack.symbols`), optionally indexed with
+/// `[...]` segments (`evt.arg[exe]`, `ps.ancestor[0].name`). The backend never
+/// invents field names on its own: pipelines like `fibratus_windows` rename
+/// `Image` → `ps.exe`, `TargetFilename` → `file.path`, and friends before the
+/// value reaches conversion. Unmapped names such as `Image` pass, so the
+/// Fibratus loader still reports them as unknown fields. A name the filter
+/// lexer would not read as one identifier fails conversion, because it would
+/// change the structure of the filter expression.
+pub fn field_ident(name: &str) -> Result<&str> {
     if FIBRATUS_FIELD_RE.is_match(name) {
-        name.to_string()
+        Ok(name)
     } else {
-        // Sigma allows arbitrary field names. Pass through unchanged so the
-        // caller (or the pipeline) can map it; we deliberately do not
-        // lowercase here because some users intentionally route raw event
-        // fields by exact case via custom pipelines.
-        name.to_string()
+        Err(ConvertError::RuleConversion(format!(
+            "invalid Fibratus field name: {name}"
+        )))
     }
 }
 
@@ -286,20 +289,47 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_field_passes_fibratus_idents() {
-        assert_eq!(sanitize_field("ps.exe"), "ps.exe");
-        assert_eq!(
-            sanitize_field("thread.callstack.symbols"),
-            "thread.callstack.symbols"
-        );
+    fn field_ident_accepts_fibratus_idents() {
+        for name in [
+            "ps.exe",
+            "thread.callstack.symbols",
+            "evt.arg[exe]",
+            "ps.ancestor[0].name",
+            "file.pe.sections[.debug$].entropy",
+            "_private",
+        ] {
+            assert_eq!(field_ident(name).unwrap(), name);
+        }
     }
 
     #[test]
-    fn sanitize_field_passes_unknown_unchanged() {
-        // Pass-through so the loader rejects loudly if the pipeline failed
-        // to rename a Sigma-style PascalCase field.
-        assert_eq!(sanitize_field("Image"), "Image");
-        assert_eq!(sanitize_field("Custom.Field"), "Custom.Field");
+    fn field_ident_accepts_unmapped_sigma_fields() {
+        // The loader reports unknown fields, so an unmapped Sigma-style
+        // name still converts.
+        assert_eq!(field_ident("Image").unwrap(), "Image");
+        assert_eq!(field_ident("Custom.Field").unwrap(), "Custom.Field");
+    }
+
+    #[test]
+    fn field_ident_rejects_names_outside_identifier_syntax() {
+        for name in [
+            "ps.name = evil or 1 = 1 or ps.name",
+            "ps.name) = true or regex(ps.name",
+            "ps.name\naction:",
+            "ps.name\raction:",
+            "cs-uri-query",
+            "1field",
+            "evt.arg[exe",
+            "evt.arg[]",
+            "evt.arg[a b]",
+            "",
+        ] {
+            let err = field_ident(name).expect_err(name);
+            assert!(
+                err.to_string().contains("invalid Fibratus field name"),
+                "{err}"
+            );
+        }
     }
 
     #[test]

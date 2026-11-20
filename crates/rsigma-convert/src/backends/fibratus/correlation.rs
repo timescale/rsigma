@@ -45,6 +45,7 @@ use super::FibratusBackend;
 use super::config::FibratusConfig;
 use super::envelope::render_correlation_yaml;
 use super::macros;
+use super::shared::field_ident;
 use crate::backend::Backend;
 use crate::error::{ConvertError, Result};
 
@@ -93,6 +94,9 @@ pub fn convert(
 ) -> Result<Vec<String>> {
     let rule_queries = load_rule_queries(pipeline_state);
     let cfg = &backend.fibratus;
+    for field in &rule.group_by {
+        field_ident(field)?;
+    }
 
     // Honor the user's per-conversion override (`-O correlation_method`)
     // first, falling back to the rule's own `window` attribute (default
@@ -458,7 +462,7 @@ fn build_value_count_sequence(
         CorrelationCondition::Threshold {
             field: Some(fields),
             ..
-        } if fields.len() == 1 => fields[0].clone(),
+        } if fields.len() == 1 => field_ident(&fields[0])?,
         CorrelationCondition::Threshold {
             field: Some(fields),
             ..
@@ -1440,6 +1444,37 @@ correlation:
             body.contains("ps.username != $2.ps.username"),
             "got: {body}"
         );
+    }
+
+    #[test]
+    fn correlation_rejects_field_names_outside_identifier_syntax() {
+        let base = r#"
+title: AuthFail
+id: 00000000-0000-0000-0000-000000000041
+logsource:
+  category: test
+detection:
+  s:
+    evt.name: AuthFail
+  condition: s
+---
+title: Distinct
+correlation:
+  type: value_count
+  rules:
+    - 00000000-0000-0000-0000-000000000041
+  timespan: 5m
+"#;
+        for (group_by, field) in [
+            ("net.sip | ps.name = 'x'", "ps.username"),
+            ("net.sip", "ps.username != '' or ps.pid"),
+        ] {
+            let yaml = format!(
+                "{base}  group-by:\n    - \"{group_by}\"\n  condition:\n    gte: 2\n    field: \"{field}\"\n"
+            );
+            let err = run(&yaml).unwrap_err().to_string();
+            assert!(err.contains("invalid Fibratus field name"), "{err}");
+        }
     }
 
     #[test]
