@@ -47,6 +47,22 @@ use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 use crate::error::RuntimeError;
 use crate::metrics::MetricsHook;
 
+/// Check that a NATS subject uses `{tenant}` at most once, as a whole
+/// dot-separated token, so a rendered subject never splices a tenant into a
+/// neighbouring token.
+pub fn validate_nats_subject_template(subject: &str) -> Result<(), String> {
+    let whole = subject
+        .split('.')
+        .filter(|token| *token == "{tenant}")
+        .count();
+    if subject.matches("{tenant}").count() != whole || whole > 1 {
+        return Err(format!(
+            "NATS subject '{subject}' must use '{{tenant}}' at most once, as a whole dot-separated token"
+        ));
+    }
+    Ok(())
+}
+
 /// Wire format a line-oriented sink serializes findings into.
 ///
 /// Selected per sink with the `format` query parameter on an output spec

@@ -119,7 +119,7 @@ pub use io::webhook::{
 pub use io::{
     AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
     EventSource, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, OnFull, RawEvent, Sink,
-    SinkFormat, StdinSource, StdoutSink, WithTenant, spawn_source,
+    SinkFormat, StdinSource, StdoutSink, WithTenant, spawn_source, validate_nats_subject_template,
 };
 #[cfg(all(unix, feature = "uds"))]
 pub use io::{

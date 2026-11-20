@@ -265,6 +265,8 @@ pub enum AlertPipelineConfigError {
     InhibitSelector(SelectorParseError),
     /// An inhibit rule has an empty `source_match` or `target_match`.
     EmptyInhibitMatch,
+    /// `group.nats_subject` misuses the `{tenant}` token.
+    NatsSubject(String),
 }
 
 impl std::fmt::Display for AlertPipelineConfigError {
@@ -296,6 +298,9 @@ impl std::fmt::Display for AlertPipelineConfigError {
             AlertPipelineConfigError::Silence(e) => write!(f, "silences: {e}"),
             AlertPipelineConfigError::InhibitMatcher(e) => write!(f, "inhibit_rules: {e}"),
             AlertPipelineConfigError::InhibitSelector(e) => write!(f, "inhibit_rules.equal: {e}"),
+            AlertPipelineConfigError::NatsSubject(message) => {
+                write!(f, "group.nats_subject: {message}")
+            }
             AlertPipelineConfigError::EmptyInhibitMatch => write!(
                 f,
                 "an inhibit rule requires a non-empty source_match and target_match"
@@ -484,6 +489,10 @@ fn build_group(g: GroupFile) -> Result<GroupConfig, AlertPipelineConfigError> {
             .max_value_cardinality
             .unwrap_or(defaults.max_value_cardinality),
     };
+    if let Some(subject) = &g.nats_subject {
+        crate::io::validate_nats_subject_template(subject)
+            .map_err(AlertPipelineConfigError::NatsSubject)?;
+    }
     Ok(GroupConfig {
         mode,
         by,

@@ -196,6 +196,8 @@ pub enum RiskConfigError {
     /// An `incident` block set neither `score_threshold` nor
     /// `tactic_count_threshold`.
     NoThreshold,
+    /// A `nats_subject` misuses the `{tenant}` token.
+    NatsSubject(String),
 }
 
 impl std::fmt::Display for RiskConfigError {
@@ -219,6 +221,7 @@ impl std::fmt::Display for RiskConfigError {
                 "incident is configured but neither score_threshold nor \
                  tactic_count_threshold is set; set at least one"
             ),
+            RiskConfigError::NatsSubject(message) => write!(f, "nats_subject: {message}"),
         }
     }
 }
@@ -290,6 +293,13 @@ pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
         Some(i) => Some(build_incident_config(i)?),
         None => None,
     };
+    let subjects = file
+        .nats_subject
+        .iter()
+        .chain(incident.as_ref().and_then(|i| i.nats_subject.as_ref()));
+    for subject in subjects {
+        crate::io::validate_nats_subject_template(subject).map_err(RiskConfigError::NatsSubject)?;
+    }
 
     Ok(RiskLayer::new(
         scope,
