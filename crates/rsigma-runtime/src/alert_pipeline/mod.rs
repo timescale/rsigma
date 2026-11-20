@@ -578,16 +578,20 @@ impl AlertPipeline {
             })
             .collect();
 
+        // Count what lands in the stores after age pruning and every cap.
+        let before = (
+            state.dedup.len(),
+            state.incidents.len(),
+            state.inhibit.snapshot().len(),
+        );
         let mut trim = CapTrim::default();
         if let Some(cfg) = self.dedup.as_ref() {
-            stats.restored += dedup.len();
             state
                 .dedup
                 .restore(dedup, now, cfg.resolve_timeout.as_secs() as i64);
             trim.dedup_alerts = state.dedup.enforce_cap(cfg.max_active_alerts);
         }
         if let Some(g) = self.group.as_ref() {
-            stats.restored += incidents.len();
             trim.incidents = state.incidents.restore(
                 incidents,
                 now,
@@ -596,11 +600,13 @@ impl AlertPipeline {
             );
         }
         if let Some(icfg) = self.inhibit.as_ref() {
-            stats.restored += inhibit_sources.len();
             state.inhibit.restore(inhibit_sources, icfg, now);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
         self.trim_tenants(state, &mut trim);
+        stats.restored += state.dedup.len().saturating_sub(before.0)
+            + state.incidents.len().saturating_sub(before.1)
+            + state.inhibit.snapshot().len().saturating_sub(before.2);
         trim.log("restore");
         Some(stats)
     }
@@ -1323,6 +1329,15 @@ mod tests {
         assert_eq!(stats.discarded_untenanted, 2);
         assert_eq!(tenanted.dedup.len(), 1);
         assert_eq!(tenanted.incidents.len(), 1);
+
+        let mut expired = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut expired, snap.clone(), 100 + 7200, true)
+            .unwrap();
+        assert_eq!(
+            stats.restored, 0,
+            "entries past resolve_timeout are not restored"
+        );
 
         let mut untenanted = AlertPipelineState::default();
         let stats = p
