@@ -219,6 +219,23 @@ fn validate_enabled(v: &TenancyValidation<'_>) -> Result<(), String> {
     for binding in v.nats_tenants {
         producible.insert(binding.tenant.clone());
     }
+    // 12. Ids that differ only by case would share a `{tenant}` file on a
+    // case-insensitive filesystem.
+    let mut folded: std::collections::HashMap<String, &TenantId> = std::collections::HashMap::new();
+    for tenant in &producible {
+        if let Some(other) = folded.insert(tenant.as_str().to_ascii_lowercase(), tenant) {
+            let (first, second) = if other.as_str() < tenant.as_str() {
+                (other, tenant)
+            } else {
+                (tenant, other)
+            };
+            return Err(format!(
+                "tenants '{}' and '{}' differ only by case; tenant ids must be unique ignoring case",
+                first.as_str(),
+                second.as_str()
+            ));
+        }
+    }
     for (ruleset, tenants) in v.ruleset_tenants {
         for tenant in tenants {
             if !producible.contains(tenant) {
@@ -650,6 +667,31 @@ mod tests {
         disabled.auth_configured = false;
         let error = validate_tenancy(&disabled).unwrap_err();
         assert!(error.contains("requires daemon.tenancy.enabled"), "{error}");
+    }
+
+    #[test]
+    fn tenants_that_differ_only_by_case_are_refused() {
+        let token = |name: &str, tenant: &str| super::super::auth::TokenSpec {
+            name: name.into(),
+            role: Some("ingest".into()),
+            permissions: None,
+            token_env: name.to_uppercase(),
+            tenant: Some(TenantId::new(tenant).unwrap()),
+            all_tenants: false,
+        };
+        let settings = TenancySettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let tokens = [token("one", "Acme"), token("two", "acme")];
+        let error = validate_tenancy(&enabled_validation(&settings, &tokens, "http")).unwrap_err();
+        assert!(
+            error.contains("'Acme' and 'acme' differ only by case"),
+            "{error}"
+        );
+
+        let tokens = [token("one", "Acme"), token("two", "globex")];
+        validate_tenancy(&enabled_validation(&settings, &tokens, "http")).unwrap();
     }
 }
 
