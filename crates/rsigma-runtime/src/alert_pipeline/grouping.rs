@@ -17,7 +17,7 @@
 //! still-open incident). An incident resolves and is evicted once
 //! `resolve_timeout` elapses with no new results.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
@@ -219,6 +219,26 @@ pub struct IncidentStore {
     entity_index: HashMap<(Option<TenantId>, String, String), String>,
     /// entity_graph: per-value occurrence count for the cardinality guard.
     value_counts: HashMap<(Option<TenantId>, String, String), u64>,
+    /// Open incident ids per tenant, kept in step with `incidents`.
+    tenant_ids: HashMap<Option<TenantId>, HashSet<String>>,
+}
+
+/// A per-tenant open-incident cap and the callback run for each incident it
+/// evicts.
+pub(crate) struct TenantCap<F: FnMut()> {
+    pub(crate) max: Option<usize>,
+    pub(crate) on_evict: F,
+}
+
+#[cfg(test)]
+impl TenantCap<fn()> {
+    /// No per-tenant cap.
+    pub(crate) fn none() -> Self {
+        TenantCap {
+            max: None,
+            on_evict: || {},
+        }
+    }
 }
 
 /// A value the cardinality guard or stop-list suppressed, reported via a
@@ -276,7 +296,7 @@ impl IncidentStore {
         now: i64,
         mut on_guard: impl FnMut(OvermergeGuard),
     ) -> Option<String> {
-        self.assign_with_finding_uid(cfg, result, None, now, &mut on_guard)
+        self.assign_with_finding_uid(cfg, result, None, now, &mut on_guard, TenantCap::none())
     }
 
     /// [`Self::assign`], recording the result's OCSF finding uid on the
@@ -288,13 +308,51 @@ impl IncidentStore {
         finding_uid: Option<&str>,
         now: i64,
         mut on_guard: impl FnMut(OvermergeGuard),
+        mut tenant_cap: TenantCap<impl FnMut()>,
     ) -> Option<String> {
         match cfg.mode {
-            GroupMode::GroupBy => self.assign_group_by(cfg, result, finding_uid, now),
-            GroupMode::EntityGraph => {
-                self.assign_entity_graph(cfg, result, finding_uid, now, &mut on_guard)
+            GroupMode::GroupBy => {
+                self.assign_group_by(cfg, result, finding_uid, now, &mut tenant_cap)
+            }
+            GroupMode::EntityGraph => self.assign_entity_graph(
+                cfg,
+                result,
+                finding_uid,
+                now,
+                &mut on_guard,
+                &mut tenant_cap,
+            ),
+        }
+    }
+
+    /// Make room for a new incident of `tenant` under its cap by evicting the
+    /// tenant's least recently seen incident.
+    fn make_tenant_room(&mut self, tenant: Option<&TenantId>, cap: &mut TenantCap<impl FnMut()>) {
+        if let Some(max) = cap.max
+            && self.count_for_tenant(tenant) >= max
+            && self.evict_tenant_oldest(tenant)
+        {
+            (cap.on_evict)();
+        }
+    }
+
+    fn insert_incident(&mut self, incident: Incident) {
+        self.tenant_ids
+            .entry(incident.tenant.clone())
+            .or_default()
+            .insert(incident.id.clone());
+        self.incidents.insert(incident.id.clone(), incident);
+    }
+
+    fn remove_incident(&mut self, id: &str) -> Option<Incident> {
+        let incident = self.incidents.remove(id)?;
+        if let Some(ids) = self.tenant_ids.get_mut(&incident.tenant) {
+            ids.remove(id);
+            if ids.is_empty() {
+                self.tenant_ids.remove(&incident.tenant);
             }
         }
+        Some(incident)
     }
 
     fn assign_group_by(
@@ -303,17 +361,18 @@ impl IncidentStore {
         result: &EvaluationResult,
         finding_uid: Option<&str>,
         now: i64,
+        tenant_cap: &mut TenantCap<impl FnMut()>,
     ) -> Option<String> {
         let (id, key) = group_fingerprint(&cfg.by, result);
         let tenant = result.header.tenant_id.clone();
-        let exists = self.incidents.contains_key(&id);
-        if !exists && self.incidents.len() >= cfg.caps.max_open_incidents {
-            return None;
+        if !self.incidents.contains_key(&id) {
+            self.make_tenant_room(tenant.as_ref(), tenant_cap);
+            if self.incidents.len() >= cfg.caps.max_open_incidents {
+                return None;
+            }
+            self.insert_incident(Incident::new(id.clone(), tenant, now, key));
         }
-        let incident = self
-            .incidents
-            .entry(id.clone())
-            .or_insert_with(|| Incident::new(id.clone(), tenant, now, key.clone()));
+        let incident = self.incidents.get_mut(&id)?;
         incident.absorb(result, finding_uid, now, cfg);
         Some(id)
     }
@@ -325,6 +384,7 @@ impl IncidentStore {
         finding_uid: Option<&str>,
         now: i64,
         on_guard: &mut impl FnMut(OvermergeGuard),
+        tenant_cap: &mut TenantCap<impl FnMut()>,
     ) -> Option<String> {
         // Extract joinable entity pairs, applying the stop-list and
         // per-value cardinality ceiling. Counters only move for values an
@@ -369,14 +429,12 @@ impl IncidentStore {
 
         let survivor_id = match touched.first().cloned() {
             None => {
+                self.make_tenant_room(tenant.as_ref(), tenant_cap);
                 if self.incidents.len() >= cfg.caps.max_open_incidents {
                     return None;
                 }
                 let id = uuid::Uuid::new_v4().to_string();
-                self.incidents.insert(
-                    id.clone(),
-                    Incident::new(id.clone(), tenant.clone(), now, Vec::new()),
-                );
+                self.insert_incident(Incident::new(id.clone(), tenant.clone(), now, Vec::new()));
                 id
             }
             Some(survivor) => {
@@ -415,7 +473,7 @@ impl IncidentStore {
         if survivor == other {
             return;
         }
-        let Some(mut victim) = self.incidents.remove(other) else {
+        let Some(mut victim) = self.remove_incident(other) else {
             return;
         };
         // Repoint entity-index entries from the victim to the survivor.
@@ -511,7 +569,7 @@ impl IncidentStore {
             }
         }
         for id in resolved {
-            if let Some(inc) = self.incidents.remove(&id) {
+            if let Some(inc) = self.remove_incident(&id) {
                 // Drop the resolved incident's entity values from both the index
                 // and the cardinality counters so neither grows unbounded with
                 // distinct entity values over time.
@@ -546,7 +604,7 @@ impl IncidentStore {
     ) -> usize {
         for inc in incidents {
             if now - inc.last_seen < resolve_secs {
-                self.incidents.insert(inc.id.clone(), inc);
+                self.insert_incident(inc);
             }
         }
         let evicted = self.enforce_caps(caps);
@@ -581,7 +639,7 @@ impl IncidentStore {
                 .collect();
             by_age.sort_unstable();
             for (_, id) in by_age.into_iter().take(excess) {
-                if let Some(inc) = self.incidents.remove(&id) {
+                if let Some(inc) = self.remove_incident(&id) {
                     let tenant = inc.tenant.clone();
                     for (sel, values) in inc.entities {
                         for value in values {
@@ -616,10 +674,9 @@ impl IncidentStore {
 
     /// Count of open incidents owned by `tenant`.
     pub(crate) fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
-        self.incidents
-            .values()
-            .filter(|inc| inc.tenant.as_ref() == tenant)
-            .count()
+        self.tenant_ids
+            .get(&tenant.cloned())
+            .map_or(0, HashSet::len)
     }
 
     /// Evict the least recently seen incident owned by `tenant`, dropping its
@@ -627,15 +684,17 @@ impl IncidentStore {
     /// evicted.
     pub(crate) fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
         let victim = self
-            .incidents
-            .values()
-            .filter(|inc| inc.tenant.as_ref() == tenant)
+            .tenant_ids
+            .get(&tenant.cloned())
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.incidents.get(id))
             .min_by_key(|inc| inc.last_seen)
             .map(|inc| inc.id.clone());
         let Some(id) = victim else {
             return false;
         };
-        if let Some(inc) = self.incidents.remove(&id) {
+        if let Some(inc) = self.remove_incident(&id) {
             let tenant = inc.tenant.clone();
             for (sel, values) in inc.entities {
                 for value in values {
@@ -646,6 +705,26 @@ impl IncidentStore {
             }
         }
         true
+    }
+
+    /// Evict each tenant's least recently seen incidents until it holds at
+    /// most `max`, returning how many were evicted.
+    pub(crate) fn enforce_tenant_cap(&mut self, max: usize) -> usize {
+        let over: Vec<Option<TenantId>> = self
+            .tenant_ids
+            .iter()
+            .filter(|(_, ids)| ids.len() > max)
+            .map(|(tenant, _)| tenant.clone())
+            .collect();
+        let mut evicted = 0;
+        for tenant in over {
+            while self.count_for_tenant(tenant.as_ref()) > max
+                && self.evict_tenant_oldest(tenant.as_ref())
+            {
+                evicted += 1;
+            }
+        }
+        evicted
     }
 
     /// Drop an entity value's index entry and cardinality counter, but only
@@ -1047,12 +1126,19 @@ mod tests {
         let mut store = IncidentStore::default();
         let r1 = detection("r1", "10.0.0.1", "alice", Level::High);
         let id = store
-            .assign_with_finding_uid(&refs_cfg, &r1, Some("uid-1"), 0, |_| {})
+            .assign_with_finding_uid(&refs_cfg, &r1, Some("uid-1"), 0, |_| {}, TenantCap::none())
             .unwrap();
         let r2 = detection("r2", "10.0.0.1", "bob", Level::Low);
-        store.assign_with_finding_uid(&results_cfg, &r2, None, 1, |_| {});
+        store.assign_with_finding_uid(&results_cfg, &r2, None, 1, |_| {}, TenantCap::none());
         let r3 = detection("r3", "10.0.0.1", "carol", Level::Low);
-        store.assign_with_finding_uid(&results_cfg, &r3, Some("uid-3"), 2, |_| {});
+        store.assign_with_finding_uid(
+            &results_cfg,
+            &r3,
+            Some("uid-3"),
+            2,
+            |_| {},
+            TenantCap::none(),
+        );
 
         let emissions = store.tick(&results_cfg, 30);
         assert_eq!(emissions[0].links.refs, [Some("uid-1".to_string())]);
@@ -1079,13 +1165,13 @@ mod tests {
         };
         let mut store = IncidentStore::default();
         let a = detection("r", "10.0.0.1", "alice", Level::High);
-        store.assign_with_finding_uid(&cfg, &a, Some("uid-a"), 0, |_| {});
+        store.assign_with_finding_uid(&cfg, &a, Some("uid-a"), 0, |_| {}, TenantCap::none());
         let b = detection("r", "10.0.0.2", "bob", Level::High);
-        store.assign_with_finding_uid(&cfg, &b, None, 1, |_| {});
+        store.assign_with_finding_uid(&cfg, &b, None, 1, |_| {}, TenantCap::none());
         // Bridges both incidents.
         let c = detection("r", "10.0.0.2", "alice", Level::High);
         let id = store
-            .assign_with_finding_uid(&cfg, &c, Some("uid-c"), 2, |_| {})
+            .assign_with_finding_uid(&cfg, &c, Some("uid-c"), 2, |_| {}, TenantCap::none())
             .unwrap();
         assert_eq!(store.len(), 1);
 

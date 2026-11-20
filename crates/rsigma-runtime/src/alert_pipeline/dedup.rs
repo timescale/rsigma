@@ -12,7 +12,7 @@
 //! `dedup_state` key in `header.enrichments`, so they ride the existing sink
 //! path and wire shape.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
@@ -68,6 +68,8 @@ pub(crate) struct ActiveAlert {
 #[derive(Debug, Default)]
 pub struct DedupStore {
     alerts: HashMap<String, ActiveAlert>,
+    /// Fingerprints per tenant, kept in step with `alerts`.
+    tenant_fingerprints: HashMap<Option<TenantId>, HashSet<String>>,
 }
 
 /// A summary record produced by the periodic tick, tagged with its state so
@@ -112,7 +114,7 @@ impl DedupStore {
         fields: Vec<(String, Value)>,
         tenant: Option<TenantId>,
     ) {
-        self.alerts.insert(
+        self.insert_alert(
             fingerprint,
             ActiveAlert {
                 first_seen: now,
@@ -156,35 +158,81 @@ impl DedupStore {
         }
 
         for key in resolved {
-            self.alerts.remove(&key);
+            self.remove_alert(&key);
         }
         out
     }
 
+    fn insert_alert(&mut self, fingerprint: String, alert: ActiveAlert) {
+        let tenant = alert.tenant.clone();
+        if let Some(old) = self.alerts.insert(fingerprint.clone(), alert)
+            && old.tenant != tenant
+        {
+            self.forget_fingerprint(&old.tenant, &fingerprint);
+        }
+        self.tenant_fingerprints
+            .entry(tenant)
+            .or_default()
+            .insert(fingerprint);
+    }
+
+    fn remove_alert(&mut self, fingerprint: &str) -> Option<ActiveAlert> {
+        let alert = self.alerts.remove(fingerprint)?;
+        self.forget_fingerprint(&alert.tenant, fingerprint);
+        Some(alert)
+    }
+
+    fn forget_fingerprint(&mut self, tenant: &Option<TenantId>, fingerprint: &str) {
+        if let Some(fingerprints) = self.tenant_fingerprints.get_mut(tenant) {
+            fingerprints.remove(fingerprint);
+            if fingerprints.is_empty() {
+                self.tenant_fingerprints.remove(tenant);
+            }
+        }
+    }
+
     /// Count of active alerts owned by `tenant`.
     pub(crate) fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
-        self.alerts
-            .values()
-            .filter(|alert| alert.tenant.as_ref() == tenant)
-            .count()
+        self.tenant_fingerprints
+            .get(&tenant.cloned())
+            .map_or(0, HashSet::len)
     }
 
     /// Evict the least recently seen alert owned by `tenant`. Returns whether
     /// one was evicted.
     pub(crate) fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
         let victim = self
-            .alerts
-            .iter()
-            .filter(|(_, alert)| alert.tenant.as_ref() == tenant)
+            .tenant_fingerprints
+            .get(&tenant.cloned())
+            .into_iter()
+            .flatten()
+            .filter_map(|fingerprint| self.alerts.get(fingerprint).map(|a| (fingerprint, a)))
             .min_by_key(|(_, alert)| alert.last_seen)
             .map(|(fingerprint, _)| fingerprint.clone());
         match victim {
-            Some(fingerprint) => {
-                self.alerts.remove(&fingerprint);
-                true
-            }
+            Some(fingerprint) => self.remove_alert(&fingerprint).is_some(),
             None => false,
         }
+    }
+
+    /// Evict each tenant's least recently seen alerts until it holds at most
+    /// `max`, returning how many were evicted.
+    pub(crate) fn enforce_tenant_cap(&mut self, max: usize) -> usize {
+        let over: Vec<Option<TenantId>> = self
+            .tenant_fingerprints
+            .iter()
+            .filter(|(_, fingerprints)| fingerprints.len() > max)
+            .map(|(tenant, _)| tenant.clone())
+            .collect();
+        let mut evicted = 0;
+        for tenant in over {
+            while self.count_for_tenant(tenant.as_ref()) > max
+                && self.evict_tenant_oldest(tenant.as_ref())
+            {
+                evicted += 1;
+            }
+        }
+        evicted
     }
 
     /// Snapshot the active alerts (fingerprint -> alert) for persistence.
@@ -205,7 +253,7 @@ impl DedupStore {
     ) {
         for (fingerprint, alert) in alerts {
             if now - alert.last_seen < resolve_secs {
-                self.alerts.insert(fingerprint, alert);
+                self.insert_alert(fingerprint, alert);
             }
         }
     }
@@ -226,7 +274,7 @@ impl DedupStore {
             .collect();
         by_age.sort_unstable();
         for (_, fingerprint) in by_age.into_iter().take(excess) {
-            self.alerts.remove(&fingerprint);
+            self.remove_alert(&fingerprint);
         }
         excess
     }

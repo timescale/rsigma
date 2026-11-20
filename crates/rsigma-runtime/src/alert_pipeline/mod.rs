@@ -345,17 +345,10 @@ impl AlertPipeline {
             // group-by selectors off the result while the event is still
             // present, then annotate it with the incident id.
             if let Some(gcfg) = self.group.as_ref() {
-                if let Some(cap) = self.max_open_incidents_per_tenant
-                    && state
-                        .incidents
-                        .count_for_tenant(result.header.tenant_id.as_ref())
-                        >= cap
-                    && state
-                        .incidents
-                        .evict_tenant_oldest(result.header.tenant_id.as_ref())
-                {
-                    metrics.on_tenant_quota_eviction("incidents");
-                }
+                let tenant_cap = grouping::TenantCap {
+                    max: self.max_open_incidents_per_tenant,
+                    on_evict: || metrics.on_tenant_quota_eviction("incidents"),
+                };
                 if let Some(id) = state.incidents.assign_with_finding_uid(
                     gcfg,
                     &result,
@@ -364,6 +357,7 @@ impl AlertPipeline {
                     |guard| {
                         metrics.on_alert_pipeline_overmerge(guard_label(guard));
                     },
+                    tenant_cap,
                 ) {
                     if self.strip_event {
                         strip_event_payloads(&mut result);
@@ -606,6 +600,7 @@ impl AlertPipeline {
             state.inhibit.restore(inhibit_sources, icfg, now);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
+        self.trim_tenants(state, &mut trim);
         trim.log("restore");
         Some(stats)
     }
@@ -614,7 +609,8 @@ impl AlertPipeline {
     /// seen dedup alerts beyond `max_active_alerts`, incidents beyond
     /// `max_open_incidents`, and inhibition sources beyond
     /// `max_inhibit_sources` are evicted (alerts and incidents without a
-    /// `resolved` record), and each incident is cut to the per-incident caps. Call it when this pipeline
+    /// `resolved` record), each tenant is cut to its quotas, and each incident
+    /// is cut to the per-incident caps. Call it when this pipeline
     /// replaces another on hot-reload, while holding the state lock the
     /// pipeline processes under, so a lowered cap applies at once.
     /// [`restore`](Self::restore) applies the same trim.
@@ -629,9 +625,24 @@ impl AlertPipeline {
         if let Some(icfg) = self.inhibit.as_ref() {
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
+        self.trim_tenants(state, &mut trim);
         trim.log("reload");
         self.warn_over_limit_silences(state, chrono::Utc::now().timestamp(), "reload");
         trim
+    }
+
+    /// Trim each tenant's dedup alerts and incidents to the per-tenant quotas.
+    fn trim_tenants(&self, state: &mut AlertPipelineState, trim: &mut CapTrim) {
+        if self.dedup.is_some()
+            && let Some(max) = self.max_active_alerts_per_tenant
+        {
+            trim.dedup_alerts += state.dedup.enforce_tenant_cap(max);
+        }
+        if self.group.is_some()
+            && let Some(max) = self.max_open_incidents_per_tenant
+        {
+            trim.incidents += state.incidents.enforce_tenant_cap(max);
+        }
     }
 
     /// Log the API silences the current limits would refuse. They stay in
@@ -654,9 +665,11 @@ impl AlertPipeline {
 /// What [`AlertPipeline::enforce_caps`] evicted.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CapTrim {
-    /// Dedup active alerts evicted by `max_active_alerts`.
+    /// Dedup active alerts evicted by `max_active_alerts` or the per-tenant
+    /// active-alert quota.
     pub dedup_alerts: usize,
-    /// Incidents evicted by `max_open_incidents`.
+    /// Incidents evicted by `max_open_incidents` or the per-tenant incident
+    /// quota.
     pub incidents: usize,
     /// Inhibition sources evicted by `max_inhibit_sources`.
     pub inhibit_sources: usize,
@@ -1340,5 +1353,64 @@ mod tests {
         assert_eq!(st.dedup.count_for_tenant(Some(&b)), 1);
         assert_eq!(st.incidents.count_for_tenant(Some(&a)), 2);
         assert_eq!(st.incidents.count_for_tenant(Some(&b)), 1);
+    }
+
+    #[test]
+    fn a_lowered_tenant_quota_trims_carried_over_state() {
+        let mut p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let mut st = AlertPipelineState::default();
+        for i in 0..3 {
+            tenant_run(&p, &ip(i), "a", &mut st, i);
+        }
+        tenant_run(&p, "10.0.0.9", "b", &mut st, 10);
+
+        p.set_tenant_quotas(Some(2), Some(2));
+        let trim = p.enforce_caps(&mut st);
+        assert_eq!((trim.dedup_alerts, trim.incidents), (1, 1));
+        let a = rsigma_eval::TenantId::new("a").unwrap();
+        let b = rsigma_eval::TenantId::new("b").unwrap();
+        assert_eq!(st.dedup.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.incidents.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.dedup.count_for_tenant(Some(&b)), 1);
+        assert!(
+            st.incidents
+                .snapshot(IncludeMode::Refs)
+                .iter()
+                .all(|inc| inc.first_seen != 0),
+            "the least recently seen incident of tenant a went first"
+        );
+    }
+
+    #[test]
+    fn joining_an_open_incident_at_the_tenant_cap_evicts_nothing() {
+        let mut p =
+            pipeline("group:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n");
+        p.set_tenant_quotas(None, Some(2));
+        let mut st = AlertPipelineState::default();
+        tenant_run(&p, &ip(0), "a", &mut st, 0);
+        tenant_run(&p, &ip(1), "a", &mut st, 1);
+        tenant_run(&p, &ip(0), "a", &mut st, 2);
+
+        let mut incidents = st.incidents.snapshot(IncludeMode::Refs);
+        incidents.sort_by_key(|inc| inc.first_seen);
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(
+            incidents[0].first_seen, 0,
+            "the joined incident kept its history"
+        );
+        assert_eq!(incidents[0].result_count, 2);
+        assert_eq!(incidents[1].first_seen, 1, "the other incident survived");
+
+        tenant_run(&p, &ip(2), "a", &mut st, 3);
+        let mut incidents = st.incidents.snapshot(IncludeMode::Refs);
+        incidents.sort_by_key(|inc| inc.first_seen);
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(
+            (incidents[0].first_seen, incidents[1].first_seen),
+            (0, 3),
+            "a new incident evicts the least recently seen one"
+        );
     }
 }
