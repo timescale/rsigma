@@ -3484,6 +3484,36 @@ fn tenant_filter_from_params(params: &[(&str, &str)]) -> Option<TenantId> {
     }
 }
 
+/// Check where a sink spec may route per tenant. Only findings sinks carry a
+/// result tenant, `{tenant}` is understood only in a file path or a NATS
+/// subject (once), and `max_open=` only applies to a `{tenant}` file path.
+fn check_tenant_routing(base: &str, params: &[(&str, &str)], role: SinkRole) -> Result<(), String> {
+    let templated = base.contains("{tenant}");
+    let has_param = |name: &str| params.iter().any(|(key, _)| *key == name);
+    if role != SinkRole::Findings && (templated || has_param("tenant") || has_param("max_open")) {
+        return Err(format!(
+            "{} sink '{base}' cannot use '{{tenant}}', 'tenant=', or 'max_open='; only findings sinks route per tenant",
+            role.label()
+        ));
+    }
+    if templated {
+        if !(base.starts_with("file://") || base.starts_with("nats://")) {
+            return Err(format!(
+                "sink '{base}' uses '{{tenant}}', which only file paths and NATS subjects support"
+            ));
+        }
+        if base.matches("{tenant}").count() > 1 {
+            return Err(format!("sink '{base}' may use '{{tenant}}' only once"));
+        }
+    }
+    if has_param("max_open") && !(templated && base.starts_with("file://")) {
+        return Err(format!(
+            "sink '{base}' sets 'max_open=', which only applies to a file path with '{{tenant}}'"
+        ));
+    }
+    Ok(())
+}
+
 /// Split a file path around a whole-component `{tenant}` token.
 fn tenant_file_template(path: &str) -> Option<(String, String)> {
     let start = path.find("{tenant}")?;
@@ -3522,6 +3552,10 @@ async fn build_sink(
     #[cfg_attr(not(feature = "daemon-nats"), allow(unused))] config: &DaemonConfig,
 ) -> (Sink, OnFull) {
     let (base, params) = split_query(spec);
+    if let Err(message) = check_tenant_routing(base, &params, role) {
+        eprintln!("error: {message}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
     let on_full = on_full_from_params(&params);
     let resolved = resolve_sink_format(&params, base, role);
     let format = resolved.format;
@@ -5817,6 +5851,25 @@ mod tests {
         let untenanted = same_tenant_entities(views, None);
         assert_eq!(untenanted.len(), 1);
         assert!(untenanted[0].tenant_id.is_none());
+    }
+
+    #[test]
+    fn tenant_routing_is_limited_to_findings_file_and_nats_sinks() {
+        let check = |spec: &str, role| {
+            let (base, params) = split_query(spec);
+            check_tenant_routing(base, &params, role)
+        };
+        assert!(check("file:///out/{tenant}.ndjson?max_open=8", SinkRole::Findings).is_ok());
+        assert!(check("nats://h:4222/det.{tenant}", SinkRole::Findings).is_ok());
+        assert!(check("stdout?tenant=a", SinkRole::Findings).is_ok());
+
+        assert!(check("file:///dlq/{tenant}.ndjson", SinkRole::Dlq).is_err());
+        assert!(check("file:///dlq.ndjson?tenant=a", SinkRole::Dlq).is_err());
+        assert!(check("file:///audit.ndjson?max_open=2", SinkRole::Audit).is_err());
+        assert!(check("otlp://h:4317/{tenant}", SinkRole::Findings).is_err());
+        assert!(check("file:///{tenant}/{tenant}.ndjson", SinkRole::Findings).is_err());
+        assert!(check("file:///out.ndjson?max_open=8", SinkRole::Findings).is_err());
+        assert!(check("nats://h:4222/det.{tenant}?max_open=8", SinkRole::Findings).is_err());
     }
 
     #[test]
