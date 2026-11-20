@@ -804,6 +804,9 @@ daemon:
             .filter(|t| !t.trim().is_empty())
     })
     .expect("correlation written");
+    // Windows kills the daemon without a shutdown save, so let a periodic
+    // save (`save_interval: 1`) land first.
+    std::thread::sleep(Duration::from_secs(2));
     drop(first);
 
     let plain_config = temp_file(
