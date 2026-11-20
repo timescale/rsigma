@@ -373,10 +373,10 @@ pub enum SilenceRejection {
 }
 
 /// The outcome of [`SilenceStore::remove_scoped`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SilenceRemoval {
-    /// The silence was removed.
-    Removed,
+    /// The silence was removed; carries the tenant it belonged to.
+    Removed(Option<TenantId>),
     /// No silence with the id is visible to the caller.
     NotFound,
     /// Several tenants have a silence with the id; the caller must name one.
@@ -471,17 +471,19 @@ impl SilenceStore {
                 return SilenceRemoval::Ambiguous;
             }
         }
-        let before = self.silences.len();
-        let removable = |s: &Silence| match tenant {
-            None => true,
-            Some(tenant) => s.tenant.as_ref() == Some(tenant),
+        let removable = |s: &Silence| {
+            s.id == id
+                && match tenant {
+                    None => true,
+                    Some(tenant) => s.tenant.as_ref() == Some(tenant),
+                }
         };
-        self.silences.retain(|s| !(s.id == id && removable(s)));
-        if self.silences.len() != before {
-            SilenceRemoval::Removed
-        } else {
-            SilenceRemoval::NotFound
-        }
+        let Some(owner) = self.silences.iter().find(|s| removable(s)) else {
+            return SilenceRemoval::NotFound;
+        };
+        let owner = owner.tenant.clone();
+        self.silences.retain(|s| !removable(s));
+        SilenceRemoval::Removed(owner)
     }
 
     /// Replace all `static`-origin silences with `statics`, keeping `api` ones.
@@ -956,9 +958,13 @@ mod tests {
         assert_eq!(store.snapshot_scoped(0, None).len(), 3);
         assert_eq!(
             store.remove_scoped("maint", Some(&b)),
-            SilenceRemoval::Removed
+            SilenceRemoval::Removed(Some(b.clone()))
         );
-        assert_eq!(store.remove_scoped("maint", None), SilenceRemoval::Removed);
+        assert_eq!(
+            store.remove_scoped("maint", None),
+            SilenceRemoval::Removed(Some(a.clone())),
+            "an unscoped delete reports whose silence it removed"
+        );
         assert_eq!(store.snapshot_scoped(0, None).len(), 1);
     }
 
@@ -1003,7 +1009,7 @@ mod tests {
         );
         assert_eq!(
             store.remove_scoped("a-silence", Some(&a)),
-            SilenceRemoval::Removed
+            SilenceRemoval::Removed(Some(a.clone()))
         );
 
         // A tenant sees the untenanted static silence but may not remove it.
@@ -1013,6 +1019,9 @@ mod tests {
             SilenceRemoval::NotFound
         );
         assert_eq!(store.snapshot_scoped(0, None).len(), 1);
-        assert_eq!(store.remove_scoped(&global, None), SilenceRemoval::Removed);
+        assert_eq!(
+            store.remove_scoped(&global, None),
+            SilenceRemoval::Removed(None)
+        );
     }
 }

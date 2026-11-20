@@ -104,17 +104,23 @@ daemon:
 }
 
 fn spawn_tenancy(dir: &Path, extra_tenancy: &str) -> DaemonProcess {
+    spawn_tenancy_with_args(dir, extra_tenancy, &[])
+}
+
+fn spawn_tenancy_with_args(dir: &Path, extra_tenancy: &str, extra_args: &[&str]) -> DaemonProcess {
     let config = temp_file(".yaml", &tenancy_config(dir, extra_tenancy));
     let config_path = config.path().to_str().unwrap().to_string();
+    let mut args = vec![
+        "engine",
+        "daemon",
+        "--config",
+        &config_path,
+        "--api-addr",
+        "127.0.0.1:0",
+    ];
+    args.extend_from_slice(extra_args);
     DaemonProcess::spawn_with_env(
-        &[
-            "engine",
-            "daemon",
-            "--config",
-            &config_path,
-            "--api-addr",
-            "127.0.0.1:0",
-        ],
+        &args,
         &[
             ("A_INGEST", A_INGEST),
             ("B_INGEST", B_INGEST),
@@ -512,6 +518,41 @@ fn a_tenant_at_its_silence_quota_does_not_block_another_tenant() {
         http_post_bearer(&silences, ADMIN, &bounded_silence_for("tenant-b")).0,
         201
     );
+}
+
+#[test]
+fn an_all_tenants_write_is_audited_under_its_target_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("state.db");
+    let daemon = spawn_tenancy_with_args(dir.path(), "", &["--state-db", db.to_str().unwrap()]);
+    let silences = daemon.url("/api/v1/silences");
+    let (status, body) = http_post_bearer(&silences, ADMIN, &bounded_silence_for("tenant-a"));
+    assert_eq!(status, 201, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deleted = http_delete_bearer(&daemon.url(&format!("/api/v1/silences/{id}")), ADMIN);
+    assert_eq!(deleted.0, 200, "{}", deleted.1);
+
+    let audit = daemon.url("/api/v1/audit");
+    let entries = |token: &str| {
+        let (status, body) = http_get_bearer(&audit, token);
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["entries"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let seen_by_a = poll_until(Duration::from_secs(5), || {
+        let rows = entries(A_OPERATOR);
+        (rows.len() == 2).then_some(rows)
+    })
+    .expect("tenant-a sees both writes made on its behalf");
+    for row in &seen_by_a {
+        assert_eq!(row["token"], "admin");
+        assert_eq!(row["tenant"], "tenant-a");
+    }
 }
 
 #[test]

@@ -290,6 +290,8 @@ Append-only log of control-plane mutations (silences, dispositions, reload, sour
 
 Auth denials (`401`/`403`) are tracked separately via `rsigma_api_auth_failures_total`, not in this log.
 
+With tenancy enabled, each entry also stores `tenant`: the token's tenant, or, for an `all_tenants` token, the tenant that its silence create, silence delete, or disposition write affected. A tenant token reads only its tenant's entries, so it also sees writes made on its behalf; an `all_tenants` token can narrow a read with `?tenant=<id>`. {{ added "unreleased" }}
+
 ### `GET /api/v1/audit`
 
 Paginated read of the audit log, newest first. Query parameters: `limit` (default 100, max 1000), `offset`, `since` and `until` (Unix seconds, inclusive bounds on `ts`). Returns `503` when audit is disabled (no state database). Requires `audit:read` when authentication is enabled.

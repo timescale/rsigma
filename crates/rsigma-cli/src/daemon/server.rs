@@ -4489,14 +4489,16 @@ async fn ingest_dispositions(
         Ok(tenant) => tenant,
         Err(response) => return response,
     };
-    match dispositions.ingest_with_tenant(&body, "api", tenant) {
+    let target = tenant.clone();
+    let response = match dispositions.ingest_with_tenant(&body, "api", tenant) {
         Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
-    }
+    };
+    super::audit::with_audit_target(response, target.as_ref())
 }
 
 /// `GET /api/v1/dispositions` — the per-rule false-positive ratio view.
@@ -4567,7 +4569,13 @@ async fn create_silence(
         Ok(tenant) => tenant,
         Err(response) => return response,
     };
+    let target = tenant.clone();
     spec.tenant = tenant;
+    let response = create_silence_for(&state, spec).await;
+    super::audit::with_audit_target(response, target.as_ref())
+}
+
+async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
     let Some((max_silences, max_per_tenant, limits)) = state
         .alert_pipeline_swap
         .load_full()
@@ -4673,11 +4681,14 @@ async fn delete_silence(
         st.silences.remove_scoped(&id, tenant.as_ref())
     };
     match removed {
-        SilenceRemoval::Removed => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "deleted", "id": id })),
-        )
-            .into_response(),
+        SilenceRemoval::Removed(owner) => super::audit::with_audit_target(
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "deleted", "id": id })),
+            )
+                .into_response(),
+            owner.as_ref(),
+        ),
         SilenceRemoval::NotFound => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such silence", "id": id })),
