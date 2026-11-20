@@ -11,12 +11,22 @@ pub struct StixId(String);
 
 impl StixId {
     /// Parse from `"{type}--{uuid}"`.
+    ///
+    /// The type name must follow the STIX 2.1 rules (3-250 characters of
+    /// `a-z`, `0-9`, and `-`, starting with a letter) and the UUID must use the
+    /// hyphenated form, so a parsed id is always safe to use as a file name.
     pub fn parse(s: &str) -> Result<Self, StixIdError> {
         let (type_name, uuid_str) = s.split_once("--").ok_or(StixIdError::MissingDelimiter)?;
         if type_name.is_empty() {
             return Err(StixIdError::EmptyTypeName);
         }
+        if !is_valid_type_name(type_name) {
+            return Err(StixIdError::InvalidTypeName(type_name.to_owned()));
+        }
         let _ = uuid::Uuid::parse_str(uuid_str)?;
+        if uuid_str.len() != uuid::fmt::Hyphenated::LENGTH {
+            return Err(StixIdError::NonHyphenatedUuid(uuid_str.to_owned()));
+        }
         Ok(Self(s.to_owned()))
     }
 
@@ -49,6 +59,14 @@ impl StixId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn is_valid_type_name(type_name: &str) -> bool {
+    (3..=250).contains(&type_name.len())
+        && type_name.starts_with(|ch: char| ch.is_ascii_lowercase())
+        && type_name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 impl fmt::Display for StixId {
@@ -479,6 +497,45 @@ mod tests {
     fn rejects_invalid_uuid() {
         let err = StixId::parse("indicator--not-a-uuid").expect_err("invalid uuid");
         assert!(matches!(err, StixIdError::InvalidUuid(_)));
+    }
+
+    #[test]
+    fn rejects_type_names_outside_stix_rules() {
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let long = "a".repeat(251);
+        for type_name in [
+            "../../../../tmp/evil",
+            "/tmp/evil",
+            "..\\evil",
+            "x-foo/bar",
+            "Indicator",
+            "x_custom",
+            "1abc",
+            "-abc",
+            "ab",
+            long.as_str(),
+        ] {
+            let err = StixId::parse(&format!("{type_name}--{uuid}"))
+                .expect_err("type name outside STIX rules must fail");
+            assert_eq!(err, StixIdError::InvalidTypeName(type_name.to_owned()));
+        }
+        let max = "a".repeat(250);
+        for type_name in ["abc", "x-mitre-tactic", "x509-certificate", max.as_str()] {
+            StixId::parse(&format!("{type_name}--{uuid}")).expect("valid type name");
+        }
+    }
+
+    #[test]
+    fn rejects_non_hyphenated_uuid() {
+        for uuid in [
+            "550e8400e29b41d4a716446655440000",
+            "{550e8400-e29b-41d4-a716-446655440000}",
+            "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            let err = StixId::parse(&format!("indicator--{uuid}"))
+                .expect_err("non-hyphenated uuid must fail");
+            assert_eq!(err, StixIdError::NonHyphenatedUuid(uuid.to_owned()));
+        }
     }
 
     #[test]

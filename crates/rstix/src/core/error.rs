@@ -9,9 +9,17 @@ pub enum StixIdError {
     /// Type name prefix was empty.
     #[error("empty type name")]
     EmptyTypeName,
+    /// Type name prefix violates the STIX 2.1 type-name rules.
+    #[error(
+        "invalid type name '{0}': must be 3-250 characters of a-z, 0-9, and '-', starting with a letter"
+    )]
+    InvalidTypeName(String),
     /// UUID segment was not a valid UUID.
     #[error("invalid UUID: {0}")]
     InvalidUuid(#[from] uuid::Error),
+    /// UUID segment was valid but not in the hyphenated `8-4-4-4-12` form.
+    #[error("UUID '{0}' must use the hyphenated 8-4-4-4-12 form")]
+    NonHyphenatedUuid(String),
     /// Typed-ID conversion expected a different type prefix.
     #[error("type mismatch: expected '{expected}', found '{found}'")]
     TypeMismatch {
