@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### STIX ids are validated before they name a store file (security)
+### STIX ids are validated before they name a store file (security, #733)
 
 `StixId::parse` checked only the `--` delimiter and the UUID, and `FsStore` used the id as a file name under `objects/`. With `--allow-custom`, a bundle passed to `rsigma taxii store` or a collection read by `rsigma taxii sync` could carry an id such as `../../x--<uuid>` or `/tmp/x--<uuid>` and write a JSON file outside the store ([GHSA-g52x-rcvw-c2qw](https://github.com/timescale/rsigma/security/advisories/GHSA-g52x-rcvw-c2qw)).
 
