@@ -1248,6 +1248,27 @@ mod tests {
     }
 
     #[test]
+    fn entity_graph_never_joins_across_tenants() {
+        let cfg = entity_cfg();
+        let mut store = IncidentStore::default();
+        let tenanted = |tenant: &str| {
+            let mut r = detection("r", "10.0.0.1", "alice", Level::High);
+            r.header.tenant_id = Some(TenantId::new(tenant).unwrap());
+            r
+        };
+        let a = store.assign(&cfg, &tenanted("a"), 0, |_| {}).unwrap();
+        let b = store.assign(&cfg, &tenanted("b"), 1, |_| {}).unwrap();
+        assert_ne!(a, b, "a shared entity value does not merge tenants");
+        assert_eq!(store.len(), 2);
+        let again = store.assign(&cfg, &tenanted("a"), 2, |_| {}).unwrap();
+        assert_eq!(again, a);
+        assert_eq!(
+            store.count_for_tenant(Some(&TenantId::new("b").unwrap())),
+            1
+        );
+    }
+
+    #[test]
     fn entity_graph_merges_via_shared_value() {
         let cfg = entity_cfg();
         let mut store = IncidentStore::default();
