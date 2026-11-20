@@ -6,6 +6,8 @@ description: "RSigma daemon HTTP API for detection state: counters, correlation 
 
 The daemon's read and control endpoints for detection state: counters, correlation windows, incidents, risk, silences, the audit trail, and analyst dispositions. The [HTTP API](http-api.md#endpoint-summary) page lists every route with its permission; [authentication](http-api.md#authentication) applies to all of them.
 
+With tenancy enabled, these reads are scoped to the token's tenant, `?tenant=` only narrows, a foreign incident id is `404`, and a tenant token gets `403` on the operator-only routes (`/api/v1/status`, `/metrics`). See [Tenancy scoping](http-api.md#tenancy-scoping). {{ added "unreleased" }}
+
 ## Status and counters
 
 ### `GET /api/v1/status`

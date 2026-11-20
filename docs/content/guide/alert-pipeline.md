@@ -86,6 +86,10 @@ silences:
 
 Expired silences are garbage-collected on the background tick. The dynamic (API) silence count is bounded by `max_silences` so an unbounded number of silences cannot accumulate; static silences from the config do not count against it. Metrics: `rsigma_silenced_total` (results muted) and `rsigma_silences_active` (currently-active silences).
 
+## Tenancy
+
+With tenancy enabled, dedup, incidents, inhibition, and silences are keyed per tenant. A silence declared in this config applies to every tenant unless it sets `tenant`; an API silence from a tenant token is bound to that tenant. Inhibition always works within one tenant. `daemon.tenancy.quotas` caps active alerts and incidents per tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## Deduplication
 
 Deduplication collapses repeated firings of the same logical alert into a single active alert, modeled on Alertmanager's dedup behavior rather than a silent drop.

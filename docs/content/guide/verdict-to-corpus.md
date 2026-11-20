@@ -75,6 +75,10 @@ Each bundle contains:
 
 Do not pass `spool_dir` itself to `rule backtest`. Backtest walks every file under `--corpus` as an event source.
 
+## Tenancy
+
+With tenancy enabled, the spool path gains a tenant level: `<spool>/<tenant>/<fp|tp>/<bundle_id>`. The bundle identity and the capture fingerprint index include the tenant, so the same rule and fingerprint in two tenants produce two bundles. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## Commands
 
 Replay a true-positive bundle:

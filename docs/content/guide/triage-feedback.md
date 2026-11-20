@@ -59,6 +59,10 @@ There are two ways in, and both are idempotent:
 
 Redelivery is safe: dispositions deduplicate on `(fingerprint or incident_id, verdict, rule_id)`, falling back to `(rule_id, timestamp, analyst)` when no alert identity is carried, so a file re-read, a NATS redelivery, or an HTTP re-poll never double counts. The `rule_id` is part of the identity key so an incident-scoped verdict that fans out to contributing rules does not collapse those per-rule records into one.
 
+## Tenancy
+
+With tenancy enabled, disposition buckets are keyed by tenant. A tenant token's dispositions are bound to its tenant; a body `tenant` naming another tenant is `403`. The disposition view is filtered to the token's tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## The numerator knob
 
 By default the numerator counts false positives only. A benign-but-correct fire is still triage noise, so whether `benign_true_positive` also counts is the `daemon.dispositions.numerator` knob (`fp_only` default, or `fp_and_btp`). Set it to match whatever convention your program already reports against.

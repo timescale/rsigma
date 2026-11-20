@@ -46,6 +46,8 @@ rsigma-mcp = "{{ rsigma.version }}"
 
 The handler implements `rmcp::ServerHandler`, so it can also be served over any rmcp transport.
 
+The `create_silence` and `post_disposition` tools accept an optional `tenant` argument. Send it when the daemon token can see every tenant; the daemon ignores it for a tenant-bound token. {{ added "unreleased" }}
+
 ## Minimum example
 
 ```rust,no_run

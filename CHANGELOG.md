@@ -4,6 +4,24 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Multi-tenant daemon
+
+`rsigma engine daemon` can serve several tenants in one process while keeping their state apart. A tenant comes only from an operator binding: the bearer token that authenticated a REST or OTLP ingest request, the configured tenant of the single selected pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. A token declares exactly one of `tenant: <id>` or `all_tenants: true`; `all_tenants` is not implied by a role, and an `all_tenants` token cannot ingest because it has no tenant to bind.
+
+Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture bundle identities. Hashes change only for tenanted results, so untenanted output is unchanged. Correlation, alert-pipeline, risk, and disposition snapshots move to version 2, which nests state under `tenants`; version 1 snapshots stay readable as the untenanted bucket, and a restore discards entries that do not match the current tenancy mode and logs the counts.
+
+Named rulesets can bind to tenants. A bound ruleset receives only events whose tenant is listed, while an unbound ruleset receives every tenant's events with its state still keyed per tenant. `daemon.tenancy.quotas` caps correlation state, active alerts, incidents, and risk entities per tenant; at a tenant's cap its own expired entries are evicted first, then its stalest entries, with the global caps as a backstop.
+
+With tenancy enabled, startup refuses without bearer-token auth, with anonymous permissions, with a token that declares both or neither binding, with a pull source that has no tenant, with overlapping `nats_tenants` subjects or a repeated tenant, with a project config layer loaded, and with a ruleset binding no token, `input.tenant`, or `nats_tenants` entry can produce. With tenancy disabled, startup refuses any tenant binding, any `{tenant}` or `tenant=` sink, and any non-empty webhook or enricher `scope.tenants`.
+
+The API scopes every route to a tenancy class. Tenant tokens get `403` on operator-only routes that span tenants (`/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, reload, and the tap and detection-stream routes). Tenant-scoped reads are filtered to the token's tenant; `?tenant=` only narrows, and a tenant token naming another tenant gets `403`. A resource id owned by another tenant is `404`, so ids do not leak existence. Silences and dispositions written by a tenant token are bound to its tenant. An `all_tenants` token must send `tenant` on a write.
+
+Sinks can filter by tenant with `tenant=<id>`, route NATS subjects with `{tenant}` as a whole token, and route file paths with `{tenant}` as a whole path component; file sinks keep a bounded LRU of per-tenant handles. A result without a tenant on a `{tenant}` subject or path is a permanent delivery failure and reaches the DLQ. OTLP sinks carry `tenant_id` as a log-record attribute. Three metric families report tenancy: `rsigma_tenant_rejected_total`, `rsigma_tenant_quota_evictions_total`, and `rsigma_detection_matches_by_tenant_total`, the last bucketing tenants outside `daemon.tenancy.metrics_tenant_allowlist` under `other`.
+
+The MCP `create_silence` and `post_disposition` tools accept an optional `tenant` argument. The library gains `TenantId`, `tenant_at`, `WithTenant`, the `_for_tenant` and `_for_tenants` evaluation methods, `TenantStateSnapshot`, `ImportStats`, `Scope::with_tenants`, tenant bindings on rulesets, and three `MetricsHook` methods.
+
+**Breaking changes:** `RuleHeader.tenant_id`, `RawEvent.tenant`, `CorrelationSnapshot.tenants`, `GroupStateInfo.tenant`, `RulesetUnit.tenants`, `RulesetStats.tenants`, `CorrelationConfig.require_tenant` and `max_state_entries_per_tenant`, both `ScopeConfig.tenants`, and `RulesetBinding.tenants` need defaults in struct literals. Correlation, alert-pipeline, risk, and disposition snapshots move to version 2, which older releases cannot read. Path-mode output and existing daemon behavior are unchanged with tenancy off.
+
 ### Draft rules from STIX indicators (#731)
 
 `rsigma rule draft --from-stix` reads a STIX 2.1 bundle, or a single indicator, and prints one Sigma rule per logsource. It needs the `stix-draft` feature. The Docker image includes it, because that image is built with `--all-features`.

@@ -120,6 +120,10 @@ For enrichers that conceptually apply to both kinds (identity lookups, runbook U
 
 There is no `scope.kinds` axis: the top-level `kind` already gates which result variant the enricher sees. Axes are AND-ed; an empty axis is not a filter.
 
+## Tenancy
+
+`scope.tenants` restricts an enricher to listed tenants. Dynamic sources, watchlists, STIX sources, MMDB databases, and DNS caches stay operator-global and shared. For per-tenant data, declare per-tenant source ids and reference them only from that tenant's ruleset. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## The seven primitives
 
 ### `template`: pure string interpolation

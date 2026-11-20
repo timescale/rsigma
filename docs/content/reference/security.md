@@ -208,6 +208,20 @@ A token with `sources:write` can push, replace, and delete watchlist indicators.
 
 A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "0.27.0" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so a single call cannot mute every rule, or every rule of a severity, indefinitely. API silences created before these limits applied are kept, and the daemon logs their ids at startup and on reload. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
 
+## Multi-tenancy
+
+Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "unreleased" }}
+
+The model fails closed. With tenancy enabled, the daemon refuses to start without bearer-token auth, refuses anonymous requests, and refuses a token that declares neither `tenant` nor `all_tenants: true`. Every pull source must carry a tenant, and an `all_tenants` token cannot ingest because it has no tenant to bind. A shared untenanted correlation bucket cannot form: the engine skips untenanted events and counts them.
+
+Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture identities. Hashes change only for tenanted results; with tenancy off every hash, id, and snapshot entry is exactly what it was before.
+
+API routes have tenancy classes. Tenant tokens get `403` on operator-only routes (`/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, reload). A resource id owned by another tenant is `404`, not `403`, so ids do not leak existence.
+
+Dynamic sources, watchlists, STIX indicator sources, MMDB databases, and DNS caches are operator-global and shared. Their values do not depend on the tenant, and their hit or miss state is visible only through operator-only metrics. For per-tenant enrichment data, declare per-tenant source ids and reference them only from that tenant's ruleset.
+
+See [Multi-tenancy](../guide/multi-tenancy.md) for the binding model, the full refusal list, and the YAML shape.
+
 ## Control-plane API audit trail
 
 When the daemon runs with `--state-db`, an append-only audit log records every control-plane mutation: who called which endpoint, when, with what outcome, and a SHA-256 digest of the request body (never the body itself). Read the log with `GET /api/v1/audit` (`audit:read` when authentication is enabled). Event ingest and OTLP surfaces are excluded so the log stays small.
@@ -252,6 +266,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
 - `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
 - `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
+- `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "unreleased" }}
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.
