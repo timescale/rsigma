@@ -2,9 +2,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use rsigma_eval::{ValueDraftSpec, ValueSelection, draft_rule_from_values};
-use rstix::{Bundle, ObservableExtraction, ParseOptions, SdoObject, StixObject};
+use rstix::{Bundle, ObservableExtraction, ObservableKind, ParseOptions, SdoObject, StixObject};
 
-const MODIFIERS: &[&str] = &["contains", "endswith", "cidr"];
+const TEXT_MODIFIERS: &[&str] = &["contains", "endswith"];
 
 fuzz_target!(|data: &[u8]| {
     let Ok(raw) = std::str::from_utf8(data) else {
@@ -78,7 +78,10 @@ fuzz_target!(|data: &[u8]| {
                 break;
             }
             let field = item.kind.map(|kind| kind.key()).unwrap_or("value");
-            let modifier = MODIFIERS[selections.len() % MODIFIERS.len()];
+            let modifier = match item.kind {
+                Some(ObservableKind::Ipv4Cidr | ObservableKind::Ipv6Cidr) => "cidr",
+                _ => TEXT_MODIFIERS[selections.len() % TEXT_MODIFIERS.len()],
+            };
             selections.push(ValueSelection {
                 name: format!("selection_{}", selections.len()),
                 field: field.to_string(),
