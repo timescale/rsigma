@@ -37,7 +37,8 @@ pub struct PostDispositionInput {
     #[serde(default)]
     pub note: Option<String>,
     /// Tenant to bind the disposition to. Required when the daemon token can
-    /// see every tenant; ignored by the daemon otherwise.
+    /// see every tenant. A tenant-bound token may omit it or send its own
+    /// tenant; naming another tenant is refused with `403`.
     #[serde(default)]
     pub tenant: Option<String>,
 }

@@ -35,7 +35,8 @@ pub struct CreateSilenceInput {
     #[serde(default)]
     pub created_by: Option<String>,
     /// Tenant to bind the silence to. Required when the daemon token can see
-    /// every tenant; ignored by the daemon otherwise.
+    /// every tenant. A tenant-bound token may omit it or send its own tenant;
+    /// naming another tenant is refused with `403`.
     #[serde(default)]
     pub tenant: Option<String>,
 }

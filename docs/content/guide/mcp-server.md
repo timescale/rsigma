@@ -77,8 +77,8 @@ Sixteen Engineer-cycle tools always register. When `--daemon-url` (or `mcp.daemo
 | `list_risk_entities` | (none) | Open risk entities from `GET /api/v1/risk`. Empty responses include a note so a disabled accumulator is not mistaken for a clean estate. {{ added "0.22.0" }} |
 | `get_rule_quality` | optional `rule_id` | Per-rule quality view from `GET /api/v1/dispositions`. {{ added "0.22.0" }} |
 | `list_silences` | (none) | Operator silences from `GET /api/v1/silences`, with `origin` and `state`. {{ added "0.22.0" }} |
-| `create_silence` | `matchers`, exactly one of `ends_at` or `duration`, optional `id`/`starts_at`/`comment`/`created_by` | Write-gated. Creates a TTL-bounded silence; a retried client `id` returns the existing entry. {{ added "0.22.0" }} |
-| `post_disposition` | `verdict` plus `fingerprint` or `incident_id`, optional `rule_id`/`scope`/`timestamp`/`analyst`/`note` | Write-gated. Returns the ingest summary; a redelivered identity is `duplicate`, not an error. {{ added "0.22.0" }} |
+| `create_silence` | `matchers`, exactly one of `ends_at` or `duration`, optional `id`/`starts_at`/`comment`/`created_by`/`tenant` | Write-gated. Creates a TTL-bounded silence; a retried client `id` returns the existing entry. {{ added "0.22.0" }} |
+| `post_disposition` | `verdict` plus `fingerprint` or `incident_id`, optional `rule_id`/`scope`/`timestamp`/`analyst`/`note`/`tenant` | Write-gated. Returns the ingest summary; a redelivered identity is `duplicate`, not an error. {{ added "0.22.0" }} |
 
 ## Operate cycle
 
@@ -109,6 +109,8 @@ Three registration tiers:
 `--daemon-ca <PATH>` adds a PEM root CA for a self-signed daemon TLS listener. Unix-socket daemon URLs are unsupported; use TCP loopback.
 
 `create_silence` refuses an unbounded window: supply `ends_at` (RFC 3339) or `duration` (humantime, converted at call time). The daemon also applies its silence limits, so a window past `max_silence_duration` or a silence without a scoped `=` matcher comes back as `{ "ok": false }` with the daemon's hint. {{ added "0.27.0" }} An optional client `id` is checked against `GET /api/v1/silences` first so a retried create is a no-op. `post_disposition` requires `fingerprint` or `incident_id` so the disposition store's redelivery key engages; without an identity a retry would double-count.
+
+Against a daemon with tenancy enabled, both write tools take an optional `tenant`. {{ added "unreleased" }} An `all_tenants` daemon token must send it, or the daemon returns `400`. A tenant-bound token may omit it or send its own tenant; naming another tenant comes back as `{ "ok": false }` with the daemon's `403`.
 
 A typical triage loop calls `list_incidents` (optionally with `min_level` or `limit`), then `get_incident` or `get_incident_bundle`, then `list_risk_entities` and `get_rule_quality`, then `create_silence` with a TTL and `post_disposition`, and finally `tune_rules` if the verdict is a false positive.
 
