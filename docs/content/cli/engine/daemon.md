@@ -219,6 +219,9 @@ See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the 
 | `daemon.tenancy.quotas.active_alerts` | unset | Per-tenant active-alert cap. {{ added "unreleased" }} |
 | `daemon.tenancy.quotas.incidents` | unset | Per-tenant open-incident cap. {{ added "unreleased" }} |
 | `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "unreleased" }} |
 | `daemon.tenancy.metrics_tenant_allowlist` | empty | Tenants whose match counts get their own metric label. Others count under `other`. {{ added "unreleased" }} |
 | `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "unreleased" }} |
 | `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "unreleased" }} |

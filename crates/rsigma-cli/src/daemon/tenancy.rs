@@ -27,17 +27,33 @@ pub(crate) struct TenantQuotas {
     pub active_alerts: Option<usize>,
     pub incidents: Option<usize>,
     pub risk_entities: Option<usize>,
+    pub silences: Option<usize>,
+    pub inhibition_sources: Option<usize>,
+    pub stream_sessions: Option<usize>,
 }
 
 impl TenantQuotas {
     /// Each quota with its config key.
-    fn named(&self) -> [(&'static str, Option<usize>); 4] {
+    fn named(&self) -> [(&'static str, Option<usize>); 7] {
         [
             ("correlation_state", self.correlation_state),
             ("active_alerts", self.active_alerts),
             ("incidents", self.incidents),
             ("risk_entities", self.risk_entities),
+            ("silences", self.silences),
+            ("inhibition_sources", self.inhibition_sources),
+            ("stream_sessions", self.stream_sessions),
         ]
+    }
+
+    /// The quotas the alert pipeline enforces.
+    pub fn alert_pipeline(&self) -> rsigma_runtime::AlertTenantQuotas {
+        rsigma_runtime::AlertTenantQuotas {
+            active_alerts: self.active_alerts,
+            incidents: self.incidents,
+            silences: self.silences,
+            inhibition_sources: self.inhibition_sources,
+        }
     }
 }
 
@@ -48,6 +64,9 @@ impl From<TenantQuotasPartial> for TenantQuotas {
             active_alerts: partial.active_alerts,
             incidents: partial.incidents,
             risk_entities: partial.risk_entities,
+            silences: partial.silences,
+            inhibition_sources: partial.inhibition_sources,
+            stream_sessions: partial.stream_sessions,
         }
     }
 }

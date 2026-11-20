@@ -366,6 +366,8 @@ pub struct SilenceStore {
 pub enum SilenceRejection {
     /// The dynamic-silence cap is reached.
     Full,
+    /// The silence's tenant holds its quota of dynamic silences.
+    TenantFull,
     /// A silence the new silence's tenant can see already has its id.
     DuplicateId,
 }
@@ -406,17 +408,19 @@ impl SilenceStore {
     /// Add an API-origin silence unless the dynamic-silence cap is reached or
     /// its id is taken. Returns `false` (and does not add) in either case.
     pub fn try_add(&mut self, silence: Silence, max_dynamic: usize) -> bool {
-        self.insert_api(silence, max_dynamic).is_ok()
+        self.insert_api(silence, max_dynamic, None).is_ok()
     }
 
-    /// Add an API-origin silence, refusing it when `max_dynamic` is reached or
-    /// a silence its tenant can see already has its id. Ids only clash within
-    /// one tenant (plus untenanted silences), so a refusal never reveals
-    /// another tenant's ids.
+    /// Add an API-origin silence, refusing it when `max_dynamic` is reached,
+    /// when its tenant already holds `max_per_tenant` dynamic silences, or
+    /// when a silence its tenant can see already has its id. Ids only clash
+    /// within one tenant (plus untenanted silences), so a refusal never
+    /// reveals another tenant's ids.
     pub fn insert_api(
         &mut self,
         silence: Silence,
         max_dynamic: usize,
+        max_per_tenant: Option<usize>,
     ) -> Result<(), SilenceRejection> {
         if self
             .silences
@@ -424,6 +428,16 @@ impl SilenceStore {
             .any(|s| s.id == silence.id && s.visible_to(silence.tenant.as_ref()))
         {
             return Err(SilenceRejection::DuplicateId);
+        }
+        if let (Some(max), Some(tenant)) = (max_per_tenant, silence.tenant.as_ref()) {
+            let held = self
+                .silences
+                .iter()
+                .filter(|s| s.origin == SilenceOrigin::Api && s.tenant.as_ref() == Some(tenant))
+                .count();
+            if held >= max {
+                return Err(SilenceRejection::TenantFull);
+            }
         }
         if self.dynamic_count() >= max_dynamic {
             return Err(SilenceRejection::Full);
@@ -921,15 +935,15 @@ mod tests {
             Silence::build(spec, SilenceOrigin::Api).unwrap()
         };
         let mut store = SilenceStore::default();
-        store.insert_api(api("maint", Some(&a)), 10).unwrap();
+        store.insert_api(api("maint", Some(&a)), 10, None).unwrap();
         assert_eq!(
-            store.insert_api(api("maint", Some(&a)), 10),
+            store.insert_api(api("maint", Some(&a)), 10, None),
             Err(SilenceRejection::DuplicateId)
         );
-        store.insert_api(api("maint", Some(&b)), 10).unwrap();
-        store.insert_api(api("global", None), 10).unwrap();
+        store.insert_api(api("maint", Some(&b)), 10, None).unwrap();
+        store.insert_api(api("global", None), 10, None).unwrap();
         assert_eq!(
-            store.insert_api(api("global", Some(&a)), 10),
+            store.insert_api(api("global", Some(&a)), 10, None),
             Err(SilenceRejection::DuplicateId),
             "an untenanted silence is visible to every tenant"
         );
@@ -946,6 +960,26 @@ mod tests {
         );
         assert_eq!(store.remove_scoped("maint", None), SilenceRemoval::Removed);
         assert_eq!(store.snapshot_scoped(0, None).len(), 1);
+    }
+
+    #[test]
+    fn a_tenant_at_its_silence_quota_leaves_room_for_others() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let api = |tenant: &TenantId| {
+            let mut spec = spec("10.0.0.1");
+            spec.tenant = Some(tenant.clone());
+            Silence::build(spec, SilenceOrigin::Api).unwrap()
+        };
+        let mut store = SilenceStore::default();
+        for _ in 0..2 {
+            store.insert_api(api(&a), 10, Some(2)).unwrap();
+        }
+        assert_eq!(
+            store.insert_api(api(&a), 10, Some(2)),
+            Err(SilenceRejection::TenantFull)
+        );
+        store.insert_api(api(&b), 10, Some(2)).unwrap();
     }
 
     #[test]

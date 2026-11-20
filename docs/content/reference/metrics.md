@@ -127,7 +127,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_silences_active` | gauge | none | Currently-active silences. |
 | `rsigma_inhibited_total` | counter | `rule` | Results muted by an inhibition rule, by rule name. |
 | `rsigma_inhibit_sources_active` | gauge | none | Currently-active inhibition sources. |
-| `rsigma_inhibit_sources_refused_total` | counter | `rule` | Results that would have opened a new inhibition source but were not tracked because `max_inhibit_sources` was reached, by rule name. Appears once a source is first refused. {{ added "0.25.0" }} |
+| `rsigma_inhibit_sources_refused_total` | counter | `rule` | Results that would have opened a new inhibition source but were not tracked because `max_inhibit_sources` or the tenant's `daemon.tenancy.quotas.inhibition_sources` was reached, by rule name. Appears once a source is first refused. {{ added "0.25.0" }} |
 | `rsigma_alert_pipeline_duration_seconds` | histogram | none | Alert-pipeline stage duration in seconds. |
 
 ## Risk-based alerting (9 metrics)

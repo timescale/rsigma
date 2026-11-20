@@ -131,16 +131,22 @@ impl Drop for TailSessionHandle {
 pub struct TailRegistry {
     buffer_events: usize,
     max_sessions: usize,
+    max_sessions_per_tenant: Option<usize>,
     next_id: AtomicU64,
     sessions: Mutex<Vec<Arc<TailSession>>>,
     snapshot: ArcSwap<Vec<Arc<TailSession>>>,
 }
 
 impl TailRegistry {
-    pub fn new(buffer_events: usize, max_sessions: usize) -> Arc<Self> {
+    pub fn new(
+        buffer_events: usize,
+        max_sessions: usize,
+        max_sessions_per_tenant: Option<usize>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             buffer_events: buffer_events.max(1),
             max_sessions,
+            max_sessions_per_tenant,
             next_id: AtomicU64::new(0),
             sessions: Mutex::new(Vec::new()),
             snapshot: ArcSwap::from_pointee(Vec::new()),
@@ -150,6 +156,15 @@ impl TailRegistry {
     fn register(self: &Arc<Self>, filter: TailFilter) -> Option<TailSessionHandle> {
         let mut sessions = self.sessions.lock().expect("tail sessions mutex");
         if sessions.len() >= self.max_sessions {
+            return None;
+        }
+        if let (Some(max), Some(tenant)) = (self.max_sessions_per_tenant, filter.tenant.as_ref())
+            && sessions
+                .iter()
+                .filter(|s| s.filter.tenant.as_ref() == Some(tenant))
+                .count()
+                >= max
+        {
             return None;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -410,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_respects_cap_and_deregisters_on_drop() {
-        let reg = TailRegistry::new(8, 2);
+        let reg = TailRegistry::new(8, 2, None);
         let a = reg.register(TailFilter::default());
         let b = reg.register(TailFilter::default());
         assert!(a.is_some() && b.is_some());
@@ -422,8 +437,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_tenant_at_its_session_cap_leaves_room_for_others() {
+        let reg = TailRegistry::new(8, 3, Some(1));
+        let filter = |tenant: &str| TailFilter {
+            tenant: Some(rsigma_eval::TenantId::new(tenant).unwrap()),
+            ..Default::default()
+        };
+        let _first = reg.register(filter("a")).unwrap();
+        assert!(reg.register(filter("a")).is_none());
+        assert!(reg.register(filter("b")).is_some());
+    }
+
+    #[tokio::test]
     async fn capture_applies_filter_and_counts_drops() {
-        let reg = TailRegistry::new(1, 1);
+        let reg = TailRegistry::new(1, 1, None);
         let handle = reg
             .register(TailFilter {
                 min_level: Some(Level::High),

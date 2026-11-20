@@ -85,8 +85,21 @@ pub struct AlertPipeline {
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
     silence_limits: SilenceLimits,
-    max_active_alerts_per_tenant: Option<usize>,
-    max_open_incidents_per_tenant: Option<usize>,
+    tenant_quotas: AlertTenantQuotas,
+}
+
+/// Per-tenant caps on alert-pipeline state. `None` leaves only the global cap
+/// in force.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AlertTenantQuotas {
+    /// Active dedup alerts per tenant; the stalest are evicted at the cap.
+    pub active_alerts: Option<usize>,
+    /// Open incidents per tenant; the stalest are evicted at the cap.
+    pub incidents: Option<usize>,
+    /// Dynamic (API) silences per tenant; creation is refused at the cap.
+    pub silences: Option<usize>,
+    /// Inhibition sources per tenant; new sources are refused at the cap.
+    pub inhibition_sources: Option<usize>,
 }
 
 impl AlertPipeline {
@@ -111,16 +124,18 @@ impl AlertPipeline {
             inhibit,
             max_silences,
             silence_limits,
-            max_active_alerts_per_tenant: None,
-            max_open_incidents_per_tenant: None,
+            tenant_quotas: AlertTenantQuotas::default(),
         }
     }
 
-    /// Set the per-tenant caps for active alerts and open incidents. `None`
-    /// leaves only the global caps in force.
-    pub fn set_tenant_quotas(&mut self, active_alerts: Option<usize>, incidents: Option<usize>) {
-        self.max_active_alerts_per_tenant = active_alerts;
-        self.max_open_incidents_per_tenant = incidents;
+    /// Set the per-tenant caps.
+    pub fn set_tenant_quotas(&mut self, quotas: AlertTenantQuotas) {
+        self.tenant_quotas = quotas;
+    }
+
+    /// Ceiling on dynamic (API) silences per tenant, when set.
+    pub fn max_dynamic_silences_per_tenant(&self) -> Option<usize> {
+        self.tenant_quotas.silences
     }
 
     /// The bounds the silence API applies to new silences
@@ -286,9 +301,15 @@ impl AlertPipeline {
             // ones about to be silenced) as active sources, so a silenced
             // source still inhibits its targets.
             if let Some(icfg) = self.inhibit.as_ref()
-                && let Some(rule) = state.inhibit.evaluate(icfg, &result, now, |rule| {
-                    metrics.on_inhibit_source_refused(rule);
-                })
+                && let Some(rule) = state.inhibit.evaluate(
+                    icfg,
+                    &result,
+                    now,
+                    self.tenant_quotas.inhibition_sources,
+                    |rule| {
+                        metrics.on_inhibit_source_refused(rule);
+                    },
+                )
             {
                 metrics.on_alert_pipeline_inhibited(&rule);
                 continue;
@@ -317,7 +338,7 @@ impl AlertPipeline {
                     continue;
                 }
                 if state.dedup.len() < cfg.max_active_alerts {
-                    if let Some(cap) = self.max_active_alerts_per_tenant
+                    if let Some(cap) = self.tenant_quotas.active_alerts
                         && state
                             .dedup
                             .count_for_tenant(result.header.tenant_id.as_ref())
@@ -346,7 +367,7 @@ impl AlertPipeline {
             // present, then annotate it with the incident id.
             if let Some(gcfg) = self.group.as_ref() {
                 let tenant_cap = grouping::TenantCap {
-                    max: self.max_open_incidents_per_tenant,
+                    max: self.tenant_quotas.incidents,
                     on_evict: || metrics.on_tenant_quota_eviction("incidents"),
                 };
                 if let Some(id) = state.incidents.assign_with_finding_uid(
@@ -637,17 +658,23 @@ impl AlertPipeline {
         trim
     }
 
-    /// Trim each tenant's dedup alerts and incidents to the per-tenant quotas.
+    /// Trim each tenant's dedup alerts, incidents, and inhibition sources to
+    /// the per-tenant quotas.
     fn trim_tenants(&self, state: &mut AlertPipelineState, trim: &mut CapTrim) {
         if self.dedup.is_some()
-            && let Some(max) = self.max_active_alerts_per_tenant
+            && let Some(max) = self.tenant_quotas.active_alerts
         {
             trim.dedup_alerts += state.dedup.enforce_tenant_cap(max);
         }
         if self.group.is_some()
-            && let Some(max) = self.max_open_incidents_per_tenant
+            && let Some(max) = self.tenant_quotas.incidents
         {
             trim.incidents += state.incidents.enforce_tenant_cap(max);
+        }
+        if self.inhibit.is_some()
+            && let Some(max) = self.tenant_quotas.inhibition_sources
+        {
+            trim.inhibit_sources += state.inhibit.enforce_tenant_cap(max);
         }
     }
 
@@ -677,7 +704,8 @@ pub struct CapTrim {
     /// Incidents evicted by `max_open_incidents` or the per-tenant incident
     /// quota.
     pub incidents: usize,
-    /// Inhibition sources evicted by `max_inhibit_sources`.
+    /// Inhibition sources evicted by `max_inhibit_sources` or the per-tenant
+    /// inhibition-source quota.
     pub inhibit_sources: usize,
 }
 
@@ -1000,7 +1028,9 @@ mod tests {
         for i in 2..6 {
             let target = detection(&ip(i), Level::Critical);
             assert_eq!(
-                st.inhibit.evaluate(icfg, &target, 10, |_| {}).is_some(),
+                st.inhibit
+                    .evaluate(icfg, &target, 10, None, |_| {})
+                    .is_some(),
                 i >= 3,
                 "only the newest inhibition sources survive: {}",
                 ip(i)
@@ -1354,7 +1384,11 @@ mod tests {
         let mut p = pipeline(
             "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
         );
-        p.set_tenant_quotas(Some(2), Some(2));
+        p.set_tenant_quotas(AlertTenantQuotas {
+            active_alerts: Some(2),
+            incidents: Some(2),
+            ..Default::default()
+        });
         let mut st = AlertPipelineState::default();
         let a = rsigma_eval::TenantId::new("a").unwrap();
         let b = rsigma_eval::TenantId::new("b").unwrap();
@@ -1371,6 +1405,33 @@ mod tests {
     }
 
     #[test]
+    fn the_inhibition_source_quota_applies_per_tenant() {
+        let mut p = pipeline(
+            "inhibit_rules:\n  - name: crit\n    source_match:\n      - selector: level\n        op: \"=\"\n        value: critical\n    target_match:\n      - selector: level\n        op: \"=\"\n        value: high\n    equal: [match.SourceIp]\n    duration: 5m\n",
+        );
+        p.set_tenant_quotas(AlertTenantQuotas {
+            inhibition_sources: Some(1),
+            ..Default::default()
+        });
+        let mut st = AlertPipelineState::default();
+        let send = |st: &mut AlertPipelineState, ip: &str, level: Level, tenant: &str| {
+            let mut d = detection(ip, level);
+            d.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+            p.process(vec![d], st, 0, &NoopMetrics).len()
+        };
+        send(&mut st, "10.0.0.1", Level::Critical, "a");
+        send(&mut st, "10.0.0.2", Level::Critical, "a");
+        send(&mut st, "10.0.0.3", Level::Critical, "b");
+        assert_eq!(send(&mut st, "10.0.0.1", Level::High, "a"), 0);
+        assert_eq!(
+            send(&mut st, "10.0.0.2", Level::High, "a"),
+            1,
+            "the source over tenant a's quota was refused"
+        );
+        assert_eq!(send(&mut st, "10.0.0.3", Level::High, "b"), 0);
+    }
+
+    #[test]
     fn a_lowered_tenant_quota_trims_carried_over_state() {
         let mut p = pipeline(
             "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
@@ -1381,7 +1442,11 @@ mod tests {
         }
         tenant_run(&p, "10.0.0.9", "b", &mut st, 10);
 
-        p.set_tenant_quotas(Some(2), Some(2));
+        p.set_tenant_quotas(AlertTenantQuotas {
+            active_alerts: Some(2),
+            incidents: Some(2),
+            ..Default::default()
+        });
         let trim = p.enforce_caps(&mut st);
         assert_eq!((trim.dedup_alerts, trim.incidents), (1, 1));
         let a = rsigma_eval::TenantId::new("a").unwrap();
@@ -1402,7 +1467,10 @@ mod tests {
     fn joining_an_open_incident_at_the_tenant_cap_evicts_nothing() {
         let mut p =
             pipeline("group:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n");
-        p.set_tenant_quotas(None, Some(2));
+        p.set_tenant_quotas(AlertTenantQuotas {
+            incidents: Some(2),
+            ..Default::default()
+        });
         let mut st = AlertPipelineState::default();
         tenant_run(&p, &ip(0), "a", &mut st, 0);
         tenant_run(&p, &ip(1), "a", &mut st, 1);

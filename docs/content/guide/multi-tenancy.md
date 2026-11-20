@@ -45,6 +45,9 @@ daemon:
       active_alerts: 5000
       incidents: 2000
       risk_entities: 10000
+      silences: 100
+      inhibition_sources: 1000
+      stream_sessions: 1
     metrics_tenant_allowlist: [tenant-a]
   input:
     source: nats://nats.internal:4222
@@ -162,6 +165,10 @@ A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset rec
 ## Quotas
 
 `daemon.tenancy.quotas` caps correlation state, active alerts, incidents, and risk entities per tenant. At a tenant's cap, a new entry evicts that tenant's own expired entries first, then its stalest entries; a result that joins an open incident or an existing entry evicts nothing. A restore or reload trims each tenant to its quota. The global caps remain as a backstop.
+
+Three more quotas refuse new entries instead of evicting, so a tenant cannot take another tenant's share of a shared control. {{ added "unreleased" }} `silences` caps a tenant's dynamic silences, and `POST /api/v1/silences` returns `429` at the cap. `inhibition_sources` caps a tenant's inhibition sources; a new source over the cap is not tracked, counts in `rsigma_inhibit_sources_refused_total`, and a restore or reload trims each tenant to the quota. `stream_sessions` caps a tenant's concurrent sessions on `GET /api/v1/tap` and on `GET /api/v1/detections/stream`, and a new session returns `409` at the cap. Sessions and silences of an `all_tenants` token that names no tenant count only against the global caps.
+
+Disposition idempotency ids are kept per tenant, and `max_seen_ids` applies to each tenant's set, so one tenant's volume cannot evict another tenant's ids and let a redelivered disposition count twice. Ingest itself is a shared queue: the daemon has no per-tenant ingest rate limit, so put one in front of the push receivers, or give each tenant its own NATS subject with broker-side limits.
 
 ## Sink routing
 

@@ -45,7 +45,7 @@ fn write_rules(dir: &Path) -> PathBuf {
 
 /// A tenancy-enabled config with a shared ruleset, an HTTP source, an alert
 /// pipeline for silences, and a per-tenant file sink.
-fn tenancy_config(dir: &Path, extra_daemon: &str) -> String {
+fn tenancy_config(dir: &Path, extra_tenancy: &str) -> String {
     let rules = write_rules(dir);
     let out = dir.join("out.ndjson");
     let pipeline = dir.join("alert-pipeline.yml");
@@ -65,6 +65,7 @@ daemon:
   tenancy:
     enabled: true
     metrics_tenant_allowlist: [tenant-a]
+{}
   input:
     source: http
   output:
@@ -89,17 +90,16 @@ daemon:
           role: admin
           token_env: ADMIN
           all_tenants: true
-{}
 "#,
         rules.display(),
         pipeline.display(),
+        extra_tenancy,
         out.display(),
-        extra_daemon
     )
 }
 
-fn spawn_tenancy(dir: &Path, extra_daemon: &str) -> DaemonProcess {
-    let config = temp_file(".yaml", &tenancy_config(dir, extra_daemon));
+fn spawn_tenancy(dir: &Path, extra_tenancy: &str) -> DaemonProcess {
+    let config = temp_file(".yaml", &tenancy_config(dir, extra_tenancy));
     let config_path = config.path().to_str().unwrap().to_string();
     DaemonProcess::spawn_with_env(
         &[
@@ -494,6 +494,22 @@ fn silence_ids_are_unique_per_tenant_and_an_ambiguous_delete_is_refused() {
         200
     );
     assert_eq!(http_delete_bearer(&maint, "a-op").0, 200);
+}
+
+#[test]
+fn a_tenant_at_its_silence_quota_does_not_block_another_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "    quotas:\n      silences: 1");
+    let silences = daemon.url("/api/v1/silences");
+    let a = bounded_silence_for("tenant-a");
+    assert_eq!(http_post_bearer(&silences, "a-op", &a).0, 201);
+    let (status, body) = http_post_bearer(&silences, "a-op", &a);
+    assert_eq!(status, 429, "{body}");
+    assert!(body.contains("quotas.silences"), "{body}");
+    assert_eq!(
+        http_post_bearer(&silences, "admin-secret", &bounded_silence_for("tenant-b")).0,
+        201
+    );
 }
 
 #[test]

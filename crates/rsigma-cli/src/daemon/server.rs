@@ -967,10 +967,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     if let Some(path) = config.alert_pipeline_path.as_ref() {
         match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
             Ok(mut pipeline) => {
-                pipeline.set_tenant_quotas(
-                    config.tenancy.quotas.active_alerts,
-                    config.tenancy.quotas.incidents,
-                );
+                pipeline.set_tenant_quotas(config.tenancy.quotas.alert_pipeline());
                 tracing::info!(path = %path.display(), "Alert pipeline loaded");
                 if let Ok(mut state) = alert_state.write() {
                     state
@@ -1229,9 +1226,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
 
     let tap = if config.tap.enabled {
-        let registry = rsigma_runtime::TapRegistry::new(
+        let registry = rsigma_runtime::TapRegistry::with_tenant_cap(
             config.tap.buffer_events,
             config.tap.max_sessions,
+            config.tenancy.quotas.stream_sessions,
             config.tap.max_duration,
         );
         processor.set_event_tap(Some(registry.clone()));
@@ -1247,8 +1245,11 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
 
     let (tail, tail_registry) = if config.tail.enabled {
-        let registry =
-            super::tail::TailRegistry::new(config.tail.buffer_events, config.tail.max_sessions);
+        let registry = super::tail::TailRegistry::new(
+            config.tail.buffer_events,
+            config.tail.max_sessions,
+            config.tenancy.quotas.stream_sessions,
+        );
         tracing::info!(
             buffer_events = config.tail.buffer_events,
             max_sessions = config.tail.max_sessions,
@@ -1789,10 +1790,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             if let Some(path) = reload_alert_pipeline_path.as_deref() {
                 match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
                     Ok(mut new_pipeline) => {
-                        new_pipeline.set_tenant_quotas(
-                            reload_tenant_quotas.active_alerts,
-                            reload_tenant_quotas.incidents,
-                        );
+                        new_pipeline.set_tenant_quotas(reload_tenant_quotas.alert_pipeline());
                         // Re-seed static silences (replacing the previous static
                         // set; API-created silences are preserved), trim to the
                         // new caps, and swap under the state lock the sink task
@@ -4570,12 +4568,18 @@ async fn create_silence(
         Err(response) => return response,
     };
     spec.tenant = tenant;
-    let Some((max_silences, limits)) = state
+    let Some((max_silences, max_per_tenant, limits)) = state
         .alert_pipeline_swap
         .load_full()
         .as_ref()
         .as_ref()
-        .map(|p| (p.max_dynamic_silences(), p.silence_limits()))
+        .map(|p| {
+            (
+                p.max_dynamic_silences(),
+                p.max_dynamic_silences_per_tenant(),
+                p.silence_limits(),
+            )
+        })
     else {
         return (
             StatusCode::CONFLICT,
@@ -4592,7 +4596,8 @@ async fn create_silence(
             let id = silence.id().to_string();
             let added = {
                 let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-                st.silences.insert_api(silence, max_silences)
+                st.silences
+                    .insert_api(silence, max_silences, max_per_tenant)
             };
             match added {
                 Ok(()) => (
@@ -4613,6 +4618,16 @@ async fn create_silence(
                     Json(serde_json::json!({
                         "error": format!(
                             "dynamic silence limit reached ({max_silences}); delete silences or raise max_silences"
+                        )
+                    })),
+                )
+                    .into_response(),
+                Err(SilenceRejection::TenantFull) => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "this tenant's dynamic silence quota is reached ({}); delete silences or raise daemon.tenancy.quotas.silences",
+                            max_per_tenant.unwrap_or_default()
                         )
                     })),
                 )
@@ -5328,7 +5343,7 @@ async fn tap_stream(
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "tap session capacity reached",
-                "hint": "wait for an active tap to finish, or raise daemon.tap.max_sessions",
+                "hint": "wait for an active tap to finish, or raise daemon.tap.max_sessions (or daemon.tenancy.quotas.stream_sessions)",
             })),
         )
             .into_response();
@@ -5382,7 +5397,7 @@ async fn detections_stream(
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "tail session capacity reached",
-                "hint": "wait for an active tail to finish, or raise daemon.tail.max_sessions",
+                "hint": "wait for an active tail to finish, or raise daemon.tail.max_sessions (or daemon.tenancy.quotas.stream_sessions)",
             })),
         )
             .into_response(),

@@ -65,7 +65,8 @@ pub struct DispositionConfig {
     pub numerator: Numerator,
     /// Minimum dispositions in the window before the ratio is published.
     pub min_sample: u64,
-    /// Ceiling on the idempotency seen-id set.
+    /// Ceiling on the idempotency seen-id set of each tenant (and of the
+    /// untenanted set), so one tenant's volume cannot evict another's ids.
     pub max_seen_ids: usize,
 }
 
@@ -153,9 +154,39 @@ pub struct DispositionStore {
     config: DispositionConfig,
     /// Per-rule bucketed counts, keyed by `(tenant, rule_id)` then bucket index.
     rules: HashMap<(Option<TenantId>, String), BTreeMap<i64, VerdictCounts>>,
-    /// Idempotency set: keys seen, with their timestamp for window pruning.
-    seen: HashSet<String>,
-    seen_order: VecDeque<(i64, String)>,
+    /// Idempotency sets keyed by the tenant prefix of the dedup key.
+    seen: HashMap<String, SeenIds>,
+}
+
+/// One tenant's idempotency keys, with their timestamp for window pruning.
+#[derive(Debug, Default)]
+struct SeenIds {
+    keys: HashSet<String>,
+    order: VecDeque<(i64, String)>,
+}
+
+impl SeenIds {
+    fn prune(&mut self, cutoff: i64, max: usize) {
+        while let Some((ts, _)) = self.order.front() {
+            if *ts < cutoff || self.order.len() > max {
+                if let Some((_, key)) = self.order.pop_front() {
+                    self.keys.remove(&key);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+/// The tenant part of a [`Disposition::dedup_key`], or `""` when untenanted.
+fn seen_partition(key: &str) -> &str {
+    if key.starts_with("tenant=")
+        && let Some(end) = key.find('\u{1f}')
+    {
+        return &key[..end];
+    }
+    ""
 }
 
 impl DispositionStore {
@@ -164,8 +195,7 @@ impl DispositionStore {
         Self {
             config,
             rules: HashMap::new(),
-            seen: HashSet::new(),
-            seen_order: VecDeque::new(),
+            seen: HashMap::new(),
         }
     }
 
@@ -192,7 +222,11 @@ impl DispositionStore {
         };
 
         let key = disposition.dedup_key();
-        if self.seen.contains(&key) {
+        if self
+            .seen
+            .get(seen_partition(&key))
+            .is_some_and(|ids| ids.keys.contains(&key))
+        {
             return IngestOutcome::Duplicate;
         }
         // Order the seen entry by the disposition's own timestamp so the
@@ -215,23 +249,25 @@ impl DispositionStore {
     }
 
     fn remember(&mut self, key: String, ts: i64, now: i64) {
-        self.seen.insert(key.clone());
-        self.seen_order.push_back((ts, key));
-        self.prune_seen(now);
+        let cutoff = now - self.config.window_secs();
+        let max = self.config.max_seen_ids;
+        let ids = self
+            .seen
+            .entry(seen_partition(&key).to_string())
+            .or_default();
+        if ids.keys.insert(key.clone()) {
+            ids.order.push_back((ts, key));
+        }
+        ids.prune(cutoff, max);
     }
 
     fn prune_seen(&mut self, now: i64) {
         let cutoff = now - self.config.window_secs();
-        while let Some((ts, _)) = self.seen_order.front() {
-            let over_capacity = self.seen_order.len() > self.config.max_seen_ids;
-            if *ts < cutoff || over_capacity {
-                if let Some((_, key)) = self.seen_order.pop_front() {
-                    self.seen.remove(&key);
-                }
-            } else {
-                break;
-            }
-        }
+        let max = self.config.max_seen_ids;
+        self.seen.retain(|_, ids| {
+            ids.prune(cutoff, max);
+            !ids.order.is_empty()
+        });
     }
 
     /// Drop buckets older than the window across every rule (called on a
@@ -347,7 +383,15 @@ impl DispositionStore {
                         .collect(),
                 })
                 .collect(),
-            seen: self.seen_order.iter().cloned().collect(),
+            seen: {
+                let mut seen: Vec<(i64, String)> = self
+                    .seen
+                    .values()
+                    .flat_map(|ids| ids.order.iter().cloned())
+                    .collect();
+                seen.sort();
+                seen
+            },
         }
     }
 
@@ -412,8 +456,12 @@ impl DispositionStore {
             if ts < seen_cutoff {
                 continue;
             }
-            if self.seen.insert(key.clone()) {
-                self.seen_order.push_back((ts, key));
+            let ids = self
+                .seen
+                .entry(seen_partition(&key).to_string())
+                .or_default();
+            if ids.keys.insert(key.clone()) {
+                ids.order.push_back((ts, key));
             }
         }
         self.prune_seen(now);
@@ -605,5 +653,24 @@ mod tests {
         let stats = untenanted.restore_detailed(snap, 1000, false).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(stats.discarded_tenanted, 1);
+    }
+
+    #[test]
+    fn one_tenants_volume_cannot_evict_anothers_seen_ids() {
+        let mut store = DispositionStore::new(DispositionConfig {
+            min_sample: 1,
+            max_seen_ids: 2,
+            ..Default::default()
+        });
+        let victim = disp_tenant("r", "false_positive", 1000, "a");
+        store.apply(&victim, 1000);
+        for ts in 1001..1010 {
+            store.apply(&disp_tenant("r", "true_positive", ts, "b"), 1010);
+        }
+        assert_eq!(store.apply(&victim, 1010), IngestOutcome::Duplicate);
+
+        let mut restored = DispositionStore::new(store.config().clone());
+        restored.restore(store.snapshot(), 1010, true);
+        assert_eq!(restored.apply(&victim, 1010), IngestOutcome::Duplicate);
     }
 }

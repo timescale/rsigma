@@ -258,7 +258,7 @@ curl -sS http://127.0.0.1:9090/api/v1/silences
 
 ### `POST /api/v1/silences`
 
-Create a silence. The body is a JSON object with `matchers` (required; each `{selector, op, value}` where `op` is `=`, `!=`, `=~`, or `!~`), optional `id`, `starts_at` and `ends_at` (RFC 3339), `created_by`, and `comment`. Returns `201` with the assigned `id`. {{ added "unreleased" }} An `id` that a silence visible to the caller already uses returns `409`. With tenancy enabled, ids are unique per tenant, so a tenant can reuse an id that another tenant has and never learns that it exists. A missing matcher list or a bad regex returns `400`. Once the dynamic-silence cap (`max_silences`, default 1000) is reached it returns `429`; delete silences or raise the cap.
+Create a silence. The body is a JSON object with `matchers` (required; each `{selector, op, value}` where `op` is `=`, `!=`, `=~`, or `!~`), optional `id`, `starts_at` and `ends_at` (RFC 3339), `created_by`, and `comment`. Returns `201` with the assigned `id`. {{ added "unreleased" }} An `id` that a silence visible to the caller already uses returns `409`. With tenancy enabled, ids are unique per tenant, so a tenant can reuse an id that another tenant has and never learns that it exists. A missing matcher list or a bad regex returns `400`. Once the dynamic-silence cap (`max_silences`, default 1000) is reached it returns `429`; delete silences or raise the cap. With `daemon.tenancy.quotas.silences` set, a tenant at its quota also gets `429`. {{ added "unreleased" }}
 
 {{ added "0.27.0" }} The alert pipeline's silence limits also return `400`, with an `error` and a `hint`:
 
@@ -334,7 +334,7 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/dispositions \
 { "accepted": 1, "duplicate": 0, "rejected": 0 }
 ```
 
-Redelivery is idempotent: records deduplicate on `(fingerprint or incident_id, verdict, rule_id)`, falling back to `(rule_id, timestamp, analyst)`. The `rule_id` is part of the identity key so an incident-scoped fan-out does not collapse per-rule records. An `incident`-scoped record with no `rule_id` resolves to the incident's contributing rules through the live incident map; an unknown incident is reported in the summary's `errors` and counted as `rejected`.
+Redelivery is idempotent: records deduplicate on `(fingerprint or incident_id, verdict, rule_id)`, falling back to `(rule_id, timestamp, analyst)`. With tenancy enabled, the tenant is part of the key and each tenant keeps its own bounded set of ids. {{ added "unreleased" }} The `rule_id` is part of the identity key so an incident-scoped fan-out does not collapse per-rule records. An `incident`-scoped record with no `rule_id` resolves to the incident's contributing rules through the live incident map; an unknown incident is reported in the summary's `errors` and counted as `rejected`.
 
 ### `GET /api/v1/dispositions`
 

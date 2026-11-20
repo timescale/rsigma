@@ -244,6 +244,12 @@ pub(crate) struct TenantQuotasPartial {
     pub incidents: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_entities: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silences: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inhibition_sources: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_sessions: Option<usize>,
 }
 
 impl Merge for TenantQuotasPartial {
@@ -253,6 +259,9 @@ impl Merge for TenantQuotasPartial {
             active_alerts: over.active_alerts.or(self.active_alerts),
             incidents: over.incidents.or(self.incidents),
             risk_entities: over.risk_entities.or(self.risk_entities),
+            silences: over.silences.or(self.silences),
+            inhibition_sources: over.inhibition_sources.or(self.inhibition_sources),
+            stream_sessions: over.stream_sessions.or(self.stream_sessions),
         }
     }
 }

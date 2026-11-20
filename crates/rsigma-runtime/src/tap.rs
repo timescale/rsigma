@@ -108,6 +108,7 @@ impl Drop for TapSessionHandle {
 pub struct TapRegistry {
     buffer_events: usize,
     max_sessions: usize,
+    max_sessions_per_tenant: Option<usize>,
     max_duration: Duration,
     next_id: AtomicU64,
     /// Authoritative session list, guarded for add/remove.
@@ -120,9 +121,21 @@ impl TapRegistry {
     /// Build an empty registry with the given per-session channel capacity,
     /// concurrent-session cap, and maximum capture window.
     pub fn new(buffer_events: usize, max_sessions: usize, max_duration: Duration) -> Arc<Self> {
+        Self::with_tenant_cap(buffer_events, max_sessions, None, max_duration)
+    }
+
+    /// Like [`new`](Self::new), also capping the concurrent sessions bound to
+    /// any one tenant at `max_sessions_per_tenant`.
+    pub fn with_tenant_cap(
+        buffer_events: usize,
+        max_sessions: usize,
+        max_sessions_per_tenant: Option<usize>,
+        max_duration: Duration,
+    ) -> Arc<Self> {
         Arc::new(Self {
             buffer_events: buffer_events.max(1),
             max_sessions,
+            max_sessions_per_tenant,
             max_duration,
             next_id: AtomicU64::new(0),
             sessions: Mutex::new(Vec::new()),
@@ -143,7 +156,8 @@ impl TapRegistry {
 
     /// Register a new session for `stage`, optionally restricted to one
     /// tenant. Returns `None` when the active session count is already at the
-    /// configured cap (the caller maps this to a `409`).
+    /// configured cap, or the tenant is at its own cap (the caller maps this
+    /// to a `409`).
     pub fn register(
         self: &Arc<Self>,
         stage: TapStage,
@@ -151,6 +165,15 @@ impl TapRegistry {
     ) -> Option<TapSessionHandle> {
         let mut sessions = self.sessions.lock();
         if sessions.len() >= self.max_sessions {
+            return None;
+        }
+        if let (Some(max), Some(tenant)) = (self.max_sessions_per_tenant, tenant.as_ref())
+            && sessions
+                .iter()
+                .filter(|s| s.tenant.as_ref() == Some(tenant))
+                .count()
+                >= max
+        {
             return None;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -257,5 +280,15 @@ mod tests {
 
         assert_eq!(handle.captured.load(Ordering::Relaxed), 1);
         assert_eq!(handle.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn a_tenant_at_its_session_cap_leaves_room_for_others() {
+        let reg = TapRegistry::with_tenant_cap(8, 3, Some(1), Duration::from_secs(30));
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let _first = reg.register(TapStage::Raw, Some(a.clone())).unwrap();
+        assert!(reg.register(TapStage::Raw, Some(a)).is_none());
+        assert!(reg.register(TapStage::Raw, Some(b)).is_some());
     }
 }
