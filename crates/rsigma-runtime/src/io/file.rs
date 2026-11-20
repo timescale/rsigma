@@ -22,6 +22,8 @@ pub struct FileSink {
     tenant_filter: Option<TenantId>,
     tenant_path: Option<TenantPath>,
     tenant_handles: HashMap<TenantId, TenantHandle>,
+    /// Lines of a `{tenant}` delivery already written, across tenant files.
+    tenant_resume: ResumePoint,
 }
 
 /// A `{tenant}` path template and the handle LRU bound.
@@ -48,6 +50,7 @@ impl FileSink {
             tenant_filter: None,
             tenant_path: None,
             tenant_handles: HashMap::new(),
+            tenant_resume: ResumePoint::default(),
         })
     }
 
@@ -70,6 +73,7 @@ impl FileSink {
                 tick: 0,
             }),
             tenant_handles: HashMap::new(),
+            tenant_resume: ResumePoint::default(),
         })
     }
 
@@ -126,6 +130,9 @@ impl FileSink {
             return Ok(());
         }
         if self.tenant_path.is_some() {
+            // Check every tenant before writing, so an untenanted result fails
+            // the delivery without a partial write.
+            let mut lines = Vec::new();
             for (index, m) in result.iter().enumerate() {
                 if let Some(filter) = &self.tenant_filter
                     && m.header.tenant_id.as_ref() != Some(filter)
@@ -137,17 +144,27 @@ impl FileSink {
                         "a {tenant} file sink received a result without a tenant".to_string(),
                     ));
                 };
-                let json = serialize_result(
+                lines.push((index, tenant, m));
+            }
+            let start = self.tenant_resume.start(ctx);
+            for (done, (index, tenant, m)) in lines.iter().enumerate().skip(start) {
+                let written = serialize_result(
                     m,
                     self.format,
                     false,
-                    ctx.map(|ctx| (ctx, index)),
+                    ctx.map(|ctx| (ctx, *index)),
                     &self.ocsf,
-                )?;
-                let path = self.render_path(&tenant);
-                let writer = self.writer_for(&tenant, &path)?;
-                writer.write_line(&json)?;
+                )
+                .and_then(|json| {
+                    let path = self.render_path(tenant);
+                    self.writer_for(tenant, &path)?.write_line(&json)
+                });
+                if let Err(err) = written {
+                    self.tenant_resume.record(ctx, done);
+                    return Err(err);
+                }
             }
+            self.tenant_resume.clear();
             return Ok(());
         }
 
@@ -545,6 +562,39 @@ mod tests {
         let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
         sink.send(&vec![tenanted("a", "a")]).unwrap();
         assert!(dir.path().join("a/findings.ndjson").is_file());
+    }
+
+    #[test]
+    fn a_retried_tenant_delivery_skips_lines_already_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let result = vec![tenanted("a", "a"), tenanted("b", "b")];
+        let ctx = DeliveryContext::new();
+
+        assert!(sink.send_with_context(&result, &ctx).is_err());
+        std::fs::remove_file(&blocker).unwrap();
+        sink.send_with_context(&result, &ctx).unwrap();
+
+        let a = std::fs::read_to_string(dir.path().join("a/findings.ndjson")).unwrap();
+        let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
+        assert_eq!(a.lines().count(), 1, "tenant a's line is not repeated");
+        assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn an_untenanted_result_fails_before_any_tenant_file_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, ".ndjson".to_string(), 4).unwrap();
+        let result = vec![tenanted("a", "a"), three_results().remove(0)];
+        assert!(matches!(
+            sink.send(&result),
+            Err(RuntimeError::Permanent(_))
+        ));
+        assert!(!dir.path().join("a.ndjson").exists());
     }
 
     #[test]
