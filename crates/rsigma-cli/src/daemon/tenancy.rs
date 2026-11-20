@@ -64,6 +64,7 @@ pub(crate) struct TenancyValidation<'a> {
     pub sink_specs: &'a [String],
     pub alert_pipeline_nats_subjects: &'a [String],
     pub scope_tenants: &'a [Vec<String>],
+    pub disposition_source: bool,
 }
 
 /// Validate tenancy settings against the inputs. Returns the first refusal.
@@ -113,15 +114,9 @@ fn validate_enabled(v: &TenancyValidation<'_>) -> Result<(), String> {
             _ => {}
         }
     }
-    // 5. Configured ids must be valid. TenantId::new already ran for tokens
-    // and NATS bindings; validate the remaining string-typed bindings.
-    for tenant in &v.settings.metrics_tenant_allowlist {
-        let _ = tenant;
-    }
+    // 5. Configured ids are parsed as TenantId before validation runs, so
+    // only an explicitly empty ruleset binding is left to refuse here.
     for (ruleset, tenants) in v.ruleset_tenants {
-        for tenant in tenants {
-            let _ = tenant;
-        }
         if tenants.is_empty() {
             return Err(format!(
                 "ruleset '{ruleset}' has an empty `tenants` binding; omit the key to admit every tenant"
@@ -130,17 +125,20 @@ fn validate_enabled(v: &TenancyValidation<'_>) -> Result<(), String> {
     }
 
     let source = v.input_source.unwrap_or("stdin");
-    let nats_subject_source = source.starts_with("nats://") && nats_url_has_subject(source);
-    // 6. A pull source needs an operator-declared tenant.
-    if (source == "stdin"
-        || source.starts_with("stdin://")
-        || source.starts_with("unix://")
-        || nats_subject_source)
-        && v.input_tenant.is_none()
-    {
+    // 6. Every source other than the HTTP push source needs an
+    // operator-declared tenant, including a subject-less NATS URL (which
+    // subscribes to `>`) without `nats_tenants`.
+    if source != "http" && v.input_tenant.is_none() && v.nats_tenants.is_empty() {
         return Err(format!(
             "daemon.input.source '{source}' requires daemon.input.tenant while tenancy is enabled"
         ));
+    }
+    // A disposition pull source has no tenant binding, and a record's own
+    // `tenant` field is not identity.
+    if v.disposition_source {
+        return Err(
+            "daemon.dispositions.source cannot be used while tenancy is enabled; post dispositions to /api/v1/dispositions with a tenant token".to_string(),
+        );
     }
     // 7. An HTTP push source gets its tenant from the token, not config.
     if source == "http" && v.input_tenant.is_some() {
@@ -347,7 +345,9 @@ pub(crate) fn tenant_filter(
         return Ok(TenantFilter::All);
     }
     let Some(identity) = identity else {
-        return Ok(TenantFilter::All);
+        return Err(forbidden(
+            "tenancy is enabled but the request has no identity",
+        ));
     };
     if identity.all_tenants {
         return match requested {
@@ -356,7 +356,7 @@ pub(crate) fn tenant_filter(
         };
     }
     let Some(own) = &identity.tenant else {
-        return Ok(TenantFilter::All);
+        return Err(forbidden("the token has no tenant binding"));
     };
     match requested {
         None => Ok(TenantFilter::Only(own.clone())),
@@ -377,7 +377,9 @@ pub(crate) fn write_tenant(
         return Ok(None);
     }
     let Some(identity) = identity else {
-        return Ok(None);
+        return Err(forbidden(
+            "tenancy is enabled but the request has no identity",
+        ));
     };
     if identity.all_tenants {
         let Some(body_tenant) = body_tenant else {
@@ -388,7 +390,7 @@ pub(crate) fn write_tenant(
         return parse_tenant(body_tenant).map(Some);
     }
     let Some(own) = &identity.tenant else {
-        return Ok(None);
+        return Err(forbidden("the token has no tenant binding"));
     };
     match body_tenant {
         None => Ok(Some(own.clone())),
@@ -503,6 +505,94 @@ mod tests {
             Some(tenant("b"))
         );
     }
+
+    #[test]
+    fn an_unbound_identity_fails_closed_with_tenancy_on() {
+        let unbound = AuthIdentity {
+            token: Some("t".into()),
+            tenant: None,
+            all_tenants: false,
+        };
+        for identity in [None, Some(&unbound)] {
+            let read = tenant_filter(true, identity, None).unwrap_err();
+            assert_eq!(read.status(), StatusCode::FORBIDDEN);
+            let write = write_tenant(true, identity, None).unwrap_err();
+            assert_eq!(write.status(), StatusCode::FORBIDDEN);
+        }
+        assert!(matches!(
+            tenant_filter(false, None, None).unwrap(),
+            TenantFilter::All
+        ));
+        assert_eq!(write_tenant(false, None, None).unwrap(), None);
+    }
+
+    fn enabled_validation<'a>(
+        settings: &'a TenancySettings,
+        tokens: &'a [super::super::auth::TokenSpec],
+        source: &'a str,
+    ) -> TenancyValidation<'a> {
+        TenancyValidation {
+            settings,
+            token_specs: tokens,
+            anonymous_permissions: &[],
+            api_token_env_used: false,
+            auth_configured: true,
+            input_source: Some(source),
+            input_tenant: None,
+            nats_tenants: &[],
+            ruleset_tenants: &[],
+            project_layer_loaded: false,
+            sink_specs: &[],
+            alert_pipeline_nats_subjects: &[],
+            scope_tenants: &[],
+            disposition_source: false,
+        }
+    }
+
+    #[test]
+    fn every_non_http_source_needs_a_tenant_binding() {
+        let settings = TenancySettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let tokens = [super::super::auth::TokenSpec {
+            name: "admin".into(),
+            role: Some("admin".into()),
+            permissions: None,
+            token_env: "ADMIN".into(),
+            tenant: None,
+            all_tenants: true,
+        }];
+        for source in [
+            "stdin",
+            "unix:///tmp/rsigma.sock",
+            "nats://host:4222/events",
+            "nats://host:4222",
+        ] {
+            let error = validate_tenancy(&enabled_validation(&settings, &tokens, source))
+                .expect_err(source);
+            assert!(error.contains("requires daemon.input.tenant"), "{error}");
+        }
+        validate_tenancy(&enabled_validation(&settings, &tokens, "http")).unwrap();
+
+        let mut with_tenant = enabled_validation(&settings, &tokens, "nats://host:4222");
+        with_tenant.input_tenant = Some("tenant-a");
+        validate_tenancy(&with_tenant).unwrap();
+
+        let bindings = [NatsTenantBinding {
+            subject: "tenants.a.>".into(),
+            tenant: tenant("a"),
+            credentials_file: None,
+        }];
+        let mut with_bindings = enabled_validation(&settings, &tokens, "nats://host:4222");
+        with_bindings.nats_tenants = &bindings;
+        validate_tenancy(&with_bindings).unwrap();
+
+        let mut disposition_source = enabled_validation(&settings, &tokens, "http");
+        disposition_source.disposition_source = true;
+        let error = validate_tenancy(&disposition_source).unwrap_err();
+        assert!(error.contains("daemon.dispositions.source"), "{error}");
+    }
 }
 
 /// Resolve tenancy settings, the input tenant, and the NATS tenant bindings
@@ -614,38 +704,41 @@ pub(crate) fn token_specs_for_tenancy(
     ))
 }
 
-/// Validate tenancy against the merged config and the CLI flags.
-#[allow(clippy::too_many_arguments)]
+/// The daemon inputs after CLI flags are applied over the config files. Tenancy
+/// validation reads these rather than the config files alone, so a flag such
+/// as `--input` or `--output` cannot bypass a refusal.
+pub(crate) struct ResolvedDaemonInputs<'a> {
+    pub input_source: &'a str,
+    pub sink_specs: &'a [String],
+    pub ruleset_tenants: &'a [(String, Vec<TenantId>)],
+    pub alert_pipeline: Option<&'a std::path::Path>,
+    pub risk: Option<&'a std::path::Path>,
+    pub enrichers: Option<&'a std::path::Path>,
+    pub webhooks: &'a [PathBuf],
+    pub disposition_source: bool,
+}
+
+/// Validate tenancy against the merged config and the resolved daemon inputs.
 pub(crate) fn validate_tenancy_from_config(
     base: &crate::config::RsigmaConfigPartial,
     settings: &TenancySettings,
     input_tenant: Option<&TenantId>,
     nats_tenants: &[NatsTenantBinding],
-    ruleset_tenants: &[(String, Vec<TenantId>)],
+    resolved: &ResolvedDaemonInputs<'_>,
     project_layer_loaded: bool,
     api_token_env_used: bool,
 ) -> Result<(), String> {
     let (token_specs, anonymous) = token_specs_for_tenancy(base, api_token_env_used)?;
-    let auth_configured = base
-        .daemon
-        .as_ref()
-        .and_then(|d| d.api.as_ref())
-        .and_then(|a| a.auth.as_ref())
-        .is_some();
-    let input_source = base
-        .daemon
-        .as_ref()
-        .and_then(|d| d.input.as_ref())
-        .and_then(|i| i.source.as_deref());
-    let sink_specs = base
-        .daemon
-        .as_ref()
-        .and_then(|d| d.output.as_ref())
-        .and_then(|o| o.sinks.clone())
-        .unwrap_or_default();
+    let auth_configured = api_token_env_used
+        || base
+            .daemon
+            .as_ref()
+            .and_then(|d| d.api.as_ref())
+            .and_then(|a| a.auth.as_ref())
+            .is_some();
     let mut alert_pipeline_nats_subjects = Vec::new();
     let mut scope_tenants: Vec<Vec<String>> = Vec::new();
-    if let Some(path) = base.daemon.as_ref().and_then(|d| d.alert_pipeline.as_ref())
+    if let Some(path) = resolved.alert_pipeline
         && let Ok(file) = rsigma_runtime::load_alert_pipeline_file(path)
     {
         if let Some(group) = &file.group
@@ -657,7 +750,7 @@ pub(crate) fn validate_tenancy_from_config(
             scope_tenants.push(scope.tenants.clone());
         }
     }
-    if let Some(path) = base.daemon.as_ref().and_then(|d| d.risk.as_ref())
+    if let Some(path) = resolved.risk
         && let Ok(file) = rsigma_runtime::load_risk_file(path)
     {
         if let Some(subject) = &file.nats_subject {
@@ -672,7 +765,7 @@ pub(crate) fn validate_tenancy_from_config(
             scope_tenants.push(scope.tenants.clone());
         }
     }
-    if let Some(path) = base.daemon.as_ref().and_then(|d| d.enrichers.as_ref())
+    if let Some(path) = resolved.enrichers
         && let Ok(file) = rsigma_runtime::load_enrichers_file(path)
     {
         for enricher in &file.enrichers {
@@ -681,14 +774,8 @@ pub(crate) fn validate_tenancy_from_config(
             }
         }
     }
-    for path in base
-        .daemon
-        .as_ref()
-        .and_then(|d| d.output.as_ref())
-        .and_then(|o| o.webhooks.clone())
-        .unwrap_or_default()
-    {
-        if let Ok(file) = rsigma_runtime::load_webhooks_file(std::path::Path::new(&path)) {
+    for path in resolved.webhooks {
+        if let Ok(file) = rsigma_runtime::load_webhooks_file(path) {
             for webhook in &file.webhooks {
                 if let Some(scope) = &webhook.scope {
                     scope_tenants.push(scope.tenants.clone());
@@ -703,13 +790,14 @@ pub(crate) fn validate_tenancy_from_config(
         anonymous_permissions: &anonymous,
         api_token_env_used,
         auth_configured,
-        input_source,
+        input_source: Some(resolved.input_source),
         input_tenant: input_tenant_str.as_deref(),
         nats_tenants,
-        ruleset_tenants,
+        ruleset_tenants: resolved.ruleset_tenants,
         project_layer_loaded,
-        sink_specs: &sink_specs,
+        sink_specs: resolved.sink_specs,
         alert_pipeline_nats_subjects: &alert_pipeline_nats_subjects,
         scope_tenants: &scope_tenants,
+        disposition_source: resolved.disposition_source,
     })
 }

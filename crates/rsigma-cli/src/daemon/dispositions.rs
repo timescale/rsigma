@@ -114,8 +114,8 @@ impl DispositionState {
         self.ingest_inner(body, source, None)
     }
 
-    /// Ingest a batch and bind every disposition to `tenant`, overriding any
-    /// `tenant` in the body.
+    /// Ingest a batch and bind every disposition to `tenant`, replacing any
+    /// `tenant` in the body (`None` clears it).
     pub fn ingest_with_tenant(
         &self,
         body: &str,
@@ -142,10 +142,10 @@ impl DispositionState {
                 return Err(e.to_string());
             }
         };
-        if let Some(tenant) = &tenant {
-            for raw in &mut raws {
-                raw.tenant = Some(tenant.as_str().to_string());
-            }
+        // A record's own `tenant` is never identity: only the API principal
+        // binds one, and every other source ingests untenanted records.
+        for raw in &mut raws {
+            raw.tenant = tenant.as_ref().map(|t| t.as_str().to_string());
         }
         let mut summary = IngestSummary::default();
         for raw in raws {

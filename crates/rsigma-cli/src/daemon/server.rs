@@ -3941,16 +3941,30 @@ async fn list_rules(
     };
     let stats = state.processor.stats();
     let mut rulesets = state.processor.ruleset_stats();
-    if let Some(tenant) = &tenant {
+    let ruleset_mode = !rulesets.is_empty();
+    let (mut detection_rules, mut correlation_rules) =
+        (stats.detection_rules, stats.correlation_rules);
+    if let Some(tenant) = &tenant
+        && ruleset_mode
+    {
         rulesets.retain(|ruleset| {
             ruleset.tenants.is_empty() || ruleset.tenants.iter().any(|t| t == tenant)
         });
+        // Counts and bindings describe only what this tenant can see, so a
+        // shared binding does not reveal the other tenants it names.
+        for ruleset in &mut rulesets {
+            if !ruleset.tenants.is_empty() {
+                ruleset.tenants = vec![tenant.clone()];
+            }
+        }
+        detection_rules = rulesets.iter().map(|r| r.detection_rules).sum();
+        correlation_rules = rulesets.iter().map(|r| r.correlation_rules).sum();
     }
     let mut value = serde_json::json!({
-        "detection_rules": stats.detection_rules,
-        "correlation_rules": stats.correlation_rules,
+        "detection_rules": detection_rules,
+        "correlation_rules": correlation_rules,
     });
-    if rulesets.is_empty() {
+    if !ruleset_mode {
         value["rules_path"] = serde_json::json!(state.processor.rules_path().display().to_string());
     } else {
         value["rulesets"] = serde_json::json!(rulesets);
@@ -4147,7 +4161,7 @@ async fn get_incident_bundle(
         .map(|cfg| {
             let now = chrono::Utc::now().timestamp();
             let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
-            st.views(cfg, now)
+            same_tenant_entities(st.views(cfg, now), incident.tenant_id.as_ref())
         });
 
     let generated_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -4167,6 +4181,18 @@ async fn get_incident_bundle(
         BundleFormat::Markdown => super::bundle::render_markdown(&bundle),
     };
     ([(header::CONTENT_TYPE, format.content_type())], body).into_response()
+}
+
+/// Keep only the risk entities of `tenant`, so a bundle never joins an
+/// incident to another tenant's entity that shares a value.
+fn same_tenant_entities(
+    entities: Vec<rsigma_runtime::RiskEntityView>,
+    tenant: Option<&TenantId>,
+) -> Vec<rsigma_runtime::RiskEntityView> {
+    entities
+        .into_iter()
+        .filter(|entity| entity.tenant_id.as_ref() == tenant)
+        .collect()
 }
 
 fn snapshot_incident(state: &AppState, id: &str, include: IncludeMode) -> Option<IncidentResult> {
@@ -4394,23 +4420,23 @@ async fn ingest_dispositions(
     let Some(dispositions) = state.disposition_state.as_ref() else {
         return dispositions_disabled();
     };
-    // A body `tenant` is read only to validate it against the token; the token
-    // wins. `write_tenant` refuses a foreign tenant with 403.
-    let body_tenant = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|value| match value {
-            serde_json::Value::Object(map) => map
-                .get("tenant")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            serde_json::Value::Array(items) => items
-                .first()
-                .and_then(serde_json::Value::as_object)
-                .and_then(|map| map.get("tenant"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            _ => None,
-        });
+    // Every record's `tenant` is checked against the token by `write_tenant`,
+    // which refuses a foreign tenant with 403, so a batch may name at most one.
+    let mut body_tenants: Vec<String> = rsigma_runtime::parse_dispositions(&body)
+        .map(|raws| raws.into_iter().filter_map(|raw| raw.tenant).collect())
+        .unwrap_or_default();
+    body_tenants.sort();
+    body_tenants.dedup();
+    if body_tenants.len() > 1 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "a disposition batch may name only one tenant"
+            })),
+        )
+            .into_response();
+    }
+    let body_tenant = body_tenants.pop();
     let tenant = match super::tenancy::write_tenant(
         state.tenancy_enabled,
         identity.as_ref().map(|e| &e.0),
@@ -5766,6 +5792,32 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bundle_joins_only_its_own_tenants_risk_entities() {
+        let entity = |tenant: Option<&str>| rsigma_runtime::RiskEntityView {
+            tenant_id: tenant.map(|t| TenantId::new(t).unwrap()),
+            entity_type: "user".to_string(),
+            entity_value: "alice".to_string(),
+            score: 100,
+            tactic_count: 1,
+            source_count: 1,
+            result_count: 1,
+            window_start: 0,
+            window_end: 60,
+            last_fired: None,
+        };
+        let views = vec![entity(Some("a")), entity(Some("b")), entity(None)];
+        let a = TenantId::new("a").unwrap();
+
+        let kept = same_tenant_entities(views.clone(), Some(&a));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].tenant_id.as_ref(), Some(&a));
+
+        let untenanted = same_tenant_entities(views, None);
+        assert_eq!(untenanted.len(), 1);
+        assert!(untenanted[0].tenant_id.is_none());
+    }
 
     #[test]
     fn dropped_failure_warnings_are_rate_limited() {

@@ -738,22 +738,9 @@ pub(crate) fn cmd_daemon(
                 process::exit(exit_code::CONFIG_ERROR);
             }
         };
-    let ruleset_tenants = config_ruleset_tenants(&base);
     let project_layer_loaded = config::load_layered(args.config.as_deref())
         .map(|loaded| loaded.project_layer_loaded)
         .unwrap_or(false);
-    if let Err(message) = daemon::tenancy::validate_tenancy_from_config(
-        &base,
-        &tenancy,
-        input_tenant.as_ref(),
-        &nats_tenants,
-        &ruleset_tenants,
-        project_layer_loaded,
-        api_token_env_used,
-    ) {
-        eprintln!("error: {message}");
-        process::exit(exit_code::CONFIG_ERROR);
-    }
     let state_db_from_config = base
         .daemon
         .as_ref()
@@ -761,7 +748,31 @@ pub(crate) fn cmd_daemon(
         .and_then(|s| s.db.as_ref());
     let has_state_db = args.state_db.is_some() || state_db_from_config.is_some();
     let audit = resolve_audit_settings(&base, has_state_db);
+    let tenancy_base = base.clone();
     apply_daemon_config(&mut args, matches, base);
+
+    let ruleset_tenants = config_ruleset_tenants(&args.ruleset_entries);
+    if let Err(message) = daemon::tenancy::validate_tenancy_from_config(
+        &tenancy_base,
+        &tenancy,
+        input_tenant.as_ref(),
+        &nats_tenants,
+        &daemon::tenancy::ResolvedDaemonInputs {
+            input_source: &args.input,
+            sink_specs: &args.output,
+            ruleset_tenants: &ruleset_tenants,
+            alert_pipeline: args.alert_pipeline.as_deref(),
+            risk: args.risk.as_deref(),
+            enrichers: args.enrichers.as_deref(),
+            webhooks: &args.webhooks,
+            disposition_source: dispositions.source.is_some(),
+        },
+        project_layer_loaded,
+        api_token_env_used,
+    ) {
+        eprintln!("error: {message}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
 
     let DaemonArgs {
         config,
@@ -1780,24 +1791,25 @@ fn apply_daemon_config(
     }
 }
 
-/// Extract the tenant bindings declared on configured rulesets, validating
-/// each id so a typo fails startup with the ruleset name.
+/// Extract the tenant bindings declared on the resolved ruleset entries,
+/// validating each id so a typo fails startup with the ruleset name. A CLI
+/// `--ruleset` list replaces the configured entries and carries no bindings.
 fn config_ruleset_tenants(
-    base: &config::RsigmaConfigPartial,
+    entries: &[config::RulesetEntryPartial],
 ) -> Vec<(String, Vec<rsigma_eval::TenantId>)> {
-    let entries = base
-        .daemon
-        .as_ref()
-        .and_then(|d| d.rulesets.clone())
-        .unwrap_or_default();
     let mut out = Vec::new();
     for entry in entries {
-        let config::RulesetEntryPartial::Bound { name, tenants, .. } = entry else {
+        let config::RulesetEntryPartial::Bound {
+            name,
+            tenants: Some(tenants),
+            ..
+        } = entry
+        else {
             continue;
         };
         let mut parsed = Vec::new();
-        for raw in tenants.unwrap_or_default() {
-            match rsigma_eval::TenantId::new(&raw) {
+        for raw in tenants {
+            match rsigma_eval::TenantId::new(raw) {
                 Ok(tenant) => parsed.push(tenant),
                 Err(error) => {
                     eprintln!("error: ruleset '{name}': {error}");
@@ -1805,7 +1817,7 @@ fn config_ruleset_tenants(
                 }
             }
         }
-        out.push((name, parsed));
+        out.push((name.clone(), parsed));
     }
     out
 }

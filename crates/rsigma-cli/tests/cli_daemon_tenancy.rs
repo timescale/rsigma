@@ -271,11 +271,119 @@ fn ingest_stamps_the_token_tenant_and_all_tenants_is_refused() {
         (lines.len() >= 2).then_some(lines)
     })
     .expect("detections written");
-    for line in &lines {
-        let value: serde_json::Value = serde_json::from_str(line).unwrap();
-        let tenant = value["tenant_id"].as_str().unwrap();
-        assert!(tenant == "tenant-a" || tenant == "tenant-b", "{line}");
+    // alice reaches two events only if the spoofed event stayed in tenant A, so
+    // her correlation must exist and carry tenant A; bob's carries tenant B.
+    let tenant_of = |user: &str| {
+        lines
+            .iter()
+            .find(|line| line.contains(user))
+            .map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                value["tenant_id"].as_str().unwrap().to_string()
+            })
+            .unwrap_or_else(|| panic!("no result for {user}: {lines:?}"))
+    };
+    assert_eq!(tenant_of("alice"), "tenant-a");
+    assert_eq!(tenant_of("bob"), "tenant-b");
+}
+
+#[test]
+fn a_cli_input_flag_cannot_bypass_the_source_binding() {
+    // The config file selects the HTTP source, which needs no input.tenant;
+    // the --input flag overrides it with stdin, which does.
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          all_tenants: true\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+            "--input",
+            "stdin",
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("'stdin' requires daemon.input.tenant"),
+        "expected source-binding refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn a_tenant_bound_ruleset_never_fires_for_another_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = tenancy_config(dir.path(), "").replace(
+        "    - shared\n",
+        "    - name: shared\n      tenants: [tenant-a]\n",
+    );
+    assert!(config.contains("tenants: [tenant-a]"));
+    let config = temp_file(".yaml", &config);
+    let daemon = DaemonProcess::spawn_with_env(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ],
+        &[
+            ("A_INGEST", "a-secret"),
+            ("B_INGEST", "b-secret"),
+            ("A_OPERATOR", "a-op"),
+            ("ADMIN", "admin-secret"),
+        ],
+    );
+
+    // Tenant B's events go first, so they are processed before tenant A's
+    // correlation is written.
+    for _ in 0..2 {
+        let (status, _) =
+            http_post_bearer(&daemon.url("/api/v1/events"), "b-secret", &event("bob"));
+        assert_eq!(status, 200);
     }
+    for _ in 0..2 {
+        let (status, _) =
+            http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
+        assert_eq!(status, 200);
+    }
+
+    let out = dir.path().join("out.ndjson");
+    let lines = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(&out).ok()?;
+        text.contains("tenant-a")
+            .then(|| text.lines().map(str::to_string).collect::<Vec<_>>())
+    })
+    .expect("tenant A's correlation written");
+    assert!(
+        lines.iter().all(|line| line.contains("tenant-a")),
+        "{lines:?}"
+    );
+
+    // Tenant A sees its ruleset; a read narrowed to tenant B sees no rules
+    // and no ruleset bound only to tenant A.
+    let (status, body) = http_get_bearer(&daemon.url("/api/v1/rules"), "a-op");
+    assert_eq!(status, 200);
+    let rules: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(rules["rulesets"][0]["name"], "shared", "{body}");
+    assert_eq!(rules["detection_rules"], 1, "{body}");
+
+    let (status, body) =
+        http_get_bearer(&daemon.url("/api/v1/rules?tenant=tenant-b"), "admin-secret");
+    assert_eq!(status, 200);
+    let rules: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(rules["detection_rules"], 0, "{body}");
+    assert_eq!(rules["correlation_rules"], 0, "{body}");
+    assert_eq!(rules["rulesets"], serde_json::json!([]), "{body}");
+    assert!(rules.get("rules_path").is_none(), "{body}");
 }
 
 #[test]
