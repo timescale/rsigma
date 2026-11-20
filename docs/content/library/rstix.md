@@ -267,7 +267,7 @@ Grouped by Cargo feature (phase name). Rust module paths are an implementation d
 
 | Symbol | Role |
 | ------ | ---- |
-| `StixId`, typed ID wrappers, `StixObjectKind` | ID parse, generate, typed conversions |
+| `StixId`, typed ID wrappers, `StixObjectKind` | ID parse, generate, typed conversions. `StixId::parse` rejects type names outside the STIX 2.1 rules and non-hyphenated UUIDs. {{ added "unreleased" }} |
 | `StixTimestamp`, `TaxiiTimestamp`, `Confidence`, `SpecVersion`, `LanguageTag` | Core wire types |
 | `generate_sco_id`, `select_id_contributing_properties`, `jcs_canonicalize` | Deterministic SCO UUIDv5 |
 | Vocabulary tables (`HASH_ALGORITHM_ENUM`, `REGION_OV`, …) | Closed and open STIX §10 tables |

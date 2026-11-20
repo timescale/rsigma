@@ -81,6 +81,10 @@ Each TAXII page is limited to 64 MiB and parsed with a finite depth, string leng
 
 A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `watch` or `push` on `type: taxii` are configuration errors.
 
+### STIX stores
+
+{{ added "unreleased" }} `rsigma taxii store` and `rsigma taxii sync` write one file per object id under the store's `objects/` directory, and `--allow-custom` accepts any object type. A STIX id parses only when its type name follows the STIX 2.1 rules (3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter) and its UUID is in hyphenated form, so a bundle or TAXII collection cannot name a path outside the store with an id such as `../../x--<uuid>` or `/tmp/x--<uuid>`. The store also checks every file name before it writes or deletes, independent of the parser.
+
 ### DNS enricher
 
 {{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
