@@ -114,7 +114,7 @@ impl FsStore {
     }
 
     fn persist_object(&self, id: &StixId) -> Result<(), StoreError> {
-        let path = self.object_path(id);
+        let path = self.object_path(id)?;
         let stored_versions = self.memory.get_all_versions(id)?;
         if stored_versions.is_empty() {
             if path.exists() {
@@ -143,15 +143,17 @@ impl FsStore {
         Ok(())
     }
 
-    fn object_path(&self, id: &StixId) -> PathBuf {
-        self.root
+    fn object_path(&self, id: &StixId) -> Result<PathBuf, StoreError> {
+        Ok(self
+            .root
             .join(OBJECTS_DIR)
-            .join(format!("{}.json", encode_id(id)))
+            .join(format!("{}.json", object_file_stem(id)?)))
     }
 }
 
 impl StixStore for FsStore {
     fn upsert(&self, obj: &StixObject) -> Result<(), StoreError> {
+        object_file_stem(obj.id())?;
         self.memory.upsert(obj)?;
         self.persist_object(obj.id())
     }
@@ -169,6 +171,9 @@ impl StixStore for FsStore {
     }
 
     fn import_bundle(&self, bundle: &Bundle) -> Result<ImportReport, StoreError> {
+        for object in bundle.objects() {
+            object_file_stem(object.id())?;
+        }
         let report = self.memory.import_bundle(bundle)?;
         for object in bundle.objects() {
             self.persist_object(object.id())?;
@@ -177,6 +182,9 @@ impl StixStore for FsStore {
     }
 
     fn import_objects(&self, objects: &[StixObject]) -> Result<ImportReport, StoreError> {
+        for object in objects {
+            object_file_stem(object.id())?;
+        }
         let report = self.memory.import_objects(objects)?;
         for object in objects {
             self.persist_object(object.id())?;
@@ -185,6 +193,7 @@ impl StixStore for FsStore {
     }
 
     fn delete(&self, id: &StixId) -> Result<bool, StoreError> {
+        object_file_stem(id)?;
         let removed = self.memory.delete(id)?;
         if removed {
             self.persist_object(id)?;
@@ -197,8 +206,21 @@ impl StixStore for FsStore {
     }
 }
 
-fn encode_id(id: &StixId) -> String {
-    id.as_str().replace("--", "__")
+/// Map an id to its file stem under `objects/`.
+///
+/// [`StixId::generate`] does not validate its type name, so the stem is
+/// checked here as well: anything other than ASCII alphanumerics, `-`, and `_`
+/// could name a path outside the store root.
+fn object_file_stem(id: &StixId) -> Result<String, StoreError> {
+    let stem = id.as_str().replace("--", "__");
+    if stem
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        Ok(stem)
+    } else {
+        Err(StoreError::InvalidObjectId(id.as_str().to_owned()))
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +277,43 @@ mod open {
             "reload must index objects written by another handle"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_ids_that_escape_the_store_root() {
+        let base = std::env::temp_dir().join(format!("rstix-fs-store-{}", uuid::Uuid::new_v4()));
+        let root = base.join("store");
+        let store = FsStore::open(&root).expect("open");
+        for type_name in ["../../escape", "/tmp/escape", "..\\escape"] {
+            let id = StixId::generate(type_name);
+            let object = StixObject::Custom(crate::model::CustomStixObject {
+                type_name: type_name.to_owned(),
+                id: id.clone(),
+                raw: serde_json::json!({"type": type_name, "id": id.as_str()}),
+                typed: None,
+            });
+            let expected = || Err(StoreError::InvalidObjectId(id.as_str().to_owned()));
+            assert_eq!(store.upsert(&object), expected());
+            assert_eq!(
+                store
+                    .import_objects(std::slice::from_ref(&object))
+                    .map(|_| ()),
+                expected()
+            );
+            assert_eq!(store.delete(&id).map(|_| ()), expected());
+            assert!(store.get(&id).expect("get").is_none());
+        }
+        let entries: Vec<_> = fs::read_dir(&base)
+            .expect("read base")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(
+            entries,
+            ["store"],
+            "nothing may be written beside the store"
+        );
+        assert_eq!(fs::read_dir(root.join(OBJECTS_DIR)).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
