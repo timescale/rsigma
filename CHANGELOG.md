@@ -4,6 +4,15 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### STIX ids are validated before they name a store file (security, #733)
+
+`StixId::parse` checked only the `--` delimiter and the UUID, and `FsStore` used the id as a file name under `objects/`. With `--allow-custom`, a bundle passed to `rsigma taxii store` or a collection read by `rsigma taxii sync` could carry an id such as `../../x--<uuid>` or `/tmp/x--<uuid>` and write a JSON file outside the store ([GHSA-g52x-rcvw-c2qw](https://github.com/timescale/rsigma/security/advisories/GHSA-g52x-rcvw-c2qw)).
+
+- A STIX id parses only when its type name is 3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter, as STIX 2.1 requires, and its UUID is in hyphenated form.
+- `FsStore` checks the file name for every id before it writes or deletes and fails with `StoreError::InvalidObjectId`, so an id built with `StixId::generate` from an unchecked type name cannot escape the store either.
+
+**Breaking changes:** `StixIdError` gains the `InvalidTypeName` and `NonHyphenatedUuid` variants. Ids that broke the STIX type-name rules, such as uppercase or two-character type names, no longer parse, and an `FsStore` that already holds such an id fails to open until the file is removed.
+
 ### Multi-tenant daemon (#732)
 
 `rsigma engine daemon` can serve several tenants in one process while keeping their state apart. A tenant comes only from an operator binding: the bearer token that authenticated a REST or OTLP ingest request, the configured tenant of the single selected pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. A token declares exactly one of `tenant: <id>` or `all_tenants: true`; `all_tenants` is not implied by a role, and an `all_tenants` token cannot ingest because it has no tenant to bind. A tenant id is 1 to 64 ASCII letters, digits, `_`, and `-`; a `.` is refused so an id is always one NATS subject token.

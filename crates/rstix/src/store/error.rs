@@ -24,6 +24,9 @@ pub enum StoreError {
     /// JSON serialization or deserialization failed.
     #[error("JSON error: {0}")]
     Json(String),
+    /// Object id cannot be mapped to a file name inside the store root.
+    #[error("object id `{0}` cannot be stored as a file name")]
+    InvalidObjectId(String),
 }
 
 impl StoreError {

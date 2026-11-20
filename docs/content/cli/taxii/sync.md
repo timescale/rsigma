@@ -42,7 +42,7 @@ Re-running sync against the same store is idempotent: unchanged objects incremen
 | `--timeout <DURATION>` | `60s` | HTTP timeout (`humantime` duration). |
 | `--limit <N>` | `64` | TAXII page size (`limit` query parameter). Must be &gt; 0. |
 | `--allow-insecure-http` | off | Allow `http://` URLs (local tests and wiremock only). |
-| `--allow-custom` | off | Parse MITRE ATT&CK and other custom SDOs (`x_*` types). |
+| `--allow-custom` | off | Parse MITRE ATT&CK and other custom SDOs (`x_*` types). Object ids must still follow the STIX 2.1 type-name rules, so a custom id cannot name a path outside the store. {{ added "unreleased" }} |
 
 ### Authentication (at most one)
 

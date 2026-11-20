@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn validate_json_str_emits_e0002_for_unknown_object_type_when_custom_disabled() {
-        let json = r#"{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000000","objects":[{"type":"not-a-real-type","id":"x--00000000-0000-0000-0000-000000000001"}]}"#;
+        let json = r#"{"type":"bundle","id":"bundle--00000000-0000-0000-0000-000000000000","objects":[{"type":"not-a-real-type","id":"not-a-real-type--00000000-0000-0000-0000-000000000001"}]}"#;
         let report = Validator::consumer_strict().validate_json_str(json);
         assert!(!report.is_valid());
         assert!(report.with_code(DiagnosticCode::E0002).next().is_some());

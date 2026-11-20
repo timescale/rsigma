@@ -35,7 +35,7 @@ This library is part of [rsigma].
 - `parse_bundle(json: &str)`: parse a STIX 2.1 bundle into a typed [`Bundle`](model::Bundle) (alias for [`Bundle::parse`](model::Bundle::parse)).
 - `model::Bundle::parse_reader(R: Read)`: stream-parse large bundles with default [`ParseOptions`](model::ParseOptions).
 - `model::Bundle::parse_with_options(json, opts)` / `parse_reader_with_options`: bundle parse with custom types and limits.
-- `core::StixId::parse(id: &str)`: parse and validate STIX object IDs in `{type}--{uuid}` form.
+- `core::StixId::parse(id: &str)`: parse and validate STIX object IDs in `{type}--{uuid}` form. The type name must be 3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter, and the UUID must be hyphenated.
 - `core::StixId::generate(type_name: &str)`: create a random UUIDv4-based STIX ID for a type prefix.
 - `id::generate_sco_id(kind, value)`: generate deterministic SCO IDs using canonicalized contributing properties.
 - `id::select_id_contributing_properties(kind, value)`: extract SCO id-contributing fields.
@@ -431,7 +431,7 @@ Acceptance tests: `tests/store.rs` (`store` feature), `tests/store_fs.rs` (`stor
 | Store SCO keys | Asserted source id is always the store key; UUIDv5 fingerprint is reporting-only. | Never silently rewrite SCO ids. |
 | Store import refs | `ImportReport::unresolved_references` lists targets missing from **both** the imported bundle and the store. | Supports incremental TAXII ingest (`taxii-store`). |
 | Store search | Full-text index updated on upsert; `StixQuery::text_search` is case-insensitive substring match. | Typed filters compose with text search. |
-| FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. | `store-fs` feature implies `store`. |
+| FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. An id that does not map to a plain file name fails with `StoreError::InvalidObjectId` before anything is written. | `store-fs` feature implies `store`. |
 
 ## TAXII Client
 
