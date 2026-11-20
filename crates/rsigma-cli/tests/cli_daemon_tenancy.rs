@@ -1,0 +1,631 @@
+//! End-to-end multi-tenant isolation: startup refusals, ingest binding, and
+//! API scoping.
+
+mod common;
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use common::{
+    DaemonProcess, http_get_bearer, http_post_bearer, poll_until, spawn_expect_failure, temp_file,
+};
+
+const RULES: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+level: high
+---
+title: Many logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+
+fn write_rules(dir: &Path) -> PathBuf {
+    let rules = dir.join("rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(rules.join("rules.yml"), RULES).unwrap();
+    rules
+}
+
+/// A tenancy-enabled config with a shared ruleset, an HTTP source, an alert
+/// pipeline for silences, and a per-tenant file sink.
+fn tenancy_config(dir: &Path, extra_daemon: &str) -> String {
+    let rules = write_rules(dir);
+    let out = dir.join("out.ndjson");
+    let pipeline = dir.join("alert-pipeline.yml");
+    std::fs::write(
+        &pipeline,
+        "dedup:\n  fingerprint: [match.EventType]\n  resolve_timeout: 1h\ngroup:\n  by: [match.EventType]\n  group_wait: 0s\n  resolve_timeout: 1h\n",
+    )
+    .unwrap();
+    format!(
+        r#"rulesets:
+  shared:
+    sources: ["{}"]
+daemon:
+  rulesets:
+    - shared
+  alert_pipeline: "{}"
+  tenancy:
+    enabled: true
+    metrics_tenant_allowlist: [tenant-a]
+  input:
+    source: http
+  output:
+    sinks: ["file://{}"]
+  api:
+    addr: 127.0.0.1:0
+    auth:
+      tokens:
+        - name: a-ingest
+          role: ingest
+          token_env: A_INGEST
+          tenant: tenant-a
+        - name: b-ingest
+          role: ingest
+          token_env: B_INGEST
+          tenant: tenant-b
+        - name: a-operator
+          role: operator
+          token_env: A_OPERATOR
+          tenant: tenant-a
+        - name: admin
+          role: admin
+          token_env: ADMIN
+          all_tenants: true
+{}
+"#,
+        rules.display(),
+        pipeline.display(),
+        out.display(),
+        extra_daemon
+    )
+}
+
+fn spawn_tenancy(dir: &Path, extra_daemon: &str) -> DaemonProcess {
+    let config = temp_file(".yaml", &tenancy_config(dir, extra_daemon));
+    let config_path = config.path().to_str().unwrap().to_string();
+    DaemonProcess::spawn_with_env(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            &config_path,
+            "--api-addr",
+            "127.0.0.1:0",
+        ],
+        &[
+            ("A_INGEST", "a-secret"),
+            ("B_INGEST", "b-secret"),
+            ("A_OPERATOR", "a-op"),
+            ("ADMIN", "admin-secret"),
+        ],
+    )
+}
+
+fn event(user: &str) -> String {
+    serde_json::json!({"EventType": "login", "User": user}).to_string()
+}
+
+#[test]
+fn tenancy_without_auth_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("daemon.api.auth"),
+        "expected auth refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn tenancy_with_anonymous_permissions_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      anonymous_permissions: [\"*:read\"]\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          all_tenants: true\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("anonymous_permissions"),
+        "expected anonymous refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn a_token_without_a_tenant_binding_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("all_tenants"),
+        "expected token binding refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn a_project_layer_refuses_tenancy() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".config/rsigma")).unwrap();
+    let rules = write_rules(dir.path());
+    // Tenancy and auth come from the user layer; the project file carries the
+    // ruleset binding that could otherwise drop a tenant.
+    std::fs::write(
+        home.join(".config/rsigma/config.yaml"),
+        format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: admin\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
+            rules.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("rsigma.yaml"),
+        "daemon:\n  rulesets: [shared]\n",
+    )
+    .unwrap();
+
+    let output = std::process::Command::new(common::rsigma_bin())
+        .args(["engine", "daemon", "--api-addr", "127.0.0.1:0"])
+        .current_dir(dir.path())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("ADMIN", "admin-secret")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("project config layer"),
+        "expected project-layer refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn ingest_stamps_the_token_tenant_and_all_tenants_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let url = daemon.url("/api/v1/events");
+
+    let (status, _) = http_post_bearer(&url, "a-secret", &event("alice"));
+    assert_eq!(status, 200);
+    let (status, _) = http_post_bearer(&url, "b-secret", &event("bob"));
+    assert_eq!(status, 200);
+    let (status, _) = http_post_bearer(&url, "b-secret", &event("bob"));
+    assert_eq!(status, 200);
+    // The all_tenants admin token has no tenant to bind.
+    let (status, _) = http_post_bearer(&url, "admin-secret", &event("carol"));
+    assert_eq!(status, 403);
+
+    // A body field and a header named like a tenant do not override the token.
+    let spoofed = serde_json::json!({
+        "EventType": "login",
+        "User": "alice",
+        "tenant": "tenant-b",
+        "tenant_id": "tenant-b",
+    })
+    .to_string();
+    let (status, _) = http_post_bearer(&url, "a-secret", &spoofed);
+    assert_eq!(status, 200);
+
+    let out = dir.path().join("out.ndjson");
+    let lines = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(&out).ok()?;
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        (lines.len() >= 2).then_some(lines)
+    })
+    .expect("detections written");
+    for line in &lines {
+        let value: serde_json::Value = serde_json::from_str(line).unwrap();
+        let tenant = value["tenant_id"].as_str().unwrap();
+        assert!(tenant == "tenant-a" || tenant == "tenant-b", "{line}");
+    }
+}
+
+#[test]
+fn api_reads_are_scoped_to_the_token_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let base = daemon.api_addr().to_string();
+
+    // Two tenant silences, one per tenant.
+    let a_silence = bounded_silence_for("tenant-a");
+    let b_silence = bounded_silence_for("tenant-b");
+    let (status, _) = http_post_bearer(
+        &format!("http://{base}/api/v1/silences"),
+        "a-op",
+        &a_silence,
+    );
+    assert_eq!(status, 201);
+    let (status, _) = http_post_bearer(
+        &format!("http://{base}/api/v1/silences"),
+        "admin-secret",
+        &b_silence,
+    );
+    assert_eq!(status, 201);
+
+    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), "a-op");
+    assert_eq!(status, 200);
+    let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["silences"][0]["tenant"], "tenant-a");
+
+    // A tenant token may not ask for another tenant.
+    let (status, _) = http_get_bearer(
+        &format!("http://{base}/api/v1/silences?tenant=tenant-b"),
+        "a-op",
+    );
+    assert_eq!(status, 403);
+
+    // The all_tenants token sees both and narrows with ?tenant=.
+    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), "admin-secret");
+    assert_eq!(status, 200);
+    let all: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(all["count"], 2);
+    let (status, body) = http_get_bearer(
+        &format!("http://{base}/api/v1/silences?tenant=tenant-b"),
+        "admin-secret",
+    );
+    assert_eq!(status, 200);
+    let narrowed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(narrowed["count"], 1);
+    assert_eq!(narrowed["silences"][0]["tenant"], "tenant-b");
+
+    // A tenant token may not read an operator-only endpoint.
+    assert_eq!(
+        http_get_bearer(&format!("http://{base}/api/v1/status"), "a-op").0,
+        403
+    );
+    assert_eq!(
+        http_get_bearer(&format!("http://{base}/metrics"), "a-op").0,
+        403
+    );
+    assert_eq!(
+        http_get_bearer(&format!("http://{base}/api/v1/status"), "admin-secret").0,
+        200
+    );
+}
+
+fn bounded_silence_for(tenant: &str) -> String {
+    let ends_at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    serde_json::json!({
+        "matchers": [{ "selector": "rule", "op": "=", "value": "login-rule" }],
+        "ends_at": ends_at,
+        "tenant": tenant,
+        "created_by": "tests",
+    })
+    .to_string()
+}
+
+#[test]
+fn an_all_tenants_silence_without_a_tenant_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let ends_at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    let body = serde_json::json!({
+        "matchers": [{ "selector": "rule", "op": "=", "value": "login-rule" }],
+        "ends_at": ends_at,
+    })
+    .to_string();
+    let (status, _) = http_post_bearer(&daemon.url("/api/v1/silences"), "admin-secret", &body);
+    assert_eq!(status, 400);
+}
+
+#[test]
+fn a_tenant_silence_mutes_only_its_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let base = daemon.api_addr().to_string();
+    let ends_at = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+    let body = serde_json::json!({
+        "matchers": [{ "selector": "rule", "op": "=", "value": "many-logins" }],
+        "ends_at": ends_at,
+        "tenant": "tenant-a",
+        "created_by": "tests",
+    })
+    .to_string();
+    let (status, _) = http_post_bearer(&format!("http://{base}/api/v1/silences"), "a-op", &body);
+    assert_eq!(status, 201);
+
+    // Two events per tenant fire the correlation; tenant A's result is
+    // silenced, so only tenant B's correlation reaches the file.
+    for user in ["alice", "alice"] {
+        http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event(user));
+    }
+    for user in ["bob", "bob"] {
+        http_post_bearer(&daemon.url("/api/v1/events"), "b-secret", &event(user));
+    }
+
+    let out = dir.path().join("out.ndjson");
+    let lines = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(&out).ok()?;
+        (!text.trim().is_empty()).then(|| text.lines().map(str::to_string).collect::<Vec<_>>())
+    })
+    .expect("a detection written");
+    assert!(
+        lines.iter().all(|line| line.contains("tenant-b")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_disabled_daemon_refuses_tenant_bindings() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          tenant: tenant-a\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("daemon.tenancy.enabled is false"),
+        "expected disabled refusal, got: {stderr}"
+    );
+}
+
+#[test]
+fn a_disabled_daemon_refuses_a_tenant_sink() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let config = temp_file(
+        ".yaml",
+        &format!(
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  output:\n    sinks: [\"file:///tmp/out.{{tenant}}.ndjson\"]\n",
+            rules.display()
+        ),
+    );
+    let stderr = spawn_expect_failure(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            config.path().to_str().unwrap(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert!(
+        stderr.contains("{tenant}"),
+        "expected sink refusal, got: {stderr}"
+    );
+}
+
+#[cfg(feature = "daemon-otlp")]
+#[test]
+fn otlp_http_stamps_the_token_tenant() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let url = daemon.url("/v1/logs");
+    let body = serde_json::json!({
+        "resourceLogs": [{
+            "scopeLogs": [{
+                "logRecords": [{
+                    "attributes": [
+                        {"key": "EventType", "value": {"stringValue": "login"}},
+                        {"key": "User", "value": {"stringValue": "alice"}}
+                    ]
+                }]
+            }]
+        }]
+    })
+    .to_string();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    for _ in 0..2 {
+        let response = agent
+            .post(&url)
+            .header("authorization", "Bearer a-secret")
+            .header("content-type", "application/json")
+            .send(&body)
+            .expect("OTLP HTTP request");
+        assert_eq!(response.status().as_u16(), 200);
+    }
+
+    let out = dir.path().join("out.ndjson");
+    let lines = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(&out).ok()?;
+        (!text.trim().is_empty()).then(|| text.lines().map(str::to_string).collect::<Vec<_>>())
+    })
+    .expect("OTLP result written");
+    assert!(
+        lines.iter().all(|line| line.contains("tenant-a")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn restarting_without_tenancy_discards_tenanted_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = write_rules(dir.path());
+    let out = dir.path().join("out.ndjson");
+    let db = dir.path().join("state.db");
+
+    let tenancy_config = temp_file(
+        ".yaml",
+        &format!(
+            r#"rulesets:
+  shared:
+    sources: ["{}"]
+daemon:
+  rulesets: [shared]
+  tenancy:
+    enabled: true
+  state:
+    db: "{}"
+    save_interval: 1
+  input:
+    source: http
+  output:
+    sinks: ["file://{}"]
+  api:
+    addr: 127.0.0.1:0
+    auth:
+      tokens:
+        - name: a-ingest
+          role: ingest
+          token_env: A_INGEST
+          tenant: tenant-a
+"#,
+            rules.display(),
+            db.display(),
+            out.display()
+        ),
+    );
+    let first = DaemonProcess::spawn_with_env(
+        &[
+            "engine",
+            "daemon",
+            "--config",
+            tenancy_config.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ],
+        &[("A_INGEST", "a-secret")],
+    );
+    for user in ["alice", "alice"] {
+        http_post_bearer(&first.url("/api/v1/events"), "a-secret", &event(user));
+    }
+    poll_until(Duration::from_secs(5), || {
+        std::fs::read_to_string(&out)
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+    })
+    .expect("correlation written");
+    drop(first);
+
+    let plain_config = temp_file(
+        ".yaml",
+        &format!(
+            r#"rulesets:
+  shared:
+    sources: ["{}"]
+daemon:
+  rulesets: [shared]
+  state:
+    db: "{}"
+    save_interval: 1
+  input:
+    source: http
+  output:
+    sinks: ["file://{}"]
+"#,
+            rules.display(),
+            db.display(),
+            out.display()
+        ),
+    );
+    let second = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "--config",
+        plain_config.path().to_str().unwrap(),
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+    let stderr = second.stderr_lines().join("\n");
+    assert!(
+        stderr.contains("Discarded correlation entries"),
+        "expected discard warning, got: {stderr}"
+    );
+}
+
+#[test]
+fn tenant_metrics_are_exported() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    // The extra `tenancy:` block merges over the base one.
+    let base = daemon.api_addr().to_string();
+    // A no_tenant rejection.
+    let (status, _) = http_post_bearer(
+        &format!("http://{base}/api/v1/events"),
+        "admin-secret",
+        &event("carol"),
+    );
+    assert_eq!(status, 403);
+    // A tenant match.
+    http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
+    http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
+
+    let (status, body) = http_get_bearer(&format!("http://{base}/metrics"), "admin-secret");
+    assert_eq!(status, 200);
+    assert!(
+        body.contains(r#"rsigma_tenant_rejected_total{channel="rest",reason="no_tenant"}"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"rsigma_detection_matches_by_tenant_total{tenant="tenant-a"}"#),
+        "{body}"
+    );
+    assert!(
+        body.contains("rsigma_tenant_quota_evictions_total"),
+        "{body}"
+    );
+}

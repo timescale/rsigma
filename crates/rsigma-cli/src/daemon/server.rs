@@ -268,6 +268,7 @@ pub struct DaemonConfig {
     /// Tenant bound to the single selected pull source.
     pub input_tenant: Option<rsigma_eval::TenantId>,
     /// Tenant-bound NATS subscriptions.
+    #[allow(dead_code)]
     pub nats_tenants: Vec<super::tenancy::NatsTenantBinding>,
     pub include_event: bool,
     pub pretty: bool,

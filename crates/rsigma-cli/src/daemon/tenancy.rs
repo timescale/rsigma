@@ -44,6 +44,7 @@ impl From<TenantQuotasPartial> for TenantQuotas {
 pub(crate) struct NatsTenantBinding {
     pub subject: String,
     pub tenant: TenantId,
+    #[allow(dead_code)]
     pub credentials_file: Option<PathBuf>,
 }
 
