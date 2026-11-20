@@ -96,10 +96,10 @@ daemon:
           token_env: ADMIN
           all_tenants: true
 "#,
-        rules.display(),
-        pipeline.display(),
+        yaml_path(&rules),
+        yaml_path(&pipeline),
         extra_tenancy,
-        out.display(),
+        yaml_path(&out),
     )
 }
 
@@ -130,6 +130,12 @@ fn spawn_tenancy_with_args(dir: &Path, extra_tenancy: &str, extra_args: &[&str])
     )
 }
 
+/// A path for a YAML scalar: forward slashes, so a Windows path has no
+/// backslash that a double-quoted scalar would read as an escape.
+fn yaml_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 fn event(user: &str) -> String {
     serde_json::json!({"EventType": "login", "User": user}).to_string()
 }
@@ -142,7 +148,7 @@ fn tenancy_without_auth_is_refused() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     );
     let stderr = spawn_expect_failure(
@@ -168,7 +174,7 @@ fn tenancy_with_anonymous_permissions_is_refused() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      anonymous_permissions: [\"*:read\"]\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     );
     let stderr = spawn_expect_failure_with_env(
@@ -194,17 +200,18 @@ fn a_token_without_a_tenant_binding_is_refused() {
     let config = temp_file(
         ".yaml",
         &format!(
-            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n",
-            rules.display()
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n",
+            yaml_path(&rules)
         ),
     );
-    let stderr = spawn_expect_failure(
+    let stderr = spawn_expect_failure_with_env(
         &[
             "engine",
             "daemon",
             "--config",
             config.path().to_str().unwrap(),
         ],
+        &[("ADMIN", ADMIN)],
         Duration::from_secs(10),
     );
     assert!(
@@ -225,7 +232,7 @@ fn a_project_layer_refuses_tenancy() {
         home.join(".config/rsigma/config.yaml"),
         format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: admin\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     )
     .unwrap();
@@ -310,7 +317,7 @@ fn a_cli_input_flag_cannot_bypass_the_source_binding() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     );
     let stderr = spawn_expect_failure_with_env(
@@ -615,7 +622,7 @@ fn a_disabled_daemon_refuses_tenant_bindings() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          tenant: tenant-a\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     );
     let stderr = spawn_expect_failure_with_env(
@@ -642,7 +649,7 @@ fn a_disabled_daemon_refuses_a_tenant_sink() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  output:\n    sinks: [\"file:///tmp/out.{{tenant}}.ndjson\"]\n",
-            rules.display()
+            yaml_path(&rules)
         ),
     );
     let stderr = spawn_expect_failure(
@@ -675,8 +682,8 @@ fn a_disabled_daemon_checks_scoped_webhooks_in_a_directory() {
         ".yaml",
         &format!(
             "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  output:\n    webhooks: [\"{}\"]\n",
-            rules.display(),
-            hooks.display()
+            yaml_path(&rules),
+            yaml_path(&hooks)
         ),
     );
     let stderr = spawn_expect_failure(
@@ -772,9 +779,9 @@ daemon:
           token_env: A_INGEST
           tenant: tenant-a
 "#,
-            rules.display(),
-            db.display(),
-            out.display()
+            yaml_path(&rules),
+            yaml_path(&db),
+            yaml_path(&out)
         ),
     );
     let first = DaemonProcess::spawn_with_env(
@@ -815,9 +822,9 @@ daemon:
   output:
     sinks: ["file://{}"]
 "#,
-            rules.display(),
-            db.display(),
-            out.display()
+            yaml_path(&rules),
+            yaml_path(&db),
+            yaml_path(&out)
         ),
     );
     let second = DaemonProcess::spawn(&[
