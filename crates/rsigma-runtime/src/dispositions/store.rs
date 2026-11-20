@@ -352,9 +352,11 @@ impl DispositionStore {
     }
 
     /// Restore a snapshot at `now`, pruning buckets and seen ids past the
-    /// window. Returns `false` on a version mismatch (caller starts fresh).
-    pub fn restore(&mut self, snapshot: DispositionSnapshot, now: i64) -> bool {
-        self.restore_detailed(snapshot, now, false).is_some()
+    /// window and applying the tenant attribution rule of
+    /// [`restore_detailed`](Self::restore_detailed). Returns `false` on a
+    /// version mismatch (caller starts fresh).
+    pub fn restore(&mut self, snapshot: DispositionSnapshot, now: i64, tenancy: bool) -> bool {
+        self.restore_detailed(snapshot, now, tenancy).is_some()
     }
 
     /// Like [`restore`](Self::restore), returning the restored and discarded
@@ -551,7 +553,7 @@ mod tests {
         let snap = store.snapshot();
 
         let mut restored = DispositionStore::new(cfg(1));
-        assert!(restored.restore(snap, 1002));
+        assert!(restored.restore(snap, 1002, false));
         assert_eq!(restored.summaries(), store.summaries());
     }
 
@@ -560,7 +562,7 @@ mod tests {
         let mut snap = DispositionStore::new(cfg(1)).snapshot();
         snap.version = 9999;
         let mut store = DispositionStore::new(cfg(1));
-        assert!(!store.restore(snap, 1));
+        assert!(!store.restore(snap, 1, false));
     }
 
     fn disp_tenant(rule: &str, verdict: &str, ts: i64, tenant: &str) -> Disposition {
