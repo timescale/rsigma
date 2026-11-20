@@ -170,7 +170,7 @@ impl CaptureSpool {
 fn lookup_snapshot(ring: &Mutex<CaptureRing>, original: &Disposition) -> Option<CaptureSnapshot> {
     let ring = ring.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(id) = original.incident_id.as_deref()
-        && let Some(snap) = ring.snapshot_incident(id)
+        && let Some(snap) = ring.snapshot_incident(original.tenant.as_ref(), id)
     {
         return Some(snap);
     }

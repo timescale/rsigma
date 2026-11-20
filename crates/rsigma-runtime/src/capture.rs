@@ -293,6 +293,7 @@ pub struct CaptureStats {
 
 #[derive(Debug)]
 struct RingIncident {
+    tenant: Option<TenantId>,
     first_seen: i64,
     last_seen: i64,
     events: Vec<CapturedEvent>,
@@ -321,9 +322,18 @@ impl CaptureRing {
         }
     }
 
-    /// Snapshot one incident, if it is still held.
-    pub fn snapshot_incident(&self, incident_id: &str) -> Option<CaptureSnapshot> {
-        self.incidents.get(incident_id).map(|inc| CaptureSnapshot {
+    /// Snapshot one incident of `tenant`, if it is still held. An incident of
+    /// another tenant is `None`, so a known id never reaches across tenants.
+    pub fn snapshot_incident(
+        &self,
+        tenant: Option<&TenantId>,
+        incident_id: &str,
+    ) -> Option<CaptureSnapshot> {
+        let inc = self
+            .incidents
+            .get(incident_id)
+            .filter(|inc| inc.tenant.as_ref() == tenant)?;
+        Some(CaptureSnapshot {
             incident_id: incident_id.to_string(),
             first_seen: inc.first_seen,
             last_seen: inc.last_seen,
@@ -344,7 +354,7 @@ impl CaptureRing {
             rule_id.to_string(),
             fingerprint.to_string(),
         ))?;
-        self.snapshot_incident(incident_id)
+        self.snapshot_incident(tenant, incident_id)
     }
 
     /// Evict incidents whose `last_seen` is at least `ttl` in the past.
@@ -444,6 +454,7 @@ impl CaptureRing {
             self.incidents.insert(
                 event.incident_id.clone(),
                 RingIncident {
+                    tenant: event.tenant.clone(),
                     first_seen: now,
                     last_seen: now,
                     events: vec![captured],
@@ -716,7 +727,7 @@ mod tests {
         ev.is_fresh_generation = true;
         ring.admit(ev, 0, &crate::NoopMetrics);
         assert_eq!(ring.stats().incidents, 1);
-        assert!(ring.snapshot_incident("a").is_some());
+        assert!(ring.snapshot_incident(None, "a").is_some());
         assert!(ring.snapshot_fingerprint(None, "r1", "fp-a").is_some());
     }
 
@@ -738,7 +749,7 @@ mod tests {
         ring.admit(first, 0, &crate::NoopMetrics);
         ring.admit(event("a", 2), 1, &crate::NoopMetrics);
         ring.admit(event("a", 3), 2, &crate::NoopMetrics);
-        assert_eq!(ring.snapshot_incident("a").unwrap().events.len(), 2);
+        assert_eq!(ring.snapshot_incident(None, "a").unwrap().events.len(), 2);
     }
 
     #[test]
@@ -753,9 +764,9 @@ mod tests {
         ring.admit(a, 0, &crate::NoopMetrics);
         ring.admit(b, 1, &crate::NoopMetrics);
         ring.admit(c, 2, &crate::NoopMetrics);
-        assert!(ring.snapshot_incident("a").is_none());
-        assert!(ring.snapshot_incident("b").is_some());
-        assert!(ring.snapshot_incident("c").is_some());
+        assert!(ring.snapshot_incident(None, "a").is_none());
+        assert!(ring.snapshot_incident(None, "b").is_some());
+        assert!(ring.snapshot_incident(None, "c").is_some());
         assert!(ring.snapshot_fingerprint(None, "r1", "fp-a").is_none());
     }
 
@@ -769,7 +780,7 @@ mod tests {
         let mut fresh = event("a", 9);
         fresh.is_fresh_generation = true;
         ring.admit(fresh, 5, &crate::NoopMetrics);
-        let snap = ring.snapshot_incident("a").unwrap();
+        let snap = ring.snapshot_incident(None, "a").unwrap();
         assert_eq!(snap.events.len(), 1);
         assert_eq!(snap.first_seen, 5);
         assert_eq!(snap.events[0].event["n"], 9);
@@ -804,13 +815,28 @@ mod tests {
 
         ring.admit(ev_a, 0, &crate::NoopMetrics);
         ring.admit(ev_b, 1, &crate::NoopMetrics);
-        assert!(
-            ring.snapshot_fingerprint(Some(&a), "r1", "shared")
-                .is_some()
-        );
-        assert!(
-            ring.snapshot_fingerprint(Some(&b), "r1", "shared")
-                .is_some()
-        );
+        let snap_a = ring
+            .snapshot_fingerprint(Some(&a), "r1", "shared")
+            .expect("tenant a");
+        assert_eq!(snap_a.incident_id, "a");
+        let snap_b = ring
+            .snapshot_fingerprint(Some(&b), "r1", "shared")
+            .expect("tenant b");
+        assert_eq!(snap_b.incident_id, "b");
+    }
+
+    #[test]
+    fn an_incident_id_never_reaches_another_tenant() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let mut ring = CaptureRing::new(tiny_config());
+        let mut ev = event("inc-b", 1);
+        ev.tenant = Some(b.clone());
+        ev.is_fresh_generation = true;
+        ring.admit(ev, 0, &crate::NoopMetrics);
+
+        assert!(ring.snapshot_incident(Some(&b), "inc-b").is_some());
+        assert!(ring.snapshot_incident(Some(&a), "inc-b").is_none());
+        assert!(ring.snapshot_incident(None, "inc-b").is_none());
     }
 }

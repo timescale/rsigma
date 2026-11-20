@@ -173,7 +173,7 @@ impl DispositionState {
             let rules = disp
                 .incident_id
                 .as_deref()
-                .map(|id| self.resolve_incident_rules(id))
+                .map(|id| self.resolve_incident_rules(disp.tenant.as_ref(), id))
                 .unwrap_or_default();
             if rules.is_empty() {
                 self.count_ingest(source, "rejected");
@@ -409,13 +409,18 @@ impl DispositionState {
     }
 
     /// Resolve an incident id to its contributing rule identities through the
-    /// live alert-pipeline incident map. Empty when the incident is unknown.
-    fn resolve_incident_rules(&self, incident_id: &str) -> Vec<String> {
+    /// live alert-pipeline incident map. Empty when the incident is unknown or
+    /// belongs to another tenant.
+    fn resolve_incident_rules(
+        &self,
+        tenant: Option<&rsigma_eval::TenantId>,
+        incident_id: &str,
+    ) -> Vec<String> {
         let Ok(state) = self.alert_state.read() else {
             return Vec::new();
         };
         for inc in state.incidents.snapshot(IncludeMode::Refs) {
-            if inc.incident_id == incident_id {
+            if inc.incident_id == incident_id && inc.tenant_id.as_ref() == tenant {
                 return inc.rule_counts.into_keys().collect();
             }
         }
