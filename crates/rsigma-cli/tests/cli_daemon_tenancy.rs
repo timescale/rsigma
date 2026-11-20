@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use common::{
-    DaemonProcess, http_get_bearer, http_post_bearer, poll_until, spawn_expect_failure, temp_file,
+    DaemonProcess, http_delete_bearer, http_get_bearer, http_post_bearer, poll_until,
+    spawn_expect_failure, temp_file,
 };
 
 const RULES: &str = r#"
@@ -459,6 +460,40 @@ fn bounded_silence_for(tenant: &str) -> String {
         "created_by": "tests",
     })
     .to_string()
+}
+
+#[test]
+fn silence_ids_are_unique_per_tenant_and_an_ambiguous_delete_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = spawn_tenancy(dir.path(), "");
+    let with_id = |tenant: &str| {
+        let mut body: serde_json::Value =
+            serde_json::from_str(&bounded_silence_for(tenant)).unwrap();
+        body["id"] = "maint".into();
+        body.to_string()
+    };
+    let silences = daemon.url("/api/v1/silences");
+    assert_eq!(
+        http_post_bearer(&silences, "a-op", &with_id("tenant-a")).0,
+        201
+    );
+    assert_eq!(
+        http_post_bearer(&silences, "a-op", &with_id("tenant-a")).0,
+        409
+    );
+    assert_eq!(
+        http_post_bearer(&silences, "admin-secret", &with_id("tenant-b")).0,
+        201,
+        "another tenant may reuse the id"
+    );
+
+    let maint = daemon.url("/api/v1/silences/maint");
+    assert_eq!(http_delete_bearer(&maint, "admin-secret").0, 409);
+    assert_eq!(
+        http_delete_bearer(&format!("{maint}?tenant=tenant-b"), "admin-secret").0,
+        200
+    );
+    assert_eq!(http_delete_bearer(&maint, "a-op").0, 200);
 }
 
 #[test]

@@ -69,9 +69,9 @@ pub use alert_pipeline::{
     AlertPipelineState, CapTrim, Caps, DEFAULT_MAX_DYNAMIC_SILENCES, DEFAULT_MAX_SILENCE_DURATION,
     DedupStore, GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, MatchOp,
     Matcher, MatcherError, MatcherSet, MatcherSpec, SNAPSHOT_VERSION, Silence, SilenceError,
-    SilenceLimits, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
-    build_alert_pipeline, group_fingerprint, load_alert_pipeline_file, parse_alert_pipeline_config,
-    strip_event_payloads,
+    SilenceLimits, SilenceOrigin, SilenceRejection, SilenceRemoval, SilenceSpec, SilenceState,
+    SilenceStore, SilenceView, TickOutput, build_alert_pipeline, group_fingerprint,
+    load_alert_pipeline_file, parse_alert_pipeline_config, strip_event_payloads,
 };
 pub use capture::{
     AdmittedEvent, AdmittedMatch, CaptureConfig, CaptureConfigError, CaptureIncompatibility,

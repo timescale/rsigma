@@ -20,9 +20,9 @@ use rsigma_runtime::{
     FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
     IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
     RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
-    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
-    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
-    strip_event_payloads,
+    SilenceRejection, SilenceRemoval, SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink,
+    build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
+    load_schema_signatures, spawn_source, strip_event_payloads,
 };
 
 use super::auth::AuthIdentity;
@@ -4592,16 +4592,23 @@ async fn create_silence(
             let id = silence.id().to_string();
             let added = {
                 let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-                st.silences.try_add(silence, max_silences)
+                st.silences.insert_api(silence, max_silences)
             };
-            if added {
-                (
+            match added {
+                Ok(()) => (
                     StatusCode::CREATED,
                     Json(serde_json::json!({ "status": "created", "id": id })),
                 )
-                    .into_response()
-            } else {
-                (
+                    .into_response(),
+                Err(SilenceRejection::DuplicateId) => (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": format!("a silence with id '{id}' already exists"),
+                        "id": id,
+                    })),
+                )
+                    .into_response(),
+                Err(SilenceRejection::Full) => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(serde_json::json!({
                         "error": format!(
@@ -4609,7 +4616,7 @@ async fn create_silence(
                         )
                     })),
                 )
-                    .into_response()
+                    .into_response(),
             }
         }
         Err(e) => {
@@ -4636,32 +4643,40 @@ async fn delete_silence(
     State(state): State<AppState>,
     identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    Query(query): Query<super::tenancy::TenantQuery>,
 ) -> Response {
-    let tenant = match super::tenancy::tenant_filter(
-        state.tenancy_enabled,
+    let tenant = match read_tenant(
+        &state,
         identity.as_ref().map(|e| &e.0),
-        None,
+        query.tenant.as_deref(),
     ) {
-        Ok(super::tenancy::TenantFilter::All) => None,
-        Ok(super::tenancy::TenantFilter::Only(tenant)) => Some(tenant),
+        Ok(tenant) => tenant,
         Err(response) => return response,
     };
     let removed = {
         let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
         st.silences.remove_scoped(&id, tenant.as_ref())
     };
-    if removed {
-        (
+    match removed {
+        SilenceRemoval::Removed => (
             StatusCode::OK,
             Json(serde_json::json!({ "status": "deleted", "id": id })),
         )
-            .into_response()
-    } else {
-        (
+            .into_response(),
+        SilenceRemoval::NotFound => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such silence", "id": id })),
         )
-            .into_response()
+            .into_response(),
+        SilenceRemoval::Ambiguous => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("several tenants have a silence with id '{id}'"),
+                "hint": "name one with ?tenant=<id>",
+                "id": id,
+            })),
+        )
+            .into_response(),
     }
 }
 

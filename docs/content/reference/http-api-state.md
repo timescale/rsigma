@@ -258,7 +258,7 @@ curl -sS http://127.0.0.1:9090/api/v1/silences
 
 ### `POST /api/v1/silences`
 
-Create a silence. The body is a JSON object with `matchers` (required; each `{selector, op, value}` where `op` is `=`, `!=`, `=~`, or `!~`), optional `starts_at` and `ends_at` (RFC 3339), `created_by`, and `comment`. Returns `201` with the assigned `id`. A missing matcher list or a bad regex returns `400`. Once the dynamic-silence cap (`max_silences`, default 1000) is reached it returns `429`; delete silences or raise the cap.
+Create a silence. The body is a JSON object with `matchers` (required; each `{selector, op, value}` where `op` is `=`, `!=`, `=~`, or `!~`), optional `id`, `starts_at` and `ends_at` (RFC 3339), `created_by`, and `comment`. Returns `201` with the assigned `id`. {{ added "unreleased" }} An `id` that a silence visible to the caller already uses returns `409`. With tenancy enabled, ids are unique per tenant, so a tenant can reuse an id that another tenant has and never learns that it exists. A missing matcher list or a bad regex returns `400`. Once the dynamic-silence cap (`max_silences`, default 1000) is reached it returns `429`; delete silences or raise the cap.
 
 {{ added "0.27.0" }} The alert pipeline's silence limits also return `400`, with an `error` and a `hint`:
 
@@ -278,7 +278,7 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/silences \
 
 ### `DELETE /api/v1/silences/{id}`
 
-Remove a silence by id. Returns `200` when removed, `404` when no such silence exists.
+Remove a silence by id. Returns `200` when removed, `404` when no such silence exists. {{ added "unreleased" }} With tenancy enabled, a tenant token removes only its own silence. An `all_tenants` token may name the tenant with `?tenant=<id>`; without it, an id that several tenants use returns `409` and nothing is removed.
 
 ```bash
 curl -sS -X DELETE http://127.0.0.1:9090/api/v1/silences/0b6c...

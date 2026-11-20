@@ -40,8 +40,8 @@ pub use grouping::{
 };
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
-    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceSpec,
-    SilenceState, SilenceStore, SilenceView,
+    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin,
+    SilenceRejection, SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView,
 };
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;

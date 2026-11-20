@@ -61,6 +61,7 @@ impl RsigmaMcp {
             return Err(invalid("`matchers` must not be empty"));
         }
         let ends_at = resolve_ends_at(input.ends_at.as_deref(), input.duration.as_deref())?;
+        let tenant = input.tenant.as_deref().filter(|t| !t.is_empty());
         if let Some(id) = input.id.as_deref().filter(|id| !id.is_empty()) {
             let listed = self.daemon_get("/api/v1/silences").await;
             if listed.get("ok") == Some(&json!(true))
@@ -69,9 +70,10 @@ impl RsigmaMcp {
                         .get("silences")
                         .and_then(Value::as_array)
                         .and_then(|silences| {
-                            silences
-                                .iter()
-                                .find(|s| s.get("id").and_then(Value::as_str) == Some(id))
+                            silences.iter().find(|s| {
+                                s.get("id").and_then(Value::as_str) == Some(id)
+                                    && same_tenant(s, tenant)
+                            })
                         })
             {
                 return Ok(json!({
@@ -100,6 +102,15 @@ impl RsigmaMcp {
             body["tenant"] = json!(tenant);
         }
         Ok(self.daemon_post("/api/v1/silences", &body).await)
+    }
+}
+
+/// Whether a listed silence belongs to `tenant` or to every tenant. With no
+/// tenant named, the daemon lists only what the token can see.
+fn same_tenant(silence: &Value, tenant: Option<&str>) -> bool {
+    match (tenant, silence.get("tenant").and_then(Value::as_str)) {
+        (None, _) | (_, None) => true,
+        (Some(tenant), Some(own)) => tenant == own,
     }
 }
 
@@ -295,6 +306,42 @@ mod tests {
             assert_eq!(value["ok"], true);
             let stored = store.0.lock().expect("store")[0].clone();
             assert_eq!(stored["tenant"], "tenant-a");
+        });
+    }
+
+    #[test]
+    fn another_tenants_silence_with_the_id_is_not_an_existing_one() {
+        block_on(async {
+            let store = Store::default();
+            store
+                .0
+                .lock()
+                .expect("store")
+                .push(json!({ "id": "maint", "tenant": "tenant-b" }));
+            let url = spawn_stub(
+                axum::Router::new()
+                    .route("/api/v1/silences", get(list).post(create))
+                    .with_state(store.clone()),
+            )
+            .await;
+            let handler = operate_handler(&url, true);
+            let value = handler
+                .run_create_silence(CreateSilenceInput {
+                    matchers: vec![json!({ "selector": "rule", "value": "r1" })],
+                    ends_at: Some("2026-12-01T00:00:00Z".into()),
+                    duration: None,
+                    starts_at: None,
+                    id: Some("maint".into()),
+                    comment: None,
+                    created_by: None,
+                    tenant: Some("tenant-a".into()),
+                })
+                .await
+                .unwrap();
+            assert_ne!(value["status"], "exists");
+            let stored = store.0.lock().expect("store").clone();
+            assert_eq!(stored.len(), 2);
+            assert_eq!(stored[1]["tenant"], "tenant-a");
         });
     }
 }
