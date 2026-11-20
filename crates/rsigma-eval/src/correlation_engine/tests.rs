@@ -4574,6 +4574,69 @@ fn a_tenant_quota_evicts_only_its_own_entries() {
 }
 
 #[test]
+fn quota_eviction_of_an_expired_window_keeps_its_suppression() {
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        max_state_entries_per_tenant: Some(1),
+        suppress: Some(3600),
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(TENANT_RULES).unwrap())
+        .unwrap();
+    let login = |user: &str| json!({"EventType": "login", "User": user});
+    let x = login("x");
+    let y = login("y");
+    let x = JsonEvent::borrow(&x);
+    let y = JsonEvent::borrow(&y);
+
+    engine.process_event_at_for_tenant(&x, 100, Some(&a));
+    let fired = engine.process_event_at_for_tenant(&x, 101, Some(&a));
+    assert_eq!(fired.correlation_count(), 1);
+
+    // x's window has expired; y at the cap evicts it.
+    engine.process_event_at_for_tenant(&y, 200, Some(&a));
+    engine.process_event_at_for_tenant(&x, 210, Some(&a));
+    let again = engine.process_event_at_for_tenant(&x, 211, Some(&a));
+    assert_eq!(
+        again.correlation_count(),
+        0,
+        "x is still inside its suppress window"
+    );
+}
+
+#[test]
+fn restored_and_late_quota_state_counts_toward_the_cap() {
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let mut source = tenant_engine(false);
+    for user in ["u1", "u2"] {
+        let value = json!({"EventType": "login", "User": user});
+        source.process_event_at_for_tenant(&JsonEvent::borrow(&value), 100, Some(&a));
+    }
+    let snapshot = source.export_state();
+
+    let mut restored = CorrelationEngine::new(CorrelationConfig {
+        max_state_entries_per_tenant: Some(2),
+        require_tenant: true,
+        ..Default::default()
+    });
+    restored
+        .add_collection(&parse_sigma_yaml(TENANT_RULES).unwrap())
+        .unwrap();
+    assert!(restored.import_state(snapshot));
+    let third = json!({"EventType": "login", "User": "u3"});
+    restored.process_event_at_for_tenant(&JsonEvent::borrow(&third), 110, Some(&a));
+    assert_eq!(restored.take_tenant_quota_evictions(), 1);
+    assert_eq!(restored.state_count(), 2);
+
+    // A cap set after state exists indexes that state.
+    source.set_max_state_entries_per_tenant(Some(2));
+    source.process_event_at_for_tenant(&JsonEvent::borrow(&third), 110, Some(&a));
+    assert_eq!(source.take_tenant_quota_evictions(), 1);
+    assert_eq!(source.state_count(), 2);
+}
+
+#[test]
 fn the_global_cap_still_applies_without_a_per_tenant_cap() {
     let mut engine = CorrelationEngine::new(CorrelationConfig {
         max_state_entries: 2,

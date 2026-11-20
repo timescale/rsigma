@@ -21,7 +21,7 @@ pub use introspect::{CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, Gr
 pub use types::*;
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::Utc;
 
@@ -101,8 +101,10 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     pipelines: Vec<Pipeline>,
     /// Events skipped by `require_tenant` because they carried no tenant.
     untenanted_skipped: u64,
-    /// Live state entries per tenant, kept in step with `state`.
-    tenant_counts: HashMap<Option<TenantId>, usize>,
+    /// Live state keys per tenant, kept in step with `state` while a
+    /// per-tenant cap is set, so quota checks and eviction touch only that
+    /// tenant's entries. Empty when there is no per-tenant cap.
+    tenant_keys: HashMap<Option<TenantId>, HashSet<StateKey>>,
     /// Entries evicted because a tenant hit its quota.
     tenant_quota_evictions: u64,
 }
@@ -136,7 +138,7 @@ impl<L> CorrelationEngine<L> {
             config,
             pipelines: Vec::new(),
             untenanted_skipped: 0,
-            tenant_counts: HashMap::new(),
+            tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
         }
     }
@@ -754,6 +756,15 @@ impl<L> CorrelationEngine<L> {
     /// Set the per-tenant state cap. `None` leaves only the global cap.
     pub fn set_max_state_entries_per_tenant(&mut self, max: Option<usize>) {
         self.config.max_state_entries_per_tenant = max;
+        self.tenant_keys.clear();
+        if max.is_some() {
+            for key in self.state.keys() {
+                self.tenant_keys
+                    .entry(key.tenant.clone())
+                    .or_default()
+                    .insert(key.clone());
+            }
+        }
     }
 
     /// Entries evicted because a tenant hit its quota since the previous call,
@@ -1075,20 +1086,12 @@ impl<L> CorrelationEngine<L> {
         let is_new = !self.state.contains_key(&state_key);
         if is_new
             && let Some(cap) = self.config.max_state_entries_per_tenant
-            && self
-                .tenant_counts
-                .get(&state_key.tenant)
-                .copied()
-                .unwrap_or(0)
-                >= cap
+            && self.tenant_len(&state_key.tenant) >= cap
         {
             self.evict_tenant(tenant, ts);
         }
         if is_new {
-            *self
-                .tenant_counts
-                .entry(state_key.tenant.clone())
-                .or_insert(0) += 1;
+            self.note_tenant_insert(&state_key);
         }
         let state = self
             .state
@@ -1381,20 +1384,12 @@ impl<L> CorrelationEngine<L> {
                 let is_new = !self.state.contains_key(&state_key);
                 if is_new
                     && let Some(cap) = self.config.max_state_entries_per_tenant
-                    && self
-                        .tenant_counts
-                        .get(&state_key.tenant)
-                        .copied()
-                        .unwrap_or(0)
-                        >= cap
+                    && self.tenant_len(&state_key.tenant) >= cap
                 {
                     self.evict_tenant(tenant.as_ref(), ts);
                 }
                 if is_new {
-                    *self
-                        .tenant_counts
-                        .entry(state_key.tenant.clone())
-                        .or_insert(0) += 1;
+                    self.note_tenant_insert(&state_key);
                 }
                 let state = self
                     .state
@@ -1534,14 +1529,29 @@ impl<L> CorrelationEngine<L> {
         self.evict_all(now_secs);
     }
 
-    /// Decrement a tenant's live entry count for `key`.
+    /// Index a new state key under its tenant while a per-tenant cap is set.
+    fn note_tenant_insert(&mut self, key: &StateKey) {
+        if self.config.max_state_entries_per_tenant.is_some() {
+            self.tenant_keys
+                .entry(key.tenant.clone())
+                .or_default()
+                .insert(key.clone());
+        }
+    }
+
+    /// Drop a removed state key from its tenant's index.
     fn note_tenant_removal(&mut self, key: &StateKey) {
-        if let Some(count) = self.tenant_counts.get_mut(&key.tenant) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.tenant_counts.remove(&key.tenant);
+        if let Some(keys) = self.tenant_keys.get_mut(&key.tenant) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.tenant_keys.remove(&key.tenant);
             }
         }
+    }
+
+    /// Live state entries of `tenant`, tracked while a per-tenant cap is set.
+    fn tenant_len(&self, tenant: &Option<TenantId>) -> usize {
+        self.tenant_keys.get(tenant).map_or(0, HashSet::len)
     }
 
     /// Remove one state entry and every sidecar keyed by it.
@@ -1563,28 +1573,32 @@ impl<L> CorrelationEngine<L> {
             return 0;
         };
         let tenant_key = tenant.cloned();
-        let specs: Vec<(u64, WindowMode, Option<u64>)> = self
-            .correlations
-            .iter()
-            .map(|c| (c.timespan_secs, c.window_mode, c.gap_secs))
-            .collect();
+        let keys: Vec<StateKey> = self
+            .tenant_keys
+            .get(&tenant_key)
+            .map(|keys| keys.iter().cloned().collect())
+            .unwrap_or_default();
 
-        let mut removed_keys = Vec::new();
-        self.state.retain(|key, state| {
-            if key.tenant != tenant_key {
-                return true;
-            }
-            if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
-                match mode {
+        // Expired phase: drop the tenant's emptied windows. `last_alert` stays,
+        // so a group evicted here is still suppressed until `evict_all` ages
+        // the alert out.
+        let mut evicted = 0;
+        for key in &keys {
+            let Some(state) = self.state.get_mut(key) else {
+                continue;
+            };
+            if let Some(correlation) = self.correlations.get(key.corr_idx) {
+                let timespan = correlation.timespan_secs as i64;
+                match correlation.window_mode {
                     WindowMode::Sliding => {
-                        state.evict(now_secs - timespan as i64);
+                        state.evict(now_secs - timespan);
                     }
-                    WindowMode::Tumbling | WindowMode::Session => {
+                    mode @ (WindowMode::Tumbling | WindowMode::Session) => {
                         let staleness = if mode == WindowMode::Session {
-                            gap.unwrap_or(timespan)
+                            correlation.gap_secs.map_or(timespan, |gap| gap as i64)
                         } else {
                             timespan
-                        } as i64;
+                        };
                         if state
                             .latest_timestamp()
                             .is_some_and(|last| now_secs - last > staleness)
@@ -1595,30 +1609,30 @@ impl<L> CorrelationEngine<L> {
                 }
             }
             if state.is_empty() {
-                removed_keys.push(key.clone());
-                false
-            } else {
-                true
+                self.state.remove(key);
+                self.note_tenant_removal(key);
+                self.event_buffers.remove(key);
+                self.event_ref_buffers.remove(key);
+                evicted += 1;
             }
-        });
-        let mut evicted = 0;
-        for key in removed_keys {
-            self.note_tenant_removal(&key);
-            self.last_alert.remove(&key);
-            self.event_buffers.remove(&key);
-            self.event_ref_buffers.remove(&key);
-            evicted += 1;
         }
 
-        let count = self.tenant_counts.get(&tenant_key).copied().unwrap_or(0);
+        // Stalest phase: at the cap, drop the tenant's stalest windows down to
+        // 90% of it, and at least one.
+        let count = self.tenant_len(&tenant_key);
         if count >= cap {
             let target = cap * 9 / 10;
             let excess = count.saturating_sub(target);
             let mut by_staleness: Vec<_> = self
-                .state
-                .iter()
-                .filter(|(key, _)| key.tenant == tenant_key)
-                .map(|(key, state)| (key, state.latest_timestamp().unwrap_or(i64::MIN)))
+                .tenant_keys
+                .get(&tenant_key)
+                .into_iter()
+                .flatten()
+                .filter_map(|key| {
+                    self.state
+                        .get(key)
+                        .map(|state| (key, state.latest_timestamp().unwrap_or(i64::MIN)))
+                })
                 .collect();
             if excess < by_staleness.len() {
                 by_staleness.select_nth_unstable_by_key(excess, |&(_, ts)| ts);
@@ -1968,7 +1982,7 @@ impl<L> CorrelationEngine<L> {
                             group_key: gk,
                         };
                         if self.state.insert(key.clone(), ws).is_none() {
-                            *self.tenant_counts.entry(key.tenant.clone()).or_insert(0) += 1;
+                            self.note_tenant_insert(&key);
                         }
                         stats.restored += 1;
                     }
