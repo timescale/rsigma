@@ -157,6 +157,8 @@ With tenancy disabled, the daemon refuses to start when a token sets `tenant` or
 
 ## API scoping
 
+A token's [role](../reference/http-api.md#authentication) and its tenant binding are separate checks, and a request must pass both. The role decides what the token may do; the binding decides which tenants it reaches. A tenant-bound `admin` token still gets `403` on operator-only routes such as reload, an `all_tenants` `admin` token still cannot ingest, and an `all_tenants` `reader` token reads every tenant but writes nothing.
+
 Every API route has a tenancy class. Tenant tokens get `403` on operator-only routes, which span tenants: `/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, and reload. On tenant-scoped reads, including the tap and the detection stream, a tenant token is filtered to its tenant. `?tenant=` may only narrow: a tenant token naming another tenant is `403`. A resource id owned by another tenant is `404`, so ids do not leak existence. With tenancy disabled, `?tenant=` is `400`.
 
 Silences and dispositions written by a tenant token are bound to its tenant. A body `tenant` naming another tenant is `403`. An `all_tenants` token must send `tenant` on a write, or it is `400`.
