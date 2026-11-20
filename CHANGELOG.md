@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Fibratus output rejects unsafe field names and escapes YAML line breaks (security)
+### Fibratus output rejects unsafe field names and escapes YAML line breaks (security, #734)
 
 The Fibratus backend passed field names through unchanged, so a field name such as `ps.name = evil or 1 = 1 or ps.name` rewrote the logic of the generated filter expression, in detection rules and in a correlation's `group-by` and `value_count` field ([GHSA-98v4-pmv2-h8qq](https://github.com/timescale/rsigma/security/advisories/GHSA-98v4-pmv2-h8qq)). The YAML rule envelope also split block scalars only on `\n` and wrote label keys unquoted, while YAML loaders such as the one Fibratus uses also break lines on `\r`, NEL, U+2028, and U+2029. A carriage return in a value, field name, or description, or a newline in a tag, could end the `condition`, `description`, or `labels` block and add top-level keys such as an `action` list with `kill` or `isolate` ([GHSA-gx4c-rpx5-2w58](https://github.com/timescale/rsigma/security/advisories/GHSA-gx4c-rpx5-2w58)).
 
