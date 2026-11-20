@@ -139,6 +139,7 @@ With tenancy enabled, the daemon refuses to start when:
 - `--api-token-env` is used; its implicit `default` token has no tenant.
 - `anonymous_permissions` is non-empty.
 - A token sets both `tenant` and `all_tenants: true`, or neither.
+- A token's secret is shorter than 32 bytes. Generate secrets with `openssl rand -hex 32`. {{ added "unreleased" }}
 - A configured tenant id is invalid.
 - Two configured tenant ids differ only by case, such as `Acme` and `acme`. They would share a `{tenant}` file on a case-insensitive filesystem.
 - A `daemon.tenancy.quotas` value is 0.

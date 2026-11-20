@@ -8,8 +8,13 @@ use std::time::Duration;
 
 use common::{
     DaemonProcess, http_delete_bearer, http_get_bearer, http_post_bearer, poll_until,
-    spawn_expect_failure, temp_file,
+    spawn_expect_failure, spawn_expect_failure_with_env, temp_file,
 };
+
+const A_INGEST: &str = "tenant-a-ingest-0123456789abcdef0123";
+const B_INGEST: &str = "tenant-b-ingest-0123456789abcdef0123";
+const A_OPERATOR: &str = "tenant-a-operator-0123456789abcdef01";
+const ADMIN: &str = "all-tenants-admin-0123456789abcdef01";
 
 const RULES: &str = r#"
 title: Login
@@ -111,10 +116,10 @@ fn spawn_tenancy(dir: &Path, extra_tenancy: &str) -> DaemonProcess {
             "127.0.0.1:0",
         ],
         &[
-            ("A_INGEST", "a-secret"),
-            ("B_INGEST", "b-secret"),
-            ("A_OPERATOR", "a-op"),
-            ("ADMIN", "admin-secret"),
+            ("A_INGEST", A_INGEST),
+            ("B_INGEST", B_INGEST),
+            ("A_OPERATOR", A_OPERATOR),
+            ("ADMIN", ADMIN),
         ],
     )
 }
@@ -156,17 +161,18 @@ fn tenancy_with_anonymous_permissions_is_refused() {
     let config = temp_file(
         ".yaml",
         &format!(
-            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      anonymous_permissions: [\"*:read\"]\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          all_tenants: true\n",
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      anonymous_permissions: [\"*:read\"]\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
             rules.display()
         ),
     );
-    let stderr = spawn_expect_failure(
+    let stderr = spawn_expect_failure_with_env(
         &[
             "engine",
             "daemon",
             "--config",
             config.path().to_str().unwrap(),
         ],
+        &[("ADMIN", ADMIN)],
         Duration::from_secs(10),
     );
     assert!(
@@ -228,7 +234,7 @@ fn a_project_layer_refuses_tenancy() {
         .current_dir(dir.path())
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("ADMIN", "admin-secret")
+        .env("ADMIN", ADMIN)
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -244,14 +250,14 @@ fn ingest_stamps_the_token_tenant_and_all_tenants_is_refused() {
     let daemon = spawn_tenancy(dir.path(), "");
     let url = daemon.url("/api/v1/events");
 
-    let (status, _) = http_post_bearer(&url, "a-secret", &event("alice"));
+    let (status, _) = http_post_bearer(&url, A_INGEST, &event("alice"));
     assert_eq!(status, 200);
-    let (status, _) = http_post_bearer(&url, "b-secret", &event("bob"));
+    let (status, _) = http_post_bearer(&url, B_INGEST, &event("bob"));
     assert_eq!(status, 200);
-    let (status, _) = http_post_bearer(&url, "b-secret", &event("bob"));
+    let (status, _) = http_post_bearer(&url, B_INGEST, &event("bob"));
     assert_eq!(status, 200);
     // The all_tenants admin token has no tenant to bind.
-    let (status, _) = http_post_bearer(&url, "admin-secret", &event("carol"));
+    let (status, _) = http_post_bearer(&url, ADMIN, &event("carol"));
     assert_eq!(status, 403);
 
     // A body field and a header named like a tenant do not override the token.
@@ -262,7 +268,7 @@ fn ingest_stamps_the_token_tenant_and_all_tenants_is_refused() {
         "tenant_id": "tenant-b",
     })
     .to_string();
-    let (status, _) = http_post_bearer(&url, "a-secret", &spoofed);
+    let (status, _) = http_post_bearer(&url, A_INGEST, &spoofed);
     assert_eq!(status, 200);
 
     let out = dir.path().join("out.ndjson");
@@ -297,11 +303,11 @@ fn a_cli_input_flag_cannot_bypass_the_source_binding() {
     let config = temp_file(
         ".yaml",
         &format!(
-            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          all_tenants: true\n",
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  tenancy:\n    enabled: true\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          all_tenants: true\n",
             rules.display()
         ),
     );
-    let stderr = spawn_expect_failure(
+    let stderr = spawn_expect_failure_with_env(
         &[
             "engine",
             "daemon",
@@ -310,6 +316,7 @@ fn a_cli_input_flag_cannot_bypass_the_source_binding() {
             "--input",
             "stdin",
         ],
+        &[("ADMIN", ADMIN)],
         Duration::from_secs(10),
     );
     assert!(
@@ -337,23 +344,22 @@ fn a_tenant_bound_ruleset_never_fires_for_another_tenant() {
             "127.0.0.1:0",
         ],
         &[
-            ("A_INGEST", "a-secret"),
-            ("B_INGEST", "b-secret"),
-            ("A_OPERATOR", "a-op"),
-            ("ADMIN", "admin-secret"),
+            ("A_INGEST", A_INGEST),
+            ("B_INGEST", B_INGEST),
+            ("A_OPERATOR", A_OPERATOR),
+            ("ADMIN", ADMIN),
         ],
     );
 
     // Tenant B's events go first, so they are processed before tenant A's
     // correlation is written.
     for _ in 0..2 {
-        let (status, _) =
-            http_post_bearer(&daemon.url("/api/v1/events"), "b-secret", &event("bob"));
+        let (status, _) = http_post_bearer(&daemon.url("/api/v1/events"), B_INGEST, &event("bob"));
         assert_eq!(status, 200);
     }
     for _ in 0..2 {
         let (status, _) =
-            http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
+            http_post_bearer(&daemon.url("/api/v1/events"), A_INGEST, &event("alice"));
         assert_eq!(status, 200);
     }
 
@@ -371,14 +377,13 @@ fn a_tenant_bound_ruleset_never_fires_for_another_tenant() {
 
     // Tenant A sees its ruleset; a read narrowed to tenant B sees no rules
     // and no ruleset bound only to tenant A.
-    let (status, body) = http_get_bearer(&daemon.url("/api/v1/rules"), "a-op");
+    let (status, body) = http_get_bearer(&daemon.url("/api/v1/rules"), A_OPERATOR);
     assert_eq!(status, 200);
     let rules: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(rules["rulesets"][0]["name"], "shared", "{body}");
     assert_eq!(rules["detection_rules"], 1, "{body}");
 
-    let (status, body) =
-        http_get_bearer(&daemon.url("/api/v1/rules?tenant=tenant-b"), "admin-secret");
+    let (status, body) = http_get_bearer(&daemon.url("/api/v1/rules?tenant=tenant-b"), ADMIN);
     assert_eq!(status, 200);
     let rules: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(rules["detection_rules"], 0, "{body}");
@@ -398,18 +403,15 @@ fn api_reads_are_scoped_to_the_token_tenant() {
     let b_silence = bounded_silence_for("tenant-b");
     let (status, _) = http_post_bearer(
         &format!("http://{base}/api/v1/silences"),
-        "a-op",
+        A_OPERATOR,
         &a_silence,
     );
     assert_eq!(status, 201);
-    let (status, _) = http_post_bearer(
-        &format!("http://{base}/api/v1/silences"),
-        "admin-secret",
-        &b_silence,
-    );
+    let (status, _) =
+        http_post_bearer(&format!("http://{base}/api/v1/silences"), ADMIN, &b_silence);
     assert_eq!(status, 201);
 
-    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), "a-op");
+    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), A_OPERATOR);
     assert_eq!(status, 200);
     let listed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(listed["count"], 1);
@@ -418,18 +420,18 @@ fn api_reads_are_scoped_to_the_token_tenant() {
     // A tenant token may not ask for another tenant.
     let (status, _) = http_get_bearer(
         &format!("http://{base}/api/v1/silences?tenant=tenant-b"),
-        "a-op",
+        A_OPERATOR,
     );
     assert_eq!(status, 403);
 
     // The all_tenants token sees both and narrows with ?tenant=.
-    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), "admin-secret");
+    let (status, body) = http_get_bearer(&format!("http://{base}/api/v1/silences"), ADMIN);
     assert_eq!(status, 200);
     let all: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(all["count"], 2);
     let (status, body) = http_get_bearer(
         &format!("http://{base}/api/v1/silences?tenant=tenant-b"),
-        "admin-secret",
+        ADMIN,
     );
     assert_eq!(status, 200);
     let narrowed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -438,15 +440,15 @@ fn api_reads_are_scoped_to_the_token_tenant() {
 
     // A tenant token may not read an operator-only endpoint.
     assert_eq!(
-        http_get_bearer(&format!("http://{base}/api/v1/status"), "a-op").0,
+        http_get_bearer(&format!("http://{base}/api/v1/status"), A_OPERATOR).0,
         403
     );
     assert_eq!(
-        http_get_bearer(&format!("http://{base}/metrics"), "a-op").0,
+        http_get_bearer(&format!("http://{base}/metrics"), A_OPERATOR).0,
         403
     );
     assert_eq!(
-        http_get_bearer(&format!("http://{base}/api/v1/status"), "admin-secret").0,
+        http_get_bearer(&format!("http://{base}/api/v1/status"), ADMIN).0,
         200
     );
 }
@@ -474,26 +476,26 @@ fn silence_ids_are_unique_per_tenant_and_an_ambiguous_delete_is_refused() {
     };
     let silences = daemon.url("/api/v1/silences");
     assert_eq!(
-        http_post_bearer(&silences, "a-op", &with_id("tenant-a")).0,
+        http_post_bearer(&silences, A_OPERATOR, &with_id("tenant-a")).0,
         201
     );
     assert_eq!(
-        http_post_bearer(&silences, "a-op", &with_id("tenant-a")).0,
+        http_post_bearer(&silences, A_OPERATOR, &with_id("tenant-a")).0,
         409
     );
     assert_eq!(
-        http_post_bearer(&silences, "admin-secret", &with_id("tenant-b")).0,
+        http_post_bearer(&silences, ADMIN, &with_id("tenant-b")).0,
         201,
         "another tenant may reuse the id"
     );
 
     let maint = daemon.url("/api/v1/silences/maint");
-    assert_eq!(http_delete_bearer(&maint, "admin-secret").0, 409);
+    assert_eq!(http_delete_bearer(&maint, ADMIN).0, 409);
     assert_eq!(
-        http_delete_bearer(&format!("{maint}?tenant=tenant-b"), "admin-secret").0,
+        http_delete_bearer(&format!("{maint}?tenant=tenant-b"), ADMIN).0,
         200
     );
-    assert_eq!(http_delete_bearer(&maint, "a-op").0, 200);
+    assert_eq!(http_delete_bearer(&maint, A_OPERATOR).0, 200);
 }
 
 #[test]
@@ -502,12 +504,12 @@ fn a_tenant_at_its_silence_quota_does_not_block_another_tenant() {
     let daemon = spawn_tenancy(dir.path(), "    quotas:\n      silences: 1");
     let silences = daemon.url("/api/v1/silences");
     let a = bounded_silence_for("tenant-a");
-    assert_eq!(http_post_bearer(&silences, "a-op", &a).0, 201);
-    let (status, body) = http_post_bearer(&silences, "a-op", &a);
+    assert_eq!(http_post_bearer(&silences, A_OPERATOR, &a).0, 201);
+    let (status, body) = http_post_bearer(&silences, A_OPERATOR, &a);
     assert_eq!(status, 429, "{body}");
     assert!(body.contains("quotas.silences"), "{body}");
     assert_eq!(
-        http_post_bearer(&silences, "admin-secret", &bounded_silence_for("tenant-b")).0,
+        http_post_bearer(&silences, ADMIN, &bounded_silence_for("tenant-b")).0,
         201
     );
 }
@@ -522,7 +524,7 @@ fn an_all_tenants_silence_without_a_tenant_is_refused() {
         "ends_at": ends_at,
     })
     .to_string();
-    let (status, _) = http_post_bearer(&daemon.url("/api/v1/silences"), "admin-secret", &body);
+    let (status, _) = http_post_bearer(&daemon.url("/api/v1/silences"), ADMIN, &body);
     assert_eq!(status, 400);
 }
 
@@ -539,16 +541,17 @@ fn a_tenant_silence_mutes_only_its_tenant() {
         "created_by": "tests",
     })
     .to_string();
-    let (status, _) = http_post_bearer(&format!("http://{base}/api/v1/silences"), "a-op", &body);
+    let (status, _) =
+        http_post_bearer(&format!("http://{base}/api/v1/silences"), A_OPERATOR, &body);
     assert_eq!(status, 201);
 
     // Two events per tenant fire the correlation; tenant A's result is
     // silenced, so only tenant B's correlation reaches the file.
     for user in ["alice", "alice"] {
-        http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event(user));
+        http_post_bearer(&daemon.url("/api/v1/events"), A_INGEST, &event(user));
     }
     for user in ["bob", "bob"] {
-        http_post_bearer(&daemon.url("/api/v1/events"), "b-secret", &event(user));
+        http_post_bearer(&daemon.url("/api/v1/events"), B_INGEST, &event(user));
     }
 
     let out = dir.path().join("out.ndjson");
@@ -570,17 +573,18 @@ fn a_disabled_daemon_refuses_tenant_bindings() {
     let config = temp_file(
         ".yaml",
         &format!(
-            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: HOME\n          tenant: tenant-a\n",
+            "rulesets:\n  shared:\n    sources: [\"{}\"]\ndaemon:\n  rulesets: [shared]\n  input:\n    source: http\n  api:\n    auth:\n      tokens:\n        - name: t\n          role: admin\n          token_env: ADMIN\n          tenant: tenant-a\n",
             rules.display()
         ),
     );
-    let stderr = spawn_expect_failure(
+    let stderr = spawn_expect_failure_with_env(
         &[
             "engine",
             "daemon",
             "--config",
             config.path().to_str().unwrap(),
         ],
+        &[("ADMIN", ADMIN)],
         Duration::from_secs(10),
     );
     assert!(
@@ -675,7 +679,7 @@ fn otlp_http_stamps_the_token_tenant() {
     for _ in 0..2 {
         let response = agent
             .post(&url)
-            .header("authorization", "Bearer a-secret")
+            .header("authorization", format!("Bearer {A_INGEST}"))
             .header("content-type", "application/json")
             .send(&body)
             .expect("OTLP HTTP request");
@@ -741,10 +745,10 @@ daemon:
             "--api-addr",
             "127.0.0.1:0",
         ],
-        &[("A_INGEST", "a-secret")],
+        &[("A_INGEST", A_INGEST)],
     );
     for user in ["alice", "alice"] {
-        http_post_bearer(&first.url("/api/v1/events"), "a-secret", &event(user));
+        http_post_bearer(&first.url("/api/v1/events"), A_INGEST, &event(user));
     }
     poll_until(Duration::from_secs(5), || {
         std::fs::read_to_string(&out)
@@ -799,15 +803,15 @@ fn tenant_metrics_are_exported() {
     // A no_tenant rejection.
     let (status, _) = http_post_bearer(
         &format!("http://{base}/api/v1/events"),
-        "admin-secret",
+        ADMIN,
         &event("carol"),
     );
     assert_eq!(status, 403);
     // A tenant match.
-    http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
-    http_post_bearer(&daemon.url("/api/v1/events"), "a-secret", &event("alice"));
+    http_post_bearer(&daemon.url("/api/v1/events"), A_INGEST, &event("alice"));
+    http_post_bearer(&daemon.url("/api/v1/events"), A_INGEST, &event("alice"));
 
-    let (status, body) = http_get_bearer(&format!("http://{base}/metrics"), "admin-secret");
+    let (status, body) = http_get_bearer(&format!("http://{base}/metrics"), ADMIN);
     assert_eq!(status, 200);
     assert!(
         body.contains(r#"rsigma_tenant_rejected_total{channel="rest",reason="no_tenant"}"#),

@@ -30,6 +30,10 @@ use axum::response::{IntoResponse, Response};
 
 use super::metrics::Metrics;
 
+/// Shortest secret accepted for a token bound to a tenant; shorter secrets on
+/// other tokens only log a warning.
+pub const MIN_TOKEN_BYTES: usize = 32;
+
 /// A permission: a resource plus an action, either of which may be the `*`
 /// wildcard on the *granted* side. Required permissions are always concrete.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,7 +291,8 @@ pub struct ApiAuth {
 }
 
 impl ApiAuth {
-    /// Build and validate the auth table. `roles` are the operator-defined
+    /// Build and validate the auth table. A secret of a token bound to a tenant
+    /// (or to every tenant) must be at least [`MIN_TOKEN_BYTES`] long. `roles` are the operator-defined
     /// roles (merged over the built-ins, which they may not redefine);
     /// `anonymous` is the permission set granted to unauthenticated
     /// requests; `env` resolves an environment variable name to its value
@@ -377,6 +382,21 @@ impl ApiAuth {
                     "token '{}': environment variable '{}' is unset or empty",
                     spec.name, spec.token_env
                 ));
+            }
+            if secret.len() < MIN_TOKEN_BYTES {
+                if spec.tenant.is_some() || spec.all_tenants {
+                    return Err(format!(
+                        "token '{}': a tenant-bound secret must be at least {MIN_TOKEN_BYTES} bytes, \
+                         got {} (generate one with `openssl rand -hex 32`)",
+                        spec.name,
+                        secret.len()
+                    ));
+                }
+                tracing::warn!(
+                    token = %spec.name,
+                    bytes = secret.len(),
+                    "API token secret is shorter than {MIN_TOKEN_BYTES} bytes; generate one with `openssl rand -hex 32`"
+                );
             }
             if let Some(other) = resolved.iter().find(|t| t.secret == secret.as_bytes()) {
                 return Err(format!(
@@ -942,6 +962,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("same secret"), "{err}");
+    }
+
+    #[test]
+    fn build_rejects_a_short_secret_only_on_a_tenant_bound_token() {
+        let short = "s".repeat(MIN_TOKEN_BYTES - 1);
+        let long = "s".repeat(MIN_TOKEN_BYTES);
+        let bound = |all_tenants: bool| TokenSpec {
+            tenant: (!all_tenants).then(|| rsigma_eval::TenantId::new("a").unwrap()),
+            all_tenants,
+            ..spec("t", "reader", "TOK")
+        };
+        for all_tenants in [false, true] {
+            let err = ApiAuth::build(&[], &[bound(all_tenants)], &[], env_of(&[("TOK", &short)]))
+                .unwrap_err();
+            assert!(err.contains("at least 32 bytes"), "{err}");
+            ApiAuth::build(&[], &[bound(all_tenants)], &[], env_of(&[("TOK", &long)])).unwrap();
+        }
+        ApiAuth::build(
+            &[],
+            &[spec("t", "reader", "TOK")],
+            &[],
+            env_of(&[("TOK", "s")]),
+        )
+        .unwrap();
     }
 
     #[test]
