@@ -404,8 +404,13 @@ impl SilenceStore {
     /// to another tenant is left in place and reported as not removed.
     pub fn remove_scoped(&mut self, id: &str, tenant: Option<&TenantId>) -> bool {
         let before = self.silences.len();
-        self.silences
-            .retain(|s| !(s.id == id && s.visible_to(tenant)));
+        // A tenant may read an untenanted silence but not remove it, since that
+        // would unmute every tenant.
+        let removable = |s: &Silence| match tenant {
+            None => true,
+            Some(tenant) => s.tenant.as_ref() == Some(tenant),
+        };
+        self.silences.retain(|s| !(s.id == id && removable(s)));
         self.silences.len() != before
     }
 
@@ -866,5 +871,11 @@ mod tests {
 
         assert!(!store.remove_scoped("a-silence", Some(&b)));
         assert!(store.remove_scoped("a-silence", Some(&a)));
+
+        // A tenant sees the untenanted static silence but may not remove it.
+        let global = store.snapshot_scoped(0, None)[0].id.clone();
+        assert!(!store.remove_scoped(&global, Some(&a)));
+        assert_eq!(store.snapshot_scoped(0, None).len(), 1);
+        assert!(store.remove_scoped(&global, None));
     }
 }
