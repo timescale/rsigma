@@ -161,7 +161,8 @@ pub(crate) struct DraftArgs {
 
 pub(crate) fn cmd_draft(args: DraftArgs, ctx: OutputCtx) {
     if let Some(date) = args.date.as_deref()
-        && chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+        && !chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .is_ok_and(|parsed| parsed.format("%Y-%m-%d").to_string() == date)
     {
         eprintln!("error: --date must be YYYY-MM-DD, got {date}");
         process::exit(crate::exit_code::CONFIG_ERROR);
