@@ -605,14 +605,20 @@ impl RulesetEngines {
             .iter_mut()
             .map(|unit| (unit.name.to_string(), unit))
             .collect();
+        // Import every unit that fits, so one bad unit does not cost the
+        // others their state, then report the failure.
         let mut stats = crate::ImportStats::default();
+        let mut failed = false;
         for (name, state) in &snapshot.rulesets {
             let Some(unit) = units.get_mut(name.as_str()) else {
                 continue;
             };
-            stats += import_unit_state_detailed(unit, state)?;
+            match import_unit_state_detailed(unit, state) {
+                Some(unit_stats) => stats += unit_stats,
+                None => failed = true,
+            }
         }
-        Some(stats)
+        (!failed).then_some(stats)
     }
 
     /// Introspect correlation state for every unit that has it.
@@ -1128,6 +1134,19 @@ correlation:
         let mut restored = RulesetEngines::new(vec![correlation_unit("a")], None).unwrap();
         assert!(!restored.import_state(&snapshot));
         assert_eq!(restored.state_entries(), 0);
+    }
+
+    #[test]
+    fn a_rejected_ruleset_does_not_cost_the_others_their_state() {
+        let units = || vec![correlation_unit("a"), correlation_unit("b")];
+        let mut engines = RulesetEngines::new(units(), None).unwrap();
+        engines.process_event(&JsonEvent::borrow(&whoami_at(0)));
+        let mut snapshot = engines.export_state();
+        snapshot.rulesets.get_mut("a").unwrap().version = 999;
+
+        let mut restored = RulesetEngines::new(units(), None).unwrap();
+        assert!(!restored.import_state(&snapshot));
+        assert_eq!(restored.state_entries(), 1, "ruleset b still restores");
     }
 
     #[test]
