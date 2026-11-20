@@ -159,7 +159,7 @@ A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset rec
 
 ## Quotas
 
-`daemon.tenancy.quotas` caps correlation state, active alerts, incidents, and risk entities per tenant. At a tenant's cap, that tenant's own expired entries are evicted first, then its stalest entries. The global caps remain as a backstop.
+`daemon.tenancy.quotas` caps correlation state, active alerts, incidents, and risk entities per tenant. At a tenant's cap, a new entry evicts that tenant's own expired entries first, then its stalest entries; a result that joins an open incident or an existing entry evicts nothing. A restore or reload trims each tenant to its quota. The global caps remain as a backstop.
 
 ## Sink routing
 
