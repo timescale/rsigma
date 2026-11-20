@@ -29,6 +29,18 @@ pub(crate) struct TenantQuotas {
     pub risk_entities: Option<usize>,
 }
 
+impl TenantQuotas {
+    /// Each quota with its config key.
+    fn named(&self) -> [(&'static str, Option<usize>); 4] {
+        [
+            ("correlation_state", self.correlation_state),
+            ("active_alerts", self.active_alerts),
+            ("incidents", self.incidents),
+            ("risk_entities", self.risk_entities),
+        ]
+    }
+}
+
 impl From<TenantQuotasPartial> for TenantQuotas {
     fn from(partial: TenantQuotasPartial) -> Self {
         TenantQuotas {
@@ -77,6 +89,12 @@ pub(crate) fn validate_tenancy(v: &TenancyValidation<'_>) -> Result<(), String> 
 }
 
 fn validate_enabled(v: &TenancyValidation<'_>) -> Result<(), String> {
+    // A quota of 0 would evict on every new entry.
+    for (name, quota) in v.settings.quotas.named() {
+        if quota == Some(0) {
+            return Err(format!("daemon.tenancy.quotas.{name} must be at least 1"));
+        }
+    }
     // 1. The API always serves state reads, so tenancy needs auth.
     if !v.auth_configured || v.token_specs.is_empty() {
         return Err(
@@ -215,6 +233,15 @@ fn validate_enabled(v: &TenancyValidation<'_>) -> Result<(), String> {
 }
 
 fn validate_disabled(v: &TenancyValidation<'_>) -> Result<(), String> {
+    // Without tenancy every entry is in one bucket, so a quota would act as a
+    // second global cap that evicts instead.
+    for (name, quota) in v.settings.quotas.named() {
+        if quota.is_some() {
+            return Err(format!(
+                "daemon.tenancy.quotas.{name} (or --max-tenant-state) requires daemon.tenancy.enabled"
+            ));
+        }
+    }
     // 12. No tenant binding may be set while tenancy is off.
     for token in v.token_specs {
         if token.tenant.is_some() || token.all_tenants {
@@ -592,6 +619,37 @@ mod tests {
         disposition_source.disposition_source = true;
         let error = validate_tenancy(&disposition_source).unwrap_err();
         assert!(error.contains("daemon.dispositions.source"), "{error}");
+    }
+
+    #[test]
+    fn quotas_need_tenancy_and_a_positive_value() {
+        let tokens = [super::super::auth::TokenSpec {
+            name: "admin".into(),
+            role: Some("admin".into()),
+            permissions: None,
+            token_env: "ADMIN".into(),
+            tenant: None,
+            all_tenants: true,
+        }];
+        let mut settings = TenancySettings {
+            enabled: true,
+            ..Default::default()
+        };
+        settings.quotas.incidents = Some(0);
+        let error = validate_tenancy(&enabled_validation(&settings, &tokens, "http")).unwrap_err();
+        assert!(
+            error.contains("quotas.incidents must be at least 1"),
+            "{error}"
+        );
+
+        settings.quotas.incidents = Some(1);
+        validate_tenancy(&enabled_validation(&settings, &tokens, "http")).unwrap();
+
+        settings.enabled = false;
+        let mut disabled = enabled_validation(&settings, &[], "http");
+        disabled.auth_configured = false;
+        let error = validate_tenancy(&disabled).unwrap_err();
+        assert!(error.contains("requires daemon.tenancy.enabled"), "{error}");
     }
 }
 
