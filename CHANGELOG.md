@@ -29,6 +29,8 @@ Findings sinks can filter by tenant with `tenant=<id>`, route NATS subjects with
 
 The MCP `create_silence` and `post_disposition` tools accept an optional `tenant` argument. The library gains `TenantId`, `tenant_at`, `WithTenant`, the `_for_tenant` and `_for_tenants` evaluation methods, `TenantStateSnapshot`, `ImportStats`, `Scope::with_tenants`, tenant bindings on rulesets, and three `MetricsHook` methods.
 
+The architecture and detection-loop diagrams show tenancy, several rulesets in one daemon, watchlist and STIX indicator sources, rebuilds on source change, `backend build`, and `rule draft --from-stix`.
+
 **Breaking changes:** `RuleHeader.tenant_id`, `RawEvent.tenant`, `CorrelationSnapshot.tenants`, `GroupStateInfo.tenant`, `RulesetUnit.tenants`, `RulesetStats.tenants`, `CorrelationConfig.require_tenant` and `max_state_entries_per_tenant`, both `ScopeConfig.tenants`, and `RulesetBinding.tenants` need defaults in struct literals, and so does the new `CacheKey.headers_hash`. `SilenceStore::remove_scoped` returns `SilenceRemoval`, whose `Removed` variant carries the removed silence's tenant, and `SilenceStore::try_add` also refuses a duplicate id. `CaptureRing::snapshot_incident` takes the tenant, `DispositionStore::restore` takes the tenancy flag, and `AlertPipelineConfigError` and `RiskConfigError` gain a `NatsSubject` variant. Correlation, alert-pipeline, risk, and disposition snapshots move to version 2, which older releases cannot read. Path-mode output and existing daemon behavior are unchanged with tenancy off.
 
 ### Draft rules from STIX indicators (#731)
