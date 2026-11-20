@@ -223,7 +223,7 @@ Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: 
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. |
+| `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. With tenancy enabled, the ratio sums the rule's dispositions across tenants; per-tenant ratios are in `GET /api/v1/dispositions`. {{ added "unreleased" }} |
 | `rsigma_dispositions_total` | counter | `rule_title`, `verdict` | Analyst dispositions counted, by rule and verdict (`true_positive`, `false_positive`, `benign_true_positive`). |
 | `rsigma_disposition_ingest_total` | counter | `source`, `result` | Ingest outcomes by source (`api`, `file`, `http`, `nats`) and result (`accepted`, `duplicate`, `rejected`). |
 | `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). |

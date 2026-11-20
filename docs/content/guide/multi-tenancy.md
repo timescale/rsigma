@@ -176,7 +176,7 @@ A sink can filter by tenant with `tenant=<id>`, route NATS subjects with `{tenan
 
 ## Metrics
 
-Three families report tenancy: `rsigma_tenant_rejected_total`, `rsigma_tenant_quota_evictions_total`, and `rsigma_detection_matches_by_tenant_total`. Tenants outside `daemon.tenancy.metrics_tenant_allowlist` count under `other`, so the label set stays bounded.
+Three families report tenancy: `rsigma_tenant_rejected_total`, `rsigma_tenant_quota_evictions_total`, and `rsigma_detection_matches_by_tenant_total`. Tenants outside `daemon.tenancy.metrics_tenant_allowlist` count under `other`, so the label set stays bounded. `rsigma_rule_false_positive_ratio` has no tenant label, so it sums each rule's dispositions across tenants; read a tenant's own ratios from `GET /api/v1/dispositions`. {{ added "unreleased" }}
 
 ## Running with `--config`
 

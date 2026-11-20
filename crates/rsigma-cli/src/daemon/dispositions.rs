@@ -387,24 +387,17 @@ impl DispositionState {
     }
 
     /// Recompute every rule's ratio gauge (after a bulk source ingest or a
-    /// state restore).
+    /// state restore). The gauge is labeled by rule only, so each value sums
+    /// the rule's dispositions across tenants.
     pub fn refresh_all_gauges(&self) {
-        if let Ok(store) = self.store.read() {
-            for summary in store.summaries() {
-                match summary.fp_ratio {
-                    Some(r) => self
-                        .metrics
-                        .rule_false_positive_ratio
-                        .with_label_values(&[&summary.rule_id])
-                        .set(r),
-                    None => {
-                        let _ = self
-                            .metrics
-                            .rule_false_positive_ratio
-                            .remove_label_values(&[&summary.rule_id]);
-                    }
-                }
-            }
+        let rules: std::collections::BTreeSet<String> = self
+            .store
+            .read()
+            .ok()
+            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
+            .unwrap_or_default();
+        for rule_id in rules {
+            self.refresh_gauge(&rule_id);
         }
     }
 
@@ -611,6 +604,35 @@ mod tests {
         assert_eq!(restored.view()["rules"][0]["total"], 2);
         assert_eq!(
             restored
+                .metrics
+                .rule_false_positive_ratio
+                .with_label_values(&["r1"])
+                .get(),
+            0.5
+        );
+    }
+
+    #[test]
+    fn the_ratio_gauge_sums_a_rule_across_tenants() {
+        let state = state(1);
+        let tenant = |id: &str| Some(rsigma_eval::TenantId::new(id).unwrap());
+        state
+            .ingest_with_tenant(
+                r#"{"rule_id":"r1","verdict":"true_positive","fingerprint":"x"}"#,
+                "api",
+                tenant("a"),
+            )
+            .unwrap();
+        state
+            .ingest_with_tenant(
+                r#"{"rule_id":"r1","verdict":"false_positive","fingerprint":"y"}"#,
+                "api",
+                tenant("b"),
+            )
+            .unwrap();
+        state.refresh_all_gauges();
+        assert_eq!(
+            state
                 .metrics
                 .rule_false_positive_ratio
                 .with_label_values(&["r1"])
