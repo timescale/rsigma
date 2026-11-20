@@ -473,7 +473,10 @@ fn registry_contains_value(key: &str) -> Option<String> {
 fn strip_registry_hive(key: &str) -> Option<&str> {
     let trimmed = key.trim();
     for hive in REGISTRY_HIVES {
-        if trimmed.len() < hive.len() || !trimmed[..hive.len()].eq_ignore_ascii_case(hive) {
+        if !trimmed
+            .get(..hive.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(hive))
+        {
             continue;
         }
         let rest = &trimmed[hive.len()..];
@@ -903,6 +906,11 @@ mod tests {
             ("HKEY_CURRENT_CONFIG\\Software\\Run", r"\Software\Run\\"),
             ("HKCC\\Software\\Run", r"\Software\Run\\"),
             ("hkey_local_machine\\Software\\Run", r"\Software\Run\\"),
+            ("HKL€\\Software", r"\HKL€\Software\\"),
+            (
+                "HKEY_LOCAL_MACHIN€\\Software",
+                r"\HKEY_LOCAL_MACHIN€\Software\\",
+            ),
         ];
         for (key, needle) in cases {
             let pattern = format!(
