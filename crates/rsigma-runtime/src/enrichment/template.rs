@@ -190,21 +190,44 @@ pub fn validate_url_tenant_position(url: &str) -> Result<(), String> {
     if !tenant_refs.iter().any(|needle| url.contains(needle)) {
         return Ok(());
     }
-    let Some(scheme_end) = url.find("://") else {
-        return Ok(());
+    // Render with two different tenants and compare what a URL parser sees:
+    // the destination must not move between them.
+    let render = |tenant: &str| {
+        TEMPLATE_RE
+            .replace_all(url, |caps: &regex::Captures| {
+                let whole = caps.get(0).unwrap().as_str();
+                if tenant_refs.contains(&whole) {
+                    return tenant.to_string();
+                }
+                match classify_ref(caps.get(1).unwrap().as_str()) {
+                    VarRef::Env(name) => std::env::var(name).unwrap_or_default(),
+                    _ => "x".to_string(),
+                }
+            })
+            .into_owned()
     };
-    let authority_start = scheme_end + 3;
-    let authority_end = url[authority_start..]
-        .find('/')
-        .map(|offset| authority_start + offset);
-    let invalid = match authority_end {
-        Some(end) => tenant_refs.iter().any(|needle| url[..end].contains(needle)),
-        None => true,
+    let (one, two) = ("rsigmatenantone", "rsigmatenanttwo");
+    let fixed = match (
+        reqwest::Url::parse(&render(one)),
+        reqwest::Url::parse(&render(two)),
+    ) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.username() == b.username()
+                && a.password() == b.password()
+                && a.host_str() == b.host_str()
+                && a.port() == b.port()
+                && !a.scheme().contains(one)
+                && !a.username().contains(one)
+                && !a.password().is_some_and(|p| p.contains(one))
+                && !a.host_str().is_some_and(|h| h.contains(one))
+        }
+        _ => false,
     };
-    if invalid {
+    if !fixed {
         return Err(format!(
-            "url '{url}' uses a tenant reference in the scheme or authority; \
-             ${{detection.tenant}} and ${{correlation.tenant}} are only valid in the path"
+            "url '{url}' must be an absolute URL whose scheme and authority do not use a tenant reference; \
+             ${{detection.tenant}} and ${{correlation.tenant}} are only valid in the path or query"
         ));
     }
     Ok(())
@@ -904,5 +927,39 @@ mod tests {
             validate_url_tenant_position("https://${correlation.tenant}.example.test").is_err()
         );
         assert!(validate_url_tenant_position("https://example.test/hook").is_ok());
+        assert!(validate_url_tenant_position("https://example.test?t=${detection.tenant}").is_ok());
+        assert!(
+            validate_url_tenant_position("https://user:${detection.tenant}@example.test/").is_err()
+        );
+        assert!(validate_url_tenant_position("https://example.test:${detection.tenant}/").is_err());
+    }
+
+    #[test]
+    fn a_tenant_reference_cannot_reach_the_host_without_a_double_slash() {
+        for url in [
+            "https:${detection.tenant}/hook",
+            "https:/${detection.tenant}/hook",
+            "https:\\\\${detection.tenant}/hook",
+            "${detection.tenant}.example.test/hook",
+        ] {
+            assert!(validate_url_tenant_position(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn an_env_reference_is_resolved_before_the_authority_check() {
+        // SAFETY: test-only variable with a unique name.
+        unsafe { std::env::set_var("RSIGMA_TEST_TENANT_URL_BASE", "https://") };
+        assert!(
+            validate_url_tenant_position(
+                "${RSIGMA_TEST_TENANT_URL_BASE}${detection.tenant}.example.test/hook"
+            )
+            .is_err()
+        );
+        unsafe { std::env::set_var("RSIGMA_TEST_TENANT_URL_HOST", "https://example.test") };
+        assert!(
+            validate_url_tenant_position("${RSIGMA_TEST_TENANT_URL_HOST}/${detection.tenant}")
+                .is_ok()
+        );
     }
 }
