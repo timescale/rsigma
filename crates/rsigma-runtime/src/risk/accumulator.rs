@@ -11,7 +11,7 @@
 //! pipeline; the only shared access is the read-only `GET /api/v1/risk` view
 //! behind an `RwLock`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -192,6 +192,8 @@ fn window_stats<'a>(
 #[derive(Debug, Default)]
 pub struct RiskState {
     entities: HashMap<(Option<TenantId>, String, String), EntityWindow>,
+    /// `(entity_type, entity_value)` per tenant, kept in step with `entities`.
+    tenant_entities: HashMap<Option<TenantId>, HashSet<(String, String)>>,
 }
 
 /// The outcome of recording one contribution.
@@ -220,10 +222,30 @@ impl RiskState {
 
     /// Count of tracked entities owned by `tenant`.
     pub fn count_for_tenant(&self, tenant: Option<&TenantId>) -> usize {
-        self.entities
-            .keys()
-            .filter(|(own, _, _)| own.as_ref() == tenant)
-            .count()
+        self.tenant_entities
+            .get(&tenant.cloned())
+            .map_or(0, HashSet::len)
+    }
+
+    fn insert_entity(&mut self, key: (Option<TenantId>, String, String), window: EntityWindow) {
+        self.tenant_entities
+            .entry(key.0.clone())
+            .or_default()
+            .insert((key.1.clone(), key.2.clone()));
+        self.entities.insert(key, window);
+    }
+
+    fn remove_entity(&mut self, key: &(Option<TenantId>, String, String)) -> bool {
+        if self.entities.remove(key).is_none() {
+            return false;
+        }
+        if let Some(entities) = self.tenant_entities.get_mut(&key.0) {
+            entities.remove(&(key.1.clone(), key.2.clone()));
+            if entities.is_empty() {
+                self.tenant_entities.remove(&key.0);
+            }
+        }
+        true
     }
 
     /// Whether `(tenant, entity_type, entity_value)` is already tracked.
@@ -243,19 +265,44 @@ impl RiskState {
     /// Evict the stalest entity owned by `tenant`. Returns whether one was
     /// evicted.
     pub fn evict_tenant_oldest(&mut self, tenant: Option<&TenantId>) -> bool {
+        let tenant = tenant.cloned();
         let victim = self
-            .entities
-            .iter()
-            .filter(|((own, _, _), _)| own.as_ref() == tenant)
-            .min_by_key(|(_, window)| window.last_seen)
-            .map(|(key, _)| key.clone());
+            .tenant_entities
+            .get(&tenant)
+            .into_iter()
+            .flatten()
+            .filter_map(|(entity_type, entity_value)| {
+                let key = (tenant.clone(), entity_type.clone(), entity_value.clone());
+                self.entities
+                    .get(&key)
+                    .map(|window| (window.last_seen, key))
+            })
+            .min_by_key(|(last_seen, _)| *last_seen)
+            .map(|(_, key)| key);
         match victim {
-            Some(key) => {
-                self.entities.remove(&key);
-                true
-            }
+            Some(key) => self.remove_entity(&key),
             None => false,
         }
+    }
+
+    /// Evict each tenant's stalest entities until it holds at most `max`,
+    /// returning how many were evicted.
+    pub fn enforce_tenant_cap(&mut self, max: usize) -> usize {
+        let over: Vec<Option<TenantId>> = self
+            .tenant_entities
+            .iter()
+            .filter(|(_, entities)| entities.len() > max)
+            .map(|(tenant, _)| tenant.clone())
+            .collect();
+        let mut evicted = 0;
+        for tenant in over {
+            while self.count_for_tenant(tenant.as_ref()) > max
+                && self.evict_tenant_oldest(tenant.as_ref())
+            {
+                evicted += 1;
+            }
+        }
+        evicted
     }
 
     /// Total retained contributions across all entities (for the state gauge).
@@ -301,7 +348,10 @@ impl RiskState {
             };
         }
 
-        let entity = self.entities.entry(key.clone()).or_default();
+        if !self.entities.contains_key(&key) {
+            self.insert_entity(key.clone(), EntityWindow::default());
+        }
+        let entity = self.entities.get_mut(&key).expect("inserted above");
         entity.prune(cutoff);
         entity.last_seen = now;
         entity.contributions.push_back(contribution);
@@ -359,12 +409,17 @@ impl RiskState {
     /// number removed (for eviction accounting).
     pub fn tick(&mut self, cfg: &IncidentConfig, now: i64) -> usize {
         let cutoff = now - cfg.window_secs();
-        let before = self.entities.len();
-        self.entities.retain(|_, entity| {
+        let mut emptied = Vec::new();
+        for (key, entity) in self.entities.iter_mut() {
             entity.prune(cutoff);
-            !entity.is_empty()
-        });
-        before - self.entities.len()
+            if entity.is_empty() {
+                emptied.push(key.clone());
+            }
+        }
+        for key in &emptied {
+            self.remove_entity(key);
+        }
+        emptied.len()
     }
 
     /// Capture the accumulator into a versioned persistence snapshot.
@@ -447,7 +502,7 @@ impl RiskState {
             if contributions.is_empty() {
                 continue;
             }
-            self.entities.insert(
+            self.insert_entity(
                 (entity.tenant, entity.entity_type, entity.entity_value),
                 EntityWindow {
                     contributions,
@@ -939,5 +994,37 @@ mod tests {
         assert_eq!(st.count_for_tenant(Some(&a)), 2);
         assert_eq!(st.count_for_tenant(Some(&b)), 1);
         assert_eq!(st.len(), 3);
+        assert!(
+            !st.contains_entity(Some(&a), "user", "a0"),
+            "the stalest entity went first"
+        );
+    }
+
+    #[test]
+    fn restored_entities_are_trimmed_to_the_tenant_cap_and_indexed() {
+        let c = cfg(Some(1_000), None);
+        let mut st = RiskState::default();
+        let a = TenantId::new("a").unwrap();
+        for i in 0..3 {
+            st.record(
+                &c,
+                Some(&a),
+                "user",
+                &format!("a{i}"),
+                contrib(i as i64, 10, &["execution"], "r1"),
+                i as i64,
+            );
+        }
+        let mut restored = RiskState::default();
+        restored
+            .restore_detailed(st.snapshot(), 3600, usize::MAX, 3, true)
+            .unwrap();
+        assert_eq!(restored.count_for_tenant(Some(&a)), 3);
+        assert_eq!(restored.enforce_tenant_cap(2), 1);
+        assert_eq!(restored.count_for_tenant(Some(&a)), 2);
+        assert!(!restored.contains_entity(Some(&a), "user", "a0"));
+
+        assert_eq!(restored.tick(&c, 10_000), 2);
+        assert_eq!(restored.count_for_tenant(Some(&a)), 0);
     }
 }

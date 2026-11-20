@@ -349,13 +349,17 @@ impl RiskLayer {
         tenancy: bool,
     ) -> Option<rsigma_eval::ImportStats> {
         let cfg = self.incident.as_ref()?;
-        state.restore_detailed(
+        let stats = state.restore_detailed(
             snap,
             cfg.window.as_secs() as i64,
             cfg.caps.max_open_entities,
             now,
             tenancy,
-        )
+        )?;
+        if let Some(max) = cfg.caps.max_open_entities_per_tenant {
+            state.enforce_tenant_cap(max);
+        }
+        Some(stats)
     }
 }
 

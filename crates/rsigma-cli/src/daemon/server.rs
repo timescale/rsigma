@@ -1829,6 +1829,18 @@ pub async fn run_daemon(config: DaemonConfig) {
                     Ok(mut new_layer) => {
                         new_layer
                             .set_max_open_entities_per_tenant(reload_tenant_quotas.risk_entities);
+                        if new_layer.incident_config().is_some()
+                            && let Some(max) = reload_tenant_quotas.risk_entities
+                            && let Ok(mut st) = reload_risk_state.write()
+                        {
+                            let evicted = st.enforce_tenant_cap(max);
+                            if evicted > 0 {
+                                tracing::warn!(
+                                    evicted,
+                                    "Evicted the stalest risk entities to fit the per-tenant quota"
+                                );
+                            }
+                        }
                         // If the reloaded config drops the accumulator, clear
                         // in-flight entities: with no `incident` block the tick
                         // no longer prunes them, so they would otherwise linger
