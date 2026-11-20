@@ -5,7 +5,9 @@ description: Isolate detections, correlation state, incidents, and API reads per
 
 # Multi-tenancy
 
-A single daemon can serve several tenants while keeping their state apart. The tenant of an event comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, request headers, NATS message headers, and OTLP attributes are never identity. {{ added "unreleased" }}
+{{ added "unreleased" }}
+
+A single daemon can serve several tenants while keeping their state apart. The tenant of an event comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, request headers, NATS message headers, and OTLP attributes are never identity.
 
 ## Why event fields are not identity
 
@@ -139,7 +141,7 @@ With tenancy enabled, the daemon refuses to start when:
 - `--api-token-env` is used; its implicit `default` token has no tenant.
 - `anonymous_permissions` is non-empty.
 - A token sets both `tenant` and `all_tenants: true`, or neither.
-- A token's secret is shorter than 32 bytes. Generate secrets with `openssl rand -hex 32`. {{ added "unreleased" }}
+- A token's secret is shorter than 32 bytes. Generate secrets with `openssl rand -hex 32`.
 - A configured tenant id is invalid.
 - Two configured tenant ids differ only by case, such as `Acme` and `acme`. They would share a `{tenant}` file on a case-insensitive filesystem.
 - A `daemon.tenancy.quotas` value is 0.
@@ -159,7 +161,7 @@ Every API route has a tenancy class. Tenant tokens get `403` on operator-only ro
 
 Silences and dispositions written by a tenant token are bound to its tenant. A body `tenant` naming another tenant is `403`. An `all_tenants` token must send `tenant` on a write, or it is `400`.
 
-An MCP bridge (`rsigma mcp serve --daemon-url`) acts with the reach of its daemon token, and incident content carries event fields that a tenant's sources control. Give each tenant's agent its own bridge with a token bound to that tenant. Keep a bridge that holds an `all_tenants` token read-only: give it a `reader` token and leave out `--allow-operate-writes`, so text injected through one tenant's events cannot steer the agent into silencing another tenant's alerts. {{ added "unreleased" }}
+An MCP bridge (`rsigma mcp serve --daemon-url`) acts with the reach of its daemon token, and incident content carries event fields that a tenant's sources control. Give each tenant's agent its own bridge with a token bound to that tenant. Keep a bridge that holds an `all_tenants` token read-only: give it a `reader` token and leave out `--allow-operate-writes`, so text injected through one tenant's events cannot steer the agent into silencing another tenant's alerts.
 
 ## Ruleset bindings
 
@@ -169,7 +171,7 @@ A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset rec
 
 `daemon.tenancy.quotas` caps correlation state, active alerts, incidents, and risk entities per tenant. At a tenant's cap, a new entry evicts that tenant's own expired entries first, then its stalest entries; a result that joins an open incident or an existing entry evicts nothing. A restore or reload trims each tenant to its quota. The global caps remain as a backstop.
 
-Three more quotas refuse new entries instead of evicting, so a tenant cannot take another tenant's share of a shared control. {{ added "unreleased" }} `silences` caps a tenant's dynamic silences, and `POST /api/v1/silences` returns `429` at the cap. `inhibition_sources` caps a tenant's inhibition sources; a new source over the cap is not tracked, counts in `rsigma_inhibit_sources_refused_total`, and a restore or reload trims each tenant to the quota. `stream_sessions` caps a tenant's concurrent sessions on `GET /api/v1/tap` and on `GET /api/v1/detections/stream`, and a new session returns `409` at the cap. Sessions and silences of an `all_tenants` token that names no tenant count only against the global caps.
+Three more quotas refuse new entries instead of evicting, so a tenant cannot take another tenant's share of a shared control. `silences` caps a tenant's dynamic silences, and `POST /api/v1/silences` returns `429` at the cap. `inhibition_sources` caps a tenant's inhibition sources; a new source over the cap is not tracked, counts in `rsigma_inhibit_sources_refused_total`, and a restore or reload trims each tenant to the quota. `stream_sessions` caps a tenant's concurrent sessions on `GET /api/v1/tap` and on `GET /api/v1/detections/stream`, and a new session returns `409` at the cap. Sessions and silences of an `all_tenants` token that names no tenant count only against the global caps.
 
 Disposition idempotency ids are kept per tenant, and `max_seen_ids` applies to each tenant's set, so one tenant's volume cannot evict another tenant's ids and let a redelivered disposition count twice. Ingest itself is a shared queue: the daemon has no per-tenant ingest rate limit, so put one in front of the push receivers, or give each tenant its own NATS subject with broker-side limits.
 
@@ -179,7 +181,7 @@ A sink can filter by tenant with `tenant=<id>`, route NATS subjects with `{tenan
 
 ## Metrics
 
-Three families report tenancy: `rsigma_tenant_rejected_total`, `rsigma_tenant_quota_evictions_total`, and `rsigma_detection_matches_by_tenant_total`. Tenants outside `daemon.tenancy.metrics_tenant_allowlist` count under `other`, so the label set stays bounded. `rsigma_rule_false_positive_ratio` has no tenant label, so it sums each rule's dispositions across tenants; read a tenant's own ratios from `GET /api/v1/dispositions`. {{ added "unreleased" }}
+Three families report tenancy: `rsigma_tenant_rejected_total`, `rsigma_tenant_quota_evictions_total`, and `rsigma_detection_matches_by_tenant_total`. Tenants outside `daemon.tenancy.metrics_tenant_allowlist` count under `other`, so the label set stays bounded. `rsigma_rule_false_positive_ratio` has no tenant label, so it sums each rule's dispositions across tenants; read a tenant's own ratios from `GET /api/v1/dispositions`.
 
 ## Running with `--config`
 
