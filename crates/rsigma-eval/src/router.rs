@@ -582,9 +582,6 @@ impl<L> SchemaRouter<L> {
     where
         L: ExtractLogSource<E> + Sync,
     {
-        if self.correlation.is_none() {
-            return self.detect_batch(events);
-        }
         if !tenants.is_empty() && tenants.len() != events.len() {
             debug_assert!(
                 false,
@@ -598,6 +595,9 @@ impl<L> SchemaRouter<L> {
                 events.len()
             );
             return vec![ProcessResult::new(); events.len()];
+        }
+        if self.correlation.is_none() {
+            return self.detect_batch(events);
         }
 
         // Stateless phase: classify + route + detect. Borrows only `&self`
@@ -759,6 +759,28 @@ transformations:
                 .collect(),
         };
         RoutingPlan::from_config(&config)
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "tenants must be empty or parallel to events")]
+    fn a_detection_only_router_checks_the_tenant_slice_length() {
+        let collection = parse_sigma_yaml(RULES).unwrap();
+        let mut router = SchemaRouter::build(
+            &collection,
+            SchemaClassifier::builtin(),
+            plan(&[]),
+            vec![vec![]],
+            CorrelationConfig::default(),
+            false,
+            MatchDetailLevel::Off,
+            None,
+            false,
+        )
+        .unwrap();
+        let value = json!({"CommandLine": "whoami"});
+        let event = JsonEvent::borrow(&value);
+        router.process_batch_for_tenants(&[&event], &[None, None]);
     }
 
     #[test]
