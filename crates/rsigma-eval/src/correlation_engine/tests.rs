@@ -4483,6 +4483,14 @@ level: critical
     }
     let success = json!({"EventType": "success_login", "User": "victim"});
     let success = JsonEvent::borrow(&success);
+    let b = crate::tenant::TenantId::new("b").unwrap();
+    let other = engine.process_event_at_for_tenant(&success, 1020, Some(&b));
+    assert!(
+        other
+            .correlations()
+            .all(|c| c.header.rule_title != "Brute Force Followed by Login"),
+        "tenant b's login does not complete tenant a's chain"
+    );
     let fired = engine.process_event_at_for_tenant(&success, 1030, Some(&a));
     let chained = fired
         .correlations()
