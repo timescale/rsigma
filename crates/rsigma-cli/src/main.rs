@@ -237,7 +237,7 @@ enum RuleCommands {
     /// List all fields referenced by Sigma rules
     Fields(FieldsArgs),
 
-    /// Draft a detection rule from exemplar events (optionally vs a baseline)
+    /// Draft a detection rule from exemplar events, or from a STIX bundle with stix-draft
     Draft(DraftArgs),
 
     /// Propose a verified filter from false-positive and true-positive events

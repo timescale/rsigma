@@ -169,6 +169,7 @@ fn header(enrichments: Option<serde_json::Map<String, Value>>) -> RuleHeader {
     RuleHeader {
         rule_title: "Suspicious PowerShell".to_string(),
         rule_id: Some("rule-1".to_string()),
+        tenant_id: None,
         level: Some(Level::High),
         tags: vec![
             "attack.t1059.001".to_string(),
@@ -238,6 +239,7 @@ fn correlation_with_group_key() {
         header: RuleHeader {
             rule_title: "SSH brute force".to_string(),
             rule_id: Some("corr-1".to_string()),
+            tenant_id: None,
             level: Some(Level::Critical),
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -262,6 +264,7 @@ fn correlation_with_group_key() {
 fn incident(state: &'static str, trigger: &'static str) -> IncidentResult {
     IncidentResult {
         incident_id: "f8bcd62a829b1126".to_string(),
+        tenant_id: None,
         state,
         trigger,
         first_seen: 1_767_225_000,
@@ -395,6 +398,7 @@ fn class_2005_injected_builders_match_the_fixture_and_reject_a_missing_group() {
 fn risk_incident() -> RiskIncidentResult {
     RiskIncidentResult {
         risk_incident_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        tenant_id: None,
         entity_type: "user".to_string(),
         entity_value: "alice".to_string(),
         trigger: "score",
@@ -613,6 +617,7 @@ fn correlation_detection() -> EvaluationResult {
         header: RuleHeader {
             rule_title: "SSH brute force".to_string(),
             rule_id: Some("corr-1".to_string()),
+            tenant_id: None,
             level: Some(Level::Critical),
             tags: vec!["attack.credential_access".to_string()],
             custom_attributes: Arc::new(attributes),
@@ -649,6 +654,7 @@ fn enriched_detection() -> EvaluationResult {
         header: RuleHeader {
             rule_title: "Malware execution".to_string(),
             rule_id: Some("rule-1".to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -676,6 +682,7 @@ fn risk_event_is_a_create_finding() {
             object_type: "src_ip".to_string(),
             value: "203.0.113.4".to_string(),
         },
+        tenant_id: None,
     };
     check_both_versions("risk_event", |opts| {
         risk_event_finding_with_opts(&event, &FixedSource::new(), opts)

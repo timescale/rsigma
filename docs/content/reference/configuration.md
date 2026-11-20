@@ -54,6 +54,9 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.output.dlq` | Sends failed events to a sink. |
 | `daemon.output.webhooks` | Sends detections to HTTP endpoints. |
 | `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials, or a `unix://` path outside the project. `stdin`, `http`, and `unix://` inputs inside the project are kept. |
+| `daemon.tenancy` | Turning tenancy off is the dangerous direction, so a project file may not set it at all. {{ added "unreleased" }} |
+| `daemon.input.tenant` | Binds the single pull source to a tenant. {{ added "unreleased" }} |
+| `daemon.input.nats_tenants` | Declares the tenant of each NATS subscription. {{ added "unreleased" }} |
 | `daemon.nats.consumer_group` | Joins another deployment's durable consumer and pulls its messages. |
 | `daemon.api.addr` | Unless it is a loopback `host:port` (`127.0.0.1`, `::1`, `localhost`) or a `unix://` path inside the project. Client commands such as `engine incidents export` send the API token to this address, and the daemon binds it. |
 | `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. |
@@ -80,6 +83,8 @@ warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-s
 ```
 
 The same keys work from every other layer: an explicit `--config <PATH>` (which replaces discovery, so the file is trusted as the operator's choice), the user config, the system config, `RSIGMA_*` environment variables, and CLI flags. To keep a protected key in a repository, commit the file under another name and pass it with `--config`. [`rsigma config validate`](../cli/config/validate.md) and [`rsigma config show`](../cli/config/show.md) list the ignored keys.
+
+With `daemon.tenancy.enabled` set, the daemon also refuses to start when any project layer was loaded at all. A project file could replace `daemon.rulesets` and drop a tenant binding, so tenancy deployments run with `engine daemon --config <PATH>`, which replaces discovery. {{ added "unreleased" }}
 
 ## Format
 

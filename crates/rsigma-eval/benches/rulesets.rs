@@ -19,6 +19,7 @@ fn detection_unit(name: &str, yaml: &str, when: Vec<String>) -> RulesetUnit {
     RulesetUnit {
         name: Arc::from(name),
         when_schemas: when,
+        tenants: Vec::new(),
         engine: UnitEngine::Detection(Box::new(engine)),
         field_set: RuleFieldSet::collect(&collection, &[], true),
     }

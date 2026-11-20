@@ -1,0 +1,124 @@
+{
+  "domain": [
+    "bad.example.com"
+  ],
+  "indicators": {
+    "198.51.100.7": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ],
+    "2001:db8::7": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ],
+    "203.0.113.0/24": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ],
+    "abcdef": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ],
+    "bad.example.com": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ],
+    "https://bad.example/a": [
+      {
+        "confidence": 80,
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [
+          {
+            "kill_chain_name": "mitre-attack",
+            "phase_name": "command-and-control"
+          }
+        ],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "mixed",
+        "valid_until": "2026-12-01T00:00:00.000Z"
+      }
+    ]
+  },
+  "ipv4": [
+    "198.51.100.7"
+  ],
+  "ipv4_cidr": [
+    "203.0.113.0/24"
+  ],
+  "ipv6": [
+    "2001:db8::7"
+  ],
+  "sha256": [
+    "abcdef"
+  ],
+  "url": [
+    "https://bad.example/a"
+  ]
+}

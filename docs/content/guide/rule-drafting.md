@@ -8,6 +8,8 @@ description: "Draft Sigma rules from log events with rsigma rule draft: supply i
 
 `rsigma rule draft` turns exemplar events into a complete draft Sigma rule. You supply the interesting events (from an incident, a red-team exercise, or a threat report's sample telemetry) and optionally a baseline corpus of normal traffic; the tool classifies fields and values, picks the discriminative ones, and emits standard Sigma YAML you review, edit, and commit. The output is a starting point with explicit `TODO` placeholders, not a finished detection.
 
+A STIX 2.1 bundle is a separate input: `rsigma rule draft --from-stix`. That path needs the `stix-draft` feature, fills the title, description, tags, and level from the indicators, and still leaves `author` and `falsepositives` as placeholders. The walkthrough is [From a TI report to a rule](threat-intel-watchlists.md#from-a-ti-report-to-a-rule). The flag table, the observable mapping, and the exit codes are on [rule draft](../cli/rule/draft.md#draft-from-a-stix-indicator). {{ added "unreleased" }}
+
 ## Workflow
 
 ```bash

@@ -117,6 +117,7 @@ mod tests {
         let mut source = HoldOpen::new(OneEvent(Some(RawEvent {
             payload: "{}".to_string(),
             ack_token: AckToken::Noop,
+            tenant: None,
         })));
         assert_eq!(source.recv().await.unwrap().payload, "{}");
         let next = tokio::time::timeout(Duration::from_millis(50), source.recv()).await;

@@ -71,6 +71,20 @@ IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) inherit the IPv4 rules: a host tha
 
 The policy applies only to those three clients. OTLP sinks, the MCP server's daemon client, and one-shot CLI commands such as `rsigma taxii sync` or `engine status` do not go through it, so point them only at endpoints you trust. Local sources (`file`, `command`) and NATS sources do not flow through the resolver and are governed by the include directive and process hygiene controls above.
 
+### STIX indicator sources
+
+{{ added "unreleased" }} A `type: taxii` source uses the same egress policy. The API root is checked before the first poll, and every address the name resolves to is checked again. An IP literal in the API root, or in an absolute URL the server returns, is rejected before the request. While that filter is set the client follows no redirects and uses no proxy, so a proxy variable cannot move the request off the filtered path. `rsigma taxii sync` is a separate command and is not covered by this filter.
+
+TAXII credentials are environment variable names in the source YAML. The values are read when the resolver is built and are not written into the declaration or into errors. A missing variable fails startup and names the variable.
+
+Each TAXII page is limited to 64 MiB and parsed with a finite depth, string length, and object count. A poll reads at most one page and object budget, then the next refresh continues from just before the last page's added date. The poll fails when the cursor does not advance, when HTTP 416 recovery would repeat the same filter, or when a budget stop cannot move the added-date cursor, so a collection that never ends cannot hold one resolve open. A file or HTTP source with `format: stix` uses the same parser limits. HTTP still stops at its 10 MiB body cap. Indicator values are data: they land in the source cache and can be expanded into a rule or returned to a lookup enricher. They are not executed. Array values escape `\`, `*`, and `?`, so that expansion is an exact comparison. The `indicators` map keys stay raw.
+
+A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `watch` or `push` on `type: taxii` are configuration errors.
+
+### STIX stores
+
+{{ added "unreleased" }} `rsigma taxii store` and `rsigma taxii sync` write one file per object id under the store's `objects/` directory, and `--allow-custom` accepts any object type. A STIX id parses only when its type name follows the STIX 2.1 rules (3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter) and its UUID is in hyphenated form, so a bundle or TAXII collection cannot name a path outside the store with an id such as `../../x--<uuid>` or `/tmp/x--<uuid>`. The store also checks every file name before it writes or deletes, independent of the parser.
+
 ### DNS enricher
 
 {{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
@@ -96,7 +110,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, and the conversion backends. Twenty-eight harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, and the conversion backends. Thirty-one harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -112,7 +126,9 @@ This means a Sigma rule that contains a `'` or `;` or `--` in a value still prod
 
 The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "unreleased" }}
 
-See [Backends: PostgreSQL](backends/postgres.md) and [Backends: LynxDB](backends/lynxdb.md).
+The Fibratus backend (`backend convert -t fibratus`) renders field names bare. A field name outside Fibratus identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, or `$`, with optional `[...]` index segments) fails conversion instead of reaching the filter expression. Each rule is a YAML document, and any value that a block scalar cannot carry, such as a `\r`, NEL, or U+2028 line break, is written as an escaped double-quoted scalar, so rule content cannot add keys such as `action` to the generated rule. {{ added "unreleased" }}
+
+See [Backends: PostgreSQL](backends/postgres.md), [Backends: LynxDB](backends/lynxdb.md), and [Backends: Fibratus](backends/fibratus.md).
 
 Custom identifiers passed through `-O table=...` or pipeline `set_state` are validated identically; an `-O table='evil; DROP'` is rejected at conversion time, not at execution time.
 
@@ -185,18 +201,33 @@ Bearer-token authentication with `resource:action` permissions gates the daemon 
 Design properties:
 
 - **Secrets are env-only.** The config names an environment variable per token (`token_env`, the same posture as webhook `signing.secret_env`); the value never lives in YAML or on the command line, and a missing or empty variable fails startup before the listener binds.
+- **A floor on tenant-bound secrets.** A token bound to a tenant (`tenant` or `all_tenants: true`) needs a secret of at least 32 bytes, or startup fails; generate one with `openssl rand -hex 32`. A shorter secret on any other token logs a warning. {{ added "unreleased" }}
 - **Constant-time comparison.** Every presented token is compared against every configured secret in constant time, so timing cannot leak a matched prefix.
 - **Least privilege by role.** Built-in roles `reader`/`operator`/`ingest`/`admin` plus custom roles as permission lists with `*` wildcards. A log shipper's `ingest` token carries only `events:ingest` and cannot create silences or trigger reloads; `reload:execute` is deliberately excluded from `operator` so config-changing control stays with `admin` tokens.
 - **Fail-closed route table.** A route added without a permission mapping requires the full `*` grant rather than defaulting open.
 - **Aggregating routes get their own resource.** An [incident bundle](http-api-state.md#get-apiv1incidentsidbundle) joins an incident to rule documentation and risk entities, so it requires `incident-bundles:read` rather than the `incidents:read` that gates the incident list. A custom role can hand out the incident list without handing out what the detections look for or which entities are accumulating risk. The built-in `reader` role (`*:read`) covers both.
 - **No anonymous fallback for bad tokens.** `anonymous_permissions` applies only to requests with no `Authorization` header; a presented-but-unrecognized token is always rejected with 401.
-- **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged.
+- **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged. The daemon does not slow down repeated failures, because behind a shared proxy a per-address backoff would lock out every client of that proxy; rate-limit `401` responses at the proxy or load balancer, and alert on the counter.
 
 Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
 A token with `sources:write` can push, replace, and delete watchlist indicators. Those values are matched against events, so treat the token like the ability to change which traffic alerts. Requests are size-capped (4 MiB, 10,000 indicators, and the source's `max_indicators`, or 4096 when a pipeline references the watchlist). When `--state-db` is set, the audit trail also rejects a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) and records each accepted change. {{ added "unreleased" }}
 
 A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "0.27.0" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so a single call cannot mute every rule, or every rule of a severity, indefinitely. API silences created before these limits applied are kept, and the daemon logs their ids at startup and on reload. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
+
+## Multi-tenancy
+
+Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "unreleased" }}
+
+The model fails closed. With tenancy enabled, the daemon refuses to start without bearer-token auth, refuses anonymous requests, and refuses a token that declares neither `tenant` nor `all_tenants: true`. Every pull source must carry a tenant, and an `all_tenants` token cannot ingest because it has no tenant to bind. A shared untenanted correlation bucket cannot form: the engine skips untenanted events and counts them.
+
+Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture identities. Hashes change only for tenanted results; with tenancy off every hash, id, and snapshot entry is exactly what it was before.
+
+API routes have tenancy classes. Tenant tokens get `403` on operator-only routes (`/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, reload). A resource id owned by another tenant is `404`, not `403`, so ids do not leak existence.
+
+Dynamic sources, watchlists, STIX indicator sources, MMDB databases, and DNS caches are operator-global and shared. Their values do not depend on the tenant, and their hit or miss state is visible only through operator-only metrics. For per-tenant enrichment data, declare per-tenant source ids and reference them only from that tenant's ruleset.
+
+See [Multi-tenancy](../guide/multi-tenancy.md) for the binding model, the full refusal list, and the YAML shape.
 
 ## Control-plane API audit trail
 
@@ -242,6 +273,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
 - `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
 - `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
+- `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "unreleased" }}
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.
@@ -305,6 +337,6 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 - [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
 - [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-5-metrics) for observability of limit hits.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

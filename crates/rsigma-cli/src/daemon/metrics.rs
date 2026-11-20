@@ -44,6 +44,12 @@ pub struct Metrics {
     pub source_rebuilds_total: IntCounterVec,
     pub watchlist_indicators: IntGaugeVec,
     pub watchlist_changes_total: IntCounterVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_indicators: IntGaugeVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_objects_total: IntCounterVec,
+    #[cfg(feature = "stix-source")]
+    pub stix_source_skipped_total: IntCounterVec,
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
@@ -123,9 +129,20 @@ pub struct Metrics {
     pub risk_incident_results_total: IntCounter,
     pub audit_records_total: IntCounter,
     pub audit_write_errors_total: IntCounter,
+    pub tenant_rejected_total: IntCounterVec,
+    pub tenant_quota_evictions_total: IntCounterVec,
+    pub detection_matches_by_tenant_total: IntCounterVec,
 }
 
 impl Metrics {
+    /// Pre-register a tenant's match-count label so it appears on `/metrics`
+    /// from startup.
+    pub fn register_tenant(&self, tenant: &str) {
+        self.detection_matches_by_tenant_total
+            .with_label_values(&[tenant])
+            .inc_by(0);
+    }
+
     pub fn new() -> Self {
         let registry = Registry::new();
 
@@ -501,6 +518,45 @@ impl Metrics {
         .unwrap();
         registry
             .register(Box::new(watchlist_changes_total.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_indicators = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_stix_source_indicators",
+                "Active indicators in a STIX source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_indicators.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_objects_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_stix_source_objects_total",
+                "STIX objects received while resolving a STIX source",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_objects_total.clone()))
+            .unwrap();
+        #[cfg(feature = "stix-source")]
+        let stix_source_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_stix_source_skipped_total",
+                "STIX indicators or observables left out of a source value",
+            ),
+            &["source_id", "reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "stix-source")]
+        registry
+            .register(Box::new(stix_source_skipped_total.clone()))
             .unwrap();
 
         let enrichment_total = IntCounterVec::new(
@@ -1275,6 +1331,59 @@ impl Metrics {
             "Audit trail SQLite or sink write failures",
         ))
         .unwrap();
+        let tenant_rejected_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tenant_rejected_total",
+                "Ingest that had no tenant binding or was skipped for lack of one",
+            ),
+            &["channel", "reason"],
+        )
+        .unwrap();
+        for channel in ["rest", "otlp_http", "otlp_grpc", "engine"] {
+            for reason in ["no_tenant", "untenanted_event"] {
+                tenant_rejected_total
+                    .with_label_values(&[channel, reason])
+                    .inc_by(0);
+            }
+        }
+        let tenant_quota_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tenant_quota_evictions_total",
+                "Entries evicted because a tenant hit its quota",
+            ),
+            &["store"],
+        )
+        .unwrap();
+        for store in [
+            "correlation_state",
+            "active_alerts",
+            "incidents",
+            "risk_entities",
+        ] {
+            tenant_quota_evictions_total
+                .with_label_values(&[store])
+                .inc_by(0);
+        }
+        let detection_matches_by_tenant_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_detection_matches_by_tenant_total",
+                "Detection and correlation matches per tenant",
+            ),
+            &["tenant"],
+        )
+        .unwrap();
+        detection_matches_by_tenant_total
+            .with_label_values(&["other"])
+            .inc_by(0);
+        registry
+            .register(Box::new(tenant_rejected_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tenant_quota_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(detection_matches_by_tenant_total.clone()))
+            .unwrap();
         // Pre-materialise the fixed label sets and zero the gauges so the
         // `# HELP` / `# TYPE` lines and zero series render on the first scrape.
         for action in ["scored", "no_entity", "skipped"] {
@@ -1362,6 +1471,12 @@ impl Metrics {
             source_rebuilds_total,
             watchlist_indicators,
             watchlist_changes_total,
+            #[cfg(feature = "stix-source")]
+            stix_source_indicators,
+            #[cfg(feature = "stix-source")]
+            stix_source_objects_total,
+            #[cfg(feature = "stix-source")]
+            stix_source_skipped_total,
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,
@@ -1441,6 +1556,9 @@ impl Metrics {
             risk_incident_results_total,
             audit_records_total,
             audit_write_errors_total,
+            tenant_rejected_total,
+            tenant_quota_evictions_total,
+            detection_matches_by_tenant_total,
         }
     }
 
@@ -1552,6 +1670,24 @@ impl Metrics {
 
 /// Bridge from rsigma-runtime's MetricsHook trait to the Prometheus-backed Metrics struct.
 impl MetricsHook for Metrics {
+    fn on_tenant_rejected(&self, channel: &'static str, reason: &'static str) {
+        self.tenant_rejected_total
+            .with_label_values(&[channel, reason])
+            .inc();
+    }
+
+    fn on_tenant_quota_eviction(&self, store: &'static str) {
+        self.tenant_quota_evictions_total
+            .with_label_values(&[store])
+            .inc();
+    }
+
+    fn on_tenant_match(&self, tenant: &str) {
+        self.detection_matches_by_tenant_total
+            .with_label_values(&[tenant])
+            .inc();
+    }
+
     fn register_ruleset(&self, ruleset: &str) {
         for kind in ["detection", "correlation"] {
             self.ruleset_rules_loaded
@@ -1980,7 +2116,54 @@ impl MetricsHook for Metrics {
             .with_label_values(&[webhook_id, "rate_limited_wait"])
             .inc();
     }
+
+    #[cfg(feature = "stix-source")]
+    fn register_stix_source(&self, source_id: &str) {
+        let _ = self.stix_source_indicators.with_label_values(&[source_id]);
+        let _ = self
+            .stix_source_objects_total
+            .with_label_values(&[source_id]);
+        for reason in STIX_SKIP_REASONS {
+            let _ = self
+                .stix_source_skipped_total
+                .with_label_values(&[source_id, reason]);
+        }
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn set_stix_source_indicators(&self, source_id: &str, count: u64) {
+        self.stix_source_indicators
+            .with_label_values(&[source_id])
+            .set(count as i64);
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn on_stix_source_objects(&self, source_id: &str, count: u64) {
+        self.stix_source_objects_total
+            .with_label_values(&[source_id])
+            .inc_by(count);
+    }
+
+    #[cfg(feature = "stix-source")]
+    fn on_stix_source_skipped(&self, source_id: &str, reason: &'static str, count: u64) {
+        self.stix_source_skipped_total
+            .with_label_values(&[source_id, reason])
+            .inc_by(count);
+    }
 }
+
+#[cfg(feature = "stix-source")]
+const STIX_SKIP_REASONS: &[&str] = &[
+    "revoked",
+    "expired",
+    "not_yet_valid",
+    "low_confidence",
+    "pattern_type",
+    "unsupported_pattern",
+    "unmapped_observable",
+    "invalid_pattern",
+    "over_limit",
+];
 
 #[cfg(test)]
 mod tests {

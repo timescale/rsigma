@@ -40,8 +40,8 @@ pub use grouping::{
 };
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
-    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceSpec,
-    SilenceState, SilenceStore, SilenceView,
+    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin,
+    SilenceRejection, SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView,
 };
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;
@@ -85,6 +85,21 @@ pub struct AlertPipeline {
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
     silence_limits: SilenceLimits,
+    tenant_quotas: AlertTenantQuotas,
+}
+
+/// Per-tenant caps on alert-pipeline state. `None` leaves only the global cap
+/// in force.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AlertTenantQuotas {
+    /// Active dedup alerts per tenant; the stalest are evicted at the cap.
+    pub active_alerts: Option<usize>,
+    /// Open incidents per tenant; the stalest are evicted at the cap.
+    pub incidents: Option<usize>,
+    /// Dynamic (API) silences per tenant; creation is refused at the cap.
+    pub silences: Option<usize>,
+    /// Inhibition sources per tenant; new sources are refused at the cap.
+    pub inhibition_sources: Option<usize>,
 }
 
 impl AlertPipeline {
@@ -109,7 +124,18 @@ impl AlertPipeline {
             inhibit,
             max_silences,
             silence_limits,
+            tenant_quotas: AlertTenantQuotas::default(),
         }
+    }
+
+    /// Set the per-tenant caps.
+    pub fn set_tenant_quotas(&mut self, quotas: AlertTenantQuotas) {
+        self.tenant_quotas = quotas;
+    }
+
+    /// Ceiling on dynamic (API) silences per tenant, when set.
+    pub fn max_dynamic_silences_per_tenant(&self) -> Option<usize> {
+        self.tenant_quotas.silences
     }
 
     /// The bounds the silence API applies to new silences
@@ -275,9 +301,15 @@ impl AlertPipeline {
             // ones about to be silenced) as active sources, so a silenced
             // source still inhibits its targets.
             if let Some(icfg) = self.inhibit.as_ref()
-                && let Some(rule) = state.inhibit.evaluate(icfg, &result, now, |rule| {
-                    metrics.on_inhibit_source_refused(rule);
-                })
+                && let Some(rule) = state.inhibit.evaluate(
+                    icfg,
+                    &result,
+                    now,
+                    self.tenant_quotas.inhibition_sources,
+                    |rule| {
+                        metrics.on_inhibit_source_refused(rule);
+                    },
+                )
             {
                 metrics.on_alert_pipeline_inhibited(&rule);
                 continue;
@@ -306,9 +338,26 @@ impl AlertPipeline {
                     continue;
                 }
                 if state.dedup.len() < cfg.max_active_alerts {
+                    if let Some(cap) = self.tenant_quotas.active_alerts
+                        && state
+                            .dedup
+                            .count_for_tenant(result.header.tenant_id.as_ref())
+                            >= cap
+                        && state
+                            .dedup
+                            .evict_tenant_oldest(result.header.tenant_id.as_ref())
+                    {
+                        metrics.on_tenant_quota_eviction("active_alerts");
+                    }
                     let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
                     let sample = dedup::sample_of(&result);
-                    state.dedup.insert(fingerprint, now, sample, fields);
+                    state.dedup.insert(
+                        fingerprint,
+                        now,
+                        sample,
+                        fields,
+                        result.header.tenant_id.clone(),
+                    );
                 }
                 metrics.on_alert_pipeline_result("emitted");
             }
@@ -316,8 +365,12 @@ impl AlertPipeline {
             // Grouping: assign the survivor to an incident, reading entity /
             // group-by selectors off the result while the event is still
             // present, then annotate it with the incident id.
-            if let Some(gcfg) = self.group.as_ref()
-                && let Some(id) = state.incidents.assign_with_finding_uid(
+            if let Some(gcfg) = self.group.as_ref() {
+                let tenant_cap = grouping::TenantCap {
+                    max: self.tenant_quotas.incidents,
+                    on_evict: || metrics.on_tenant_quota_eviction("incidents"),
+                };
+                if let Some(id) = state.incidents.assign_with_finding_uid(
                     gcfg,
                     &result,
                     finding_uid.as_deref().filter(|uid| !uid.is_empty()),
@@ -325,14 +378,15 @@ impl AlertPipeline {
                     |guard| {
                         metrics.on_alert_pipeline_overmerge(guard_label(guard));
                     },
-                )
-            {
-                if self.strip_event {
-                    strip_event_payloads(&mut result);
+                    tenant_cap,
+                ) {
+                    if self.strip_event {
+                        strip_event_payloads(&mut result);
+                    }
+                    annotate_incident(&mut result, id);
+                    keep(result, finding_uid);
+                    continue;
                 }
-                annotate_incident(&mut result, id);
-                keep(result, finding_uid);
-                continue;
             }
 
             if self.strip_event {
@@ -395,6 +449,7 @@ impl AlertPipeline {
         pending.push(PendingCapture::Admit(PendingAdmit {
             is_fresh_generation: !incidents.contains(&incident_id),
             incident_id,
+            tenant: result.header.tenant_id.clone(),
             event,
             match_: AdmittedMatch {
                 rule_id,
@@ -470,41 +525,119 @@ impl AlertPipeline {
         state: &mut AlertPipelineState,
         snap: AlertPipelineSnapshot,
         now: i64,
+        tenancy: bool,
     ) -> bool {
-        if snap.version != SNAPSHOT_VERSION {
-            return false;
+        self.restore_detailed(state, snap, now, tenancy).is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts. Accepts versions 1 and 2 and applies the tenant attribution rule
+    /// to every store: with `tenancy`, untenanted entries are discarded; without
+    /// it, tenanted ones are.
+    pub fn restore_detailed(
+        &self,
+        state: &mut AlertPipelineState,
+        snap: AlertPipelineSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        if !matches!(snap.version, 1 | 2) {
+            return None;
         }
+        let mut stats = rsigma_eval::ImportStats::default();
+        let keep = |tenant: Option<&rsigma_eval::TenantId>| {
+            if tenancy {
+                tenant.is_some()
+            } else {
+                tenant.is_none()
+            }
+        };
+        let mut count = |tenant: Option<&rsigma_eval::TenantId>| {
+            if !keep(tenant) {
+                if tenant.is_none() {
+                    stats.discarded_untenanted += 1;
+                } else {
+                    stats.discarded_tenanted += 1;
+                }
+            }
+        };
+
         // Silences are independent of the configured stages.
-        state.silences.restore_api(snap.silences, now);
+        let silences: Vec<_> = snap
+            .silences
+            .into_iter()
+            .filter(|s| {
+                count(s.tenant.as_ref());
+                keep(s.tenant.as_ref())
+            })
+            .collect();
+        state.silences.restore_api(silences, now);
         self.warn_over_limit_silences(state, now, "restore");
+
+        let dedup: Vec<_> = snap
+            .dedup
+            .into_iter()
+            .filter(|(_, alert)| {
+                count(alert.tenant.as_ref());
+                keep(alert.tenant.as_ref())
+            })
+            .collect();
+        let incidents: Vec<_> = snap
+            .incidents
+            .into_iter()
+            .filter(|inc| {
+                count(inc.tenant.as_ref());
+                keep(inc.tenant.as_ref())
+            })
+            .collect();
+        let inhibit_sources: Vec<_> = snap
+            .inhibit_sources
+            .into_iter()
+            .filter(|source| {
+                count(source.tenant.as_ref());
+                keep(source.tenant.as_ref())
+            })
+            .collect();
+
+        // Count what lands in the stores after age pruning and every cap.
+        let before = (
+            state.dedup.len(),
+            state.incidents.len(),
+            state.inhibit.snapshot().len(),
+        );
         let mut trim = CapTrim::default();
         if let Some(cfg) = self.dedup.as_ref() {
             state
                 .dedup
-                .restore(snap.dedup, now, cfg.resolve_timeout.as_secs() as i64);
+                .restore(dedup, now, cfg.resolve_timeout.as_secs() as i64);
             trim.dedup_alerts = state.dedup.enforce_cap(cfg.max_active_alerts);
         }
         if let Some(g) = self.group.as_ref() {
             trim.incidents = state.incidents.restore(
-                snap.incidents,
+                incidents,
                 now,
                 g.resolve_timeout.as_secs() as i64,
                 &g.caps,
             );
         }
         if let Some(icfg) = self.inhibit.as_ref() {
-            state.inhibit.restore(snap.inhibit_sources, icfg, now);
+            state.inhibit.restore(inhibit_sources, icfg, now);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
+        self.trim_tenants(state, &mut trim);
+        stats.restored += state.dedup.len().saturating_sub(before.0)
+            + state.incidents.len().saturating_sub(before.1)
+            + state.inhibit.snapshot().len().saturating_sub(before.2);
         trim.log("restore");
-        true
+        Some(stats)
     }
 
     /// Trim carried-over state to this pipeline's caps: the least recently
     /// seen dedup alerts beyond `max_active_alerts`, incidents beyond
     /// `max_open_incidents`, and inhibition sources beyond
     /// `max_inhibit_sources` are evicted (alerts and incidents without a
-    /// `resolved` record), and each incident is cut to the per-incident caps. Call it when this pipeline
+    /// `resolved` record), each tenant is cut to its quotas, and each incident
+    /// is cut to the per-incident caps. Call it when this pipeline
     /// replaces another on hot-reload, while holding the state lock the
     /// pipeline processes under, so a lowered cap applies at once.
     /// [`restore`](Self::restore) applies the same trim.
@@ -519,9 +652,30 @@ impl AlertPipeline {
         if let Some(icfg) = self.inhibit.as_ref() {
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
+        self.trim_tenants(state, &mut trim);
         trim.log("reload");
         self.warn_over_limit_silences(state, chrono::Utc::now().timestamp(), "reload");
         trim
+    }
+
+    /// Trim each tenant's dedup alerts, incidents, and inhibition sources to
+    /// the per-tenant quotas.
+    fn trim_tenants(&self, state: &mut AlertPipelineState, trim: &mut CapTrim) {
+        if self.dedup.is_some()
+            && let Some(max) = self.tenant_quotas.active_alerts
+        {
+            trim.dedup_alerts += state.dedup.enforce_tenant_cap(max);
+        }
+        if self.group.is_some()
+            && let Some(max) = self.tenant_quotas.incidents
+        {
+            trim.incidents += state.incidents.enforce_tenant_cap(max);
+        }
+        if self.inhibit.is_some()
+            && let Some(max) = self.tenant_quotas.inhibition_sources
+        {
+            trim.inhibit_sources += state.inhibit.enforce_tenant_cap(max);
+        }
     }
 
     /// Log the API silences the current limits would refuse. They stay in
@@ -544,11 +698,14 @@ impl AlertPipeline {
 /// What [`AlertPipeline::enforce_caps`] evicted.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CapTrim {
-    /// Dedup active alerts evicted by `max_active_alerts`.
+    /// Dedup active alerts evicted by `max_active_alerts` or the per-tenant
+    /// active-alert quota.
     pub dedup_alerts: usize,
-    /// Incidents evicted by `max_open_incidents`.
+    /// Incidents evicted by `max_open_incidents` or the per-tenant incident
+    /// quota.
     pub incidents: usize,
-    /// Inhibition sources evicted by `max_inhibit_sources`.
+    /// Inhibition sources evicted by `max_inhibit_sources` or the per-tenant
+    /// inhibition-source quota.
     pub inhibit_sources: usize,
 }
 
@@ -621,6 +778,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Brute force".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(level),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -803,7 +961,7 @@ mod tests {
 
         // Restore within the window: state comes back.
         let mut fresh = AlertPipelineState::default();
-        assert!(p.restore(&mut fresh, snap, 200));
+        assert!(p.restore(&mut fresh, snap, 200, false));
         assert_eq!(fresh.dedup.len(), 1, "dedup alert restored");
         assert_eq!(fresh.incidents.len(), 1, "incident restored");
         assert_eq!(
@@ -818,7 +976,7 @@ mod tests {
         let snap2: AlertPipelineSnapshot =
             serde_json::from_str(&serde_json::to_string(&p.snapshot(&st)).unwrap()).unwrap();
         let mut aged = AlertPipelineState::default();
-        assert!(p.restore(&mut aged, snap2, 100 + 3600 + 5));
+        assert!(p.restore(&mut aged, snap2, 100 + 3600 + 5, false));
         assert!(aged.dedup.is_empty(), "stale dedup alert pruned on restore");
         assert!(
             aged.incidents.is_empty(),
@@ -870,7 +1028,9 @@ mod tests {
         for i in 2..6 {
             let target = detection(&ip(i), Level::Critical);
             assert_eq!(
-                st.inhibit.evaluate(icfg, &target, 10, |_| {}).is_some(),
+                st.inhibit
+                    .evaluate(icfg, &target, 10, None, |_| {})
+                    .is_some(),
                 i >= 3,
                 "only the newest inhibition sources survive: {}",
                 ip(i)
@@ -895,7 +1055,7 @@ mod tests {
         let snap = uncapped().snapshot(&six_alerts());
         let capped = capped();
         let mut st = AlertPipelineState::default();
-        assert!(capped.restore(&mut st, snap, 10));
+        assert!(capped.restore(&mut st, snap, 10, false));
         assert_keeps_newest_three(&capped, &mut st);
     }
 
@@ -1073,6 +1233,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Corr".to_string(),
                 rule_id: Some("corr-1".to_string()),
+                tenant_id: None,
                 level: Some(Level::High),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -1165,5 +1326,174 @@ mod tests {
             Some(&mut sink),
         );
         assert!(!sink.admits[1].is_fresh_generation);
+    }
+
+    fn tenant_run(
+        p: &AlertPipeline,
+        ip: &str,
+        tenant: &str,
+        state: &mut AlertPipelineState,
+        now: i64,
+    ) -> ProcessResult {
+        let mut d = detection(ip, Level::High);
+        d.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+        p.process(vec![d], state, now, &NoopMetrics)
+    }
+
+    #[test]
+    fn snapshot_attribution_discards_the_other_mode() {
+        let p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let mut st = AlertPipelineState::default();
+        tenant_run(&p, "10.0.0.1", "a", &mut st, 100);
+        run(&p, "10.0.0.2", Level::High, &mut st, 100);
+        assert_eq!((st.dedup.len(), st.incidents.len()), (2, 2));
+        let snap = p.snapshot(&st);
+
+        let mut tenanted = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut tenanted, snap.clone(), 100, true)
+            .unwrap();
+        assert_eq!(stats.restored, 2);
+        assert_eq!(stats.discarded_untenanted, 2);
+        assert_eq!(tenanted.dedup.len(), 1);
+        assert_eq!(tenanted.incidents.len(), 1);
+
+        let mut expired = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut expired, snap.clone(), 100 + 7200, true)
+            .unwrap();
+        assert_eq!(
+            stats.restored, 0,
+            "entries past resolve_timeout are not restored"
+        );
+
+        let mut untenanted = AlertPipelineState::default();
+        let stats = p
+            .restore_detailed(&mut untenanted, snap, 100, false)
+            .unwrap();
+        assert_eq!(stats.restored, 2);
+        assert_eq!(stats.discarded_tenanted, 2);
+        assert_eq!(untenanted.dedup.len(), 1);
+        assert_eq!(untenanted.incidents.len(), 1);
+    }
+
+    #[test]
+    fn tenant_quotas_evict_only_that_tenants_entries() {
+        let mut p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        p.set_tenant_quotas(AlertTenantQuotas {
+            active_alerts: Some(2),
+            incidents: Some(2),
+            ..Default::default()
+        });
+        let mut st = AlertPipelineState::default();
+        let a = rsigma_eval::TenantId::new("a").unwrap();
+        let b = rsigma_eval::TenantId::new("b").unwrap();
+
+        for i in 0..3 {
+            tenant_run(&p, &ip(i), "a", &mut st, i);
+        }
+        tenant_run(&p, "10.0.0.9", "b", &mut st, 10);
+
+        assert_eq!(st.dedup.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.dedup.count_for_tenant(Some(&b)), 1);
+        assert_eq!(st.incidents.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.incidents.count_for_tenant(Some(&b)), 1);
+    }
+
+    #[test]
+    fn the_inhibition_source_quota_applies_per_tenant() {
+        let mut p = pipeline(
+            "inhibit_rules:\n  - name: crit\n    source_match:\n      - selector: level\n        op: \"=\"\n        value: critical\n    target_match:\n      - selector: level\n        op: \"=\"\n        value: high\n    equal: [match.SourceIp]\n    duration: 5m\n",
+        );
+        p.set_tenant_quotas(AlertTenantQuotas {
+            inhibition_sources: Some(1),
+            ..Default::default()
+        });
+        let mut st = AlertPipelineState::default();
+        let send = |st: &mut AlertPipelineState, ip: &str, level: Level, tenant: &str| {
+            let mut d = detection(ip, level);
+            d.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+            p.process(vec![d], st, 0, &NoopMetrics).len()
+        };
+        send(&mut st, "10.0.0.1", Level::Critical, "a");
+        send(&mut st, "10.0.0.2", Level::Critical, "a");
+        send(&mut st, "10.0.0.3", Level::Critical, "b");
+        assert_eq!(send(&mut st, "10.0.0.1", Level::High, "a"), 0);
+        assert_eq!(
+            send(&mut st, "10.0.0.2", Level::High, "a"),
+            1,
+            "the source over tenant a's quota was refused"
+        );
+        assert_eq!(send(&mut st, "10.0.0.3", Level::High, "b"), 0);
+    }
+
+    #[test]
+    fn a_lowered_tenant_quota_trims_carried_over_state() {
+        let mut p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let mut st = AlertPipelineState::default();
+        for i in 0..3 {
+            tenant_run(&p, &ip(i), "a", &mut st, i);
+        }
+        tenant_run(&p, "10.0.0.9", "b", &mut st, 10);
+
+        p.set_tenant_quotas(AlertTenantQuotas {
+            active_alerts: Some(2),
+            incidents: Some(2),
+            ..Default::default()
+        });
+        let trim = p.enforce_caps(&mut st);
+        assert_eq!((trim.dedup_alerts, trim.incidents), (1, 1));
+        let a = rsigma_eval::TenantId::new("a").unwrap();
+        let b = rsigma_eval::TenantId::new("b").unwrap();
+        assert_eq!(st.dedup.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.incidents.count_for_tenant(Some(&a)), 2);
+        assert_eq!(st.dedup.count_for_tenant(Some(&b)), 1);
+        assert!(
+            st.incidents
+                .snapshot(IncludeMode::Refs)
+                .iter()
+                .all(|inc| inc.first_seen != 0),
+            "the least recently seen incident of tenant a went first"
+        );
+    }
+
+    #[test]
+    fn joining_an_open_incident_at_the_tenant_cap_evicts_nothing() {
+        let mut p =
+            pipeline("group:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n");
+        p.set_tenant_quotas(AlertTenantQuotas {
+            incidents: Some(2),
+            ..Default::default()
+        });
+        let mut st = AlertPipelineState::default();
+        tenant_run(&p, &ip(0), "a", &mut st, 0);
+        tenant_run(&p, &ip(1), "a", &mut st, 1);
+        tenant_run(&p, &ip(0), "a", &mut st, 2);
+
+        let mut incidents = st.incidents.snapshot(IncludeMode::Refs);
+        incidents.sort_by_key(|inc| inc.first_seen);
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(
+            incidents[0].first_seen, 0,
+            "the joined incident kept its history"
+        );
+        assert_eq!(incidents[0].result_count, 2);
+        assert_eq!(incidents[1].first_seen, 1, "the other incident survived");
+
+        tenant_run(&p, &ip(2), "a", &mut st, 3);
+        let mut incidents = st.incidents.snapshot(IncludeMode::Refs);
+        incidents.sort_by_key(|inc| inc.first_seen);
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(
+            (incidents[0].first_seen, incidents[1].first_seen),
+            (0, 3),
+            "a new incident evicts the least recently seen one"
+        );
     }
 }

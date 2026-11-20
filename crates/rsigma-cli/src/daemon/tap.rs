@@ -47,6 +47,7 @@ pub(crate) struct TapQuery {
     limit: Option<u64>,
     stage: Option<String>,
     redact: Option<String>,
+    pub(crate) tenant: Option<String>,
 }
 
 /// Validated capture parameters.

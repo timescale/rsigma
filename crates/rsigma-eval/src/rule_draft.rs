@@ -16,9 +16,12 @@
 //! recorded as the draft's estimated false-positive rate.
 //!
 //! The core is pure and deterministic: no randomness (the rule `id` is
-//! caller-supplied; the CLI generates a UUIDv4), and repeated runs over the
-//! same input yield byte-identical YAML. The draft uses the exemplars' native
-//! field names, so it must be evaluated without a mapping pipeline.
+//! caller-supplied; the CLI generates a UUIDv4 for event drafts and a UUID v5
+//! for indicator drafts), and repeated runs over the same input yield
+//! byte-identical YAML. [`draft_rule`] uses the exemplars' native field names,
+//! so that draft must be evaluated without a mapping pipeline.
+//! [`draft_rule_from_values`] emits a rule from field values the caller already
+//! chose. It does not read events.
 //!
 //! This is the detection-authoring sibling of
 //! [`schema_discovery`](crate::schema_discovery): discovery mines unrecognized
@@ -152,7 +155,67 @@ pub enum DraftError {
     /// The emitted YAML failed to parse or compile (a bug, surfaced honestly).
     #[error("internal error: emitted draft failed to {stage}: {message}")]
     Internal { stage: String, message: String },
+    /// [`draft_rule_from_values`] was called with no selections.
+    #[error("no selections to draft from")]
+    NoSelections,
+    /// A selection passed to [`draft_rule_from_values`] cannot be emitted.
+    #[error("selection {name:?} needs a selection_<ident> name, a field, and at least one value")]
+    BadSelection { name: String },
+    /// [`draft_rule_from_values`] was called with an empty title.
+    #[error("draft title is empty")]
+    EmptyTitle,
 }
+
+/// One detection selection in a value draft.
+///
+/// `name` must start with `selection_` so the emitted condition
+/// `1 of selection_*` covers it. `modifiers` are Sigma modifiers without the
+/// leading `|`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueSelection {
+    /// Detection item name, such as `selection_destination_ip`.
+    pub name: String,
+    /// Event field, such as `DestinationIp`.
+    pub field: String,
+    /// Sigma modifiers, such as `cidr` or `contains`.
+    pub modifiers: Vec<String>,
+    /// Literal values. `*`, `?`, and wildcard-adjacent backslashes are escaped.
+    pub values: Vec<String>,
+}
+
+/// Input for [`draft_rule_from_values`].
+///
+/// Every string is the caller's. This crate does not parse STIX.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueDraftSpec {
+    /// Rule title. Empty titles are refused.
+    pub title: String,
+    /// Rule description. `None` or blank text emits the shared TODO placeholder.
+    pub description: Option<String>,
+    /// External references. Empty lists are omitted.
+    pub references: Vec<String>,
+    /// Sigma tags. Empty lists are omitted.
+    pub tags: Vec<String>,
+    /// Rule id. The caller owns how it is chosen.
+    pub rule_id: Option<String>,
+    /// `YYYY-MM-DD`. `None` uses today's UTC date.
+    pub date: Option<String>,
+    /// Logsource category.
+    pub logsource_category: Option<String>,
+    /// Logsource product.
+    pub logsource_product: Option<String>,
+    /// Logsource service.
+    pub logsource_service: Option<String>,
+    /// Sigma level. `None` emits `medium`.
+    pub level: Option<String>,
+    /// Selections combined with `1 of selection_*`.
+    pub selections: Vec<ValueSelection>,
+}
+
+/// Placeholders the event draft and the value draft both emit.
+const DESCRIPTION_PLACEHOLDER: &str = "TODO: describe what this rule detects and why it matters.";
+const AUTHOR_PLACEHOLDER: &str = "TODO: your name";
+const FALSE_POSITIVE_PLACEHOLDER: &str = "TODO: list known benign triggers.";
 
 // =============================================================================
 // Public report types
@@ -809,9 +872,9 @@ fn emit_rule_yaml(
         out.push_str(&format!("id: {id}\n"));
     }
     out.push_str("status: experimental\n");
-    out.push_str("description: 'TODO: describe what this rule detects and why it matters.'\n");
-    out.push_str("author: 'TODO: your name'\n");
-    out.push_str(&format!("date: {date}\n"));
+    push_description(&mut out, None);
+    push_author(&mut out);
+    out.push_str(&format!("date: {}\n", yaml_str(&date)));
     out.push_str("logsource:\n");
     if let Some(c) = &logsource.category {
         out.push_str(&format!("    category: {}\n", yaml_str(c)));
@@ -830,10 +893,214 @@ fn emit_rule_yaml(
         }
     }
     out.push_str(&format!("    condition: {}\n", detection.condition));
-    out.push_str("falsepositives:\n");
-    out.push_str("    - 'TODO: list known benign triggers.'\n");
-    out.push_str("level: medium\n");
+    push_falsepositives(&mut out);
+    push_level(&mut out, "medium");
     out
+}
+
+/// Emit one Sigma rule from explicit field values and compile it.
+///
+/// Selections are OR-ed with `condition: 1 of selection_*`. A missing
+/// description uses the same placeholder as [`draft_rule`]. Newlines in text
+/// fields become spaces so each scalar stays on one line. `*`, `?`, and
+/// wildcard-adjacent backslashes in values are escaped before quoting.
+///
+/// # Examples
+///
+/// ```
+/// use rsigma_eval::{ValueDraftSpec, ValueSelection, draft_rule_from_values};
+///
+/// let yaml = draft_rule_from_values(&ValueDraftSpec {
+///     title: "Beacon address".into(),
+///     description: None,
+///     references: vec!["https://example.com/report".into()],
+///     tags: vec!["attack.command_and_control".into()],
+///     rule_id: Some("00000000-0000-4000-8000-000000000001".into()),
+///     date: Some("2026-06-01".into()),
+///     logsource_category: Some("network_connection".into()),
+///     logsource_product: None,
+///     logsource_service: None,
+///     level: Some("high".into()),
+///     selections: vec![ValueSelection {
+///         name: "selection_destination_ip".into(),
+///         field: "DestinationIp".into(),
+///         modifiers: Vec::new(),
+///         values: vec!["198.51.100.7".into()],
+///     }],
+/// })
+/// .expect("draft");
+/// assert!(yaml.contains("DestinationIp: 198.51.100.7"));
+/// ```
+pub fn draft_rule_from_values(spec: &ValueDraftSpec) -> Result<String, DraftError> {
+    let title = one_line(&spec.title);
+    if title.trim().is_empty() {
+        return Err(DraftError::EmptyTitle);
+    }
+    if spec.selections.is_empty() {
+        return Err(DraftError::NoSelections);
+    }
+    for selection in &spec.selections {
+        if !valid_selection(selection) {
+            return Err(DraftError::BadSelection {
+                name: selection.name.clone(),
+            });
+        }
+    }
+
+    let date = spec
+        .date
+        .as_deref()
+        .map(one_line)
+        .filter(|date| !date.trim().is_empty())
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+    let level = spec
+        .level
+        .as_deref()
+        .map(one_line)
+        .filter(|level| !level.trim().is_empty())
+        .unwrap_or_else(|| "medium".to_string());
+    let description = spec.description.as_deref().map(one_line);
+
+    let mut out = String::new();
+    out.push_str(&format!("title: {}\n", yaml_title_str(title.trim())));
+    if let Some(id) = &spec.rule_id {
+        let id = one_line(id);
+        if !id.trim().is_empty() {
+            out.push_str(&format!("id: {}\n", yaml_str(id.trim())));
+        }
+    }
+    out.push_str("status: experimental\n");
+    push_description(&mut out, description.as_deref());
+    push_string_list(&mut out, "references", &spec.references);
+    push_author(&mut out);
+    out.push_str(&format!("date: {}\n", yaml_str(date.trim())));
+    push_string_list(&mut out, "tags", &spec.tags);
+    out.push_str("logsource:\n");
+    if let Some(category) = &spec.logsource_category {
+        push_logsource_field(&mut out, "category", category);
+    }
+    if let Some(product) = &spec.logsource_product {
+        push_logsource_field(&mut out, "product", product);
+    }
+    if let Some(service) = &spec.logsource_service {
+        push_logsource_field(&mut out, "service", service);
+    }
+    out.push_str("detection:\n");
+    for selection in &spec.selections {
+        out.push_str(&format!("    {}:\n", selection.name));
+        let key = selection_key(selection);
+        let values: Vec<String> = selection
+            .values
+            .iter()
+            .map(|value| one_line(value))
+            .collect();
+        if values.len() == 1 {
+            out.push_str(&format!(
+                "        {key}: {}\n",
+                yaml_str(&escape_sigma_value(&values[0]))
+            ));
+        } else {
+            out.push_str(&format!("        {key}:\n"));
+            for value in &values {
+                out.push_str(&format!(
+                    "            - {}\n",
+                    yaml_str(&escape_sigma_value(value))
+                ));
+            }
+        }
+    }
+    out.push_str("    condition: 1 of selection_*\n");
+    push_falsepositives(&mut out);
+    push_level(&mut out, level.trim());
+
+    compile_draft(&out)?;
+    Ok(out)
+}
+
+fn push_description(out: &mut String, description: Option<&str>) {
+    let text = description
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(DESCRIPTION_PLACEHOLDER);
+    out.push_str(&format!("description: {}\n", yaml_str(text)));
+}
+
+fn push_author(out: &mut String) {
+    out.push_str(&format!("author: {}\n", yaml_str(AUTHOR_PLACEHOLDER)));
+}
+
+fn push_falsepositives(out: &mut String) {
+    out.push_str("falsepositives:\n");
+    out.push_str(&format!("    - {}\n", yaml_str(FALSE_POSITIVE_PLACEHOLDER)));
+}
+
+fn push_level(out: &mut String, level: &str) {
+    out.push_str(&format!("level: {}\n", yaml_str(level)));
+}
+
+fn push_logsource_field(out: &mut String, key: &str, value: &str) {
+    let value = one_line(value);
+    if value.trim().is_empty() {
+        return;
+    }
+    out.push_str(&format!("    {key}: {}\n", yaml_str(value.trim())));
+}
+
+fn push_string_list(out: &mut String, key: &str, values: &[String]) {
+    let values: Vec<String> = values
+        .iter()
+        .map(|value| one_line(value).trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if values.is_empty() {
+        return;
+    }
+    out.push_str(key);
+    out.push_str(":\n");
+    for value in values {
+        out.push_str(&format!("    - {}\n", yaml_str(&value)));
+    }
+}
+
+fn one_line(value: &str) -> String {
+    value.replace(['\n', '\r'], " ")
+}
+
+fn valid_selection(selection: &ValueSelection) -> bool {
+    ident_like(&selection.name)
+        && selection.name.starts_with("selection_")
+        && field_like(&selection.field)
+        && selection
+            .modifiers
+            .iter()
+            .all(|modifier| ident_like(modifier))
+        && !selection.values.is_empty()
+}
+
+fn selection_key(selection: &ValueSelection) -> String {
+    if selection.modifiers.is_empty() {
+        selection.field.clone()
+    } else {
+        format!("{}|{}", selection.field, selection.modifiers.join("|"))
+    }
+}
+
+fn ident_like(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn field_like(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
 // =============================================================================
@@ -1460,5 +1727,160 @@ mod tests {
         };
         let titled = draft(&exemplars, &[], &cfg).unwrap();
         assert!(titled.rule_yaml.starts_with("title: Acme Exfil Detection"));
+    }
+
+    #[test]
+    fn value_draft_escapes_hostile_text_and_compiles() {
+        let yaml = draft_rule_from_values(&ValueDraftSpec {
+            title: "Bad: # 'quote'".into(),
+            description: Some("line\nwith 'quotes'".into()),
+            references: vec!["https://example.com/a'b".into()],
+            tags: vec!["attack.command_and_control".into()],
+            rule_id: Some("00000000-0000-4000-8000-000000000002".into()),
+            date: Some("2026-06-01".into()),
+            logsource_category: Some("network_connection".into()),
+            logsource_product: Some("windows".into()),
+            logsource_service: Some("sysmon".into()),
+            level: Some("high".into()),
+            selections: vec![
+                ValueSelection {
+                    name: "selection_destination_ip".into(),
+                    field: "DestinationIp".into(),
+                    modifiers: Vec::new(),
+                    values: vec!["a'b*c\nd".into(), "198.51.100.8".into()],
+                },
+                ValueSelection {
+                    name: "selection_destination_ip_cidr".into(),
+                    field: "DestinationIp".into(),
+                    modifiers: vec!["cidr".into()],
+                    values: vec!["198.51.100.0/24".into()],
+                },
+            ],
+        })
+        .unwrap();
+        assert!(yaml.contains("title: 'Bad: # ''quote'''"));
+        assert!(yaml.contains("description: 'line with ''quotes'''"));
+        assert!(yaml.contains("'a''b\\*c d'"));
+        assert!(yaml.contains("198.51.100.8"));
+        assert!(yaml.contains("DestinationIp|cidr"));
+        assert!(yaml.contains("condition: 1 of selection_*"));
+        assert!(yaml.contains("product: windows"));
+        assert!(yaml.contains("service: sysmon"));
+        assert!(yaml.contains("level: high"));
+        assert!(!yaml.contains(&format!(
+            "description: {}",
+            yaml_str(DESCRIPTION_PLACEHOLDER)
+        )));
+        assert!(yaml.contains(&format!("author: {}", yaml_str(AUTHOR_PLACEHOLDER))));
+        rsigma_parser::parse_sigma_yaml(&yaml).expect("hostile draft parses");
+    }
+
+    #[test]
+    fn value_draft_uses_the_shared_placeholders() {
+        let yaml = draft_rule_from_values(&ValueDraftSpec {
+            title: "Placeholder".into(),
+            description: Some("   ".into()),
+            references: Vec::new(),
+            tags: Vec::new(),
+            rule_id: None,
+            date: Some("2026-06-01".into()),
+            logsource_category: Some("dns_query".into()),
+            logsource_product: None,
+            logsource_service: None,
+            level: None,
+            selections: vec![ValueSelection {
+                name: "selection_query_name".into(),
+                field: "QueryName".into(),
+                modifiers: Vec::new(),
+                values: vec!["bad.example".into()],
+            }],
+        })
+        .unwrap();
+        assert!(yaml.contains(&format!(
+            "description: {}",
+            yaml_str(DESCRIPTION_PLACEHOLDER)
+        )));
+        assert!(yaml.contains(&format!("    - {}", yaml_str(FALSE_POSITIVE_PLACEHOLDER))));
+        assert!(yaml.contains("level: medium"));
+        assert!(!yaml.contains("references:"));
+        assert!(!yaml.contains("tags:"));
+        assert!(!yaml.contains("id:"));
+    }
+
+    #[test]
+    fn value_draft_escapes_a_single_value() {
+        let yaml = draft_rule_from_values(&ValueDraftSpec {
+            title: "Callback URL".into(),
+            description: None,
+            references: Vec::new(),
+            tags: Vec::new(),
+            rule_id: None,
+            date: Some("2026-06-01".into()),
+            logsource_category: Some("proxy".into()),
+            logsource_product: None,
+            logsource_service: None,
+            level: None,
+            selections: vec![ValueSelection {
+                name: "selection_c_uri".into(),
+                field: "c-uri".into(),
+                modifiers: Vec::new(),
+                values: vec!["http://bad.example/a.php?id=1".into()],
+            }],
+        })
+        .unwrap();
+        assert!(
+            yaml.contains(r"c-uri: 'http://bad.example/a.php\?id=1'"),
+            "{yaml}"
+        );
+        assert!(!yaml.contains("a.php?id=1"), "{yaml}");
+    }
+
+    #[test]
+    fn value_draft_rejects_empty_input() {
+        let empty = ValueDraftSpec {
+            title: " ".into(),
+            description: None,
+            references: Vec::new(),
+            tags: Vec::new(),
+            rule_id: None,
+            date: None,
+            logsource_category: None,
+            logsource_product: None,
+            logsource_service: None,
+            level: None,
+            selections: vec![ValueSelection {
+                name: "selection_query_name".into(),
+                field: "QueryName".into(),
+                modifiers: Vec::new(),
+                values: vec!["bad.example".into()],
+            }],
+        };
+        assert!(matches!(
+            draft_rule_from_values(&empty),
+            Err(DraftError::EmptyTitle)
+        ));
+        let no_selections = ValueDraftSpec {
+            title: "Named".into(),
+            selections: Vec::new(),
+            ..empty.clone()
+        };
+        assert!(matches!(
+            draft_rule_from_values(&no_selections),
+            Err(DraftError::NoSelections)
+        ));
+        let bad_name = ValueDraftSpec {
+            title: "Named".into(),
+            selections: vec![ValueSelection {
+                name: "ip".into(),
+                field: "DestinationIp".into(),
+                modifiers: Vec::new(),
+                values: vec!["198.51.100.7".into()],
+            }],
+            ..empty
+        };
+        assert!(matches!(
+            draft_rule_from_values(&bad_name),
+            Err(DraftError::BadSelection { .. })
+        ));
     }
 }

@@ -566,6 +566,7 @@ mod tests {
     fn incident() -> IncidentResult {
         IncidentResult {
             incident_id: "f8bcd62a829b1126".to_string(),
+            tenant_id: None,
             state: "open",
             trigger: "snapshot",
             first_seen: 1_767_225_000,
@@ -600,6 +601,7 @@ mod tests {
 
     fn entity(entity_type: &str, entity_value: &str, score: i64) -> RiskEntityView {
         RiskEntityView {
+            tenant_id: None,
             entity_type: entity_type.to_string(),
             entity_value: entity_value.to_string(),
             score,

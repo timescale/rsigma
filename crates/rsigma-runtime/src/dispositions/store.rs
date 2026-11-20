@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use super::record::{Disposition, Verdict};
 use super::snapshot::{DispositionSnapshot, RuleBucketsSnapshot};
+use rsigma_eval::TenantId;
 
 /// Default rolling window over which dispositions are counted.
 pub const DEFAULT_WINDOW: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -64,7 +65,8 @@ pub struct DispositionConfig {
     pub numerator: Numerator,
     /// Minimum dispositions in the window before the ratio is published.
     pub min_sample: u64,
-    /// Ceiling on the idempotency seen-id set.
+    /// Ceiling on the idempotency seen-id set of each tenant (and of the
+    /// untenanted set), so one tenant's volume cannot evict another's ids.
     pub max_seen_ids: usize,
 }
 
@@ -132,6 +134,8 @@ pub enum IngestOutcome {
 /// A per-rule rolling summary for the `GET` view and the scorecard feed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuleSummary {
+    /// Tenant that owns these counts, when tenancy is enabled.
+    pub tenant: Option<TenantId>,
     pub rule_id: String,
     pub true_positives: u64,
     pub false_positives: u64,
@@ -148,11 +152,41 @@ pub struct RuleSummary {
 #[derive(Debug)]
 pub struct DispositionStore {
     config: DispositionConfig,
-    /// Per-rule bucketed counts, keyed by `rule_id` then bucket index.
-    rules: HashMap<String, BTreeMap<i64, VerdictCounts>>,
-    /// Idempotency set: keys seen, with their timestamp for window pruning.
-    seen: HashSet<String>,
-    seen_order: VecDeque<(i64, String)>,
+    /// Per-rule bucketed counts, keyed by `(tenant, rule_id)` then bucket index.
+    rules: HashMap<(Option<TenantId>, String), BTreeMap<i64, VerdictCounts>>,
+    /// Idempotency sets keyed by the tenant prefix of the dedup key.
+    seen: HashMap<String, SeenIds>,
+}
+
+/// One tenant's idempotency keys, with their timestamp for window pruning.
+#[derive(Debug, Default)]
+struct SeenIds {
+    keys: HashSet<String>,
+    order: VecDeque<(i64, String)>,
+}
+
+impl SeenIds {
+    fn prune(&mut self, cutoff: i64, max: usize) {
+        while let Some((ts, _)) = self.order.front() {
+            if *ts < cutoff || self.order.len() > max {
+                if let Some((_, key)) = self.order.pop_front() {
+                    self.keys.remove(&key);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+/// The tenant part of a [`Disposition::dedup_key`], or `""` when untenanted.
+fn seen_partition(key: &str) -> &str {
+    if key.starts_with("tenant=")
+        && let Some(end) = key.find('\u{1f}')
+    {
+        return &key[..end];
+    }
+    ""
 }
 
 impl DispositionStore {
@@ -161,8 +195,7 @@ impl DispositionStore {
         Self {
             config,
             rules: HashMap::new(),
-            seen: HashSet::new(),
-            seen_order: VecDeque::new(),
+            seen: HashMap::new(),
         }
     }
 
@@ -189,7 +222,11 @@ impl DispositionStore {
         };
 
         let key = disposition.dedup_key();
-        if self.seen.contains(&key) {
+        if self
+            .seen
+            .get(seen_partition(&key))
+            .is_some_and(|ids| ids.keys.contains(&key))
+        {
             return IngestOutcome::Duplicate;
         }
         // Order the seen entry by the disposition's own timestamp so the
@@ -201,7 +238,10 @@ impl DispositionStore {
 
         let idx = self.bucket_index(disposition.timestamp);
         let cutoff = self.bucket_index(now - self.config.window_secs());
-        let buckets = self.rules.entry(rule_id).or_default();
+        let buckets = self
+            .rules
+            .entry((disposition.tenant.clone(), rule_id))
+            .or_default();
         buckets.entry(idx).or_default().add(disposition.verdict);
         buckets.retain(|&i, _| i >= cutoff);
 
@@ -209,23 +249,25 @@ impl DispositionStore {
     }
 
     fn remember(&mut self, key: String, ts: i64, now: i64) {
-        self.seen.insert(key.clone());
-        self.seen_order.push_back((ts, key));
-        self.prune_seen(now);
+        let cutoff = now - self.config.window_secs();
+        let max = self.config.max_seen_ids;
+        let ids = self
+            .seen
+            .entry(seen_partition(&key).to_string())
+            .or_default();
+        if ids.keys.insert(key.clone()) {
+            ids.order.push_back((ts, key));
+        }
+        ids.prune(cutoff, max);
     }
 
     fn prune_seen(&mut self, now: i64) {
         let cutoff = now - self.config.window_secs();
-        while let Some((ts, _)) = self.seen_order.front() {
-            let over_capacity = self.seen_order.len() > self.config.max_seen_ids;
-            if *ts < cutoff || over_capacity {
-                if let Some((_, key)) = self.seen_order.pop_front() {
-                    self.seen.remove(&key);
-                }
-            } else {
-                break;
-            }
-        }
+        let max = self.config.max_seen_ids;
+        self.seen.retain(|_, ids| {
+            ids.prune(cutoff, max);
+            !ids.order.is_empty()
+        });
     }
 
     /// Drop buckets older than the window across every rule (called on a
@@ -239,11 +281,23 @@ impl DispositionStore {
         self.prune_seen(now);
     }
 
-    fn aggregate(&self, rule_id: &str) -> VerdictCounts {
+    fn aggregate(&self, tenant: Option<&TenantId>, rule_id: &str) -> VerdictCounts {
         let mut total = VerdictCounts::default();
-        if let Some(buckets) = self.rules.get(rule_id) {
+        if let Some(buckets) = self.rules.get(&(tenant.cloned(), rule_id.to_string())) {
             for counts in buckets.values() {
                 total.merge(counts);
+            }
+        }
+        total
+    }
+
+    fn aggregate_all_tenants(&self, rule_id: &str) -> VerdictCounts {
+        let mut total = VerdictCounts::default();
+        for ((_, rule), buckets) in &self.rules {
+            if rule == rule_id {
+                for counts in buckets.values() {
+                    total.merge(counts);
+                }
             }
         }
         total
@@ -262,20 +316,27 @@ impl DispositionStore {
     }
 
     /// The false-positive ratio for one rule over the window, or `None` when it
-    /// has fewer than `min_sample` dispositions.
+    /// has fewer than `min_sample` dispositions. Sums across tenants.
     pub fn ratio(&self, rule_id: &str) -> Option<f64> {
-        self.ratio_of(&self.aggregate(rule_id))
+        self.ratio_of(&self.aggregate_all_tenants(rule_id))
     }
 
-    /// A per-rule summary for every rule with at least one disposition, sorted
-    /// by `rule_id` for stable output.
+    /// The false-positive ratio for one rule in `tenant`, or `None` when it has
+    /// fewer than `min_sample` dispositions.
+    pub fn ratio_for(&self, tenant: Option<&TenantId>, rule_id: &str) -> Option<f64> {
+        self.ratio_of(&self.aggregate(tenant, rule_id))
+    }
+
+    /// A per-(tenant, rule) summary for every rule with at least one
+    /// disposition, sorted for stable output.
     pub fn summaries(&self) -> Vec<RuleSummary> {
         let mut out: Vec<RuleSummary> = self
             .rules
-            .keys()
-            .map(|rule_id| {
-                let counts = self.aggregate(rule_id);
+            .iter()
+            .map(|((tenant, rule_id), _)| {
+                let counts = self.aggregate(tenant.as_ref(), rule_id);
                 RuleSummary {
+                    tenant: tenant.clone(),
                     rule_id: rule_id.clone(),
                     true_positives: counts.true_positive,
                     false_positives: counts.false_positive,
@@ -285,11 +346,15 @@ impl DispositionStore {
                 }
             })
             .collect();
-        out.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
+        out.sort_by(|a, b| {
+            a.tenant
+                .cmp(&b.tenant)
+                .then_with(|| a.rule_id.cmp(&b.rule_id))
+        });
         out
     }
 
-    /// Number of rules currently tracked.
+    /// Number of (tenant, rule) buckets currently tracked.
     pub fn rule_count(&self) -> usize {
         self.rules.len()
     }
@@ -302,7 +367,8 @@ impl DispositionStore {
             rules: self
                 .rules
                 .iter()
-                .map(|(rule_id, buckets)| RuleBucketsSnapshot {
+                .map(|((tenant, rule_id), buckets)| RuleBucketsSnapshot {
+                    tenant: tenant.clone(),
                     rule_id: rule_id.clone(),
                     buckets: buckets
                         .iter()
@@ -317,18 +383,55 @@ impl DispositionStore {
                         .collect(),
                 })
                 .collect(),
-            seen: self.seen_order.iter().cloned().collect(),
+            seen: {
+                let mut seen: Vec<(i64, String)> = self
+                    .seen
+                    .values()
+                    .flat_map(|ids| ids.order.iter().cloned())
+                    .collect();
+                seen.sort();
+                seen
+            },
         }
     }
 
     /// Restore a snapshot at `now`, pruning buckets and seen ids past the
-    /// window. Returns `false` on a version mismatch (caller starts fresh).
-    pub fn restore(&mut self, snapshot: DispositionSnapshot, now: i64) -> bool {
-        if snapshot.version != super::snapshot::SNAPSHOT_VERSION {
-            return false;
+    /// window and applying the tenant attribution rule of
+    /// [`restore_detailed`](Self::restore_detailed). Returns `false` on a
+    /// version mismatch (caller starts fresh).
+    pub fn restore(&mut self, snapshot: DispositionSnapshot, now: i64, tenancy: bool) -> bool {
+        self.restore_detailed(snapshot, now, tenancy).is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts. Accepts versions 1 and 2 and applies the tenant attribution rule:
+    /// with `tenancy`, untenanted buckets are discarded; without it, tenanted
+    /// ones are.
+    pub fn restore_detailed(
+        &mut self,
+        snapshot: DispositionSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        if !matches!(snapshot.version, 1 | 2) {
+            return None;
         }
+        let mut stats = rsigma_eval::ImportStats::default();
         let cutoff = self.bucket_index(now - self.config.window_secs());
         for rule in snapshot.rules {
+            let keep = if tenancy {
+                rule.tenant.is_some()
+            } else {
+                rule.tenant.is_none()
+            };
+            if !keep {
+                if rule.tenant.is_none() {
+                    stats.discarded_untenanted += 1;
+                } else {
+                    stats.discarded_tenanted += 1;
+                }
+                continue;
+            }
             let mut buckets = BTreeMap::new();
             for (idx, tp, fp, btp) in rule.buckets {
                 if idx < cutoff {
@@ -344,7 +447,8 @@ impl DispositionStore {
                 );
             }
             if !buckets.is_empty() {
-                self.rules.insert(rule.rule_id, buckets);
+                self.rules.insert((rule.tenant, rule.rule_id), buckets);
+                stats.restored += 1;
             }
         }
         let seen_cutoff = now - self.config.window_secs();
@@ -352,12 +456,16 @@ impl DispositionStore {
             if ts < seen_cutoff {
                 continue;
             }
-            if self.seen.insert(key.clone()) {
-                self.seen_order.push_back((ts, key));
+            let ids = self
+                .seen
+                .entry(seen_partition(&key).to_string())
+                .or_default();
+            if ids.keys.insert(key.clone()) {
+                ids.order.push_back((ts, key));
             }
         }
         self.prune_seen(now);
-        true
+        Some(stats)
     }
 }
 
@@ -493,7 +601,7 @@ mod tests {
         let snap = store.snapshot();
 
         let mut restored = DispositionStore::new(cfg(1));
-        assert!(restored.restore(snap, 1002));
+        assert!(restored.restore(snap, 1002, false));
         assert_eq!(restored.summaries(), store.summaries());
     }
 
@@ -502,6 +610,67 @@ mod tests {
         let mut snap = DispositionStore::new(cfg(1)).snapshot();
         snap.version = 9999;
         let mut store = DispositionStore::new(cfg(1));
-        assert!(!store.restore(snap, 1));
+        assert!(!store.restore(snap, 1, false));
+    }
+
+    fn disp_tenant(rule: &str, verdict: &str, ts: i64, tenant: &str) -> Disposition {
+        let raw: RawDisposition = serde_json::from_str(&format!(
+            r#"{{"rule_id": "{rule}", "verdict": "{verdict}", "tenant": "{tenant}"}}"#
+        ))
+        .unwrap();
+        let mut d = Disposition::from_raw(raw, ts).unwrap();
+        d.timestamp = ts;
+        d
+    }
+
+    #[test]
+    fn the_same_rule_in_two_tenants_is_two_buckets() {
+        let mut store = DispositionStore::new(cfg(1));
+        store.apply(&disp_tenant("r", "false_positive", 1000, "a"), 1000);
+        store.apply(&disp_tenant("r", "false_positive", 1000, "b"), 1000);
+        assert_eq!(store.summaries().len(), 2);
+        assert_eq!(store.summaries()[0].tenant.as_ref().unwrap().as_str(), "a");
+        assert_eq!(store.summaries()[1].tenant.as_ref().unwrap().as_str(), "b");
+        assert_eq!(
+            store.ratio_for(Some(&TenantId::new("a").unwrap()), "r"),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn snapshot_attribution_discards_the_other_mode() {
+        let mut store = DispositionStore::new(cfg(1));
+        store.apply(&disp_tenant("r", "false_positive", 1000, "a"), 1000);
+        store.apply(&disp("s", "true_positive", 1000), 1000);
+        let snap = store.snapshot();
+
+        let mut tenanted = DispositionStore::new(cfg(1));
+        let stats = tenanted.restore_detailed(snap.clone(), 1000, true).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(stats.discarded_untenanted, 1);
+
+        let mut untenanted = DispositionStore::new(cfg(1));
+        let stats = untenanted.restore_detailed(snap, 1000, false).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(stats.discarded_tenanted, 1);
+    }
+
+    #[test]
+    fn one_tenants_volume_cannot_evict_anothers_seen_ids() {
+        let mut store = DispositionStore::new(DispositionConfig {
+            min_sample: 1,
+            max_seen_ids: 2,
+            ..Default::default()
+        });
+        let victim = disp_tenant("r", "false_positive", 1000, "a");
+        store.apply(&victim, 1000);
+        for ts in 1001..1010 {
+            store.apply(&disp_tenant("r", "true_positive", ts, "b"), 1010);
+        }
+        assert_eq!(store.apply(&victim, 1010), IngestOutcome::Duplicate);
+
+        let mut restored = DispositionStore::new(store.config().clone());
+        restored.restore(store.snapshot(), 1010, true);
+        assert_eq!(restored.apply(&victim, 1010), IngestOutcome::Duplicate);
     }
 }

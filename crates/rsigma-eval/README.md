@@ -46,7 +46,11 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 
 ### Ruleset fan-out
 
-`RulesetEngines` evaluates several independent rulesets over the same events. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; `process_event` and `process_batch` stamp the ruleset name on every result, apply optional `when` schema bindings, and count skipped events (`skipped_totals` reads the running totals, `take_skipped` drains the counts since its last call); `process_event` also counts routing outcomes for a routed unit. Classification runs once per event, and only when a unit has a `when` binding. `export_state` and `import_state` carry per-ruleset correlation state, a single-engine snapshot imports into a fan-out with one unit, and `rule_field_set` unions the units' field sets.
+`RulesetEngines` evaluates several independent rulesets over the same events. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; `process_event` and `process_batch` stamp the ruleset name on every result, apply optional `when` schema bindings, and count skipped events (`skipped_totals` reads the running totals, `take_skipped` drains the counts since its last call); `process_event` also counts routing outcomes for a routed unit. Classification runs once per event, and only when a unit has a `when` binding. `export_state` and `import_state` carry per-ruleset correlation state, a single-engine snapshot imports into a fan-out with one unit, and `rule_field_set` unions the units' field sets. A unit can also list `tenants`; a bound unit accepts only events carrying one of them.
+
+### Tenants
+
+`TenantId` validates a tenant identifier (1 to 64 ASCII letters, digits, `_`, and `-`, starting with a letter or digit, so an id is one NATS subject token and one path component) and `tenant_at` reads a parallel tenant slice. `RuleHeader.tenant_id` carries a result's tenant. The `_for_tenant` and `_for_tenants` variants of `process_event`, `process_event_at`, `process_with_detections`, `process_batch`, and `correlate_detections` take the tenant; the existing methods delegate with no tenant. Correlation state keys include the tenant, `CorrelationConfig.require_tenant` skips untenanted events, and `max_state_entries_per_tenant` caps each tenant's state. Version 2 snapshots nest state under `tenants`; `import_state_detailed` returns restored and discarded counts.
 
 ### Correlation Engine
 
@@ -141,11 +145,12 @@ Turns exemplar events into complete draft Sigma detection and temporal correlati
 | Type / function | Description |
 |-----------------|-------------|
 | `draft_rule(exemplars, baseline, &DraftConfig)` | Profile the exemplars, drop volatile fields (timestamps, GUIDs, counters, high-entropy uniques), score by stability times baseline rarity, infer value forms and modifiers (equals, OR list, `endswith`/`startswith`/`contains` with Sigma wildcard escaping), infer the logsource via `SchemaClassifier`, and emit + verify the rule (every exemplar must match; bounded relaxation with a minimum-field floor) |
+| `draft_rule_from_values(&ValueDraftSpec)` | Emit and compile one rule from explicit selections (`ValueSelection`: a `selection_*` name, a field, modifiers, and values). Selections are OR-ed with `1 of selection_*`. A blank description, and the author and false-positive lines, use the same TODO placeholders as `draft_rule`. Empty title, no selections, and a bad selection are `EmptyTitle`, `NoSelections`, and `BadSelection`. This function does not parse STIX, and this crate does not depend on `rstix` |
 | `DraftConfig` | Tunables: `max_fields`, `min_fields`, `min_prevalence`, `max_value_cardinality`, `min_token_len`, `max_baseline_token_prevalence`, include/exclude fields, title/logsource overrides, `rule_id` (caller-supplied; the core is deterministic and never generates one), `date`, `evaluate_baseline` |
 | `DraftReport` | `rule_yaml` (parse- and lint-checked), ranked `fields` (`DraftFieldReport` with score, `Stability` class, chosen modifier, values, baseline prevalence), `exemplar_matched`, `baseline_hits`/`baseline_hit_rate`, warnings |
 | `rule_draft::correlation::draft_correlation(groups, negatives, baseline, &CorrelationDraftConfig)` | Validate grouped timed events, infer recurring slots, grouping entity, order, and window, emit named detection documents plus a temporal correlation, and verify every group in an isolated `CorrelationEngine` |
 | `CorrelationDraftReport` | Multi-document YAML, correlation type, group-by fields, chosen timespan, observed spans/gaps, per-slot support and selected forms, isolated verification rows, warnings |
-| `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped) |
+| `DraftError` | `NoExemplars`, `NoCandidateFields`, `CannotMatchExemplars` (the floor error: an over-broad draft is refused, not emitted), `ForcedFieldMismatch` (a forced include-field absent from some exemplars is named, never silently dropped), `NoSelections`, `BadSelection`, `EmptyTitle` |
 
 ### Rule exemplars (`exemplar` module)
 

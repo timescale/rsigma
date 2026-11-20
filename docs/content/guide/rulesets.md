@@ -189,6 +189,27 @@ In the daemon, the ruleset list and definitions are read once at startup. Changi
 
 `engine eval --dump-correlation-state` prints a map keyed by ruleset name, even when only one ruleset is selected. `--stats` adds one line per ruleset with detection matches, correlation matches, and, for bound rulesets, skipped events.
 
+### Tenant bindings
+
+{{ added "unreleased" }}
+
+A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset receives only events whose tenant is listed; an unbound ruleset receives every tenant's events, with its state still keyed per tenant. `when` and `tenants` combine with AND. A tenant rejection counts in the same `skipped` counters as a `when` rejection, and `ruleset_stats` reports the binding.
+
+```yaml
+rulesets:
+  shared_baseline:
+    sources: [/etc/rsigma/rules/shared]
+  tenant_a_custom:
+    sources: [/etc/rsigma/rules/tenant-a]
+daemon:
+  rulesets:
+    - shared_baseline
+    - name: tenant_a_custom
+      tenants: [tenant-a]
+```
+
+A CLI `--ruleset` list replaces the configured list and carries no `tenants`, like `when`. `eval.rulesets` rejects `tenants`. A ruleset binding must name a tenant that some token, `daemon.input.tenant`, or `daemon.input.nats_tenants` entry can produce; a typo would otherwise silently disable the ruleset. See [Multi-tenancy](multi-tenancy.md).
+
 ## Converting a ruleset
 
 {{ added "unreleased" }}

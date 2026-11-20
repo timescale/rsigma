@@ -132,6 +132,7 @@ impl EventSource for UnixSocketSource {
                     return Some(RawEvent {
                         payload: line,
                         ack_token: AckToken::Noop,
+                        tenant: None,
                     });
                 }
                 Some(_) => continue,

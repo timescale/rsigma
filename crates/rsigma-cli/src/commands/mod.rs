@@ -10,6 +10,8 @@ mod discover;
 mod disposition_spool;
 mod doc;
 mod draft;
+#[cfg(feature = "stix-draft")]
+mod draft_stix;
 mod eval;
 mod eval_stream;
 mod explain;

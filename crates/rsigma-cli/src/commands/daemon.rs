@@ -122,6 +122,16 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "max-group-entries")]
     pub max_group_entries: Option<usize>,
 
+    /// Enable logical multi-tenancy. Startup-only; requires bearer-token auth
+    /// and a tenant binding on every input source.
+    #[arg(long = "tenancy")]
+    pub tenancy: bool,
+
+    /// Per-tenant correlation state cap. Requires `--tenancy` or
+    /// `daemon.tenancy.enabled`.
+    #[arg(long = "max-tenant-state")]
+    pub max_tenant_state: Option<usize>,
+
     /// Event field name(s) for timestamp extraction in correlations
     #[arg(long = "timestamp-field")]
     pub timestamp_fields: Vec<String>,
@@ -726,6 +736,19 @@ pub(crate) fn cmd_daemon(
     );
     let capture = resolve_capture_settings(&base, args.enable_capture, dispositions.enabled);
     let api_auth = resolve_auth_settings(&base, args.api_token_env.clone());
+    let api_token_env_used = args.api_token_env.is_some();
+    let (tenancy, input_tenant, nats_tenants) =
+        match daemon::tenancy::resolve_tenancy_settings(&base, args.tenancy, args.max_tenant_state)
+        {
+            Ok(values) => values,
+            Err(message) => {
+                eprintln!("error: {message}");
+                process::exit(exit_code::CONFIG_ERROR);
+            }
+        };
+    let project_layer_loaded = config::load_layered(args.config.as_deref())
+        .map(|loaded| loaded.project_layer_loaded)
+        .unwrap_or(false);
     let state_db_from_config = base
         .daemon
         .as_ref()
@@ -733,7 +756,31 @@ pub(crate) fn cmd_daemon(
         .and_then(|s| s.db.as_ref());
     let has_state_db = args.state_db.is_some() || state_db_from_config.is_some();
     let audit = resolve_audit_settings(&base, has_state_db);
+    let tenancy_base = base.clone();
     apply_daemon_config(&mut args, matches, base);
+
+    let ruleset_tenants = config_ruleset_tenants(&args.ruleset_entries);
+    if let Err(message) = daemon::tenancy::validate_tenancy_from_config(
+        &tenancy_base,
+        &tenancy,
+        input_tenant.as_ref(),
+        &nats_tenants,
+        &daemon::tenancy::ResolvedDaemonInputs {
+            input_source: &args.input,
+            sink_specs: &args.output,
+            ruleset_tenants: &ruleset_tenants,
+            alert_pipeline: args.alert_pipeline.as_deref(),
+            risk: args.risk.as_deref(),
+            enrichers: args.enrichers.as_deref(),
+            webhooks: &args.webhooks,
+            disposition_source: dispositions.source.is_some(),
+        },
+        project_layer_loaded,
+        api_token_env_used,
+    ) {
+        eprintln!("error: {message}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
 
     let DaemonArgs {
         config,
@@ -756,6 +803,8 @@ pub(crate) fn cmd_daemon(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        tenancy: _cli_tenancy,
+        max_tenant_state: _cli_max_tenant_state,
         timestamp_fields,
         state_db,
         state_save_interval,
@@ -953,6 +1002,9 @@ pub(crate) fn cmd_daemon(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        tenancy,
+        input_tenant,
+        nats_tenants,
         timestamp_fields,
         timestamp_fallback,
         state_db,
@@ -1096,6 +1148,8 @@ fn resolve_auth_settings(
                 role: Some("admin".into()),
                 permissions: None,
                 token_env: var,
+                tenant: None,
+                all_tenants: false,
             }],
             Vec::new(),
         )
@@ -1117,11 +1171,25 @@ fn resolve_auth_settings(
                     eprintln!("daemon.api.auth: token '{name}' missing 'token_env'");
                     process::exit(exit_code::CONFIG_ERROR);
                 });
+                let tenant = t
+                    .tenant
+                    .as_deref()
+                    .map(rsigma_eval::TenantId::new)
+                    .transpose();
+                let tenant = match tenant {
+                    Ok(tenant) => tenant,
+                    Err(error) => {
+                        eprintln!("daemon.api.auth: token '{name}': {error}");
+                        process::exit(exit_code::CONFIG_ERROR);
+                    }
+                };
                 TokenSpec {
                     name,
                     role: t.role,
                     permissions: t.permissions,
                     token_env,
+                    tenant,
+                    all_tenants: t.all_tenants.unwrap_or(false),
                 }
             })
             .collect();
@@ -1747,6 +1815,37 @@ fn apply_daemon_config(
     }
 }
 
+/// Extract the tenant bindings declared on the resolved ruleset entries,
+/// validating each id so a typo fails startup with the ruleset name. A CLI
+/// `--ruleset` list replaces the configured entries and carries no bindings.
+fn config_ruleset_tenants(
+    entries: &[config::RulesetEntryPartial],
+) -> Vec<(String, Vec<rsigma_eval::TenantId>)> {
+    let mut out = Vec::new();
+    for entry in entries {
+        let config::RulesetEntryPartial::Bound {
+            name,
+            tenants: Some(tenants),
+            ..
+        } = entry
+        else {
+            continue;
+        };
+        let mut parsed = Vec::new();
+        for raw in tenants {
+            match rsigma_eval::TenantId::new(raw) {
+                Ok(tenant) => parsed.push(tenant),
+                Err(error) => {
+                    eprintln!("error: ruleset '{name}': {error}");
+                    process::exit(exit_code::CONFIG_ERROR);
+                }
+            }
+        }
+        out.push((name.clone(), parsed));
+    }
+    out
+}
+
 /// Helper struct grouping TLS flags so `cmd_daemon` stays readable.
 #[cfg(feature = "daemon-tls")]
 pub(crate) struct TlsCliArgs {
@@ -1771,11 +1870,12 @@ fn build_ruleset_bindings(
     let mut any_when = false;
 
     for entry in entries {
-        let (name, when_schemas) = match entry {
-            crate::config::RulesetEntryPartial::Name(name) => (name, Vec::new()),
+        let (name, when_schemas, tenants) = match entry {
+            crate::config::RulesetEntryPartial::Name(name) => (name, Vec::new(), Vec::new()),
             crate::config::RulesetEntryPartial::Bound {
                 name,
                 when,
+                tenants,
                 unknown,
             } => {
                 if !unknown.is_empty() {
@@ -1796,7 +1896,18 @@ fn build_ruleset_bindings(
                     );
                     process::exit(exit_code::CONFIG_ERROR);
                 }
-                (name, when.schemas)
+                let tenants = tenants.unwrap_or_default();
+                let mut parsed = Vec::with_capacity(tenants.len());
+                for tenant in tenants {
+                    match rsigma_eval::TenantId::new(&tenant) {
+                        Ok(tenant) => parsed.push(tenant),
+                        Err(error) => {
+                            eprintln!("error: ruleset '{name}': {error}");
+                            process::exit(exit_code::CONFIG_ERROR);
+                        }
+                    }
+                }
+                (name, when.schemas, parsed)
             }
         };
         if !seen.insert(name.clone()) {
@@ -1855,6 +1966,7 @@ fn build_ruleset_bindings(
             spec: spec.clone(),
             pipelines,
             when_schemas,
+            tenants,
         });
     }
 
@@ -1906,6 +2018,9 @@ fn run_daemon(
     max_correlation_events: usize,
     max_state_entries: usize,
     max_group_entries: Option<usize>,
+    tenancy: daemon::tenancy::TenancySettings,
+    input_tenant: Option<rsigma_eval::TenantId>,
+    nats_tenants: Vec<daemon::tenancy::NatsTenantBinding>,
     timestamp_fields: Vec<String>,
     timestamp_fallback: String,
     state_db: Option<PathBuf>,
@@ -2110,6 +2225,9 @@ fn run_daemon(
         pipelines,
         pipeline_paths: file_pipeline_paths,
         corr_config,
+        tenancy,
+        input_tenant,
+        nats_tenants,
         include_event,
         match_detail,
         pretty,

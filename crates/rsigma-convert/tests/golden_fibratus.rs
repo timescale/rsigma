@@ -71,6 +71,11 @@ fn run_golden(name: &str, format: &str) {
 }
 
 #[test]
+fn golden_envelope_line_breaks() {
+    run_golden("envelope_line_breaks", "default");
+}
+
+#[test]
 fn golden_field_eq() {
     run_golden("field_eq", "expr");
 }

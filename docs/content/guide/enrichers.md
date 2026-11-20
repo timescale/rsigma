@@ -120,6 +120,10 @@ For enrichers that conceptually apply to both kinds (identity lookups, runbook U
 
 There is no `scope.kinds` axis: the top-level `kind` already gates which result variant the enricher sees. Axes are AND-ed; an empty axis is not a filter.
 
+## Tenancy
+
+`scope.tenants` restricts an enricher to listed tenants. Dynamic sources, watchlists, STIX sources, MMDB databases, and DNS caches stay operator-global and shared. For per-tenant data, declare per-tenant source ids and reference them only from that tenant's ruleset. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## The seven primitives
 
 ### `template`: pure string interpolation
@@ -346,7 +350,7 @@ Operational metrics for this primitive:
 
 ### `http`: per-result HTTP fetch with optional response cache
 
-Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on `(method, url, body_hash)` with a configurable TTL; mandatory in practice for any rate-limited API.
+Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on the method, the rendered URL, the body, and the rendered headers, with a configurable TTL; mandatory in practice for any rate-limited API. Because the rendered headers are part of the key, a header that carries `${detection.tenant}` or an event field never shares a cached response with another value.
 
 ```yaml
 - id: hash_virustotal

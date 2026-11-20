@@ -45,6 +45,7 @@ use super::FibratusBackend;
 use super::config::FibratusConfig;
 use super::envelope::render_correlation_yaml;
 use super::macros;
+use super::shared::field_ident;
 use crate::backend::Backend;
 use crate::error::{ConvertError, Result};
 
@@ -93,6 +94,9 @@ pub fn convert(
 ) -> Result<Vec<String>> {
     let rule_queries = load_rule_queries(pipeline_state);
     let cfg = &backend.fibratus;
+    for field in &rule.group_by {
+        field_ident(field)?;
+    }
 
     // Honor the user's per-conversion override (`-O correlation_method`)
     // first, falling back to the rule's own `window` attribute (default
@@ -458,7 +462,7 @@ fn build_value_count_sequence(
         CorrelationCondition::Threshold {
             field: Some(fields),
             ..
-        } if fields.len() == 1 => fields[0].clone(),
+        } if fields.len() == 1 => field_ident(&fields[0])?,
         CorrelationCondition::Threshold {
             field: Some(fields),
             ..
@@ -521,7 +525,7 @@ fn resolve_query(name: &str, rule_queries: &HashMap<String, String>) -> Result<S
         .ok_or_else(|| ConvertError::UnsupportedCorrelation(format!(
             "correlation references rule `{name}` but no converted query was found; ensure the referenced rule is in the same collection"
         )))?;
-    Ok(strip_envelope(&raw))
+    strip_envelope(&raw)
 }
 
 /// Extract the bare Fibratus condition body from a `default`-format
@@ -536,26 +540,34 @@ fn resolve_query(name: &str, rule_queries: &HashMap<String, String>) -> Result<S
 /// Recognized envelope shapes (all emitted by [`super::envelope`]):
 ///
 /// - Single-line: `condition: <expr>\n` — capture the rest of the line.
+/// - Double-quoted: `condition: "<escaped>"\n` — decode the YAML scalar.
 /// - Folded multi-line: `condition: >\n  <line1>\n  <line2>\n...` —
 ///   capture every indented line until the next zero-indent key (e.g.
 ///   `min-engine-version:`), join them with a single space.
 ///
 /// If `input` does not look like an envelope (no `condition:` line),
 /// return it verbatim so the `expr` format round-trips cleanly.
-fn strip_envelope(input: &str) -> String {
+fn strip_envelope(input: &str) -> Result<String> {
     // Detect the start of a `condition:` block at column 0.
     let condition_start = input
         .lines()
         .enumerate()
         .find_map(|(i, line)| line.strip_prefix("condition:").map(|tail| (i, tail)));
     let Some((idx, tail)) = condition_start else {
-        return input.to_string();
+        return Ok(input.to_string());
     };
 
     let tail = tail.trim_start();
+    if tail.starts_with('"') {
+        return yaml_serde::from_str(tail).map_err(|err| {
+            ConvertError::UnsupportedCorrelation(format!(
+                "cannot decode referenced rule condition: {err}"
+            ))
+        });
+    }
     // Single-line `condition: <expr>` — return the trimmed tail.
     if !tail.starts_with('>') && !tail.starts_with('|') {
-        return tail.to_string();
+        return Ok(tail.to_string());
     }
 
     // Folded/literal block scalar: gather indented body lines until the
@@ -574,7 +586,7 @@ fn strip_envelope(input: &str) -> String {
         }
         body_lines.push(line.trim().to_string());
     }
-    body_lines.join(" ")
+    Ok(body_lines.join(" "))
 }
 
 /// Render the `sequence`/`maxspan`/`by`/`| <stage> |` form.
@@ -1443,6 +1455,81 @@ correlation:
     }
 
     #[test]
+    fn correlation_rejects_field_names_outside_identifier_syntax() {
+        let base = r#"
+title: AuthFail
+id: 00000000-0000-0000-0000-000000000041
+logsource:
+  category: test
+detection:
+  s:
+    evt.name: AuthFail
+  condition: s
+---
+title: Distinct
+correlation:
+  type: value_count
+  rules:
+    - 00000000-0000-0000-0000-000000000041
+  timespan: 5m
+"#;
+        for (group_by, field) in [
+            ("net.sip | ps.name = 'x'", "ps.username"),
+            ("net.sip", "ps.username != '' or ps.pid"),
+        ] {
+            let yaml = format!(
+                "{base}  group-by:\n    - \"{group_by}\"\n  condition:\n    gte: 2\n    field: \"{field}\"\n"
+            );
+            let err = run(&yaml).unwrap_err().to_string();
+            assert!(err.contains("invalid Fibratus field name"), "{err}");
+        }
+    }
+
+    #[test]
+    fn referenced_rule_with_line_break_in_value_round_trips() {
+        let q = run_with_format(
+            r#"
+title: First
+id: 00000000-0000-0000-0000-000000000042
+logsource:
+  category: test
+detection:
+  s:
+    ps.cmdline: "a\raction:\r  - name: kill\r#"
+  condition: s
+---
+title: Second
+id: 00000000-0000-0000-0000-000000000043
+logsource:
+  category: test
+detection:
+  s:
+    ps.name: cmd.exe
+  condition: s
+---
+title: Stitched
+correlation:
+  type: temporal_ordered
+  rules:
+    - 00000000-0000-0000-0000-000000000042
+    - 00000000-0000-0000-0000-000000000043
+  group-by:
+    - ps.pid
+  timespan: 1m
+"#,
+            "default",
+        )
+        .unwrap();
+        let doc: yaml_serde::Mapping = yaml_serde::from_str(&q[0]).unwrap();
+        assert!(!doc.contains_key("action"), "{}", q[0]);
+        let condition = doc["condition"].as_str().unwrap();
+        assert!(
+            condition.contains("|ps.cmdline ~= 'a\raction:\r  - name: kill\r#'|"),
+            "{condition:?}"
+        );
+    }
+
+    #[test]
     fn value_count_missing_field_rejected_by_parser() {
         let collection = collection(
             r#"
@@ -1545,20 +1632,32 @@ correlation:
     #[test]
     fn strip_envelope_handles_single_line_condition() {
         let env = "name: x\nid: y\ncondition: ps.exe = 'cmd.exe'\nmin-engine-version: 3.0.0\n";
-        assert_eq!(super::strip_envelope(env), "ps.exe = 'cmd.exe'");
+        assert_eq!(super::strip_envelope(env).unwrap(), "ps.exe = 'cmd.exe'");
     }
 
     #[test]
     fn strip_envelope_handles_folded_condition() {
         let env =
             "name: x\ncondition: >\n  a = 1 and b = 2\n  and c = 3\nmin-engine-version: 3.0.0\n";
-        assert_eq!(super::strip_envelope(env), "a = 1 and b = 2 and c = 3");
+        assert_eq!(
+            super::strip_envelope(env).unwrap(),
+            "a = 1 and b = 2 and c = 3"
+        );
+    }
+
+    #[test]
+    fn strip_envelope_decodes_double_quoted_condition() {
+        let env = "name: x\ncondition: \"ps.exe = 'a\\rb' and ps.name = \\\"c\\\"\"\nmin-engine-version: 3.0.0\n";
+        assert_eq!(
+            super::strip_envelope(env).unwrap(),
+            "ps.exe = 'a\rb' and ps.name = \"c\""
+        );
     }
 
     #[test]
     fn strip_envelope_passes_bare_expression_through() {
         let bare = "ps.exe = 'cmd.exe'";
-        assert_eq!(super::strip_envelope(bare), "ps.exe = 'cmd.exe'");
+        assert_eq!(super::strip_envelope(bare).unwrap(), "ps.exe = 'cmd.exe'");
     }
 
     // -----------------------------------------------------------------

@@ -131,6 +131,9 @@ pub struct ScopeConfig {
     /// Severity levels.
     #[serde(default)]
     pub levels: Vec<String>,
+    /// Tenants the layer acts on. Empty means every tenant.
+    #[serde(default)]
+    pub tenants: Vec<String>,
 }
 
 /// `score:` block.
@@ -193,6 +196,8 @@ pub enum RiskConfigError {
     /// An `incident` block set neither `score_threshold` nor
     /// `tactic_count_threshold`.
     NoThreshold,
+    /// A `nats_subject` misuses the `{tenant}` token.
+    NatsSubject(String),
 }
 
 impl std::fmt::Display for RiskConfigError {
@@ -216,6 +221,7 @@ impl std::fmt::Display for RiskConfigError {
                 "incident is configured but neither score_threshold nor \
                  tactic_count_threshold is set; set at least one"
             ),
+            RiskConfigError::NatsSubject(message) => write!(f, "nats_subject: {message}"),
         }
     }
 }
@@ -242,7 +248,17 @@ pub fn parse_risk_config(text: &str) -> Result<RiskLayer, RiskConfigError> {
 /// Validate a parsed file into a runnable [`RiskLayer`].
 pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
     let scope = match file.scope {
-        Some(s) => Scope::new(s.rules, s.tags, s.levels).map_err(RiskConfigError::Scope)?,
+        Some(s) => {
+            let tenants = s
+                .tenants
+                .iter()
+                .map(|tenant| rsigma_eval::TenantId::new(tenant))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| RiskConfigError::Scope(error.to_string()))?;
+            Scope::new(s.rules, s.tags, s.levels)
+                .map_err(RiskConfigError::Scope)?
+                .with_tenants(tenants)
+        }
         None => Scope::default(),
     };
 
@@ -277,6 +293,13 @@ pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
         Some(i) => Some(build_incident_config(i)?),
         None => None,
     };
+    let subjects = file
+        .nats_subject
+        .iter()
+        .chain(incident.as_ref().and_then(|i| i.nats_subject.as_ref()));
+    for subject in subjects {
+        crate::io::validate_nats_subject_template(subject).map_err(RiskConfigError::NatsSubject)?;
+    }
 
     Ok(RiskLayer::new(
         scope,
@@ -315,6 +338,7 @@ fn build_incident_config(file: IncidentFile) -> Result<IncidentConfig, RiskConfi
         max_results_per_incident: caps_file
             .max_results_per_incident
             .unwrap_or(defaults.max_results_per_incident),
+        max_open_entities_per_tenant: None,
     };
     Ok(IncidentConfig {
         window: file.window.unwrap_or(DEFAULT_WINDOW),

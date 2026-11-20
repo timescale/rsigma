@@ -14,10 +14,10 @@ use super::silence::SilenceSnap;
 
 /// Bumped when the snapshot layout changes incompatibly; a mismatch on load
 /// logs a warning and the daemon starts with fresh state.
-pub const SNAPSHOT_VERSION: u32 = 1;
+pub const SNAPSHOT_VERSION: u32 = 2;
 
 /// A point-in-time snapshot of the alert pipeline's mutable state.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertPipelineSnapshot {
     /// Snapshot layout version.
     pub version: u32,

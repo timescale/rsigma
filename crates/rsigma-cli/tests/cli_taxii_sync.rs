@@ -110,6 +110,58 @@ fn sync_imports_collection_into_fs_store() {
 }
 
 #[test]
+fn sync_rejects_custom_object_id_that_escapes_store() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let server = MockServer::start().await;
+        let traversal = serde_json::json!({
+            "type": "../../escape",
+            "spec_version": "2.1",
+            "id": "../../escape--11111111-1111-4111-8111-111111111111",
+            "created": "2024-01-01T00:00:00.000Z",
+            "modified": "2024-01-01T00:00:00.000Z"
+        });
+        mount_objects(&server, &[traversal]).await;
+
+        let base = tempdir().expect("tempdir");
+        let store = base.path().join("store");
+        let api = api_root_url(&server);
+
+        rsigma()
+            .args([
+                "taxii",
+                "sync",
+                "--server",
+                &server.uri(),
+                "--api-root",
+                &api,
+                "--collection",
+                "col1",
+                "--store",
+                store.to_str().unwrap(),
+                "--allow-insecure-http",
+                "--no-preflight",
+                "--disable-capability-check",
+                "--allow-custom",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("invalid type name"));
+
+        let escaped: Vec<_> = fs::read_dir(base.path())
+            .expect("read base")
+            .map(|entry| entry.expect("entry").file_name())
+            .filter(|name| name != "store")
+            .collect();
+        assert!(
+            escaped.is_empty(),
+            "files written outside the store: {escaped:?}"
+        );
+        assert_eq!(fs::read_dir(store.join("objects")).unwrap().count(), 0);
+    });
+}
+
+#[test]
 fn resync_is_idempotent() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {

@@ -20,6 +20,8 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "dns-enrich")]
 pub mod dns;
+#[cfg(feature = "stix-source")]
+pub mod taxii;
 
 /// Absolute path to a committed MMDB fixture.
 pub fn mmdb_fixture(name: &str) -> String {
@@ -30,6 +32,7 @@ fn header(rule_id: &str) -> RuleHeader {
     RuleHeader {
         rule_title: "integration rule".into(),
         rule_id: Some(rule_id.into()),
+        tenant_id: None,
         level: Some(Level::High),
         tags: vec![],
         custom_attributes: Arc::new(HashMap::new()),

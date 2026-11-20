@@ -52,6 +52,8 @@ pub enum SourceType {
         body: Option<String>,
         format: DataFormat,
         extract: Option<ExtractExpr>,
+        /// Set when `format` is [`DataFormat::Stix`].
+        stix: Option<StixOptions>,
     },
     /// Run a local command and capture its stdout.
     Command {
@@ -64,6 +66,8 @@ pub enum SourceType {
         path: PathBuf,
         format: DataFormat,
         extract: Option<ExtractExpr>,
+        /// Set when `format` is [`DataFormat::Stix`].
+        stix: Option<StixOptions>,
     },
     /// Subscribe to a NATS subject for push-based updates.
     Nats {
@@ -82,6 +86,92 @@ pub enum SourceType {
         max_value_length: usize,
         default_ttl: Option<Duration>,
     },
+    /// Poll a TAXII 2.1 collection and turn STIX indicators into source values.
+    Taxii {
+        /// API root URL. The client does not run discovery.
+        url: String,
+        /// Collection id.
+        collection: String,
+        /// Environment-variable names that hold credentials. Never the secrets.
+        auth: TaxiiAuthConfig,
+        /// Page size sent as the TAXII `limit`.
+        page_size: usize,
+        /// Which indicators become source values.
+        stix: StixOptions,
+    },
+}
+
+/// Credential environment-variable names for a TAXII source.
+///
+/// At most one method is set: bearer, basic, or API key. The values are read
+/// from the environment when the resolver is built.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaxiiAuthConfig {
+    /// Variable holding a bearer token.
+    pub bearer_token_env: Option<String>,
+    /// Variable holding the basic-auth user.
+    pub basic_user_env: Option<String>,
+    /// Variable holding the basic-auth password.
+    pub basic_password_env: Option<String>,
+    /// Variable holding an API key.
+    pub api_key_env: Option<String>,
+    /// Header that carries the API key. Used only with `api_key_env`.
+    pub api_key_header: Option<String>,
+}
+
+/// Observable keys a STIX source can emit.
+///
+/// The list is the `key()` of each rstix `ObservableKind`. rsigma-eval does not
+/// depend on rstix, so the keys are recorded here.
+pub const STIX_OBSERVABLE_KEYS: &[&str] = &[
+    "asn",
+    "domain",
+    "email",
+    "file_name",
+    "ipv4",
+    "ipv4_cidr",
+    "ipv6",
+    "ipv6_cidr",
+    "mac",
+    "md5",
+    "mutex",
+    "registry_key",
+    "sha1",
+    "sha256",
+    "sha512",
+    "url",
+];
+
+/// Limits and observable selection shared by TAXII sources and `format: stix`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StixOptions {
+    /// Drop indicators whose confidence is set and below this value.
+    pub min_confidence: Option<u8>,
+    /// Observable keys to emit. Empty is not used: parsing fills every key when
+    /// the YAML omits `observables`.
+    pub observables: Vec<String>,
+    /// Maximum number of active indicators kept in the value.
+    pub max_indicators: usize,
+}
+
+impl Default for StixOptions {
+    fn default() -> Self {
+        Self {
+            min_confidence: None,
+            observables: STIX_OBSERVABLE_KEYS
+                .iter()
+                .map(|key| (*key).to_owned())
+                .collect(),
+            max_indicators: 100_000,
+        }
+    }
+}
+
+impl StixOptions {
+    /// Every observable key, with no confidence floor and the default cap.
+    pub fn all() -> Self {
+        Self::default()
+    }
 }
 
 /// An extraction expression applied to source data after parsing.
@@ -136,6 +226,8 @@ pub enum DataFormat {
     Lines,
     /// Comma-separated values.
     Csv,
+    /// A STIX 2.1 bundle. Indicators become the source value.
+    Stix,
 }
 
 // =============================================================================

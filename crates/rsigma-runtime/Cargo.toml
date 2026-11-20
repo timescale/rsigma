@@ -26,6 +26,8 @@ stix-enrich = ["dep:rstix", "rstix/store", "rstix/store-fs"]
 mmdb-enrich = ["dep:maxminddb"]
 # Post-evaluation DNS lookup enricher (`type: dns` in enrichers YAML).
 dns-enrich = ["dep:hickory-resolver"]
+# TAXII collections and `format: stix` file or HTTP sources.
+stix-source = ["dep:rstix", "rstix/taxii", "rstix/pattern"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.27.0" }
@@ -54,7 +56,7 @@ jaq-std = "3.0"
 jsonpath-rust = "1"
 cel = "0.15"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 notify = "8.2"
 hmac = { version = "0.13", features = ["zeroize"] }
 sha2 = "0.11"
@@ -65,7 +67,7 @@ rayon = "1.12.0"
 
 # optional
 tokio-stream = { version = "0.1", optional = true }
-async-nats = { version = "0.51", optional = true }
+async-nats = { version = "0.52", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.15.1", optional = true, default-features = false }
@@ -81,7 +83,7 @@ rustls = { version = "0.23", optional = true }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 # Validates the OCSF goldens against the committed class-2004 schema fixture.
-jsonschema = "0.60"
+jsonschema = "0.61"
 rcgen = "0.14"
 time = "0.3"
 criterion = "0.8"
@@ -137,3 +139,8 @@ required-features = ["otlp"]
 [[bench]]
 name = "watchlist"
 harness = false
+
+[[bench]]
+name = "stix_source"
+harness = false
+required-features = ["stix-source"]

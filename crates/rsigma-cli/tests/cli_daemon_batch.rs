@@ -300,6 +300,7 @@ fn batch_run_with_clear_state_replaces_an_incompatible_snapshot() {
         .write_stdin(event)
         .assert()
         .success();
+    let current = snapshot_version(&db, "rsigma_correlation_state");
     patch_snapshot(&db, "rsigma_correlation_state", |snapshot| {
         snapshot["version"] = serde_json::json!(99);
     });
@@ -311,7 +312,7 @@ fn batch_run_with_clear_state_replaces_an_incompatible_snapshot() {
         .success();
     assert_eq!(
         snapshot_version(&db, "rsigma_correlation_state"),
-        1,
+        current,
         "--clear-state should replace the incompatible snapshot with a current one"
     );
 }
@@ -330,6 +331,7 @@ fn batch_run_with_clear_state_starts_fresh_from_an_unreadable_snapshot() {
         .write_stdin(event)
         .assert()
         .success();
+    let current = snapshot_version(&db, "rsigma_correlation_state");
     set_raw_snapshot(&db, "rsigma_correlation_state", "not json");
 
     batch(rules.path(), &db)
@@ -339,7 +341,7 @@ fn batch_run_with_clear_state_starts_fresh_from_an_unreadable_snapshot() {
         .success();
     assert_eq!(
         snapshot_version(&db, "rsigma_correlation_state"),
-        1,
+        current,
         "--clear-state should replace an unreadable snapshot with a current one"
     );
 }

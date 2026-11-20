@@ -5,6 +5,7 @@ use opentelemetry_proto::tonic::{
     resource::v1::Resource,
 };
 use rsigma_eval::EvaluationResult;
+use rsigma_eval::TenantId;
 use serde_json::{Map, Value};
 
 use crate::io::{AckToken, RawEvent};
@@ -19,6 +20,15 @@ use crate::io::{AckToken, RawEvent};
 /// - Scope metadata goes to `scope.name` / `scope.version`
 /// - Timestamps are ISO 8601, trace/span IDs are lowercase hex
 pub fn logs_request_to_raw_events(request: &ExportLogsServiceRequest) -> Vec<RawEvent> {
+    logs_request_to_raw_events_for(request, None)
+}
+
+/// Like [`logs_request_to_raw_events`] but stamps every event with `tenant`,
+/// which comes from the authenticated ingest principal.
+pub fn logs_request_to_raw_events_for(
+    request: &ExportLogsServiceRequest,
+    tenant: Option<&TenantId>,
+) -> Vec<RawEvent> {
     let mut events = Vec::new();
 
     for resource_logs in &request.resource_logs {
@@ -37,6 +47,7 @@ pub fn logs_request_to_raw_events(request: &ExportLogsServiceRequest) -> Vec<Raw
                 events.push(RawEvent {
                     payload,
                     ack_token: AckToken::Noop,
+                    tenant: tenant.cloned(),
                 });
             }
         }
@@ -672,6 +683,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious PowerShell".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::High),
                 tags: vec!["attack.t1059".to_string()],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -743,6 +755,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "SSH brute force".to_string(),
                 rule_id: Some("corr-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::Critical),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -787,6 +800,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious PowerShell".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(rsigma_parser::Level::Medium),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -819,5 +833,55 @@ mod tests {
         };
         let parsed: Value = serde_json::from_str(&raw).expect("finding JSON");
         assert_eq!(parsed, golden, "the string body is the finding");
+    }
+
+    #[test]
+    fn logs_request_stamps_the_tenant() {
+        let tenant = TenantId::new("tenant-a").unwrap();
+        let request = make_request(vec![], None, vec![LogRecord::default()]);
+        let events = logs_request_to_raw_events_for(&request, Some(&tenant));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tenant.as_ref(), Some(&tenant));
+
+        let events = logs_request_to_raw_events(&request);
+        assert!(events[0].tenant.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tenant_tests {
+    use super::*;
+    use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn tenant_id_becomes_a_log_attribute() {
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: "Tenanted".to_string(),
+                rule_id: Some("rule-1".to_string()),
+                tenant_id: Some(TenantId::new("tenant-a").unwrap()),
+                level: None,
+                tags: vec![],
+                custom_attributes: Arc::new(HashMap::new()),
+                enrichments: None,
+                ruleset: None,
+            },
+            body: ResultBody::Detection(DetectionBody {
+                matched_selections: vec![],
+                matched_fields: vec![],
+                event: None,
+            }),
+        };
+        let request = evaluation_results_to_logs_request(&[result]);
+        let records = &request.resource_logs[0].scope_logs[0].log_records;
+        let attr = records[0]
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "tenant_id")
+            .expect("tenant_id attribute");
+        let value = attr.value.as_ref().and_then(|value| value.value.as_ref());
+        assert!(matches!(value, Some(any_value::Value::StringValue(s)) if s == "tenant-a"));
     }
 }

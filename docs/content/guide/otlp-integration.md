@@ -75,6 +75,10 @@ OTLP `LogRecord` carries data across several fields: timestamp, severity, body, 
 
 Because of the map-body flattening, a rule that selects `EventID: 4625` against your Sysmon events works whether the agent ships them via OTLP, NATS, or stdin. You do not need an OTLP-specific pipeline.
 
+## Tenancy
+
+With tenancy enabled, the OTLP HTTP and gRPC ingest routes take the tenant from the bearer token, never from a resource or log attribute. Every exported result carries `tenant_id` as a log-record attribute. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## Agent recipes
 
 Each recipe is intentionally minimal: just enough config to forward logs to RSigma. Real production setups will add labels, filters, and routing on top. Refer to each agent's own documentation for those.

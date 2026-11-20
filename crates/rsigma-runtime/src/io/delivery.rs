@@ -235,6 +235,8 @@ pub struct DeliveryFailure {
     pub serialized: String,
     /// Human-readable failure reason (the last transport error).
     pub error: String,
+    /// Tenant of the failed result, when tenancy is enabled.
+    pub tenant: Option<rsigma_eval::TenantId>,
 }
 
 /// Holds an event's ack tokens until every worker has committed it.
@@ -547,9 +549,17 @@ async fn deliver_one<S: DeliverySink>(
                                 DeliverTarget::Incident(e) => e.json.clone(),
                                 DeliverTarget::FormattedIncident(e) => e.native().json.clone(),
                             };
+                            let tenant = match target {
+                                DeliverTarget::Result(r) => {
+                                    r.iter().find_map(|result| result.header.tenant_id.clone())
+                                }
+                                DeliverTarget::Incident(e) => e.tenant.clone(),
+                                DeliverTarget::FormattedIncident(e) => e.native().tenant.clone(),
+                            };
                             let failure = DeliveryFailure {
                                 serialized,
                                 error: format!("sink delivery failure: {e}"),
+                                tenant,
                             };
                             if dlq.send(failure).await.is_err() {
                                 tracing::warn!(

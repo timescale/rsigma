@@ -300,6 +300,51 @@ fn scenario_mode(window: &'static str) -> RunStats {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Scenario D: the same workload spread across many tenants
+// ---------------------------------------------------------------------------
+
+fn scenario_tenants(n_tenants: usize, n_events: usize, per_tenant_cap: Option<usize>) -> RunStats {
+    let yaml = rules_yaml("event_count", "session", "2h", Some("5m"));
+    let mut engine = engine_for(&yaml, 1_000_000);
+    engine.set_max_state_entries_per_tenant(per_tenant_cap);
+
+    // Build the inputs before the baseline so peak and settled memory measure
+    // correlation state, not the event payloads.
+    let tenants: Vec<Option<rsigma_eval::TenantId>> = (0..n_events)
+        .map(|i| Some(rsigma_eval::TenantId::new(&format!("t{}", i % n_tenants)).unwrap()))
+        .collect();
+    let values: Vec<serde_json::Value> = (0..n_events)
+        .map(|i| {
+            serde_json::json!({
+                "EventType": "process_create",
+                "User": format!("user_{:08}", i % 1_000),
+                "CommandLine": "whoami /all",
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+            })
+        })
+        .collect();
+    let events: Vec<JsonEvent> = values.iter().map(JsonEvent::borrow).collect();
+    let refs: Vec<&JsonEvent> = events.iter().collect();
+
+    let baseline = live_bytes();
+    reset_peak();
+    let start = Instant::now();
+    let results = engine.process_batch_for_tenants(&refs, &tenants);
+    let secs = start.elapsed().as_secs_f64();
+    let alerts = results.iter().map(|r| r.correlation_count()).sum();
+    drop(results);
+
+    RunStats {
+        events: n_events,
+        secs,
+        peak_delta: peak_bytes().saturating_sub(baseline),
+        settled_delta: live_bytes().saturating_sub(baseline),
+        groups: engine.state_count(),
+        alerts,
+    }
+}
+
 fn main() {
     println!(
         "\n=== A. High-cardinality session windows (1 event/key, event_count, gap 5m, cap 2h) ==="
@@ -320,6 +365,14 @@ fn main() {
         let stats = scenario_cardinality(n_keys, cap);
         report(&format!("session  {label}"), &stats);
     }
+
+    println!("\n=== D. Tenant-keyed state (1, 100, 1000 tenants) ===");
+    for &n_tenants in &[1usize, 100, 1_000] {
+        let stats = scenario_tenants(n_tenants, 100_000, None);
+        report(&format!("tenants {n_tenants}"), &stats);
+    }
+    let stats = scenario_tenants(1_000, 100_000, Some(10));
+    report("tenants 1000, per-tenant cap 10", &stats);
 
     println!("\n=== B. Long-lived chatty sessions ===");
     let stats = scenario_chatty(&ChattySpec {

@@ -67,9 +67,11 @@ fn header() -> RuleHeader {
     RuleHeader {
         rule_title: "fuzz".to_string(),
         rule_id: None,
+        tenant_id: None,
         level: None,
         tags: Vec::new(),
         custom_attributes: Arc::new(HashMap::new()),
         enrichments: None,
+        ruleset: None,
     }
 }

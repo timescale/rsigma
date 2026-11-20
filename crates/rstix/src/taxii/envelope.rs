@@ -8,6 +8,7 @@ use crate::core::TaxiiTimestamp;
 use crate::model::ParseOptions;
 use crate::model::StixObject;
 use crate::model::stix_object::deserialize_stix_object_from_value;
+use crate::model::validate_value_limits;
 
 use super::TaxiiError;
 use super::filter::ObjectVersion;
@@ -77,12 +78,33 @@ impl RawEnvelope {
     }
 }
 
-pub(crate) fn parse_envelope(
-    bytes: &[u8],
-    opts: &ParseOptions,
-) -> Result<TaxiiEnvelope, TaxiiError> {
-    let raw: RawEnvelope =
+/// Parse a TAXII envelope, applying the same JSON limits as [`crate::Bundle::parse_with_options`].
+///
+/// Nesting depth and string length use [`ParseOptions::max_nesting_depth`] and
+/// [`ParseOptions::max_string_length`]. The `objects` array is rejected when it is longer
+/// than [`ParseOptions::max_object_count`]. Limit failures are [`crate::ParseError`] values
+/// wrapped in [`TaxiiError::StixParseError`]. JSON that is not an object fails as
+/// [`TaxiiError::MalformedResponse`].
+pub fn parse_envelope(bytes: &[u8], opts: &ParseOptions) -> Result<TaxiiEnvelope, TaxiiError> {
+    let value: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|err| TaxiiError::MalformedResponse {
+            reason: err.to_string(),
+        })?;
+    validate_value_limits(&value, opts)?;
+    let object_count = value
+        .get("objects")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if object_count > opts.max_object_count {
+        return Err(crate::ParseError::ObjectLimitExceeded {
+            count: object_count,
+            max: opts.max_object_count,
+        }
+        .into());
+    }
+    let raw: RawEnvelope =
+        serde_json::from_value(value).map_err(|err| TaxiiError::MalformedResponse {
             reason: err.to_string(),
         })?;
     raw.into_envelope(opts)
@@ -179,4 +201,54 @@ pub struct ManifestResponse {
     /// Unmodeled manifest properties.
     #[serde(flatten)]
     pub custom: BTreeMap<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ParseError;
+
+    fn limited(max_objects: usize, max_depth: usize, max_string: usize) -> ParseOptions {
+        ParseOptions {
+            max_object_count: max_objects,
+            max_nesting_depth: max_depth,
+            max_string_length: max_string,
+            ..ParseOptions::default()
+        }
+    }
+
+    #[test]
+    fn empty_envelope_parses() {
+        let envelope = parse_envelope(br#"{"objects":[]}"#, &ParseOptions::default()).unwrap();
+        assert!(envelope.objects.is_empty());
+    }
+
+    #[test]
+    fn rejects_too_many_objects() {
+        let err = parse_envelope(br#"{"objects":[{},{}]}"#, &limited(1, 64, 1024)).unwrap_err();
+        assert!(matches!(
+            err,
+            TaxiiError::StixParseError(ParseError::ObjectLimitExceeded { count: 2, max: 1 })
+        ));
+    }
+
+    #[test]
+    fn rejects_nesting_past_the_limit() {
+        let err =
+            parse_envelope(br#"{"objects":[{"a":{"b":1}}]}"#, &limited(8, 2, 1024)).unwrap_err();
+        assert!(matches!(
+            err,
+            TaxiiError::StixParseError(ParseError::JsonNestingTooDeep { max: 2 })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_string_past_the_limit() {
+        let body = format!(r#"{{"next":"{}","objects":[]}}"#, "n".repeat(8));
+        let err = parse_envelope(body.as_bytes(), &limited(8, 64, 4)).unwrap_err();
+        assert!(matches!(
+            err,
+            TaxiiError::StixParseError(ParseError::JsonStringTooLong { len: 8, max: 4 })
+        ));
+    }
 }

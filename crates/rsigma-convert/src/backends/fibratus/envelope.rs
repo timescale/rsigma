@@ -93,9 +93,13 @@ fn render_envelope(
         if let Some(desc) = description
             && !desc.is_empty()
         {
-            out.push_str("description: |\n");
-            for line in desc.lines() {
-                let _ = writeln!(out, "  {line}");
+            if fits_block_scalar(desc) {
+                out.push_str("description: |\n");
+                for line in desc.lines() {
+                    let _ = writeln!(out, "  {line}");
+                }
+            } else {
+                let _ = writeln!(out, "description: {}", yaml_double_quoted(desc));
             }
         }
 
@@ -136,7 +140,14 @@ fn render_envelope(
 /// - Long single-line conditions are soft-wrapped on top-level
 ///   `and`/`or` boundaries.
 /// - Short single-line conditions are emitted on one indented line.
+/// - A condition a block scalar cannot carry (see [`fits_block_scalar`]),
+///   such as one with a raw `\r` inside a string value, is written as a
+///   double-quoted scalar instead.
 fn write_condition(out: &mut String, expr: &str) {
+    if !fits_block_scalar(expr) {
+        let _ = writeln!(out, "condition: {}", yaml_double_quoted(expr));
+        return;
+    }
     out.push_str("condition: >\n");
     if expr.contains('\n') {
         for line in expr.lines() {
@@ -245,8 +256,49 @@ fn write_labels(out: &mut String, labels: &BTreeMap<String, String>) {
     }
     out.push_str("labels:\n");
     for (k, v) in labels {
-        let _ = writeln!(out, "  {k}: {}", yaml_inline_str(v));
+        let _ = writeln!(out, "  {}: {}", yaml_inline_str(k), yaml_inline_str(v));
     }
+}
+
+/// Whether `c` stays on its line in any YAML scalar style: a printable
+/// character that YAML loaders do not treat as a line break. Besides `\n`,
+/// loaders built on libyaml (including `gopkg.in/yaml.v3`, which Fibratus
+/// uses) break lines on `\r`, NEL (U+0085), U+2028, and U+2029.
+fn is_yaml_printable(c: char) -> bool {
+    matches!(c,
+        '\t' | ' '..='~' | '\u{A0}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+        && !matches!(c, '\u{2028}' | '\u{2029}' | '\u{FEFF}')
+}
+
+/// Whether `text` can be written as a `|` or `>` block scalar with every
+/// line indented by two spaces. A line break other than `\n` would end the
+/// block and start a new key, and leading whitespace on the first line would
+/// change the indentation the loader detects.
+fn fits_block_scalar(text: &str) -> bool {
+    text.chars().all(|c| c == '\n' || is_yaml_printable(c))
+        && !text.trim_start_matches('\n').starts_with([' ', '\t'])
+}
+
+/// Write `s` as a double-quoted YAML scalar, escaping every character that
+/// is not printable so the value stays on one line.
+fn yaml_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if is_yaml_printable(c) => out.push(c),
+            c => {
+                let _ = write!(out, "\\U{:08X}", u32::from(c));
+            }
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Quote a value for a YAML inline scalar.
@@ -254,11 +306,15 @@ fn write_labels(out: &mut String, labels: &BTreeMap<String, String>) {
 /// Strings that look like YAML reserved tokens (`true`, `false`, `null`,
 /// numeric literals) and strings containing characters that would break
 /// flow syntax (`:`, `#`, leading `-`, leading whitespace) are wrapped in
-/// single quotes with internal single quotes doubled. Other strings are
-/// emitted bare so the result reads naturally.
+/// single quotes with internal single quotes doubled. Strings with a line
+/// break or another non-printable character are double-quoted with escapes.
+/// Other strings are emitted bare so the result reads naturally.
 fn yaml_inline_str(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
+    }
+    if !s.chars().all(is_yaml_printable) {
+        return yaml_double_quoted(s);
     }
     if needs_yaml_quoting(s) {
         format!("'{}'", s.replace('\'', "''"))
@@ -306,15 +362,10 @@ fn needs_yaml_quoting(s: &str) -> bool {
     {
         return true;
     }
-    // Strings containing internal quotes, colons, sharps, tabs, or
-    // newlines confuse YAML flow scalars. Force quoting in those cases
-    // so the loader sees the literal value verbatim.
-    s.contains(':')
-        || s.contains(" #")
-        || s.contains('\n')
-        || s.contains('\t')
-        || s.contains('\'')
-        || s.contains('"')
+    // Strings containing internal quotes, colons, sharps, or tabs confuse
+    // YAML flow scalars. Force quoting in those cases so the loader sees the
+    // literal value verbatim.
+    s.contains(':') || s.contains(" #") || s.contains('\t') || s.contains('\'') || s.contains('"')
 }
 
 #[cfg(test)]
@@ -482,6 +533,75 @@ detection:
         assert!(!out.contains("tactic.id"));
         // The required `version` is emitted even in the minimal envelope.
         assert!(out.contains("version: 1.0.0\n"));
+    }
+
+    fn load(out: &str) -> yaml_serde::Mapping {
+        yaml_serde::from_str(out).unwrap_or_else(|e| panic!("invalid YAML ({e}):\n{out}"))
+    }
+
+    const LINE_BREAKS: [&str; 5] = ["\n", "\r", "\u{85}", "\u{2028}", "\u{2029}"];
+
+    #[test]
+    fn line_breaks_in_metadata_cannot_add_keys() {
+        for br in LINE_BREAKS {
+            let payload = format!("Detects cmd.{br}action:{br}  - name: kill{br}#");
+            let mut r = rule(
+                "title: T\nlogsource:\n  category: test\ndetection:\n  s:\n    ps.name: x\n  condition: s\n",
+            );
+            r.title = payload.clone();
+            r.id = Some(payload.clone());
+            r.description = Some(payload.clone());
+            r.tags = vec![payload.clone()];
+            let out = render_rule_yaml(&r, "ps.name = 'x'", &cfg());
+            let doc = load(&out);
+            assert!(!doc.contains_key("action"), "{br:?} added a key:\n{out}");
+            assert_eq!(doc["name"].as_str(), Some(payload.as_str()));
+            assert_eq!(doc["id"].as_str(), Some(payload.as_str()));
+            let labels = doc["labels"].as_mapping().unwrap();
+            assert_eq!(
+                labels[format!("tag.{payload}").as_str()].as_str(),
+                Some(payload.as_str())
+            );
+            if br == "\n" {
+                assert!(out.contains("description: |\n"), "{out}");
+            } else {
+                assert_eq!(doc["description"].as_str(), Some(payload.as_str()));
+            }
+        }
+    }
+
+    #[test]
+    fn line_breaks_in_condition_stay_in_the_condition() {
+        let r = rule(
+            "title: T\nlogsource:\n  category: test\ndetection:\n  s:\n    ps.name: x\n  condition: s\n",
+        );
+        for br in &LINE_BREAKS[1..] {
+            let expr = format!("ps.name ~= 'x{br}action:{br}  - name: kill{br}#'");
+            let out = render_rule_yaml(&r, &expr, &cfg());
+            let doc = load(&out);
+            assert!(!doc.contains_key("action"), "{br:?} added a key:\n{out}");
+            assert_eq!(doc["condition"].as_str(), Some(expr.as_str()));
+        }
+    }
+
+    #[test]
+    fn leading_whitespace_falls_back_to_double_quotes() {
+        let r = rule(
+            "title: T\nlogsource:\n  category: test\ndetection:\n  s:\n    ps.name: x\n  condition: s\n",
+        );
+        let expr = "    ps.name\naction:\n  - name: kill";
+        let out = render_rule_yaml(&r, expr, &cfg());
+        let doc = load(&out);
+        assert!(!doc.contains_key("action"), "{out}");
+        assert_eq!(doc["condition"].as_str(), Some(expr));
+    }
+
+    #[test]
+    fn yaml_double_quoted_escapes_non_printable_characters() {
+        assert_eq!(
+            yaml_double_quoted("a\"b\\c\n\r\t\u{85}\u{2028}\u{7f}"),
+            r#""a\"b\\c\n\r\t\U00000085\U00002028\U0000007F""#
+        );
     }
 
     #[test]

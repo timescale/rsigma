@@ -193,6 +193,7 @@ mod tests {
                 path: PathBuf::from("/tmp/test.json"),
                 format: DataFormat::Json,
                 extract: None,
+                stix: None,
             },
             refresh: RefreshPolicy::Once,
             timeout: None,

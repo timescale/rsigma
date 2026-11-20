@@ -14,8 +14,9 @@ use super::conditions::{
 };
 use super::finalizers::Finalizer;
 use super::sources::{
-    DataFormat, DynamicSource, ErrorPolicy, ExtractExpr, RefLocation, RefreshPolicy, SourceRef,
-    SourceType, is_valid_source_id, scan_source_templates,
+    DataFormat, DynamicSource, ErrorPolicy, ExtractExpr, RefLocation, RefreshPolicy,
+    STIX_OBSERVABLE_KEYS, SourceRef, SourceType, StixOptions, TaxiiAuthConfig, is_valid_source_id,
+    scan_source_templates,
 };
 use super::transformations::Transformation;
 use super::{Pipeline, TransformationItem};
@@ -1315,6 +1316,8 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
 
     let source_type = match type_str {
         "http" => {
+            let (format, extract, stix) =
+                bind_stix_format(&id, "http", format, extract, obj.get(ykey("stix")))?;
             let url = obj
                 .get(ykey("url"))
                 .and_then(|v| v.as_str())
@@ -1340,9 +1343,12 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 body,
                 format,
                 extract,
+                stix,
             }
         }
         "command" => {
+            let (format, extract, _) =
+                bind_stix_format(&id, "command", format, extract, obj.get(ykey("stix")))?;
             let command = parse_command_field(obj.get(ykey("command")))?;
             if command.is_empty() {
                 return Err(EvalError::Pipeline(format!(
@@ -1356,6 +1362,8 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
             }
         }
         "file" => {
+            let (format, extract, stix) =
+                bind_stix_format(&id, "file", format, extract, obj.get(ykey("stix")))?;
             let path = obj
                 .get(ykey("path"))
                 .and_then(|v| v.as_str())
@@ -1368,9 +1376,12 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 path: PathBuf::from(path),
                 format,
                 extract,
+                stix,
             }
         }
         "nats" => {
+            let (format, extract, _) =
+                bind_stix_format(&id, "nats", format, extract, obj.get(ykey("stix")))?;
             let url = obj
                 .get(ykey("url"))
                 .and_then(|v| v.as_str())
@@ -1453,6 +1464,66 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 default_ttl,
             }
         }
+        "taxii" => {
+            if extract.is_some() {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' of type 'taxii' does not accept 'extract'"
+                )));
+            }
+            if obj.get(ykey("format")).is_some() {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' of type 'taxii' does not accept 'format'"
+                )));
+            }
+            let url = obj
+                .get(ykey("url"))
+                .and_then(|v| v.as_str())
+                .filter(|url| !url.is_empty())
+                .ok_or_else(|| {
+                    EvalError::Pipeline(format!(
+                        "source '{id}' of type 'taxii' must have a 'url' field"
+                    ))
+                })?
+                .to_string();
+            let collection = obj
+                .get(ykey("collection"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    EvalError::Pipeline(format!(
+                        "source '{id}' of type 'taxii' must have a 'collection' field"
+                    ))
+                })?;
+            if !is_collection_uuid(collection) {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' collection must be a UUID"
+                )));
+            }
+            let page_size = match obj.get(ykey("page_size")) {
+                None => 500,
+                Some(value) => match value.as_u64() {
+                    Some(0) => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' page_size must be greater than 0"
+                        )));
+                    }
+                    Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+                    None => {
+                        return Err(EvalError::Pipeline(format!(
+                            "source '{id}' page_size must be a positive integer"
+                        )));
+                    }
+                },
+            };
+            let auth = parse_taxii_auth(&id, obj.get(ykey("auth")))?;
+            let stix = parse_stix_options(&id, obj.get(ykey("stix")))?;
+            SourceType::Taxii {
+                url,
+                collection: collection.to_string(),
+                auth,
+                page_size,
+                stix,
+            }
+        }
         other => {
             return Err(EvalError::Pipeline(format!(
                 "source '{id}' has unknown type: '{other}'"
@@ -1461,6 +1532,18 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
     };
 
     let refresh = parse_refresh_policy(obj.get(ykey("refresh")));
+    if matches!(source_type, SourceType::Taxii { .. }) {
+        let mode = match refresh {
+            RefreshPolicy::Watch => Some("watch"),
+            RefreshPolicy::Push => Some("push"),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}' of type 'taxii' does not accept refresh '{mode}'"
+            )));
+        }
+    }
     let timeout = parse_duration_field(obj.get(ykey("timeout")));
     let on_error = parse_error_policy(obj.get(ykey("on_error")));
     let required = obj
@@ -1587,8 +1670,206 @@ fn parse_data_format(value: Option<&yaml_serde::Value>) -> DataFormat {
         Some("yaml" | "yml") => DataFormat::Yaml,
         Some("lines") => DataFormat::Lines,
         Some("csv") => DataFormat::Csv,
+        Some("stix") => DataFormat::Stix,
         _ => DataFormat::Json,
     }
+}
+
+fn bind_stix_format(
+    id: &str,
+    source_type: &str,
+    format: DataFormat,
+    extract: Option<ExtractExpr>,
+    stix: Option<&yaml_serde::Value>,
+) -> Result<(DataFormat, Option<ExtractExpr>, Option<StixOptions>)> {
+    if matches!(format, DataFormat::Stix) && matches!(source_type, "command" | "nats") {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' of type '{source_type}' does not accept format 'stix'"
+        )));
+    }
+    if stix.is_some() && !matches!(format, DataFormat::Stix) {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' stix block requires format: stix"
+        )));
+    }
+    if matches!(format, DataFormat::Stix) && extract.is_some() {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' with format 'stix' does not accept 'extract'"
+        )));
+    }
+    let options = if matches!(format, DataFormat::Stix) {
+        Some(parse_stix_options(id, stix)?)
+    } else {
+        None
+    };
+    Ok((format, extract, options))
+}
+
+fn parse_stix_options(id: &str, value: Option<&yaml_serde::Value>) -> Result<StixOptions> {
+    let Some(value) = value else {
+        return Ok(StixOptions::all());
+    };
+    let obj = value.as_mapping().ok_or_else(|| {
+        EvalError::Pipeline(format!("source '{id}' stix block must be a mapping"))
+    })?;
+    for key in obj.keys() {
+        let Some(name) = key.as_str() else {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}' stix block keys must be strings"
+            )));
+        };
+        if !matches!(name, "min_confidence" | "observables" | "max_indicators") {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}' stix block does not accept '{name}'"
+            )));
+        }
+    }
+    let min_confidence = match obj.get(ykey("min_confidence")) {
+        None => None,
+        Some(value) => match value.as_u64() {
+            Some(n) if n <= 100 => Some(u8::try_from(n).unwrap_or(100)),
+            _ => {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' min_confidence must be an integer from 0 to 100"
+                )));
+            }
+        },
+    };
+    let observables = match obj.get(ykey("observables")) {
+        None => StixOptions::all().observables,
+        Some(value) => {
+            let items = value.as_sequence().ok_or_else(|| {
+                EvalError::Pipeline(format!(
+                    "source '{id}' observables must be a list of strings"
+                ))
+            })?;
+            let mut keys = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(key) = item.as_str() else {
+                    return Err(EvalError::Pipeline(format!(
+                        "source '{id}' observables must be a list of strings"
+                    )));
+                };
+                if !STIX_OBSERVABLE_KEYS.contains(&key) {
+                    return Err(EvalError::Pipeline(format!(
+                        "source '{id}' unknown observable '{key}'; valid keys: {}",
+                        STIX_OBSERVABLE_KEYS.join(", ")
+                    )));
+                }
+                keys.push(key.to_owned());
+            }
+            keys
+        }
+    };
+    let max_indicators = match obj.get(ykey("max_indicators")) {
+        None => 100_000,
+        Some(value) => match value.as_u64() {
+            Some(0) => {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' max_indicators must be greater than 0"
+                )));
+            }
+            Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
+            None => {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}' max_indicators must be a positive integer"
+                )));
+            }
+        },
+    };
+    Ok(StixOptions {
+        min_confidence,
+        observables,
+        max_indicators,
+    })
+}
+
+fn parse_taxii_auth(id: &str, value: Option<&yaml_serde::Value>) -> Result<TaxiiAuthConfig> {
+    let Some(value) = value else {
+        return Ok(TaxiiAuthConfig::default());
+    };
+    let obj = value
+        .as_mapping()
+        .ok_or_else(|| EvalError::Pipeline(format!("source '{id}' auth must be a mapping")))?;
+    for key in obj.keys() {
+        let Some(name) = key.as_str() else {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}' auth keys must be strings"
+            )));
+        };
+        if !matches!(
+            name,
+            "bearer_token_env"
+                | "basic_user_env"
+                | "basic_password_env"
+                | "api_key_env"
+                | "api_key_header"
+        ) {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}' auth does not accept '{name}'"
+            )));
+        }
+    }
+    let bearer = env_name(id, obj, "bearer_token_env")?;
+    let user = env_name(id, obj, "basic_user_env")?;
+    let password = env_name(id, obj, "basic_password_env")?;
+    let api_key = env_name(id, obj, "api_key_env")?;
+    let api_key_header = env_name(id, obj, "api_key_header")?;
+    if api_key_header.is_some() && api_key.is_none() {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' api_key_header requires api_key_env"
+        )));
+    }
+    if user.is_some() != password.is_some() {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' basic auth requires basic_user_env and basic_password_env"
+        )));
+    }
+    let methods = [
+        bearer.is_some(),
+        user.is_some() || password.is_some(),
+        api_key.is_some(),
+    ]
+    .into_iter()
+    .filter(|set| *set)
+    .count();
+    if methods != 1 {
+        return Err(EvalError::Pipeline(format!(
+            "source '{id}' must set exactly one TAXII auth method"
+        )));
+    }
+    Ok(TaxiiAuthConfig {
+        bearer_token_env: bearer,
+        basic_user_env: user,
+        basic_password_env: password,
+        api_key_env: api_key,
+        api_key_header,
+    })
+}
+
+fn env_name(id: &str, obj: &yaml_serde::Mapping, key: &str) -> Result<Option<String>> {
+    match obj.get(ykey(key)) {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .map(|name| Some(name.to_owned()))
+            .ok_or_else(|| {
+                EvalError::Pipeline(format!(
+                    "source '{id}' {key} must be an environment variable name"
+                ))
+            }),
+    }
+}
+
+fn is_collection_uuid(value: &str) -> bool {
+    let mut parts = value.split('-');
+    let widths = [8, 4, 4, 4, 12];
+    widths.into_iter().all(|width| {
+        parts.next().is_some_and(|part| {
+            part.len() == width && part.chars().all(|ch| ch.is_ascii_hexdigit())
+        })
+    }) && parts.next().is_none()
 }
 
 fn parse_refresh_policy(value: Option<&yaml_serde::Value>) -> RefreshPolicy {

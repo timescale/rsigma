@@ -394,8 +394,19 @@ impl DaemonProcess {
 /// (e.g. plaintext bind on `0.0.0.0` without `--allow-plaintext`) refuses
 /// to start with a specific error message.
 pub fn spawn_expect_failure(args: &[&str], deadline: Duration) -> String {
+    spawn_expect_failure_with_env(args, &[], deadline)
+}
+
+/// Like [`spawn_expect_failure`], with extra environment variables.
+#[allow(dead_code)]
+pub fn spawn_expect_failure_with_env(
+    args: &[&str],
+    env: &[(&str, &str)],
+    deadline: Duration,
+) -> String {
     let mut child = StdCommand::new(rsigma_bin())
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

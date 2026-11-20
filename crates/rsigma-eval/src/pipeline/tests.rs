@@ -1064,6 +1064,130 @@ transformations:
 }
 
 #[test]
+fn test_parse_taxii_source_and_stix_format() {
+    let yaml = r#"
+sources:
+  - id: ti
+    type: taxii
+    url: https://taxii.example/api/
+    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+    refresh: 5m
+    page_size: 500
+    auth:
+      bearer_token_env: TAXII_TOKEN
+    stix:
+      min_confidence: 50
+      observables: [ipv4, domain]
+  - id: bundle
+    type: file
+    path: ./indicators.json
+    format: stix
+"#;
+    let sources = parse_source_list(yaml).unwrap();
+    match &sources[0].source_type {
+        sources::SourceType::Taxii {
+            url,
+            collection,
+            auth,
+            page_size,
+            stix,
+        } => {
+            assert_eq!(url, "https://taxii.example/api/");
+            assert_eq!(collection, "91a7b528-80eb-42ed-a74d-c6fbd5a26116");
+            assert_eq!(auth.bearer_token_env.as_deref(), Some("TAXII_TOKEN"));
+            assert_eq!(*page_size, 500);
+            assert_eq!(stix.min_confidence, Some(50));
+            assert_eq!(stix.observables, ["ipv4", "domain"]);
+        }
+        other => panic!("expected Taxii, got {other:?}"),
+    }
+    assert!(matches!(
+        sources[0].refresh,
+        sources::RefreshPolicy::Interval(d) if d == std::time::Duration::from_secs(300)
+    ));
+    match &sources[1].source_type {
+        sources::SourceType::File {
+            format: sources::DataFormat::Stix,
+            extract: None,
+            stix: Some(stix),
+            ..
+        } => {
+            assert_eq!(stix.observables, sources::STIX_OBSERVABLE_KEYS);
+            assert_eq!(stix.max_indicators, 100_000);
+        }
+        other => panic!("expected a stix file source, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_parse_taxii_and_stix_rejections() {
+    let cases = [
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: not-a-uuid\n",
+            "collection must be a UUID",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    refresh: watch\n",
+            "does not accept refresh 'watch'",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    refresh: push\n",
+            "does not accept refresh 'push'",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    extract: .[]\n",
+            "does not accept 'extract'",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    format: stix\n",
+            "does not accept 'format'",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth:\n      bearer_token_env: TAXII_TOKEN\n      api_key_env: TAXII_KEY\n",
+            "exactly one TAXII auth method",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth:\n      basic_user_env: TAXII_USER\n",
+            "basic_user_env and basic_password_env",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    stix:\n      observables: [ipv4, not-a-kind]\n",
+            "unknown observable 'not-a-kind'",
+        ),
+        (
+            "type: file\n    path: ./indicators.json\n    format: json\n    stix:\n      min_confidence: 10\n",
+            "stix block requires format: stix",
+        ),
+        (
+            "type: file\n    path: ./indicators.json\n    format: stix\n    extract: .[]\n",
+            "does not accept 'extract'",
+        ),
+        (
+            "type: http\n    url: https://example.test/bundle.json\n    format: stix\n    extract: .[]\n",
+            "does not accept 'extract'",
+        ),
+        (
+            "type: command\n    command: cat\n    format: stix\n",
+            "does not accept format 'stix'",
+        ),
+    ];
+    for (body, needle) in cases {
+        let yaml = format!("sources:\n  - id: ti\n    {body}");
+        let err = parse_source_list(&yaml).unwrap_err().to_string();
+        assert!(
+            err.contains("ti") && err.contains(needle),
+            "expected '{needle}' naming ti, got: {err}"
+        );
+        if needle.starts_with("unknown observable") {
+            assert!(
+                err.contains("valid keys:"),
+                "unknown observable error should list valid keys: {err}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_parse_watchlist_source_defaults_and_ttl() {
     let yaml = r#"
 sources:
@@ -1235,10 +1359,12 @@ transformations:
             path,
             format,
             extract,
+            stix,
         } => {
             assert_eq!(path, std::path::Path::new("/etc/rsigma/watchlist.json"));
             assert_eq!(*format, sources::DataFormat::Json);
             assert_eq!(*extract, None);
+            assert_eq!(*stix, None);
         }
         other => panic!("expected File, got {other:?}"),
     }

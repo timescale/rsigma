@@ -4,7 +4,7 @@ description: "How to add a dynamic pipeline source type to RSigma, such as S3 or
 
 # Adding a dynamic source type
 
-Dynamic sources (`http`, `command`, `file`, `nats`) live behind one trait: `SourceResolver`. Each `DynamicSource` carries a typed `SourceType` plus shared metadata (`id`, refresh policy, error policy, optional extract). The shipped `DefaultSourceResolver` dispatches on `SourceType`, hits the right adapter, and stores the result in a shared `Arc<SourceCache>` for pipelines and `lookup` enrichers. This page walks through adding a new source type (S3, BigQuery, Redis, an internal HTTP endpoint with non-standard auth) and wiring it into the parser, resolver, and CLI.
+Dynamic sources (`http`, `command`, `file`, `nats`, `watchlist`, and `taxii` when `stix-source` is enabled) live behind one trait: `SourceResolver`. Each `DynamicSource` carries a typed `SourceType` plus shared metadata (`id`, refresh policy, error policy, optional extract). The shipped `DefaultSourceResolver` dispatches on `SourceType`, hits the right adapter, and stores the result in a shared `Arc<SourceCache>` for pipelines and `lookup` enrichers. This page walks through adding a new source type (S3, BigQuery, Redis, an internal HTTP endpoint with non-standard auth) and wiring it into the parser, resolver, and CLI.
 
 Source declarations live in standalone YAML loaded with `--source` or `--source-file`. Each file has a top-level `sources:` list. Pipeline-embedded `sources:` is rejected (hard parse error pointing at `rsigma rule migrate-sources`).
 

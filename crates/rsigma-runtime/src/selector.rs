@@ -201,6 +201,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious PowerShell".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(Level::High),
                 tags: vec!["attack.t1059".to_string()],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -225,6 +226,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "SSH brute force".to_string(),
                 rule_id: None,
+                tenant_id: None,
                 level: Some(Level::Critical),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),

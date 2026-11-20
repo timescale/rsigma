@@ -131,6 +131,10 @@ warning: `--output-format csv` is not supported by `rule reverse`; falling back 
 
 `rule fmt` writes its data product to stdout: `Would reformat:` report lines, unified diffs, or the formatted text from `--stdout`. Progress lines, `Reformatted:` lines, `skipped:` lines, errors, and the trailing summary go to stderr.
 
+## Tenant fields
+
+With `daemon.tenancy.enabled`, every result carries `tenant_id` when it has one, directly after `rule_id`. Incidents and risk incidents carry `tenant_id` after their id, risk events carry it at the top level, and DLQ entries carry `tenant` when the failed event or delivery had one. The field is omitted when the result is untenanted, so untenanted output is unchanged. {{ added "unreleased" }}
+
 ## Examples
 
 Stream detections into jq, getting compact NDJSON automatically because stdout is piped:

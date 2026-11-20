@@ -1,0 +1,18 @@
+{
+  "domain": [
+    "kept.example"
+  ],
+  "indicators": {
+    "kept.example": [
+      {
+        "id": "indicator--00000000-0000-4000-8000-000000000001",
+        "kill_chain_phases": [],
+        "labels": [
+          "malicious-activity"
+        ],
+        "name": "simple"
+      }
+    ]
+  },
+  "ipv4": []
+}

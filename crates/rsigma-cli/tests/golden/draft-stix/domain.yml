@@ -1,0 +1,15 @@
+title: Bad domain
+id: 498446a7-3aca-53ae-9552-023503f5a9b2
+status: experimental
+description: 'Bad domain: DNS callback'
+author: 'TODO: your name'
+date: 2026-06-01
+logsource:
+    category: dns_query
+detection:
+    selection_query_name:
+        QueryName: bad.example
+    condition: 1 of selection_*
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium

@@ -58,6 +58,26 @@ pub fn parse_data(raw: &str, format: DataFormat) -> Result<serde_json::Value, So
                 .collect();
             Ok(serde_json::Value::Array(lines))
         }
+        DataFormat::Stix => {
+            #[cfg(feature = "stix-source")]
+            {
+                let built = super::stix::build(
+                    raw,
+                    &rsigma_eval::pipeline::sources::StixOptions::all(),
+                    &rstix::core::StixTimestamp::now(),
+                )?;
+                Ok(built.value)
+            }
+            #[cfg(not(feature = "stix-source"))]
+            {
+                Err(SourceError {
+                    source_id: String::new(),
+                    kind: SourceErrorKind::Parse(
+                        "STIX source format requires the stix-source feature".into(),
+                    ),
+                })
+            }
+        }
         DataFormat::Csv => {
             let mut reader = csv::ReaderBuilder::new()
                 .has_headers(true)

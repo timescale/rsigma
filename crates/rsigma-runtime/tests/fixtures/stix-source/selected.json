@@ -1,0 +1,58 @@
+{
+  "type": "bundle",
+  "id": "bundle--11111111-1111-4111-8111-111111111111",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000001",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "low",
+      "confidence": 10,
+      "pattern": "[ipv4-addr:value = '198.51.100.7']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "indicator_types": ["malicious-activity"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000002",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "addr",
+      "confidence": 80,
+      "pattern": "[ipv4-addr:value = '198.51.100.8']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "indicator_types": ["malicious-activity"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000003",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "name",
+      "confidence": 90,
+      "pattern": "[domain-name:value = 'Kept.Example']",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "indicator_types": ["anomalous-activity"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--00000000-0000-4000-8000-000000000004",
+      "created": "2020-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "size",
+      "confidence": 70,
+      "pattern": "[file:size = 12]",
+      "pattern_type": "stix",
+      "valid_from": "2020-01-01T00:00:00.000Z",
+      "indicator_types": ["malicious-activity"]
+    }
+  ]
+}

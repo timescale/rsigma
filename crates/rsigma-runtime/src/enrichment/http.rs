@@ -229,7 +229,14 @@ impl Enricher for HttpEnricher {
         let url = render_template_url(&self.url, result);
         let body = self.body.as_ref().map(|b| render_template_json(b, result));
 
-        let cache_key = CacheKey::new(&self.method, &url, body.as_deref().map(str::as_bytes));
+        let headers: Vec<(String, String)> = self
+            .headers
+            .iter()
+            .map(|(name, value_template)| (name.clone(), render_template(value_template, result)))
+            .collect();
+
+        let cache_key = CacheKey::new(&self.method, &url, body.as_deref().map(str::as_bytes))
+            .with_headers(&headers);
         let (outcome, cached) = self.cache.lookup(&cache_key);
         match outcome {
             CacheOutcome::Hit => self.metrics.on_enrichment_http_cache_hit(&self.id),
@@ -245,14 +252,13 @@ impl Enricher for HttpEnricher {
             return Ok(());
         }
 
-        let mut header_map = HeaderMap::with_capacity(self.headers.len());
-        for (name, value_template) in &self.headers {
-            let rendered = render_template(value_template, result);
+        let mut header_map = HeaderMap::with_capacity(headers.len());
+        for (name, rendered) in &headers {
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| EnrichError {
                 enricher_id: self.id.clone(),
                 kind: EnrichErrorKind::Fetch(format!("invalid header name '{name}': {e}")),
             })?;
-            let header_value = HeaderValue::from_str(&rendered).map_err(|e| EnrichError {
+            let header_value = HeaderValue::from_str(rendered).map_err(|e| EnrichError {
                 enricher_id: self.id.clone(),
                 kind: EnrichErrorKind::Fetch(format!("invalid header value for '{name}': {e}")),
             })?;

@@ -42,10 +42,26 @@ use std::cell::Cell;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use rsigma_eval::{EvaluationResult, ProcessResult};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::metrics::MetricsHook;
+
+/// Check that a NATS subject uses `{tenant}` at most once, as a whole
+/// dot-separated token, so a rendered subject never splices a tenant into a
+/// neighbouring token.
+pub fn validate_nats_subject_template(subject: &str) -> Result<(), String> {
+    let whole = subject
+        .split('.')
+        .filter(|token| *token == "{tenant}")
+        .count();
+    if subject.matches("{tenant}").count() != whole || whole > 1 {
+        return Err(format!(
+            "NATS subject '{subject}' must use '{{tenant}}' at most once, as a whole dot-separated token"
+        ));
+    }
+    Ok(())
+}
 
 /// Wire format a line-oriented sink serializes findings into.
 ///
@@ -213,12 +229,25 @@ pub struct IncidentEnvelope {
     pub json: String,
     /// Optional NATS subject override for incident consumers.
     pub nats_subject: Option<String>,
+    /// Tenant that owns the incident, when tenancy is enabled.
+    pub tenant: Option<TenantId>,
 }
 
 impl IncidentEnvelope {
     /// Build an envelope from the native NDJSON line.
     pub fn new(json: String, nats_subject: Option<String>) -> Self {
-        IncidentEnvelope { json, nats_subject }
+        IncidentEnvelope {
+            json,
+            nats_subject,
+            tenant: None,
+        }
+    }
+
+    /// Attach the incident's tenant for tenant-routed sinks.
+    #[must_use]
+    pub fn with_tenant(mut self, tenant: Option<TenantId>) -> Self {
+        self.tenant = tenant;
+        self
     }
 }
 
@@ -335,6 +364,9 @@ impl FormattedIncidentEnvelope {
 pub struct RawEvent {
     pub payload: String,
     pub ack_token: AckToken,
+    /// Tenant bound to this event by its source or ingest principal. `None`
+    /// when tenancy is off.
+    pub tenant: Option<TenantId>,
 }
 
 /// Contract for event input adapters.
@@ -347,6 +379,30 @@ pub trait EventSource: Send + 'static {
     /// Receive the next event with its ack token.
     /// Returns `None` when the source is exhausted or shutting down.
     fn recv(&mut self) -> impl std::future::Future<Output = Option<RawEvent>> + Send;
+}
+
+/// Stamps every event from `inner` with one tenant.
+pub struct WithTenant<S> {
+    inner: S,
+    tenant: TenantId,
+}
+
+impl<S> WithTenant<S> {
+    /// Wrap `inner` so every event it yields carries `tenant`.
+    pub fn new(inner: S, tenant: TenantId) -> Self {
+        WithTenant { inner, tenant }
+    }
+}
+
+impl<S: EventSource> EventSource for WithTenant<S> {
+    fn recv(&mut self) -> impl std::future::Future<Output = Option<RawEvent>> + Send {
+        let tenant = self.tenant.clone();
+        async move {
+            let mut raw = self.inner.recv().await?;
+            raw.tenant = Some(tenant);
+            Some(raw)
+        }
+    }
 }
 
 /// Run a synchronous sink write from async code.
@@ -528,18 +584,22 @@ impl Sink {
     {
         Box::pin(async move {
             match self {
-                Sink::Stdout(s) => blocking_write(|| s.send_raw(&env.json)),
-                Sink::File(s) => blocking_write(|| s.send_raw(&env.json)),
+                Sink::Stdout(s) => {
+                    blocking_write(|| s.send_raw_for_tenant(&env.json, env.tenant.as_ref()))
+                }
+                Sink::File(s) => {
+                    blocking_write(|| s.send_raw_for_tenant(&env.json, env.tenant.as_ref()))
+                }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
-                    s.send_incident(&env.json, env.nats_subject.as_deref())
+                    s.send_incident(&env.json, env.nats_subject.as_deref(), env.tenant.as_ref())
                         .await
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
                 Sink::Webhook(_) => Ok(()),
                 #[cfg(all(unix, feature = "uds"))]
-                Sink::Unix(s) => s.send_raw(&env.json).await,
+                Sink::Unix(s) => s.send_raw_for_tenant(&env.json, env.tenant.as_ref()).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_incident(env).await {
@@ -568,17 +628,21 @@ impl Sink {
             match self {
                 Sink::Stdout(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    blocking_write(|| s.send_raw(&line))
+                    blocking_write(|| s.send_raw_for_tenant(&line, env.native().tenant.as_ref()))
                 }
                 Sink::File(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    blocking_write(|| s.send_raw(&line))
+                    blocking_write(|| s.send_raw_for_tenant(&line, env.native().tenant.as_ref()))
                 }
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    s.send_incident(&line, env.native().nats_subject.as_deref())
-                        .await
+                    s.send_incident(
+                        &line,
+                        env.native().nats_subject.as_deref(),
+                        env.native().tenant.as_ref(),
+                    )
+                    .await
                 }
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(_) => Ok(()),
@@ -586,7 +650,8 @@ impl Sink {
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    s.send_raw(&line).await
+                    s.send_raw_for_tenant(&line, env.native().tenant.as_ref())
+                        .await
                 }
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
@@ -825,6 +890,7 @@ mod tests {
         let env = IncidentEnvelope {
             json: "native".to_string(),
             nats_subject: None,
+            tenant: None,
         };
         assert_eq!(env.json, "native");
     }
@@ -882,5 +948,31 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "{\"a\":1}\n{\"b\":2}\n"
         );
+    }
+
+    struct OneShot {
+        events: Vec<RawEvent>,
+    }
+
+    impl EventSource for OneShot {
+        async fn recv(&mut self) -> Option<RawEvent> {
+            self.events.pop()
+        }
+    }
+
+    #[tokio::test]
+    async fn with_tenant_stamps_every_event() {
+        let tenant = TenantId::new("tenant-a").unwrap();
+        let source = OneShot {
+            events: vec![RawEvent {
+                payload: "{}".to_string(),
+                ack_token: AckToken::Noop,
+                tenant: None,
+            }],
+        };
+        let mut source = WithTenant::new(source, tenant.clone());
+        let raw = source.recv().await.expect("one event");
+        assert_eq!(raw.tenant.as_ref(), Some(&tenant));
+        assert!(source.recv().await.is_none());
     }
 }

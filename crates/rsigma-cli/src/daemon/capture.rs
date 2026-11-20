@@ -93,6 +93,7 @@ impl CaptureSpool {
             return SpoolStatus::Miss;
         };
         let identity = disposition_identity(
+            original.tenant.as_ref(),
             scope_str(original.scope),
             original.verdict.as_str(),
             original.incident_id.as_deref(),
@@ -103,7 +104,12 @@ impl CaptureSpool {
                 .filter(|_| original.scope == DispositionScope::Detection),
         );
         let id = bundle_id(&identity);
-        let dest = dest_dir(&self.spool_dir, original.verdict, &id);
+        let dest = dest_dir(
+            &self.spool_dir,
+            original.tenant.as_ref(),
+            original.verdict,
+            &id,
+        );
         if dest.join("manifest.json").is_file() {
             self.metrics
                 .capture_spool_jobs_total
@@ -164,12 +170,12 @@ impl CaptureSpool {
 fn lookup_snapshot(ring: &Mutex<CaptureRing>, original: &Disposition) -> Option<CaptureSnapshot> {
     let ring = ring.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(id) = original.incident_id.as_deref()
-        && let Some(snap) = ring.snapshot_incident(id)
+        && let Some(snap) = ring.snapshot_incident(original.tenant.as_ref(), id)
     {
         return Some(snap);
     }
     if let (Some(rule), Some(fp)) = (original.rule_id.as_deref(), original.fingerprint.as_deref()) {
-        return ring.snapshot_fingerprint(rule, fp);
+        return ring.snapshot_fingerprint(original.tenant.as_ref(), rule, fp);
     }
     None
 }
@@ -199,12 +205,20 @@ fn rules_from_snapshot(snapshot: &CaptureSnapshot, accepted_rules: &[String]) ->
     rules
 }
 
-fn dest_dir(spool_dir: &Path, verdict: Verdict, bundle_id: &str) -> PathBuf {
+fn dest_dir(
+    spool_dir: &Path,
+    tenant: Option<&rsigma_eval::TenantId>,
+    verdict: Verdict,
+    bundle_id: &str,
+) -> PathBuf {
     let kind = match verdict {
         Verdict::FalsePositive => "fp",
         Verdict::TruePositive | Verdict::BenignTruePositive => "tp",
     };
-    spool_dir.join(kind).join(bundle_id)
+    match tenant {
+        Some(tenant) => spool_dir.join(tenant.as_str()).join(kind).join(bundle_id),
+        None => spool_dir.join(kind).join(bundle_id),
+    }
 }
 
 fn scope_str(scope: DispositionScope) -> &'static str {
@@ -573,7 +587,7 @@ mod tests {
     fn job(dir: &Path) -> SpoolJob {
         let id = bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}");
         SpoolJob {
-            dest: dest_dir(dir, Verdict::TruePositive, &id),
+            dest: dest_dir(dir, None, Verdict::TruePositive, &id),
             verdict: Verdict::TruePositive,
             snapshot: snapshot(),
             manifest: BundleManifest {
@@ -609,6 +623,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );
@@ -648,6 +663,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let first = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );
@@ -657,6 +673,7 @@ mod tests {
         second.manifest.bundle_id = bundle_id("incident\u{1}true_positive\u{1}other\u{1}\u{1}");
         second.dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &second.manifest.bundle_id,
         );
@@ -677,6 +694,7 @@ mod tests {
         write_job(dir.path(), 10_000, job(dir.path())).unwrap();
         let dest = dest_dir(
             dir.path(),
+            None,
             Verdict::TruePositive,
             &bundle_id("incident\u{1}true_positive\u{1}inc\u{1}\u{1}"),
         );
@@ -696,6 +714,7 @@ mod tests {
         ring.admit(
             rsigma_runtime::AdmittedEvent {
                 incident_id: "inc".into(),
+                tenant: None,
                 is_fresh_generation: true,
                 event: json!({"user":"a"}),
                 matches: vec![AdmittedMatch {
@@ -717,6 +736,7 @@ mod tests {
             timestamp: 1,
             analyst: None,
             note: None,
+            tenant: None,
         };
         assert!(lookup_snapshot(&ring, &disp).is_some());
     }

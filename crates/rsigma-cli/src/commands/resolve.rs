@@ -201,7 +201,16 @@ async fn resolve_async(
         return;
     }
 
-    let resolver = Arc::new(DefaultSourceResolver::new());
+    let mut resolver = DefaultSourceResolver::new();
+    let declared: Vec<_> = all_sources
+        .iter()
+        .map(|(_, source)| (*source).clone())
+        .collect();
+    if let Err(err) = resolver.prepare_taxii(&declared) {
+        eprintln!("Error preparing TAXII sources: {err}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    let resolver = Arc::new(resolver);
     let mut rows = Vec::new();
     let mut legacy_items = Vec::new();
     let mut had_error = false;

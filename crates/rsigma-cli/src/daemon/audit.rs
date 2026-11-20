@@ -47,6 +47,8 @@ pub struct AuditRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_digest: Option<String>,
     pub status: u16,
 }
@@ -114,8 +116,11 @@ impl AuditLog {
         offset: u64,
         since: Option<i64>,
         until: Option<i64>,
+        tenant: Option<String>,
     ) -> Result<(u64, Vec<AuditRecord>), String> {
-        self.store.query_audit(limit, offset, since, until).await
+        self.store
+            .query_audit(limit, offset, since, until, tenant)
+            .await
     }
 
     pub async fn prune(&self) {
@@ -212,6 +217,25 @@ fn payload_too_large(max: usize) -> Response {
         .into_response()
 }
 
+/// The tenant a write affected, set by the handler as a response extension.
+/// The audit row records it when the caller's token has no tenant of its own,
+/// so an `all_tenants` write shows up in that tenant's audit reads.
+#[derive(Debug, Clone)]
+pub struct AuditTarget(pub rsigma_eval::TenantId);
+
+/// Attach the write's target tenant to `response` for the audit log.
+pub fn with_audit_target(
+    mut response: Response,
+    tenant: Option<&rsigma_eval::TenantId>,
+) -> Response {
+    if let Some(tenant) = tenant {
+        response
+            .extensions_mut()
+            .insert(AuditTarget(tenant.clone()));
+    }
+    response
+}
+
 pub async fn audit_middleware(
     State(log): State<Arc<AuditLog>>,
     request: Request<Body>,
@@ -235,20 +259,27 @@ pub async fn audit_middleware(
         .get::<AuthIdentity>()
         .map(|id| id.token.clone())
         .unwrap_or(None);
+    let tenant = request
+        .extensions()
+        .get::<AuthIdentity>()
+        .and_then(|id| id.tenant.clone())
+        .map(|tenant| tenant.as_str().to_string());
 
     // Records the outcome once we know the status. Digest is `None` for
     // bodyless or rejected requests.
-    let emit = |log: &AuditLog, status: u16, payload_digest: Option<String>| {
-        log.record(AuditRecord {
-            id: None,
-            ts: now_ts(),
-            method: method.to_string(),
-            endpoint: path.clone(),
-            token: token.clone(),
-            payload_digest,
-            status,
-        });
-    };
+    let emit =
+        |log: &AuditLog, status: u16, payload_digest: Option<String>, target: Option<String>| {
+            log.record(AuditRecord {
+                id: None,
+                ts: now_ts(),
+                method: method.to_string(),
+                endpoint: path.clone(),
+                token: token.clone(),
+                tenant: tenant.clone().or(target),
+                payload_digest,
+                status,
+            });
+        };
 
     let max = log.max_body_bytes();
     let (parts, body) = request.into_parts();
@@ -258,7 +289,7 @@ pub async fn audit_middleware(
         // A declared `Content-Length` over the cap is a definitive reject
         // before reading the stream.
         if declared_len(&parts.headers).is_some_and(|len| len > max) {
-            emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None);
+            emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None, None);
             return payload_too_large(max);
         }
         // `to_bytes` errors when the streamed body exceeds the limit; past the
@@ -268,7 +299,7 @@ pub async fn audit_middleware(
         match axum::body::to_bytes(body, max).await {
             Ok(bytes) => bytes,
             Err(_) => {
-                emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None);
+                emit(&log, StatusCode::PAYLOAD_TOO_LARGE.as_u16(), None, None);
                 return payload_too_large(max);
             }
         }
@@ -278,8 +309,12 @@ pub async fn audit_middleware(
     let request = Request::from_parts(parts, Body::from(body_bytes));
     let response = next.run(request).await;
     let status = response.status().as_u16();
+    let target = response
+        .extensions()
+        .get::<AuditTarget>()
+        .map(|target| target.0.as_str().to_string());
 
-    emit(&log, status, payload_digest);
+    emit(&log, status, payload_digest, target);
 
     response
 }

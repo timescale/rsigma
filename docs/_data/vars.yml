@@ -18,10 +18,11 @@ rsigma:
   # Referenced as {{ rsigma.metrics.names }} etc. Keep in sync with
   # crates/rsigma-cli/src/daemon/metrics.rs and docs/content/reference/metrics.md.
   metrics:
-    names: 111 # total metric names in the definition catalogue
-    always: 106 # registered without feature gates (names - otlp - tls)
+    names: 117 # total metric names in the definition catalogue
+    always: 109 # registered without feature gates (names - otlp - tls - stix)
     otlp: 3 # daemon-otlp
     tls: 2 # daemon-tls
+    stix: 3 # stix-source
   crates:
     - { name: rsigma-parser, role: "Parse Sigma YAML into a strongly-typed AST" }
     - { name: rsigma-eval, role: "Compile and evaluate rules against JSON events" }

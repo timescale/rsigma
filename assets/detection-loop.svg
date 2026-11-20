@@ -242,7 +242,7 @@
     <text class="tR" fill="#9a3412" x="772" y="101.5" font-size="13" font-weight="bold">Detect</text>
     </a>
     <circle cx="750" cy="127.3" r="2" fill="#fdba74"/>
-    <text class="ink" fill="#374151" x="758" y="131" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/daemon/" target="_top"><tspan class="mono cmdR" fill="#c2410c">engine daemon</tspan></a> streaming · RBAC API</text>
+    <text class="ink" fill="#374151" x="758" y="131" font-size="10.5"><a class="lnk" href="https://rsigma.io/cli/engine/daemon/" target="_top"><tspan class="mono cmdR" fill="#c2410c">engine daemon</tspan></a> RBAC API · <a class="lnk" href="https://rsigma.io/guide/multi-tenancy/" target="_top">tenants</a></text>
     <circle cx="750" cy="142.3" r="2" fill="#fdba74"/>
     <text class="ink" fill="#374151" x="758" y="146" font-size="10.5"><a class="lnk" href="https://rsigma.io/guide/streaming-detection/" target="_top"><tspan class="strong" fill="#111827" font-weight="bold">correlation</tspan></a> windows · chains</text>
     <circle cx="750" cy="157.3" r="2" fill="#fdba74"/>

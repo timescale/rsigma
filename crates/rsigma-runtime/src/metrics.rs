@@ -113,6 +113,19 @@ pub trait MetricsHook: Send + Sync {
     /// scrape, even before the enricher has run. Called once per
     /// configured enricher at pipeline construction.
     fn register_enricher(&self, _enricher_id: &str, _kind: &str) {}
+
+    /// Pre-register the STIX source gauge and skip-reason counters for `source_id`.
+    fn register_stix_source(&self, _source_id: &str) {}
+    /// Set the number of active indicators for `source_id`.
+    fn set_stix_source_indicators(&self, _source_id: &str, _count: u64) {}
+    /// Count STIX objects received while resolving `source_id`.
+    fn on_stix_source_objects(&self, _source_id: &str, _count: u64) {}
+    /// Count indicators or observables skipped for `reason`.
+    ///
+    /// `reason` is one of `revoked`, `expired`, `not_yet_valid`, `low_confidence`,
+    /// `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`,
+    /// or `over_limit`.
+    fn on_stix_source_skipped(&self, _source_id: &str, _reason: &'static str, _count: u64) {}
     /// Pre-register the three HTTP-cache counter label sets for an
     /// `HttpEnricher` instance so the cache counters are visible on
     /// `/metrics` from startup, even before any cache event fires.
@@ -200,6 +213,16 @@ pub trait MetricsHook: Send + Sync {
     /// `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, or
     /// `unsupported_result_kind`.
     fn on_capture_event_dropped(&self, _reason: &str) {}
+    /// Entries were evicted because a tenant hit its quota. `store` is one of
+    /// `correlation_state`, `active_alerts`, `incidents`, or `risk_entities`.
+    fn on_tenant_quota_eviction(&self, _store: &'static str) {}
+    /// Ingest was rejected because it had no tenant binding or because the
+    /// engine skipped an untenanted event. `channel` is `rest`, `otlp_http`,
+    /// `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`.
+    fn on_tenant_rejected(&self, _channel: &'static str, _reason: &'static str) {}
+    /// `tenant` produced a detection or correlation match. Tenants outside the
+    /// operator allowlist arrive as `other`.
+    fn on_tenant_match(&self, _tenant: &str) {}
     /// A ring incident was evicted. `reason` is `ring_full` or `ttl`.
     fn on_capture_eviction(&self, _reason: &str) {}
     /// Report the current number of incidents held in the capture ring.

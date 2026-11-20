@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use rsigma_eval::TenantId;
+
 /// How much contributing-detection detail to embed in a [`RiskIncidentResult`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncludeMode {
@@ -32,6 +34,9 @@ pub struct RiskRef {
 pub struct RiskIncidentResult {
     /// Surrogate UUIDv4 identity for this incident.
     pub risk_incident_id: String,
+    /// Tenant that owns this incident, when tenancy is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<TenantId>,
     /// The risk-object type, e.g. `user`.
     pub entity_type: String,
     /// The entity value, e.g. `alice`.
@@ -73,6 +78,9 @@ pub struct RiskIncidentResult {
 /// A read-only view of one open entity, served by `GET /api/v1/risk`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RiskEntityView {
+    /// Tenant that owns this entity, when tenancy is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<TenantId>,
     /// The risk-object type.
     pub entity_type: String,
     /// The entity value.
@@ -101,6 +109,7 @@ mod tests {
     fn risk_incident_wire_shape_is_stable() {
         let incident = RiskIncidentResult {
             risk_incident_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            tenant_id: None,
             entity_type: "user".to_string(),
             entity_value: "alice".to_string(),
             trigger: "score",
@@ -137,6 +146,7 @@ mod tests {
     #[test]
     fn risk_entity_view_omits_unset_last_fired() {
         let view = RiskEntityView {
+            tenant_id: None,
             entity_type: "host".to_string(),
             entity_value: "dc01".to_string(),
             score: 40,

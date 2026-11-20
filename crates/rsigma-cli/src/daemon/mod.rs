@@ -14,6 +14,7 @@ pub(crate) mod server;
 mod store;
 pub(crate) mod tail;
 pub(crate) mod tap;
+pub(crate) mod tenancy;
 #[cfg(feature = "daemon-tls")]
 pub(crate) mod tls;
 pub(crate) mod watchlist_api;

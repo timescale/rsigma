@@ -25,6 +25,7 @@ use rsigma_parser::{CorrelationType, Level};
 use serde::Serialize;
 
 use crate::correlation::EventRef;
+use crate::tenant::TenantId;
 
 /// A single evaluation result.
 ///
@@ -95,6 +96,10 @@ pub struct RuleHeader {
     pub rule_title: String,
     /// ID of the matched rule (if present).
     pub rule_id: Option<String>,
+    /// Tenant that produced this result, when tenancy is enabled. `None` for
+    /// every result when it is off; skipped on serialize.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<TenantId>,
     /// Severity level.
     pub level: Option<Level>,
     /// Tags from the matched rule.
@@ -325,6 +330,7 @@ mod tests {
         RuleHeader {
             rule_title: title.to_string(),
             rule_id: Some(format!("{title}-id")),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),

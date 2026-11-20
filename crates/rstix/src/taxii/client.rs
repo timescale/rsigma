@@ -1,6 +1,6 @@
 //! TAXII 2.1 HTTP client.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +13,7 @@ use crate::model::{ParseOptions, StixObject};
 
 use super::TaxiiAuthProvider;
 use super::TaxiiError;
+use super::address_filter::{AddressFilter, FilteringResolver};
 use super::capability::{
     ensure_api_root_supports_taxii, ensure_collection_accepts_stix, ensure_post_content_type,
 };
@@ -60,6 +61,7 @@ pub struct TaxiiClientConfig {
     tlsa_cache: TlsaCache,
     dns_nameserver: Option<SocketAddr>,
     dane_require_dnssec: bool,
+    address_filter: Option<AddressFilter>,
 }
 
 impl TaxiiClientConfig {
@@ -84,6 +86,7 @@ impl TaxiiClientConfig {
             tlsa_cache: TlsaCache::default(),
             dns_nameserver: None,
             dane_require_dnssec: true,
+            address_filter: None,
         }
     }
 
@@ -195,6 +198,18 @@ impl TaxiiClientConfig {
         self.dane_require_dnssec = required;
         self
     }
+
+    /// Accept only destination addresses for which `filter` returns true.
+    ///
+    /// Name resolution drops rejected addresses and fails when none remain. IP
+    /// literals are checked on every request, including absolute URLs advertised
+    /// by the server. Redirects and proxies are disabled so a later hop cannot
+    /// bypass the filter. With no filter, the client keeps its default resolver,
+    /// redirect policy, and proxy behavior.
+    pub fn address_filter(mut self, filter: Arc<dyn Fn(IpAddr) -> bool + Send + Sync>) -> Self {
+        self.address_filter = Some(filter);
+        self
+    }
 }
 
 struct TaxiiClientInner {
@@ -205,6 +220,62 @@ struct TaxiiClientInner {
     post_submit: PostSubmitPolicy,
     capability: CapabilityPolicy,
     https_policy: HttpsPolicy,
+}
+
+/// Page and object bounds for one [`TaxiiClient::poll_object_pages`] call.
+///
+/// The struct is non-exhaustive. Build it with [`PollBudget::new`] or
+/// [`PollBudget::for_indicators`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PollBudget {
+    /// Maximum objects pages fetched in one poll.
+    pub max_pages: usize,
+    /// Maximum objects delivered in one poll.
+    pub max_objects: usize,
+}
+
+/// One objects page delivered by [`TaxiiClient::poll_object_pages`].
+#[derive(Debug)]
+pub struct PolledPage {
+    /// Objects on this page.
+    pub objects: Vec<StixObject>,
+    /// `X-TAXII-Date-Added-Last` for this page, when the server sent it.
+    pub date_added_last: Option<crate::core::TaxiiTimestamp>,
+}
+
+/// Why [`TaxiiClient::poll_object_pages`] returned after the pages it delivered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PollStop {
+    /// The server reported no further pages.
+    Finished,
+    /// The budget was reached and the server still has more.
+    Budget,
+}
+
+impl PollBudget {
+    /// A budget that fails the poll before a request when either bound is zero.
+    pub fn new(max_pages: usize, max_objects: usize) -> Self {
+        Self {
+            max_pages,
+            max_objects,
+        }
+    }
+
+    /// One poll of work for a source that keeps at most `max_indicators`.
+    ///
+    /// `max_objects` is `max_indicators` plus one page, and `max_pages` is that
+    /// many objects divided by `page_size`. A larger collection continues on
+    /// the next poll. [`TaxiiClient::poll_object_pages`] returns
+    /// [`PollStop::Budget`] after the last page it applied.
+    /// [`TaxiiClient::poll_objects`] reports that stop as
+    /// [`TaxiiError::PollBudgetExceeded`].
+    pub fn for_indicators(page_size: usize, max_indicators: usize) -> Self {
+        let page_size = page_size.max(1);
+        let max_objects = max_indicators.saturating_add(page_size).max(1);
+        let max_pages = max_objects.div_ceil(page_size).max(1);
+        Self::new(max_pages, max_objects)
+    }
 }
 
 /// TAXII 2.1 HTTP client.
@@ -232,11 +303,16 @@ impl TaxiiClient {
             &config.tlsa_cache,
             config.client_certificate.as_ref(),
         )?;
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(config.timeout)
-            .use_preconfigured_tls(tls)
-            .build()
-            .map_err(TaxiiError::NetworkError)?;
+            .use_preconfigured_tls(tls);
+        if let Some(filter) = config.address_filter.clone() {
+            builder = builder
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .dns_resolver(FilteringResolver { permit: filter });
+        }
+        let client = builder.build().map_err(TaxiiError::NetworkError)?;
 
         Ok(Self {
             base_url,
@@ -253,6 +329,7 @@ impl TaxiiClient {
                     tlsa_cache: config.tlsa_cache,
                     dns_nameserver: config.dns_nameserver,
                     dane_require_dnssec: config.dane_require_dnssec,
+                    address_filter: config.address_filter,
                 },
                 preflight: config.preflight,
                 status_poll_interval: config.status_poll_interval,
@@ -369,6 +446,120 @@ impl TaxiiClient {
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let envelope = self.inner.http.decode_envelope(&response)?;
         Ok(TaxiiPaged::new(envelope, &response))
+    }
+
+    /// Drain objects pages until the collection ends.
+    ///
+    /// The header is consumed while advancing pages. Callers that poll with
+    /// `added_after` use the returned timestamp as the next cursor. A failed
+    /// page returns the error and no objects. [`PollStop::Budget`] from
+    /// [`TaxiiClient::poll_object_pages`] is [`TaxiiError::PollBudgetExceeded`]
+    /// here, because this method cannot resume. A page that does not advance
+    /// the filter is [`TaxiiError::RepeatedPaginationCursor`]. HTTP 416 recovery
+    /// that would request the same filter returns that 416 error.
+    pub async fn poll_objects(
+        &self,
+        api_root_url: &str,
+        collection_id: &str,
+        filter: TaxiiFilter,
+        budget: PollBudget,
+    ) -> Result<(Vec<StixObject>, Option<crate::core::TaxiiTimestamp>), TaxiiError> {
+        let mut objects = Vec::new();
+        let mut date_added_last = None;
+        let stop = self
+            .poll_object_pages(api_root_url, collection_id, filter, budget, |page| {
+                if page.date_added_last.is_some() {
+                    date_added_last = page.date_added_last.clone();
+                }
+                objects.extend(page.objects);
+            })
+            .await?;
+        match stop {
+            PollStop::Finished => Ok((objects, date_added_last)),
+            PollStop::Budget => Err(TaxiiError::PollBudgetExceeded {
+                max_pages: budget.max_pages,
+                max_objects: budget.max_objects,
+            }),
+        }
+    }
+
+    /// Deliver each objects page, then stop at `budget` or at the end.
+    ///
+    /// `on_page` runs after the page is fetched and before the next request.
+    /// [`PollStop::Budget`] means the pages already delivered are complete and
+    /// the server still has more. The last page's `X-TAXII-Date-Added-Last`
+    /// is the cursor a later poll passes as `added_after`. A zero budget
+    /// returns [`TaxiiError::PollBudgetExceeded`] before a request. A page that
+    /// does not advance the filter is [`TaxiiError::RepeatedPaginationCursor`].
+    /// HTTP 416 recovery that would request the same filter returns that 416
+    /// error. Either error can follow pages already passed to `on_page`; the
+    /// caller decides whether to keep them.
+    pub async fn poll_object_pages<F>(
+        &self,
+        api_root_url: &str,
+        collection_id: &str,
+        filter: TaxiiFilter,
+        budget: PollBudget,
+        mut on_page: F,
+    ) -> Result<PollStop, TaxiiError>
+    where
+        F: FnMut(PolledPage) + Send,
+    {
+        if budget.max_pages == 0 || budget.max_objects == 0 {
+            return Err(TaxiiError::PollBudgetExceeded {
+                max_pages: budget.max_pages,
+                max_objects: budget.max_objects,
+            });
+        }
+        let mut pagination = ObjectPaginationState::new(filter);
+        let mut pages = 0usize;
+        let mut objects_seen = 0usize;
+        loop {
+            if pagination.finished {
+                return Ok(PollStop::Finished);
+            }
+            if pages >= budget.max_pages || objects_seen >= budget.max_objects {
+                return Ok(PollStop::Budget);
+            }
+            let sent = pagination.filter.clone();
+            match self
+                .fetch_objects_page(api_root_url, collection_id, &pagination.filter)
+                .await
+            {
+                Ok((envelope, response)) => {
+                    let date_added_last =
+                        TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
+                            .headers
+                            .date_added_last;
+                    pagination.apply_page(
+                        envelope.more,
+                        envelope.next.clone(),
+                        date_added_last.clone(),
+                        envelope.objects,
+                    )?;
+                    if !pagination.finished && pagination.filter == sent {
+                        return Err(TaxiiError::RepeatedPaginationCursor);
+                    }
+                    let objects: Vec<_> = pagination.pending_objects.drain(..).collect();
+                    objects_seen += objects.len();
+                    pages += 1;
+                    on_page(PolledPage {
+                        objects,
+                        date_added_last,
+                    });
+                }
+                Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                    recover_from_range_not_satisfiable(
+                        &mut pagination.filter,
+                        pagination.baseline_added_after.clone(),
+                    );
+                    if pagination.filter == sent {
+                        return Err(err);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     /// Paginated stream of STIX objects from a collection.

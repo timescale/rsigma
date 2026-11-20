@@ -244,6 +244,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "test".into(),
                 rule_id: Some("rule-1".into()),
+                tenant_id: None,
                 level: Some(Level::High),
                 tags: tags.into_iter().map(str::to_string).collect(),
                 custom_attributes: Arc::new(HashMap::new()),

@@ -116,6 +116,7 @@ export default {
           collapsible: true,
           children: [
             { title: "Rulesets", path: "/guide/rulesets" },
+            { title: "Multi-tenancy", path: "/guide/multi-tenancy" },
             { title: "Streaming Detection", path: "/guide/streaming-detection" },
             { title: "Processing Pipelines", path: "/guide/processing-pipelines" },
             { title: "Schema Routing", path: "/guide/schema-routing" },

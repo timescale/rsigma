@@ -368,6 +368,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: title.to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(Level::High),
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),
@@ -575,6 +576,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "corr".to_string(),
                 rule_id: None,
+                tenant_id: None,
                 level: None,
                 tags: vec![],
                 custom_attributes: Arc::new(HashMap::new()),

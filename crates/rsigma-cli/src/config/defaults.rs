@@ -163,6 +163,8 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 batch_size: Some(BATCH_SIZE),
                 jq: None,
                 jsonpath: None,
+                tenant: None,
+                nats_tenants: None,
             }),
             output: Some(OutputPartial {
                 sinks: Some(vec![STDOUT_SINK.to_string()]),
@@ -249,6 +251,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 event_logsource: None,
                 strict: Some(LOGSOURCE_STRICT),
             }),
+            tenancy: None,
         }),
         eval: Some(EvalPartial {
             rules: None,

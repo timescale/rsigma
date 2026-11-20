@@ -21,12 +21,18 @@
 
 use std::sync::Arc;
 
+use rsigma_runtime::MetricsHook;
+
 use axum::extract::{MatchedPath, Request, State};
 use axum::http::{Method, StatusCode, header::AUTHORIZATION};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use super::metrics::Metrics;
+
+/// Shortest secret accepted for a token bound to a tenant; shorter secrets on
+/// other tokens only log a warning.
+pub const MIN_TOKEN_BYTES: usize = 32;
 
 /// A permission: a resource plus an action, either of which may be the `*`
 /// wildcard on the *granted* side. Required permissions are always concrete.
@@ -169,6 +175,43 @@ pub fn required_access(method: &Method, path: &str) -> Access {
     }
 }
 
+/// The tenancy class of an API route, enforced at the edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TenancyClass {
+    /// No tenant needed (`/healthz`, `/readyz`).
+    Open,
+    /// Requires a token bound to exactly one tenant.
+    Ingest,
+    /// Reads and writes the handler scopes to the token's tenant.
+    TenantScoped,
+    /// Spans tenants, so it requires an `all_tenants` token.
+    OperatorOnly,
+}
+
+/// Map a method + route pattern to its tenancy class. Unknown routes fail
+/// closed as [`TenancyClass::OperatorOnly`].
+pub(crate) fn tenancy_class(method: &Method, path: &str) -> TenancyClass {
+    use TenancyClass::{Ingest, Open, OperatorOnly, TenantScoped};
+    match (method, path) {
+        (&Method::GET, "/healthz" | "/readyz") => Open,
+        (&Method::POST, "/api/v1/events" | "/v1/logs") => Ingest,
+        (&Method::GET, "/api/v1/rules") => TenantScoped,
+        (&Method::GET, "/api/v1/correlations" | "/api/v1/correlations/state") => TenantScoped,
+        (&Method::GET, "/api/v1/incidents" | "/api/v1/incidents/{id}") => TenantScoped,
+        (&Method::GET, "/api/v1/incidents/{id}/bundle") => TenantScoped,
+        (&Method::GET, "/api/v1/risk") => TenantScoped,
+        (&Method::GET, "/api/v1/silences") => TenantScoped,
+        (&Method::POST, "/api/v1/silences") => TenantScoped,
+        (&Method::DELETE, "/api/v1/silences/{id}") => TenantScoped,
+        (&Method::GET, "/api/v1/dispositions") => TenantScoped,
+        (&Method::POST, "/api/v1/dispositions") => TenantScoped,
+        (&Method::GET, "/api/v1/audit") => TenantScoped,
+        (&Method::GET, "/api/v1/tap") => TenantScoped,
+        (&Method::GET, "/api/v1/detections/stream") => TenantScoped,
+        _ => OperatorOnly,
+    }
+}
+
 /// The built-in role names and their permission sets.
 pub const BUILTIN_ROLES: &[(&str, &[&str])] = &[
     ("reader", &["*:read"]),
@@ -197,6 +240,10 @@ pub struct TokenSpec {
     pub role: Option<String>,
     pub permissions: Option<Vec<String>>,
     pub token_env: String,
+    /// Tenant this token is bound to.
+    pub tenant: Option<rsigma_eval::TenantId>,
+    /// Token may see every tenant.
+    pub all_tenants: bool,
 }
 
 /// A resolved token: name, permission set, and the secret bytes.
@@ -205,6 +252,8 @@ struct AuthToken {
     name: String,
     permissions: Vec<Permission>,
     secret: Vec<u8>,
+    tenant: Option<rsigma_eval::TenantId>,
+    all_tenants: bool,
 }
 
 /// The identity established by the auth middleware, inserted into request
@@ -214,6 +263,10 @@ pub struct AuthIdentity {
     /// The token name, or `None` for a request admitted via
     /// `anonymous_permissions`.
     pub token: Option<String>,
+    /// Tenant the authenticated token is bound to.
+    pub tenant: Option<rsigma_eval::TenantId>,
+    /// Token may see every tenant. Never implied by a role.
+    pub all_tenants: bool,
 }
 
 /// Outcome of checking a request's credentials against a required permission.
@@ -238,7 +291,8 @@ pub struct ApiAuth {
 }
 
 impl ApiAuth {
-    /// Build and validate the auth table. `roles` are the operator-defined
+    /// Build and validate the auth table. A secret of a token bound to a tenant
+    /// (or to every tenant) must be at least [`MIN_TOKEN_BYTES`] long. `roles` are the operator-defined
     /// roles (merged over the built-ins, which they may not redefine);
     /// `anonymous` is the permission set granted to unauthenticated
     /// requests; `env` resolves an environment variable name to its value
@@ -329,6 +383,21 @@ impl ApiAuth {
                     spec.name, spec.token_env
                 ));
             }
+            if secret.len() < MIN_TOKEN_BYTES {
+                if spec.tenant.is_some() || spec.all_tenants {
+                    return Err(format!(
+                        "token '{}': a tenant-bound secret must be at least {MIN_TOKEN_BYTES} bytes, \
+                         got {} (generate one with `openssl rand -hex 32`)",
+                        spec.name,
+                        secret.len()
+                    ));
+                }
+                tracing::warn!(
+                    token = %spec.name,
+                    bytes = secret.len(),
+                    "API token secret is shorter than {MIN_TOKEN_BYTES} bytes; generate one with `openssl rand -hex 32`"
+                );
+            }
             if let Some(other) = resolved.iter().find(|t| t.secret == secret.as_bytes()) {
                 return Err(format!(
                     "tokens '{}' and '{}' resolve to the same secret value",
@@ -339,6 +408,8 @@ impl ApiAuth {
                 name: spec.name.clone(),
                 permissions,
                 secret: secret.into_bytes(),
+                tenant: spec.tenant.clone(),
+                all_tenants: spec.all_tenants,
             });
         }
 
@@ -373,6 +444,8 @@ impl ApiAuth {
                         if token.permissions.iter().any(|p| p.grants(&required)) {
                             Decision::Allowed(AuthIdentity {
                                 token: Some(token.name.clone()),
+                                tenant: token.tenant.clone(),
+                                all_tenants: token.all_tenants,
                             })
                         } else {
                             Decision::Forbidden {
@@ -385,7 +458,11 @@ impl ApiAuth {
             }
             None => {
                 if self.anonymous.iter().any(|p| p.grants(&required)) {
-                    Decision::Allowed(AuthIdentity { token: None })
+                    Decision::Allowed(AuthIdentity {
+                        token: None,
+                        tenant: None,
+                        all_tenants: false,
+                    })
                 } else {
                     Decision::Unauthorized
                 }
@@ -401,6 +478,8 @@ pub struct AuthLayerState {
     pub metrics: Arc<Metrics>,
     /// When capture is enabled, `POST /api/v1/dispositions` also requires this.
     pub extra_disposition_perm: Option<RequiredPermission>,
+    /// Whether tenancy route classes are enforced.
+    pub tenancy: bool,
 }
 
 /// Axum middleware enforcing [`ApiAuth`] on every matched route. Mounted via
@@ -464,7 +543,49 @@ pub async fn api_auth_middleware(
                     }
                 }
             }
-            request.extensions_mut().insert(identity);
+            request.extensions_mut().insert(identity.clone());
+            if state.tenancy {
+                let class = tenancy_class(request.method(), &path);
+                let denied = match class {
+                    TenancyClass::Open | TenancyClass::TenantScoped => false,
+                    TenancyClass::Ingest => identity.tenant.is_none(),
+                    TenancyClass::OperatorOnly => !identity.all_tenants,
+                };
+                if denied {
+                    state
+                        .metrics
+                        .api_auth_failures
+                        .with_label_values(&["forbidden"])
+                        .inc();
+                    if matches!(class, TenancyClass::Ingest) {
+                        let channel = if path == "/v1/logs" {
+                            "otlp_http"
+                        } else {
+                            "rest"
+                        };
+                        state.metrics.on_tenant_rejected(channel, "no_tenant");
+                    }
+                    tracing::warn!(
+                        path = %path,
+                        token = ?identity.token,
+                        "API auth failure: tenancy route class denied"
+                    );
+                    let response = (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(serde_json::json!({
+                            "error": match class {
+                                TenancyClass::Ingest =>
+                                    "ingest requires a token bound to exactly one tenant",
+                                TenancyClass::OperatorOnly =>
+                                    "this endpoint spans tenants; use an all_tenants token",
+                                _ => "forbidden",
+                            }
+                        })),
+                    )
+                        .into_response();
+                    return drain_then_respond(request, response).await;
+                }
+            }
             next.run(request).await
         }
         Decision::Unauthorized => {
@@ -563,6 +684,8 @@ mod tests {
             role: Some(role.into()),
             permissions: None,
             token_env: env_var.into(),
+            tenant: None,
+            all_tenants: false,
         }
     }
 
@@ -660,6 +783,80 @@ mod tests {
     }
 
     #[test]
+    fn every_route_has_a_tenancy_class() {
+        // The routes mounted in server.rs. The catch-all is OperatorOnly, so a
+        // route added without a class is fail-closed; this list pins the
+        // classes the handlers rely on.
+        let cases: &[(Method, &str, TenancyClass)] = &[
+            (Method::GET, "/healthz", TenancyClass::Open),
+            (Method::GET, "/readyz", TenancyClass::Open),
+            (Method::POST, "/api/v1/events", TenancyClass::Ingest),
+            (Method::POST, "/v1/logs", TenancyClass::Ingest),
+            (Method::GET, "/api/v1/rules", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/correlations",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/correlations/state",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/incidents", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/incidents/{id}",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/incidents/{id}/bundle",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/risk", TenancyClass::TenantScoped),
+            (Method::GET, "/api/v1/silences", TenancyClass::TenantScoped),
+            (Method::POST, "/api/v1/silences", TenancyClass::TenantScoped),
+            (
+                Method::DELETE,
+                "/api/v1/silences/{id}",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::GET,
+                "/api/v1/dispositions",
+                TenancyClass::TenantScoped,
+            ),
+            (
+                Method::POST,
+                "/api/v1/dispositions",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/api/v1/audit", TenancyClass::TenantScoped),
+            (Method::GET, "/api/v1/tap", TenancyClass::TenantScoped),
+            (
+                Method::GET,
+                "/api/v1/detections/stream",
+                TenancyClass::TenantScoped,
+            ),
+            (Method::GET, "/metrics", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/status", TenancyClass::OperatorOnly),
+            (Method::POST, "/api/v1/reload", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/fields", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/schemas", TenancyClass::OperatorOnly),
+            (Method::GET, "/api/v1/sources", TenancyClass::OperatorOnly),
+        ];
+        for (method, path, expected) in cases {
+            assert_eq!(tenancy_class(method, path), *expected, "{method} {path}");
+        }
+        assert_eq!(
+            tenancy_class(&Method::GET, "/api/v1/unknown"),
+            TenancyClass::OperatorOnly,
+            "unknown routes fail closed"
+        );
+    }
+
+    #[test]
     fn the_bundle_route_needs_more_than_incident_access() {
         // A bundle joins incidents to rule documentation and risk entities, so
         // granting someone the incident list must not also hand them that.
@@ -717,7 +914,7 @@ mod tests {
         let write = Permission::required("silences", "write");
         assert!(matches!(
             auth.check(Some("Bearer secret-a"), read),
-            Decision::Allowed(AuthIdentity { token: Some(name) }) if name == "grafana"
+            Decision::Allowed(AuthIdentity { token: Some(name), .. }) if name == "grafana"
         ));
         assert!(matches!(
             auth.check(Some("Bearer secret-a"), write),
@@ -768,6 +965,30 @@ mod tests {
     }
 
     #[test]
+    fn build_rejects_a_short_secret_only_on_a_tenant_bound_token() {
+        let short = "s".repeat(MIN_TOKEN_BYTES - 1);
+        let long = "s".repeat(MIN_TOKEN_BYTES);
+        let bound = |all_tenants: bool| TokenSpec {
+            tenant: (!all_tenants).then(|| rsigma_eval::TenantId::new("a").unwrap()),
+            all_tenants,
+            ..spec("t", "reader", "TOK")
+        };
+        for all_tenants in [false, true] {
+            let err = ApiAuth::build(&[], &[bound(all_tenants)], &[], env_of(&[("TOK", &short)]))
+                .unwrap_err();
+            assert!(err.contains("at least 32 bytes"), "{err}");
+            ApiAuth::build(&[], &[bound(all_tenants)], &[], env_of(&[("TOK", &long)])).unwrap();
+        }
+        ApiAuth::build(
+            &[],
+            &[spec("t", "reader", "TOK")],
+            &[],
+            env_of(&[("TOK", "s")]),
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn build_rejects_role_and_permissions_together() {
         let err = ApiAuth::build(
             &[],
@@ -776,6 +997,8 @@ mod tests {
                 role: Some("reader".into()),
                 permissions: Some(vec!["*:read".into()]),
                 token_env: "TOK".into(),
+                tenant: None,
+                all_tenants: false,
             }],
             &[],
             env_of(&[("TOK", "x")]),
@@ -796,7 +1019,7 @@ mod tests {
 
         assert!(matches!(
             auth.check(None, Permission::required("metrics", "read")),
-            Decision::Allowed(AuthIdentity { token: None })
+            Decision::Allowed(AuthIdentity { token: None, .. })
         ));
         assert_eq!(
             auth.check(None, Permission::required("rules", "read")),

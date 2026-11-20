@@ -85,6 +85,8 @@ pub(crate) struct ObjectPaginationState {
     pub baseline_added_after: Option<TaxiiTimestamp>,
     pub pending_objects: std::collections::VecDeque<crate::model::StixObject>,
     pub finished: bool,
+    /// Latest `X-TAXII-Date-Added-Last` seen on a page of this poll.
+    pub date_added_last: Option<TaxiiTimestamp>,
 }
 
 impl ObjectPaginationState {
@@ -95,6 +97,7 @@ impl ObjectPaginationState {
             baseline_added_after,
             pending_objects: std::collections::VecDeque::new(),
             finished: false,
+            date_added_last: None,
         }
     }
 
@@ -105,6 +108,9 @@ impl ObjectPaginationState {
         date_added_last: Option<TaxiiTimestamp>,
         objects: Vec<crate::model::StixObject>,
     ) -> Result<(), TaxiiError> {
+        if let Some(ts) = &date_added_last {
+            self.date_added_last = Some(ts.clone());
+        }
         if objects.is_empty() && more {
             self.finished = true;
             return Ok(());

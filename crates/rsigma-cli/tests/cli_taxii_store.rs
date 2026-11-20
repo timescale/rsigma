@@ -129,6 +129,54 @@ fn strict_rejects_invalid_object() {
 }
 
 #[test]
+fn rejects_custom_object_id_that_escapes_store() {
+    let bundle_dir = tempdir().expect("tempdir");
+    let base = tempdir().expect("tempdir");
+    let store = base.path().join("store");
+    let bundle = bundle_dir.path().join("traversal.json");
+    fs::write(
+        &bundle,
+        serde_json::json!({
+            "type": "bundle",
+            "id": "bundle--11111111-1111-4111-8111-111111111111",
+            "objects": [{
+                "type": "../../escape",
+                "spec_version": "2.1",
+                "id": "../../escape--11111111-1111-4111-8111-111111111111",
+                "created": "2024-01-01T00:00:00.000Z",
+                "modified": "2024-01-01T00:00:00.000Z"
+            }]
+        })
+        .to_string(),
+    )
+    .expect("write bundle");
+
+    rsigma()
+        .args([
+            "taxii",
+            "store",
+            "--bundle",
+            bundle.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--allow-custom",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid type name"));
+
+    let escaped: Vec<_> = fs::read_dir(base.path())
+        .expect("read base")
+        .map(|entry| entry.expect("entry").file_name())
+        .filter(|name| name != "store")
+        .collect();
+    assert!(
+        escaped.is_empty(),
+        "files written outside the store: {escaped:?}"
+    );
+}
+
+#[test]
 fn store_reads_bundle_from_stdin() {
     let store_dir = tempdir().expect("tempdir");
     let bundle = fs::read_to_string(fixture_bundle("multi-indicators.json")).expect("read");
