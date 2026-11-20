@@ -501,6 +501,24 @@ enrichers:
 
 For vendor APIs, use `http` with a `cache_ttl` instead of shipping a dump (same shape as the VirusTotal recipe below).
 
+### `enrich_ip_ip2location`: country/city/ASN/proxy by IP (IP2Location.io)
+
+Uses the IP2Location.io HTTP API (50K/month free with an API key, or 1,000/day keyless) with a 24h response cache:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_ip2location
+    kind: detection
+    type: http
+    inject_field: geoip
+    url: "https://api.ip2location.io/?key=${IP2LOCATION_IO_KEY}&ip=${detection.fields.SourceIp}"
+    cache_ttl: 24h
+    extract: "{country_code, country_name, region_name, city_name, latitude, longitude, asn, as, is_proxy}"
+    extract_type: jq
+    on_error: skip
+```
+
 ### `enrich_ip_rdns`: reverse DNS name by IP
 
 {{ added "unreleased" }}
