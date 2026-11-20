@@ -61,6 +61,8 @@ pub struct RiskEvent {
     pub level: Option<String>,
     pub risk_score: i64,
     pub risk_object: RiskObject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<rsigma_eval::TenantId>,
 }
 
 /// Output of [`RiskLayer::process`]: the annotated pass-through results and the
@@ -124,6 +126,13 @@ impl RiskLayer {
     /// The optional NATS subject override for emitted risk events.
     pub fn risk_event_nats_subject(&self) -> Option<&str> {
         self.nats_subject.as_deref()
+    }
+
+    /// Set the per-tenant entity cap. `None` leaves only the global cap.
+    pub fn set_max_open_entities_per_tenant(&mut self, max: Option<usize>) {
+        if let Some(incident) = self.incident.as_mut() {
+            incident.caps.max_open_entities_per_tenant = max;
+        }
     }
 
     /// The validated incident config, if the accumulator is enabled.
@@ -276,7 +285,17 @@ impl RiskLayer {
                 result: stored_result.clone(),
                 finding_uid: finding_uid.map(str::to_string),
             };
-            let outcome = state.record(cfg, &object.object_type, &object.value, contribution, now);
+            let outcome = state.record(
+                cfg,
+                result.header.tenant_id.as_ref(),
+                &object.object_type,
+                &object.value,
+                contribution,
+                now,
+            );
+            if outcome.quota_evicted {
+                metrics.on_tenant_quota_eviction("risk_entities");
+            }
             if outcome.evicted {
                 metrics.on_risk_eviction();
             }
@@ -310,16 +329,37 @@ impl RiskLayer {
     /// Restore a snapshot into `state`, pruning entries past the window at
     /// `now`. Returns `false` on a version mismatch, or when no accumulator is
     /// configured to restore into (the caller starts fresh).
-    pub fn restore(&self, state: &mut RiskState, snap: RiskStateSnapshot, now: i64) -> bool {
-        let Some(cfg) = self.incident.as_ref() else {
-            return false;
-        };
-        state.restore(
+    pub fn restore(
+        &self,
+        state: &mut RiskState,
+        snap: RiskStateSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> bool {
+        self.restore_detailed(state, snap, now, tenancy).is_some()
+    }
+
+    /// Like [`restore`](Self::restore), returning the restored and discarded
+    /// counts.
+    pub fn restore_detailed(
+        &self,
+        state: &mut RiskState,
+        snap: RiskStateSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<rsigma_eval::ImportStats> {
+        let cfg = self.incident.as_ref()?;
+        let stats = state.restore_detailed(
             snap,
             cfg.window.as_secs() as i64,
             cfg.caps.max_open_entities,
             now,
-        )
+            tenancy,
+        )?;
+        if let Some(max) = cfg.caps.max_open_entities_per_tenant {
+            state.enforce_tenant_cap(max);
+        }
+        Some(stats)
     }
 }
 
@@ -369,6 +409,7 @@ fn risk_event(result: &EvaluationResult, score: i64, object: &RiskObject, now: i
         level: result.header.level.map(|l| l.as_str().to_string()),
         risk_score: score,
         risk_object: object.clone(),
+        tenant_id: result.header.tenant_id.clone(),
     }
 }
 
@@ -390,6 +431,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: "Suspicious activity".to_string(),
                 rule_id: Some("rule-1".to_string()),
+                tenant_id: None,
                 level: Some(level),
                 tags: tags.into_iter().map(str::to_string).collect(),
                 custom_attributes: Arc::new(HashMap::new()),

@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use rsigma_eval::TenantId;
+
 /// The analyst's verdict on an alert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +94,8 @@ pub struct RawDisposition {
     pub analyst: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub tenant: Option<String>,
 }
 
 /// Maximum accepted length of the free-text `note` field, in bytes.
@@ -121,6 +125,8 @@ pub struct Disposition {
     pub analyst: Option<String>,
     /// Optional bounded free-text note, recorded for traceability.
     pub note: Option<String>,
+    /// Tenant the disposition accounts against, when tenancy is enabled.
+    pub tenant: Option<TenantId>,
 }
 
 impl Disposition {
@@ -183,6 +189,12 @@ impl Disposition {
             timestamp,
             analyst: raw.analyst.filter(|s| !s.is_empty()),
             note: raw.note,
+            tenant: raw
+                .tenant
+                .filter(|s| !s.is_empty())
+                .map(|s| TenantId::new(&s))
+                .transpose()
+                .map_err(|e| DispositionError::field("tenant", e.to_string()))?,
         })
     }
 
@@ -197,11 +209,18 @@ impl Disposition {
     /// collapse to one and only the first rule would be counted.
     pub fn dedup_key(&self) -> String {
         let rule = self.rule_id.as_deref().unwrap_or("");
+        let prefix = match &self.tenant {
+            Some(tenant) => format!("tenant={}\u{1f}", tenant.as_str()),
+            None => String::new(),
+        };
         if let Some(id) = self.fingerprint.as_deref().or(self.incident_id.as_deref()) {
-            format!("id\u{1}{id}\u{1}{}\u{1}{rule}", self.verdict.as_str())
+            format!(
+                "{prefix}id\u{1}{id}\u{1}{}\u{1}{rule}",
+                self.verdict.as_str()
+            )
         } else {
             format!(
-                "rt\u{1}{rule}\u{1}{}\u{1}{}",
+                "{prefix}rt\u{1}{rule}\u{1}{}\u{1}{}",
                 self.timestamp,
                 self.analyst.as_deref().unwrap_or(""),
             )

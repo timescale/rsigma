@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rsigma_eval::{Pipeline, parse_pipeline_file};
+use rsigma_eval::{Pipeline, TenantId, parse_pipeline_file};
 use rsigma_parser::ruleset::RulesetSpec;
 
 /// How a ruleset supplies its pipelines.
@@ -25,6 +25,8 @@ pub struct RulesetBinding {
     pub pipelines: Vec<PipelineRef>,
     /// Schema names that admit an event to this ruleset.
     pub when_schemas: Vec<String>,
+    /// Tenant ids admitted to this ruleset. Empty means every tenant.
+    pub tenants: Vec<TenantId>,
 }
 
 /// Where the runtime loads its rules from.
@@ -160,6 +162,7 @@ mod tests {
             spec: ruleset,
             pipelines: vec![PipelineRef::File(dir.path().join("pipes").join("p.yml"))],
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
         };
         let watched = watch_paths(&RuleSource::Rulesets(vec![binding]), &[]);
         let mut expected = vec![

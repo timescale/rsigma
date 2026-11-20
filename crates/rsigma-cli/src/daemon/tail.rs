@@ -58,10 +58,17 @@ pub(crate) struct TailFilter {
     min_level: Option<Level>,
     /// Case-insensitive substring matched against the rule title or id.
     rule: Option<String>,
+    /// Only results of this tenant when set.
+    tenant: Option<rsigma_eval::TenantId>,
 }
 
 impl TailFilter {
     fn matches(&self, result: &EvaluationResult) -> bool {
+        if let Some(tenant) = &self.tenant
+            && result.header.tenant_id.as_ref() != Some(tenant)
+        {
+            return false;
+        }
         if let Some(min) = self.min_level {
             match result.header.level {
                 Some(level) if level_rank(level) >= level_rank(min) => {}
@@ -124,16 +131,22 @@ impl Drop for TailSessionHandle {
 pub struct TailRegistry {
     buffer_events: usize,
     max_sessions: usize,
+    max_sessions_per_tenant: Option<usize>,
     next_id: AtomicU64,
     sessions: Mutex<Vec<Arc<TailSession>>>,
     snapshot: ArcSwap<Vec<Arc<TailSession>>>,
 }
 
 impl TailRegistry {
-    pub fn new(buffer_events: usize, max_sessions: usize) -> Arc<Self> {
+    pub fn new(
+        buffer_events: usize,
+        max_sessions: usize,
+        max_sessions_per_tenant: Option<usize>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             buffer_events: buffer_events.max(1),
             max_sessions,
+            max_sessions_per_tenant,
             next_id: AtomicU64::new(0),
             sessions: Mutex::new(Vec::new()),
             snapshot: ArcSwap::from_pointee(Vec::new()),
@@ -143,6 +156,15 @@ impl TailRegistry {
     fn register(self: &Arc<Self>, filter: TailFilter) -> Option<TailSessionHandle> {
         let mut sessions = self.sessions.lock().expect("tail sessions mutex");
         if sessions.len() >= self.max_sessions {
+            return None;
+        }
+        if let (Some(max), Some(tenant)) = (self.max_sessions_per_tenant, filter.tenant.as_ref())
+            && sessions
+                .iter()
+                .filter(|s| s.filter.tenant.as_ref() == Some(tenant))
+                .count()
+                >= max
+        {
             return None;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -204,6 +226,7 @@ pub(crate) struct TailQuery {
     limit: Option<u64>,
     level: Option<String>,
     rule: Option<String>,
+    pub(crate) tenant: Option<String>,
 }
 
 /// Validated tail parameters.
@@ -242,7 +265,11 @@ pub(crate) fn parse_params(query: &TailQuery) -> Result<ParsedParams, String> {
     Ok(ParsedParams {
         duration,
         limit: query.limit,
-        filter: TailFilter { min_level, rule },
+        filter: TailFilter {
+            min_level,
+            rule,
+            tenant: None,
+        },
     })
 }
 
@@ -250,9 +277,11 @@ pub(crate) fn parse_params(query: &TailQuery) -> Result<ParsedParams, String> {
 /// when the concurrent-session cap is reached (the caller maps this to `409`).
 pub(crate) fn stream_response(
     registry: &Arc<TailRegistry>,
-    params: ParsedParams,
+    mut params: ParsedParams,
+    tenant: Option<rsigma_eval::TenantId>,
     metrics: Arc<Metrics>,
 ) -> Option<Response> {
+    params.filter.tenant = tenant;
     let handle = registry.register(params.filter)?;
 
     metrics.tail_active_sessions.inc();
@@ -348,6 +377,7 @@ mod tests {
             header: RuleHeader {
                 rule_title: title.to_string(),
                 rule_id: None,
+                tenant_id: None,
                 level,
                 tags: Vec::new(),
                 custom_attributes: Arc::new(HashMap::new()),
@@ -374,6 +404,7 @@ mod tests {
         let f = TailFilter {
             min_level: Some(Level::High),
             rule: None,
+            tenant: None,
         };
         assert!(f.matches(&detection("a", Some(Level::High))));
         assert!(f.matches(&detection("a", Some(Level::Critical))));
@@ -386,6 +417,7 @@ mod tests {
         let f = TailFilter {
             min_level: None,
             rule: Some("whoami".to_string()),
+            tenant: None,
         };
         assert!(f.matches(&detection("Detect WHOAMI usage", None)));
         assert!(!f.matches(&detection("Detect netcat", None)));
@@ -393,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_respects_cap_and_deregisters_on_drop() {
-        let reg = TailRegistry::new(8, 2);
+        let reg = TailRegistry::new(8, 2, None);
         let a = reg.register(TailFilter::default());
         let b = reg.register(TailFilter::default());
         assert!(a.is_some() && b.is_some());
@@ -405,12 +437,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_tenant_at_its_session_cap_leaves_room_for_others() {
+        let reg = TailRegistry::new(8, 3, Some(1));
+        let filter = |tenant: &str| TailFilter {
+            tenant: Some(rsigma_eval::TenantId::new(tenant).unwrap()),
+            ..Default::default()
+        };
+        let _first = reg.register(filter("a")).unwrap();
+        assert!(reg.register(filter("a")).is_none());
+        assert!(reg.register(filter("b")).is_some());
+    }
+
+    #[tokio::test]
     async fn capture_applies_filter_and_counts_drops() {
-        let reg = TailRegistry::new(1, 1);
+        let reg = TailRegistry::new(1, 1, None);
         let handle = reg
             .register(TailFilter {
                 min_level: Some(Level::High),
                 rule: None,
+                tenant: None,
             })
             .expect("registered");
 

@@ -1,6 +1,8 @@
 //! In-memory response cache for [`HttpEnricher`](super::http::HttpEnricher).
 //!
-//! Keyed on `(method, url, body_hash)` with a configurable TTL. Each
+//! Keyed on `(method, url, body_hash, headers_hash)` with a configurable
+//! TTL. The rendered headers are part of the key because a header template
+//! can carry a per-result value such as the tenant. Each
 //! `HttpEnricher` instance owns its own cache so two recipes that hit
 //! the same URL with different API keys (different `Authorization`
 //! headers) cannot accidentally share each other's cached responses.
@@ -25,6 +27,8 @@ pub struct CacheKey {
     pub url: String,
     /// 64-bit hash of the request body (zero when no body).
     pub body_hash: u64,
+    /// 64-bit hash of the rendered request headers (zero when none).
+    pub headers_hash: u64,
 }
 
 impl CacheKey {
@@ -38,7 +42,23 @@ impl CacheKey {
             method: method.to_ascii_uppercase(),
             url: url.to_string(),
             body_hash: hasher.finish(),
+            headers_hash: 0,
         }
+    }
+
+    /// Fold the rendered request headers into the key, so two requests that
+    /// differ only in a header never share a cached response.
+    #[must_use]
+    pub fn with_headers(mut self, headers: &[(String, String)]) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        headers.hash(&mut hasher);
+        self.headers_hash = if headers.is_empty() {
+            0
+        } else {
+            hasher.finish()
+        };
+        self
     }
 }
 
@@ -268,6 +288,13 @@ mod tests {
     fn method_difference_separates_keys() {
         let a = CacheKey::new("GET", "https://x", None);
         let b = CacheKey::new("POST", "https://x", None);
+        assert_ne!(a, b);
+        let tenant = |t: &str| vec![("X-Tenant".to_string(), t.to_string())];
+        assert_ne!(
+            CacheKey::new("GET", "https://x", None).with_headers(&tenant("a")),
+            CacheKey::new("GET", "https://x", None).with_headers(&tenant("b")),
+            "requests that differ only in a header have different keys"
+        );
         assert_ne!(a, b);
     }
 

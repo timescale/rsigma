@@ -15,6 +15,7 @@ use rsigma_parser::{ConditionOperator, CorrelationType};
 
 use super::CorrelationEngine;
 use crate::correlation::{CompiledCorrelation, GroupKey, WindowState};
+use crate::tenant::TenantId;
 
 /// A snapshot of every compiled correlation and its live per-group window
 /// state at the moment [`CorrelationEngine::introspect`] was called.
@@ -110,12 +111,15 @@ pub struct GroupStateInfo {
     /// and leaves this `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ruleset: Option<String>,
+    /// Tenant that owns this window, when tenancy is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
 }
 
 impl<L> CorrelationEngine<L> {
     /// Snapshot every compiled correlation and its live per-group window state.
     pub fn introspect(&self) -> CorrelationStateSnapshot {
-        self.introspect_filtered(None, None)
+        self.introspect_for_tenant(None, None, None)
     }
 
     /// Like [`introspect`](CorrelationEngine::introspect) but keeps only the
@@ -126,9 +130,23 @@ impl<L> CorrelationEngine<L> {
         id_filter: Option<&str>,
         group_filter: Option<&str>,
     ) -> CorrelationStateSnapshot {
+        self.introspect_for_tenant(id_filter, group_filter, None)
+    }
+
+    /// Like [`introspect_filtered`](CorrelationEngine::introspect_filtered)
+    /// but, when `tenant_filter` is set, keeps only groups owned by that
+    /// tenant and counts only its groups as active.
+    pub fn introspect_for_tenant(
+        &self,
+        id_filter: Option<&str>,
+        group_filter: Option<&str>,
+        tenant_filter: Option<&TenantId>,
+    ) -> CorrelationStateSnapshot {
         let mut active_per_corr = vec![0usize; self.correlations.len()];
-        for (ci, _) in self.state.keys() {
-            active_per_corr[*ci] += 1;
+        for key in self.state.keys() {
+            if tenant_filter.is_none_or(|tenant| key.tenant.as_ref() == Some(tenant)) {
+                active_per_corr[key.corr_idx] += 1;
+            }
         }
 
         let correlations = self
@@ -152,12 +170,15 @@ impl<L> CorrelationEngine<L> {
             .collect();
 
         let mut groups = Vec::new();
-        for ((ci, gk), ws) in &self.state {
-            let corr = &self.correlations[*ci];
+        for (key, ws) in &self.state {
+            let corr = &self.correlations[key.corr_idx];
             if !matches_id(corr, id_filter) {
                 continue;
             }
-            let parts = group_key_parts(corr, gk);
+            if !tenant_filter.is_none_or(|tenant| key.tenant.as_ref() == Some(tenant)) {
+                continue;
+            }
+            let parts = group_key_parts(corr, &key.group_key);
             let display = render_group_key(&parts);
             if let Some(filter) = group_filter
                 && !display.contains(filter)
@@ -184,7 +205,7 @@ impl<L> CorrelationEngine<L> {
                 (Some(e), Some(l)) => Some((e + corr.timespan_secs as i64 - l).max(0)),
                 _ => None,
             };
-            let last_alert = self.last_alert.get(&(*ci, gk.clone())).copied();
+            let last_alert = self.last_alert.get(key).copied();
             let suppress_secs = corr.suppress_secs.or(self.config.suppress);
             let suppression_remaining = match (last_alert, suppress_secs, latest) {
                 (Some(la), Some(s), Some(l)) => Some((la + s as i64 - l).max(0)),
@@ -192,7 +213,7 @@ impl<L> CorrelationEngine<L> {
             };
 
             groups.push(GroupStateInfo {
-                correlation_index: *ci,
+                correlation_index: key.corr_idx,
                 correlation_id: corr.id.clone(),
                 correlation_name: corr.name.clone(),
                 correlation_title: corr.title.clone(),
@@ -212,6 +233,7 @@ impl<L> CorrelationEngine<L> {
                 suppression_remaining,
                 window: ws.clone(),
                 ruleset: None,
+                tenant: key.tenant.clone(),
             });
         }
 
@@ -220,6 +242,7 @@ impl<L> CorrelationEngine<L> {
             a.correlation_index
                 .cmp(&b.correlation_index)
                 .then_with(|| a.group_key_display.cmp(&b.group_key_display))
+                .then_with(|| a.tenant.cmp(&b.tenant))
         });
 
         CorrelationStateSnapshot {

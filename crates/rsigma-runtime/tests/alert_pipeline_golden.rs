@@ -16,6 +16,7 @@ fn detection() -> EvaluationResult {
         header: RuleHeader {
             rule_title: "Malware execution".to_string(),
             rule_id: Some("rule-1".to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -103,6 +104,44 @@ fn incident_wire_shape() {
         value,
         serde_json::json!({
             "incident_id": "f8bcd62a829b1126",
+            "state": "open",
+            "trigger": "group_wait",
+            "first_seen": 1000,
+            "last_seen": 1000,
+            "max_level": "high",
+            "result_count": 1,
+            "rule_counts": {"rule-1": 1},
+            "group_by": {"match.CommandLine": "malware.exe"},
+            "refs": [{"rule": "rule-1", "level": "high"}]
+        })
+    );
+}
+
+fn tenanted_detection() -> EvaluationResult {
+    let mut d = detection();
+    d.header.tenant_id = Some(rsigma_eval::TenantId::new("tenant-a").unwrap());
+    d
+}
+
+#[test]
+fn tenanted_incident_wire_shape() {
+    let pipeline = parse_alert_pipeline_config(
+        "group:\n  by: [match.CommandLine]\n  group_wait: 0s\n  resolve_timeout: 1h\n",
+    )
+    .unwrap();
+    let mut st = AlertPipelineState::default();
+    let m = NoopMetrics;
+
+    let _ = pipeline.process(vec![tenanted_detection()], &mut st, 1000, &m);
+    let out = pipeline.tick(&mut st, 1000, &m);
+    assert_eq!(out.incidents.len(), 1);
+    let json = serde_json::to_string(&out.incidents[0]).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "incident_id": "9e88f4a53c5a5640",
+            "tenant_id": "tenant-a",
             "state": "open",
             "trigger": "group_wait",
             "first_seen": 1000,

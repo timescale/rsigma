@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
+use rsigma_eval::TenantId;
 use tokio::sync::mpsc;
 
 /// Which point on the decode path a session captures from.
@@ -48,6 +49,8 @@ pub enum TapPayload {
 pub(crate) struct TapSession {
     id: u64,
     pub(crate) stage: TapStage,
+    /// Only events of this tenant are offered when set.
+    tenant: Option<TenantId>,
     tx: mpsc::Sender<TapPayload>,
     captured: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
@@ -56,8 +59,12 @@ pub(crate) struct TapSession {
 impl TapSession {
     /// Offer one payload without ever blocking. On a full or closed channel
     /// the payload is dropped and the drop counter is bumped, so the engine
-    /// never waits on a slow consumer.
-    pub(crate) fn offer(&self, payload: TapPayload) {
+    /// never waits on a slow consumer. A session bound to a tenant skips
+    /// payloads of other tenants.
+    pub(crate) fn offer(&self, payload: TapPayload, tenant: Option<&TenantId>) {
+        if self.tenant.is_some() && self.tenant.as_ref() != tenant {
+            return;
+        }
         match self.tx.try_send(payload) {
             Ok(()) => {
                 self.captured.fetch_add(1, Ordering::Relaxed);
@@ -101,6 +108,7 @@ impl Drop for TapSessionHandle {
 pub struct TapRegistry {
     buffer_events: usize,
     max_sessions: usize,
+    max_sessions_per_tenant: Option<usize>,
     max_duration: Duration,
     next_id: AtomicU64,
     /// Authoritative session list, guarded for add/remove.
@@ -113,9 +121,21 @@ impl TapRegistry {
     /// Build an empty registry with the given per-session channel capacity,
     /// concurrent-session cap, and maximum capture window.
     pub fn new(buffer_events: usize, max_sessions: usize, max_duration: Duration) -> Arc<Self> {
+        Self::with_tenant_cap(buffer_events, max_sessions, None, max_duration)
+    }
+
+    /// Like [`new`](Self::new), also capping the concurrent sessions bound to
+    /// any one tenant at `max_sessions_per_tenant`.
+    pub fn with_tenant_cap(
+        buffer_events: usize,
+        max_sessions: usize,
+        max_sessions_per_tenant: Option<usize>,
+        max_duration: Duration,
+    ) -> Arc<Self> {
         Arc::new(Self {
             buffer_events: buffer_events.max(1),
             max_sessions,
+            max_sessions_per_tenant,
             max_duration,
             next_id: AtomicU64::new(0),
             sessions: Mutex::new(Vec::new()),
@@ -134,12 +154,26 @@ impl TapRegistry {
         self.snapshot.load().len()
     }
 
-    /// Register a new session for `stage`. Returns `None` when the active
-    /// session count is already at the configured cap (the caller maps this to
-    /// a `409`).
-    pub fn register(self: &Arc<Self>, stage: TapStage) -> Option<TapSessionHandle> {
+    /// Register a new session for `stage`, optionally restricted to one
+    /// tenant. Returns `None` when the active session count is already at the
+    /// configured cap, or the tenant is at its own cap (the caller maps this
+    /// to a `409`).
+    pub fn register(
+        self: &Arc<Self>,
+        stage: TapStage,
+        tenant: Option<TenantId>,
+    ) -> Option<TapSessionHandle> {
         let mut sessions = self.sessions.lock();
         if sessions.len() >= self.max_sessions {
+            return None;
+        }
+        if let (Some(max), Some(tenant)) = (self.max_sessions_per_tenant, tenant.as_ref())
+            && sessions
+                .iter()
+                .filter(|s| s.tenant.as_ref() == Some(tenant))
+                .count()
+                >= max
+        {
             return None;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -149,6 +183,7 @@ impl TapRegistry {
         sessions.push(Arc::new(TapSession {
             id,
             stage,
+            tenant,
             tx,
             captured: captured.clone(),
             dropped: dropped.clone(),
@@ -190,38 +225,70 @@ mod tests {
     #[tokio::test]
     async fn register_respects_session_cap() {
         let reg = TapRegistry::new(8, 2, Duration::from_secs(30));
-        let a = reg.register(TapStage::Decoded);
-        let b = reg.register(TapStage::Raw);
+        let a = reg.register(TapStage::Decoded, None);
+        let b = reg.register(TapStage::Raw, None);
         assert!(a.is_some());
         assert!(b.is_some());
         assert_eq!(reg.active_sessions(), 2);
-        assert!(reg.register(TapStage::Decoded).is_none(), "third over cap");
+        assert!(
+            reg.register(TapStage::Decoded, None).is_none(),
+            "third over cap"
+        );
     }
 
     #[tokio::test]
     async fn dropping_handle_deregisters_session() {
         let reg = TapRegistry::new(8, 2, Duration::from_secs(30));
-        let handle = reg.register(TapStage::Decoded).expect("registered");
+        let handle = reg.register(TapStage::Decoded, None).expect("registered");
         assert_eq!(reg.active_sessions(), 1);
         drop(handle);
         assert_eq!(reg.active_sessions(), 0);
         // A slot freed up, so a new session registers.
-        assert!(reg.register(TapStage::Raw).is_some());
+        assert!(reg.register(TapStage::Raw, None).is_some());
     }
 
     #[tokio::test]
     async fn offer_delivers_until_full_then_drops() {
         let reg = TapRegistry::new(2, 1, Duration::from_secs(30));
-        let handle = reg.register(TapStage::Raw).expect("registered");
+        let handle = reg.register(TapStage::Raw, None).expect("registered");
         let snapshot = reg.sessions_snapshot();
         let session = &snapshot[0];
 
-        session.offer(TapPayload::Raw("a".into()));
-        session.offer(TapPayload::Raw("b".into()));
+        session.offer(TapPayload::Raw("a".into()), None);
+        session.offer(TapPayload::Raw("b".into()), None);
         // Channel capacity is 2; the third is dropped, not blocked.
-        session.offer(TapPayload::Raw("c".into()));
+        session.offer(TapPayload::Raw("c".into()), None);
 
         assert_eq!(handle.captured.load(Ordering::Relaxed), 2);
         assert_eq!(handle.dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn a_tenant_bound_session_skips_other_tenants() {
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let reg = TapRegistry::new(8, 1, Duration::from_secs(30));
+        let handle = reg
+            .register(TapStage::Raw, Some(a.clone()))
+            .expect("registered");
+        let snapshot = reg.sessions_snapshot();
+        let session = &snapshot[0];
+
+        session.offer(TapPayload::Raw("b".into()), Some(&b));
+        session.offer(TapPayload::Raw("none".into()), None);
+        session.offer(TapPayload::Raw("a".into()), Some(&a));
+
+        assert_eq!(handle.captured.load(Ordering::Relaxed), 1);
+        assert_eq!(handle.dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn a_tenant_at_its_session_cap_leaves_room_for_others() {
+        let reg = TapRegistry::with_tenant_cap(8, 3, Some(1), Duration::from_secs(30));
+        let a = TenantId::new("a").unwrap();
+        let b = TenantId::new("b").unwrap();
+        let _first = reg.register(TapStage::Raw, Some(a.clone())).unwrap();
+        assert!(reg.register(TapStage::Raw, Some(a)).is_none());
+        assert!(reg.register(TapStage::Raw, Some(b)).is_some());
     }
 }

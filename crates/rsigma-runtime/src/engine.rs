@@ -8,7 +8,7 @@ use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
     LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
     RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier, SchemaPruning,
-    SchemaRouter, UnitEngine, parse_pipeline_file,
+    SchemaRouter, TenantId, UnitEngine, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
@@ -302,6 +302,47 @@ impl RuntimeEngine {
         self.match_detail = level;
     }
 
+    /// Require a tenant on every event before correlation updates.
+    ///
+    /// Applies on the next `load_rules()`; pre-load callers should set this
+    /// before calling `load_rules()`.
+    pub fn set_require_tenant(&mut self, require: bool) {
+        self.corr_config.require_tenant = require;
+    }
+
+    /// Whether correlation skips untenanted events.
+    pub fn require_tenant(&self) -> bool {
+        self.corr_config.require_tenant
+    }
+
+    /// Set the per-tenant correlation state cap. Applies on the next
+    /// `load_rules()`; pre-load callers should set this before calling it.
+    pub fn set_max_state_entries_per_tenant(&mut self, max: Option<usize>) {
+        self.corr_config.max_state_entries_per_tenant = max;
+    }
+
+    /// Entries evicted because a tenant hit its correlation quota since the
+    /// previous call, summed across engine variants.
+    pub fn take_tenant_quota_evictions(&mut self) -> u64 {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.take_tenant_quota_evictions(),
+            EngineVariant::Routed(router) => router.take_tenant_quota_evictions(),
+            EngineVariant::Rulesets(engines) => engines.take_tenant_quota_evictions(),
+        }
+    }
+
+    /// Events skipped by `require_tenant` since the previous call, summed across
+    /// engine variants.
+    pub fn take_untenanted_skipped(&mut self) -> u64 {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.take_untenanted_skipped(),
+            EngineVariant::Routed(router) => router.take_untenanted_skipped(),
+            EngineVariant::Rulesets(engines) => engines.take_untenanted_skipped(),
+        }
+    }
+
     /// Return the current match-detail verbosity. Used by hot-reload to
     /// carry the setting across a `RuntimeEngine` swap.
     pub fn match_detail(&self) -> MatchDetailLevel {
@@ -522,6 +563,7 @@ impl RuntimeEngine {
             units.push(RulesetUnit {
                 name: Arc::from(binding.name.as_str()),
                 when_schemas: binding.when_schemas.clone(),
+                tenants: binding.tenants.clone(),
                 engine: into_unit(variant),
                 field_set,
             });
@@ -709,13 +751,23 @@ impl RuntimeEngine {
         &self,
         events: &[&E],
     ) -> Option<Vec<ProcessResult>> {
+        self.process_batch_shared_for_tenants(events, &[])
+    }
+
+    /// Like [`process_batch_shared`](Self::process_batch_shared) with a
+    /// parallel tenant slice.
+    pub fn process_batch_shared_for_tenants<E: Event + Sync>(
+        &self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Option<Vec<ProcessResult>> {
         match &self.engine {
             EngineVariant::DetectionOnly(engine) => Some(engine.evaluate_batch(events)),
             EngineVariant::Routed(router) if !router.has_correlations() => {
                 Some(router.detect_batch(events))
             }
             EngineVariant::WithCorrelations(_) | EngineVariant::Routed(_) => None,
-            EngineVariant::Rulesets(engines) => engines.detect_batch(events),
+            EngineVariant::Rulesets(engines) => engines.detect_batch_for_tenants(events, tenants),
         }
     }
 
@@ -724,11 +776,22 @@ impl RuntimeEngine {
     /// Delegates to `Engine::evaluate_batch` or `CorrelationEngine::process_batch`
     /// depending on whether correlation rules are loaded.
     pub fn process_batch<E: Event + Sync>(&mut self, events: &[&E]) -> Vec<ProcessResult> {
+        self.process_batch_for_tenants(events, &[])
+    }
+
+    /// Like [`process_batch`](Self::process_batch) with a parallel tenant slice.
+    pub fn process_batch_for_tenants<E: Event + Sync>(
+        &mut self,
+        events: &[&E],
+        tenants: &[Option<TenantId>],
+    ) -> Vec<ProcessResult> {
         match &mut self.engine {
             EngineVariant::DetectionOnly(engine) => engine.evaluate_batch(events),
-            EngineVariant::WithCorrelations(engine) => engine.process_batch(events),
-            EngineVariant::Routed(router) => router.process_batch(events),
-            EngineVariant::Rulesets(engines) => engines.process_batch(events),
+            EngineVariant::WithCorrelations(engine) => {
+                engine.process_batch_for_tenants(events, tenants)
+            }
+            EngineVariant::Routed(router) => router.process_batch_for_tenants(events, tenants),
+            EngineVariant::Rulesets(engines) => engines.process_batch_for_tenants(events, tenants),
         }
     }
 
@@ -815,16 +878,32 @@ impl RuntimeEngine {
         id: Option<&str>,
         group: Option<&str>,
     ) -> Option<CorrelationStateSnapshot> {
+        self.introspect_correlations_for_tenant(id, group, None)
+    }
+
+    /// Like [`introspect_correlations`](Self::introspect_correlations), keeping
+    /// only groups owned by `tenant` when it is set.
+    pub fn introspect_correlations_for_tenant(
+        &self,
+        id: Option<&str>,
+        group: Option<&str>,
+        tenant: Option<&rsigma_eval::TenantId>,
+    ) -> Option<CorrelationStateSnapshot> {
         match &self.engine {
             EngineVariant::DetectionOnly(_) => None,
-            EngineVariant::WithCorrelations(engine) => Some(engine.introspect_filtered(id, group)),
-            EngineVariant::Routed(router) => router.correlation_introspect(id, group),
+            EngineVariant::WithCorrelations(engine) => {
+                Some(engine.introspect_for_tenant(id, group, tenant))
+            }
+            EngineVariant::Routed(router) => {
+                router.correlation_introspect_for_tenant(id, group, tenant)
+            }
             EngineVariant::Rulesets(engines) => {
                 let mut snapshot = CorrelationStateSnapshot {
                     correlations: Vec::new(),
                     groups: Vec::new(),
                 };
-                for (ruleset, mut part) in engines.introspect_filtered(id, group) {
+                for (ruleset, mut part) in engines.introspect_filtered_for_tenant(id, group, tenant)
+                {
                     for row in &mut part.correlations {
                         row.ruleset = Some(ruleset.clone());
                     }
@@ -843,11 +922,22 @@ impl RuntimeEngine {
     /// Returns `true` if the import succeeded, `false` if the snapshot version
     /// is incompatible. No-op (returns `true`) if the engine is detection-only.
     pub fn import_state(&mut self, snapshot: &CorrelationSnapshot) -> bool {
+        self.import_state_detailed(snapshot).is_some()
+    }
+
+    /// Like [`import_state`](Self::import_state), returning the restored and
+    /// discarded entry counts.
+    pub fn import_state_detailed(
+        &mut self,
+        snapshot: &CorrelationSnapshot,
+    ) -> Option<rsigma_eval::ImportStats> {
         match &mut self.engine {
-            EngineVariant::WithCorrelations(engine) => engine.import_state(snapshot.clone()),
-            EngineVariant::Routed(router) => router.import_state(snapshot.clone()),
-            EngineVariant::DetectionOnly(_) => true,
-            EngineVariant::Rulesets(engines) => engines.import_state(snapshot),
+            EngineVariant::WithCorrelations(engine) => {
+                engine.import_state_detailed(snapshot.clone())
+            }
+            EngineVariant::Routed(router) => router.import_state_detailed(snapshot.clone()),
+            EngineVariant::DetectionOnly(_) => Some(rsigma_eval::ImportStats::default()),
+            EngineVariant::Rulesets(engines) => engines.import_state_detailed(snapshot),
         }
     }
 }
@@ -1251,6 +1341,7 @@ transformations:
             },
             pipelines,
             when_schemas: Vec::new(),
+            tenants: Vec::new(),
         }
     }
 

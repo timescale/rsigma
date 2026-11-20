@@ -46,7 +46,11 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 
 ### Ruleset fan-out
 
-`RulesetEngines` evaluates several independent rulesets over the same events. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; `process_event` and `process_batch` stamp the ruleset name on every result, apply optional `when` schema bindings, and count skipped events (`skipped_totals` reads the running totals, `take_skipped` drains the counts since its last call); `process_event` also counts routing outcomes for a routed unit. Classification runs once per event, and only when a unit has a `when` binding. `export_state` and `import_state` carry per-ruleset correlation state, a single-engine snapshot imports into a fan-out with one unit, and `rule_field_set` unions the units' field sets.
+`RulesetEngines` evaluates several independent rulesets over the same events. Each `RulesetUnit` owns its compiled engine, pipelines, and correlation state; `process_event` and `process_batch` stamp the ruleset name on every result, apply optional `when` schema bindings, and count skipped events (`skipped_totals` reads the running totals, `take_skipped` drains the counts since its last call); `process_event` also counts routing outcomes for a routed unit. Classification runs once per event, and only when a unit has a `when` binding. `export_state` and `import_state` carry per-ruleset correlation state, a single-engine snapshot imports into a fan-out with one unit, and `rule_field_set` unions the units' field sets. A unit can also list `tenants`; a bound unit accepts only events carrying one of them.
+
+### Tenants
+
+`TenantId` validates a tenant identifier (1 to 64 ASCII letters, digits, `_`, and `-`, starting with a letter or digit, so an id is one NATS subject token and one path component) and `tenant_at` reads a parallel tenant slice. `RuleHeader.tenant_id` carries a result's tenant. The `_for_tenant` and `_for_tenants` variants of `process_event`, `process_event_at`, `process_with_detections`, `process_batch`, and `correlate_detections` take the tenant; the existing methods delegate with no tenant. Correlation state keys include the tenant, `CorrelationConfig.require_tenant` skips untenanted events, and `max_state_entries_per_tenant` caps each tenant's state. Version 2 snapshots nest state under `tenants`; `import_state_detailed` returns restored and discarded counts.
 
 ### Correlation Engine
 

@@ -2,13 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
+use rsigma_eval::TenantId;
+
 /// Snapshot format version. Bump on any incompatible layout change; a restore
 /// of a mismatched version starts fresh with a warning rather than erroring.
-pub const SNAPSHOT_VERSION: u32 = 1;
+pub const SNAPSHOT_VERSION: u32 = 2;
 
 /// One rule's bucketed verdict counts, as `(bucket_index, tp, fp, btp)` tuples.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleBucketsSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
     pub rule_id: String,
     pub buckets: Vec<(i64, u64, u64, u64)>,
 }

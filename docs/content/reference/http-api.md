@@ -86,6 +86,14 @@ Token secrets never live in YAML: `token_env` names an environment variable, res
 
 Failure semantics: a missing or unrecognized token gets `401 Unauthorized` (with a `WWW-Authenticate: Bearer` header); a recognized token without the required permission gets `403 Forbidden` naming the missing permission. A presented-but-invalid token is always 401, never a fallback to the anonymous grants. OTLP/gRPC clients pass the same `authorization` metadata and receive `UNAUTHENTICATED` or `PERMISSION_DENIED` gRPC status codes. Rejections are counted in `rsigma_api_auth_failures_total{reason}` and logged at warn level with the token name (never the secret). See [Security](security.md#daemon-api-authentication) for the threat-model discussion.
 
+## Tenancy scoping
+
+With `daemon.tenancy.enabled`, every route has a tenancy class and the token's binding decides what it can see. {{ added "unreleased" }} `GET /healthz` and `GET /readyz` are open. Ingest routes require a token bound to exactly one tenant; an `all_tenants` token gets `403` because it has no tenant to bind. Operator-only routes (`GET /metrics`, `GET /api/v1/status`, `POST /api/v1/reload`, the field and schema observers, dynamic sources, watchlists, STIX sources) span tenants, so a tenant token gets `403`.
+
+Tenant-scoped reads are filtered to the token's tenant: rules, correlations and correlation state, incidents and their bundles, risk entities, silences, dispositions, audit rows, the tap, and the detection stream. `?tenant=` may only narrow. A tenant token naming another tenant is `403`; an `all_tenants` token sees every tenant or one with `?tenant=`. A resource id owned by another tenant is `404`, never `403`, so ids do not leak existence. With tenancy disabled, `?tenant=` is `400`.
+
+Writes bind to the token's tenant. A tenant token's silence or disposition gets its tenant; a body `tenant` naming another tenant is `403`. An `all_tenants` token must send `tenant` on a write, or it is `400`. See [Multi-tenancy](../guide/multi-tenancy.md).
+
 ## Probes
 
 ### `GET /healthz`

@@ -27,6 +27,7 @@ fn header(title: &str) -> RuleHeader {
     RuleHeader {
         rule_title: title.to_string(),
         rule_id: Some(format!("{title}-id")),
+        tenant_id: None,
         level: Some(Level::High),
         tags: vec![
             "attack.execution".to_string(),
@@ -200,6 +201,46 @@ fn correlation_golden_ndjson_line() {
     let parsed: serde_json::Value = serde_json::from_str(&actual).unwrap();
     assert!(parsed.get("correlation_type").is_some());
     assert!(parsed.get("matched_fields").is_none());
+}
+
+/// `tenant_id` is `None` by default and must be skipped from serialization.
+#[test]
+fn tenant_id_none_is_skipped() {
+    let result = EvaluationResult {
+        header: header("Untenanted"),
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection".to_string()],
+            matched_fields: vec![],
+            event: None,
+        }),
+    };
+    let json = serde_json::to_string(&result).unwrap();
+    assert!(!json.contains("\"tenant_id\""), "{json}");
+}
+
+/// A tenanted result carries `tenant_id` directly after `rule_id`.
+#[test]
+fn tenant_id_golden_ndjson_line() {
+    let mut h = header("Suspicious PowerShell Encoded Command");
+    h.tenant_id = Some(rsigma_eval::TenantId::new("tenant-a").unwrap());
+    let result = EvaluationResult {
+        header: h,
+        body: ResultBody::Detection(DetectionBody {
+            matched_selections: vec!["selection".to_string()],
+            matched_fields: vec![FieldMatch::new(
+                "CommandLine",
+                serde_json::json!("powershell -enc ..."),
+            )],
+            event: None,
+        }),
+    };
+
+    let actual = serde_json::to_string(&result).unwrap();
+    let expected = r#"{"rule_title":"Suspicious PowerShell Encoded Command","rule_id":"Suspicious PowerShell Encoded Command-id","tenant_id":"tenant-a","level":"high","tags":["attack.execution","attack.t1059.001"],"matched_selections":["selection"],"matched_fields":[{"field":"CommandLine","value":"powershell -enc ..."}]}"#;
+    assert_eq!(
+        actual, expected,
+        "Tenant wire shape drift. If this change is intentional, update this golden."
+    );
 }
 
 /// `enrichments` is `None` by default and must be skipped from serialization.

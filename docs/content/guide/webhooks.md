@@ -95,6 +95,10 @@ webhooks:
 
 The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` delivery defaults for this webhook only.
 
+## Tenancy
+
+`scope.tenants` restricts a webhook to listed tenants. `detection.tenant` and `correlation.tenant` render the result's tenant (empty when untenanted), and a URL template may use them only in the path, not the scheme or authority. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+
 ## Templating
 
 `url`, every header value, and `body` are templates rendered per result by the same engine the [enrichers](enrichers.md) use:

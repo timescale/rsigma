@@ -197,6 +197,7 @@ where
                 header: RuleHeader {
                     rule_title: rule.title.clone(),
                     rule_id: rule.id.clone(),
+                    tenant_id: None,
                     level: rule.level,
                     tags: rule.tags.clone(),
                     custom_attributes: rule.custom_attributes.clone(),

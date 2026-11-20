@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::correlation::EventBuffer;
 use crate::correlation::{EventRefBuffer, GroupKey, WindowState};
 use crate::result::EvaluationResult;
+use crate::tenant::TenantId;
 
 // =============================================================================
 // Configuration
@@ -171,6 +172,30 @@ pub struct CorrelationConfig {
     /// Bounds memory at: `max_correlation_events × cost_per_event × active_groups`.
     /// Default: 10.
     pub max_correlation_events: usize,
+
+    /// Maximum state entries per tenant. At a tenant's cap, that tenant's own
+    /// expired entries are evicted first, then its stalest entries down to 90%
+    /// of the cap. `None` leaves only the global [`Self::max_state_entries`]
+    /// bound in force.
+    pub max_state_entries_per_tenant: Option<usize>,
+
+    /// Skip correlation for events that carry no tenant, counting them in
+    /// [`crate::CorrelationEngine::untenanted_skipped`].
+    ///
+    /// Set when tenancy is enabled so a bug that lets an untenanted event
+    /// through cannot form a shared `None` bucket. Default: `false`.
+    pub require_tenant: bool,
+}
+
+/// Key identifying one correlation window: tenant, correlation index, and the
+/// resolved group values.
+///
+/// Tenants never share a window even when their group keys are identical.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct StateKey {
+    pub(crate) tenant: Option<TenantId>,
+    pub(crate) corr_idx: usize,
+    pub(crate) group_key: GroupKey,
 }
 
 impl Default for CorrelationConfig {
@@ -191,6 +216,8 @@ impl Default for CorrelationConfig {
             emit_detections: false,
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
+            max_state_entries_per_tenant: None,
+            require_tenant: false,
         }
     }
 }
@@ -214,23 +241,88 @@ pub type ProcessResult = Vec<EvaluationResult>;
 /// snapshot can be restored after a rule reload, even if internal indices change.
 /// Inner maps use `Vec<(GroupKey, T)>` instead of `HashMap<GroupKey, T>` because
 /// `GroupKey` cannot be used as a JSON object key.
+///
+/// Version 2 nests state under [`Self::tenants`]; the top-level maps hold the
+/// version 1 layout and are read as tenant `None` but never written.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CorrelationSnapshot {
     /// Schema version — used to detect incompatible snapshots on load.
     #[serde(default = "default_snapshot_version")]
     pub version: u32,
+    /// Version 1 layout: per-correlation, per-group window state, read as
+    /// tenant `None`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub windows: HashMap<String, Vec<(GroupKey, WindowState)>>,
+    /// Version 1 layout: per-correlation, per-group last alert timestamp.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub last_alert: HashMap<String, Vec<(GroupKey, i64)>>,
+    /// Version 1 layout: per-correlation, per-group compressed event buffers.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
+    /// Version 1 layout: per-correlation, per-group event reference buffers.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// Version 2 layout: one entry per tenant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tenants: Vec<TenantStateSnapshot>,
+    /// Per-ruleset snapshots, keyed by ruleset name. Empty for a single
+    /// collection.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rulesets: BTreeMap<String, CorrelationSnapshot>,
+}
+
+/// State belonging to one tenant in a version 2 snapshot.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct TenantStateSnapshot {
+    /// Tenant that owns this state. `None` for the untenanted bucket.
+    pub tenant: Option<TenantId>,
     /// Per-correlation, per-group window state.
     pub windows: HashMap<String, Vec<(GroupKey, WindowState)>>,
-    /// Per-correlation, per-group last alert timestamp (for suppression).
+    /// Per-correlation, per-group last alert timestamp.
     pub last_alert: HashMap<String, Vec<(GroupKey, i64)>>,
     /// Per-correlation, per-group compressed event buffers.
     pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
     /// Per-correlation, per-group event reference buffers.
     pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
-    /// Per-ruleset snapshots, keyed by ruleset name. Empty for a single
-    /// collection.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub rulesets: BTreeMap<String, CorrelationSnapshot>,
+}
+
+impl TenantStateSnapshot {
+    /// An empty snapshot for `tenant`.
+    pub fn empty(tenant: Option<TenantId>) -> Self {
+        TenantStateSnapshot {
+            tenant,
+            windows: HashMap::new(),
+            last_alert: HashMap::new(),
+            event_buffers: HashMap::new(),
+            event_ref_buffers: HashMap::new(),
+        }
+    }
+
+    /// Number of window-state entries in this tenant's snapshot.
+    pub fn window_entries(&self) -> usize {
+        self.windows.values().map(Vec::len).sum::<usize>()
+    }
+}
+
+/// Outcome of importing a snapshot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImportStats {
+    /// Window-state entries restored.
+    pub restored: usize,
+    /// Window-state entries discarded because they had no tenant while
+    /// tenancy requires one.
+    pub discarded_untenanted: usize,
+    /// Window-state entries discarded because they carried a tenant while
+    /// tenancy is disabled.
+    pub discarded_tenanted: usize,
+}
+
+impl std::ops::AddAssign for ImportStats {
+    fn add_assign(&mut self, other: Self) {
+        self.restored += other.restored;
+        self.discarded_untenanted += other.discarded_untenanted;
+        self.discarded_tenanted += other.discarded_tenanted;
+    }
 }
 
 impl CorrelationSnapshot {
@@ -240,11 +332,17 @@ impl CorrelationSnapshot {
             || !self.last_alert.is_empty()
             || !self.event_buffers.is_empty()
             || !self.event_ref_buffers.is_empty()
+            || !self.tenants.is_empty()
     }
 
     /// Window entries in the snapshot and every per-ruleset snapshot.
     pub fn window_entries(&self) -> usize {
         self.windows.values().map(Vec::len).sum::<usize>()
+            + self
+                .tenants
+                .iter()
+                .map(TenantStateSnapshot::window_entries)
+                .sum::<usize>()
             + self
                 .rulesets
                 .values()

@@ -84,6 +84,7 @@ fn detection(rule_id: &str, command_line: &str) -> EvaluationResult {
         header: RuleHeader {
             rule_title: format!("rule-{rule_id}"),
             rule_id: Some(rule_id.to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -103,6 +104,7 @@ fn correlation(rule_id: &str, source_ip: &str, count: u64) -> EvaluationResult {
         header: RuleHeader {
             rule_title: format!("corr-{rule_id}"),
             rule_id: Some(rule_id.to_string()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1110".to_string()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -444,6 +446,48 @@ async fn http_response_cache_eliminates_second_call() {
     let (hits, misses, _exp) = cache.stats();
     assert_eq!(misses, 1, "first call should be a miss");
     assert_eq!(hits, 1, "second call should be a cache hit");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_response_cache_never_crosses_tenants_in_a_header() {
+    let server = MockServer::start().await;
+    for tenant in ["a", "b"] {
+        Mock::given(method("GET"))
+            .and(path("/r"))
+            .and(header("X-Tenant", tenant))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "tenant": tenant })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+
+    let cache = HttpResponseCache::new(Duration::from_secs(60));
+    let enricher = Box::new(HttpEnricher::new(
+        "per_tenant".to_string(),
+        EnricherKind::Detection,
+        "out".to_string(),
+        "GET".to_string(),
+        format!("{}/r", server.uri()),
+        vec![("X-Tenant".to_string(), "${detection.tenant}".to_string())],
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        http_client_for_test(),
+        cache.clone(),
+    )) as Box<dyn rsigma_runtime::Enricher>;
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![detection("rule-x", "ps -ef"), detection("rule-x", "ps -ef")];
+    results[0].header.tenant_id = Some(rsigma_eval::TenantId::new("a").unwrap());
+    results[1].header.tenant_id = Some(rsigma_eval::TenantId::new("b").unwrap());
+    pipeline.run(&mut results).await;
+
+    for (result, tenant) in results.iter().zip(["a", "b"]) {
+        let map = result.header.enrichments.as_ref().unwrap();
+        assert_eq!(map.get("out").unwrap(), &json!({ "tenant": tenant }));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

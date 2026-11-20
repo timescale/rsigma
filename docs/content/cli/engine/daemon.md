@@ -194,6 +194,8 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 | `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window. |
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded, and a correlation with a `timespan` longer than one hour and no `rsigma.max_group_entries` logs a warning at load. {{ added "0.25.0" }} |
+| `--tenancy` | off | Enable logical multi-tenancy. Requires bearer-token auth and a tenant binding on every input source; startup refuses otherwise. Equivalent to `daemon.tenancy.enabled: true`. {{ added "unreleased" }} |
+| `--max-tenant-state <N>` | unset | Per-tenant correlation state cap. At a tenant's cap, that tenant's own expired entries are evicted first, then its stalest entries. Requires tenancy. {{ added "unreleased" }} |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction list. Repeatable. |
 | `--timestamp-fallback <MODE>` | `wallclock` | Behavior when no timestamp is found: `wallclock` (use wall clock time) or `skip` (skip correlation state for that event). Use `skip` for forensic replay. |
 
@@ -205,6 +207,30 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 | `--state-save-interval <SECONDS>` | `30` | Periodic snapshot interval. No effect without `--state-db`. |
 | `--clear-state` | off | Clear stored state on startup, including watchlist indicators. With `--replay-from-*`, forces a clean slate even if the replay starts after the stored position. |
 | `--keep-state` | off | Force restore stored state even during replay. Use for forward catch-up where you want to preserve cross-boundary correlation windows. Mutually exclusive with `--clear-state`. |
+
+### Tenancy
+
+See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the full refusal list. These keys are read at startup and are not hot-reloadable.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `daemon.tenancy.enabled` | `false` | Enable tenant isolation. Also enabled by `--tenancy`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.correlation_state` | unset | Per-tenant correlation state cap. Also set by `--max-tenant-state`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.active_alerts` | unset | Per-tenant active-alert cap. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.incidents` | unset | Per-tenant open-incident cap. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "unreleased" }} |
+| `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "unreleased" }} |
+| `daemon.tenancy.metrics_tenant_allowlist` | empty | Tenants whose match counts get their own metric label. Others count under `other`. {{ added "unreleased" }} |
+| `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "unreleased" }} |
+| `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "unreleased" }} |
+| `daemon.rulesets[].tenants` | empty | Tenants admitted to a named ruleset. Empty means every tenant. {{ added "unreleased" }} |
+| sink `tenant=<id>` | unset | Only deliver results of one tenant to this findings sink. Refused on `--dlq` and `audit.sink`. {{ added "unreleased" }} |
+| sink `{tenant}` | unset | Render a whole NATS subject token or a whole file path component per tenant, once per findings sink. Refused on other schemes, `--dlq`, and `audit.sink`. {{ added "unreleased" }} |
+| file sink `?max_open=` | `64` | Maximum open per-tenant file handles. Only valid on a file path with `{tenant}`. {{ added "unreleased" }} |
+
+Each `daemon.tenancy.quotas` value must be at least 1, and setting any quota (or `--max-tenant-state`) requires `daemon.tenancy.enabled`. {{ added "unreleased" }}
 
 ### Throughput
 

@@ -213,6 +213,16 @@ pub trait MetricsHook: Send + Sync {
     /// `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, or
     /// `unsupported_result_kind`.
     fn on_capture_event_dropped(&self, _reason: &str) {}
+    /// Entries were evicted because a tenant hit its quota. `store` is one of
+    /// `correlation_state`, `active_alerts`, `incidents`, or `risk_entities`.
+    fn on_tenant_quota_eviction(&self, _store: &'static str) {}
+    /// Ingest was rejected because it had no tenant binding or because the
+    /// engine skipped an untenanted event. `channel` is `rest`, `otlp_http`,
+    /// `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`.
+    fn on_tenant_rejected(&self, _channel: &'static str, _reason: &'static str) {}
+    /// `tenant` produced a detection or correlation match. Tenants outside the
+    /// operator allowlist arrive as `other`.
+    fn on_tenant_match(&self, _tenant: &str) {}
     /// A ring incident was evicted. `reason` is `ring_full` or `ttl`.
     fn on_capture_eviction(&self, _reason: &str) {}
     /// Report the current number of incidents held in the capture ring.

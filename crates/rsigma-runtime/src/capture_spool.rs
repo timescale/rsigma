@@ -8,6 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::capture::AdmittedMatch;
+use rsigma_eval::TenantId;
 
 /// Current bundle format major version. Readers reject any other major.
 pub const BUNDLE_FORMAT_VERSION: u32 = 1;
@@ -102,14 +103,19 @@ pub fn bundle_id(identity: &str) -> String {
 
 /// Canonical identity string for an original disposition.
 pub fn disposition_identity(
+    tenant: Option<&TenantId>,
     scope: &str,
     verdict: &str,
     incident_id: Option<&str>,
     fingerprint: Option<&str>,
     rule_id: Option<&str>,
 ) -> String {
+    let prefix = match tenant {
+        Some(tenant) => format!("tenant={}\u{1f}", tenant.as_str()),
+        None => String::new(),
+    };
     format!(
-        "{scope}\u{1}{verdict}\u{1}{}\u{1}{}\u{1}{}",
+        "{prefix}{scope}\u{1}{verdict}\u{1}{}\u{1}{}\u{1}{}",
         incident_id.unwrap_or(""),
         fingerprint.unwrap_or(""),
         rule_id.unwrap_or(""),

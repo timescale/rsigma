@@ -66,10 +66,11 @@ pub mod tap;
 
 pub use alert_pipeline::{
     AlertPipeline, AlertPipelineConfigError, AlertPipelineFile, AlertPipelineSnapshot,
-    AlertPipelineState, CapTrim, Caps, DEFAULT_MAX_DYNAMIC_SILENCES, DEFAULT_MAX_SILENCE_DURATION,
-    DedupStore, GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, MatchOp,
-    Matcher, MatcherError, MatcherSet, MatcherSpec, SNAPSHOT_VERSION, Silence, SilenceError,
-    SilenceLimits, SilenceOrigin, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
+    AlertPipelineState, AlertTenantQuotas, CapTrim, Caps, DEFAULT_MAX_DYNAMIC_SILENCES,
+    DEFAULT_MAX_SILENCE_DURATION, DedupStore, GroupMode, IncidentRef, IncidentResult,
+    IncidentStore, IncludeMode, MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec,
+    SNAPSHOT_VERSION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceRejection,
+    SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
     build_alert_pipeline, group_fingerprint, load_alert_pipeline_file, parse_alert_pipeline_config,
     strip_event_payloads,
 };
@@ -101,7 +102,7 @@ pub use enrichment::{
     EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
     HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
     TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
-    render_webhook_body, validate_template_namespace,
+    render_webhook_body, validate_template_namespace, validate_url_tenant_position,
 };
 #[cfg(feature = "dns-enrich")]
 pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
@@ -119,7 +120,7 @@ pub use io::webhook::{
 pub use io::{
     AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
     EventSource, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, OnFull, RawEvent, Sink,
-    SinkFormat, StdinSource, StdoutSink, spawn_source,
+    SinkFormat, StdinSource, StdoutSink, WithTenant, spawn_source, validate_nats_subject_template,
 };
 #[cfg(all(unix, feature = "uds"))]
 pub use io::{
@@ -140,7 +141,7 @@ pub use tap::{TapPayload, TapRegistry, TapSessionHandle, TapStage};
 pub use rsigma_eval::{
     FieldCoverage, FieldObservation, FieldObservationEntry, FieldObserver, ProcessResult,
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
-    SchemaObserver, SchemaPruning, UnknownShapeEntry, load_schema_signatures,
+    SchemaObserver, SchemaPruning, TenantId, UnknownShapeEntry, load_schema_signatures,
 };
 pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
 pub use sources::{
@@ -159,5 +160,5 @@ pub use input::evtx::{EvtxError, EvtxFileReader};
 pub use io::otlp::{
     DEFAULT_OTLP_TIMEOUT, ExportLogsServiceRequest, ExportLogsServiceResponse, LogsService,
     LogsServiceServer, OtlpClientTls, OtlpProtocol, OtlpSink, evaluation_results_to_logs_request,
-    logs_request_to_raw_events,
+    logs_request_to_raw_events, logs_request_to_raw_events_for,
 };

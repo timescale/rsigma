@@ -24,6 +24,7 @@ fn detection_with_hash(hash: &str) -> EvaluationResult {
         header: RuleHeader {
             rule_title: "hash rule".into(),
             rule_id: Some("rule-hash".into()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec!["attack.t1059.001".into()],
             custom_attributes: Arc::new(HashMap::new()),
@@ -191,6 +192,7 @@ async fn stix_enricher_skips_correlation_results_for_detection_kind() {
         header: RuleHeader {
             rule_title: "corr".into(),
             rule_id: Some("corr-1".into()),
+            tenant_id: None,
             level: Some(Level::High),
             tags: vec![],
             custom_attributes: Arc::new(HashMap::new()),

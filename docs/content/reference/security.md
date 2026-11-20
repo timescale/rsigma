@@ -195,18 +195,33 @@ Bearer-token authentication with `resource:action` permissions gates the daemon 
 Design properties:
 
 - **Secrets are env-only.** The config names an environment variable per token (`token_env`, the same posture as webhook `signing.secret_env`); the value never lives in YAML or on the command line, and a missing or empty variable fails startup before the listener binds.
+- **A floor on tenant-bound secrets.** A token bound to a tenant (`tenant` or `all_tenants: true`) needs a secret of at least 32 bytes, or startup fails; generate one with `openssl rand -hex 32`. A shorter secret on any other token logs a warning. {{ added "unreleased" }}
 - **Constant-time comparison.** Every presented token is compared against every configured secret in constant time, so timing cannot leak a matched prefix.
 - **Least privilege by role.** Built-in roles `reader`/`operator`/`ingest`/`admin` plus custom roles as permission lists with `*` wildcards. A log shipper's `ingest` token carries only `events:ingest` and cannot create silences or trigger reloads; `reload:execute` is deliberately excluded from `operator` so config-changing control stays with `admin` tokens.
 - **Fail-closed route table.** A route added without a permission mapping requires the full `*` grant rather than defaulting open.
 - **Aggregating routes get their own resource.** An [incident bundle](http-api-state.md#get-apiv1incidentsidbundle) joins an incident to rule documentation and risk entities, so it requires `incident-bundles:read` rather than the `incidents:read` that gates the incident list. A custom role can hand out the incident list without handing out what the detections look for or which entities are accumulating risk. The built-in `reader` role (`*:read`) covers both.
 - **No anonymous fallback for bad tokens.** `anonymous_permissions` applies only to requests with no `Authorization` header; a presented-but-unrecognized token is always rejected with 401.
-- **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged.
+- **Observable rejections.** `rsigma_api_auth_failures_total{reason="unauthorized"|"forbidden"}` counts rejections, and each is logged at warn level with the route and token name; the secret is never logged. The daemon does not slow down repeated failures, because behind a shared proxy a per-address backoff would lock out every client of that proxy; rate-limit `401` responses at the proxy or load balancer, and alert on the counter.
 
 Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
 A token with `sources:write` can push, replace, and delete watchlist indicators. Those values are matched against events, so treat the token like the ability to change which traffic alerts. Requests are size-capped (4 MiB, 10,000 indicators, and the source's `max_indicators`, or 4096 when a pipeline references the watchlist). When `--state-db` is set, the audit trail also rejects a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) and records each accepted change. {{ added "unreleased" }}
 
 A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "0.27.0" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so a single call cannot mute every rule, or every rule of a severity, indefinitely. API silences created before these limits applied are kept, and the daemon logs their ids at startup and on reload. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
+
+## Multi-tenancy
+
+Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "unreleased" }}
+
+The model fails closed. With tenancy enabled, the daemon refuses to start without bearer-token auth, refuses anonymous requests, and refuses a token that declares neither `tenant` nor `all_tenants: true`. Every pull source must carry a tenant, and an `all_tenants` token cannot ingest because it has no tenant to bind. A shared untenanted correlation bucket cannot form: the engine skips untenanted events and counts them.
+
+Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture identities. Hashes change only for tenanted results; with tenancy off every hash, id, and snapshot entry is exactly what it was before.
+
+API routes have tenancy classes. Tenant tokens get `403` on operator-only routes (`/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, reload). A resource id owned by another tenant is `404`, not `403`, so ids do not leak existence.
+
+Dynamic sources, watchlists, STIX indicator sources, MMDB databases, and DNS caches are operator-global and shared. Their values do not depend on the tenant, and their hit or miss state is visible only through operator-only metrics. For per-tenant enrichment data, declare per-tenant source ids and reference them only from that tenant's ruleset.
+
+See [Multi-tenancy](../guide/multi-tenancy.md) for the binding model, the full refusal list, and the YAML shape.
 
 ## Control-plane API audit trail
 
@@ -252,6 +267,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
 - `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
 - `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
+- `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "unreleased" }}
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.

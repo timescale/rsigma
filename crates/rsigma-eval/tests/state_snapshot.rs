@@ -1,8 +1,13 @@
 mod helpers;
 
 use helpers::{corr_engine, corr_engine_with_config, process};
-use rsigma_eval::{CorrelationConfig, CorrelationEventMode, CorrelationSnapshot, ProcessResultExt};
+use rsigma_eval::{
+    CorrelationConfig, CorrelationEventMode, CorrelationSnapshot, JsonEvent, ProcessResultExt,
+    RuleFieldSet, RulesetEngines, RulesetUnit, TenantId, UnitEngine,
+};
+use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
+use std::sync::Arc;
 
 const EVENT_COUNT_YAML: &str = r#"
 title: Login
@@ -103,6 +108,7 @@ fn login_event_with_ip(user: &str, ip: &str) -> serde_json::Value {
 fn snapshot_empty_engine_exports_empty() {
     let engine = corr_engine(EVENT_COUNT_YAML);
     let snapshot = engine.export_state();
+    assert!(snapshot.tenants.is_empty());
     assert!(snapshot.windows.is_empty());
     assert!(snapshot.last_alert.is_empty());
     assert!(snapshot.event_buffers.is_empty());
@@ -119,11 +125,8 @@ fn snapshot_json_round_trip() {
     let json = serde_json::to_string(&snapshot).unwrap();
     let restored: CorrelationSnapshot = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(snapshot.windows.len(), restored.windows.len());
-    for (corr_id, entries) in &snapshot.windows {
-        let restored_entries = restored.windows.get(corr_id).unwrap();
-        assert_eq!(entries.len(), restored_entries.len());
-    }
+    assert_eq!(snapshot.tenants.len(), restored.tenants.len());
+    assert_eq!(snapshot.window_entries(), restored.window_entries());
 }
 
 #[test]
@@ -132,10 +135,15 @@ fn snapshot_uses_stable_ids_not_indices() {
     process(&mut engine, login_event("admin"), 1000);
 
     let snapshot = engine.export_state();
+    let tenant = snapshot
+        .tenants
+        .first()
+        .expect("an untenanted export entry");
+    assert!(tenant.tenant.is_none());
     assert!(
-        snapshot.windows.contains_key("many-logins"),
+        tenant.windows.contains_key("many-logins"),
         "snapshot should use correlation id as key, got: {:?}",
-        snapshot.windows.keys().collect::<Vec<_>>()
+        tenant.windows.keys().collect::<Vec<_>>()
     );
 }
 
@@ -273,7 +281,7 @@ fn export_import_preserves_suppression_state() {
 
     let snapshot = engine.export_state();
     assert!(
-        !snapshot.last_alert.is_empty(),
+        snapshot.tenants.iter().any(|t| !t.last_alert.is_empty()),
         "last_alert should be populated"
     );
 
@@ -309,7 +317,7 @@ fn export_import_preserves_event_buffers_full_mode() {
 
     let snapshot = engine.export_state();
     assert!(
-        !snapshot.event_buffers.is_empty(),
+        snapshot.tenants.iter().any(|t| !t.event_buffers.is_empty()),
         "event_buffers should be populated in Full mode"
     );
 
@@ -349,7 +357,10 @@ fn export_import_preserves_event_ref_buffers() {
 
     let snapshot = engine.export_state();
     assert!(
-        !snapshot.event_ref_buffers.is_empty(),
+        snapshot
+            .tenants
+            .iter()
+            .any(|t| !t.event_ref_buffers.is_empty()),
         "event_ref_buffers should be populated in Refs mode"
     );
 
@@ -384,8 +395,9 @@ fn import_drops_unknown_correlation_ids() {
 
     let mut snapshot = engine.export_state();
     // Rename the correlation id to something that doesn't exist
-    let entries = snapshot.windows.remove("many-logins").unwrap();
-    snapshot
+    let tenant = snapshot.tenants.first_mut().expect("untenanted entry");
+    let entries = tenant.windows.remove("many-logins").unwrap();
+    tenant
         .windows
         .insert("nonexistent-rule".to_string(), entries);
 
@@ -418,6 +430,7 @@ detection:
         last_alert: Default::default(),
         event_buffers: Default::default(),
         event_ref_buffers: Default::default(),
+        tenants: Vec::new(),
         rulesets: Default::default(),
     };
     assert!(engine.import_state(snapshot));
@@ -516,4 +529,135 @@ fn export_import_preserves_session_window() {
     // t=1030 is within the 30s gap of t=1010 -> same session, count reaches 3.
     let r = process(&mut engine2, login_event("admin"), 1030);
     assert_eq!(r.correlation_count(), 1);
+}
+
+// =============================================================================
+// Version 2 and tenant attribution
+// =============================================================================
+
+const V1_FIXTURE: &str = r#"{"version":1,"windows":{"many-logins":[[["admin"],{"EventCount":{"timestamps":[1000,1001]}}]]},"last_alert":{},"event_buffers":{},"event_ref_buffers":{}}"#;
+
+#[test]
+fn a_v1_fixture_imports_with_tenancy_off() {
+    let mut engine = corr_engine(EVENT_COUNT_YAML);
+    let snapshot: CorrelationSnapshot = serde_json::from_str(V1_FIXTURE).unwrap();
+    let stats = engine.import_state_detailed(snapshot).unwrap();
+    assert_eq!(stats.restored, 1);
+    assert_eq!(stats.discarded_untenanted, 0);
+    assert_eq!(stats.discarded_tenanted, 0);
+    assert_eq!(engine.state_count(), 1);
+
+    let result = process(&mut engine, login_event("admin"), 1002);
+    assert_eq!(result.correlation_count(), 1);
+}
+
+#[test]
+fn a_v1_fixture_is_discarded_when_tenancy_is_required() {
+    let mut engine = corr_engine_with_config(
+        EVENT_COUNT_YAML,
+        CorrelationConfig {
+            require_tenant: true,
+            ..Default::default()
+        },
+    );
+    let snapshot: CorrelationSnapshot = serde_json::from_str(V1_FIXTURE).unwrap();
+    let stats = engine.import_state_detailed(snapshot).unwrap();
+    assert_eq!(stats.restored, 0);
+    assert_eq!(stats.discarded_untenanted, 1);
+    assert_eq!(engine.state_count(), 0);
+}
+
+fn tenant_engine_snapshot() -> CorrelationSnapshot {
+    let mut engine = corr_engine(EVENT_COUNT_YAML);
+    let a = TenantId::new("a").unwrap();
+    let b = TenantId::new("b").unwrap();
+    for ts in [1000, 1001] {
+        let value = login_event("admin");
+        let event = JsonEvent::borrow(&value);
+        engine.process_event_at_for_tenant(&event, ts, Some(&a));
+    }
+    let value = login_event("admin");
+    let event = JsonEvent::borrow(&value);
+    engine.process_event_at_for_tenant(&event, 1000, Some(&b));
+    engine.export_state()
+}
+
+#[test]
+fn a_v2_snapshot_with_tenants_round_trips() {
+    let snapshot = tenant_engine_snapshot();
+    assert_eq!(snapshot.version, 2);
+    assert_eq!(snapshot.tenants.len(), 2);
+    assert_eq!(snapshot.window_entries(), 2);
+
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let restored: CorrelationSnapshot = serde_json::from_str(&json).unwrap();
+
+    let mut engine = corr_engine_with_config(
+        EVENT_COUNT_YAML,
+        CorrelationConfig {
+            require_tenant: true,
+            ..Default::default()
+        },
+    );
+    let stats = engine.import_state_detailed(restored).unwrap();
+    assert_eq!(stats.restored, 2);
+    assert_eq!(engine.state_count(), 2);
+
+    let a = TenantId::new("a").unwrap();
+    let b = TenantId::new("b").unwrap();
+    let value = login_event("admin");
+    let event = JsonEvent::borrow(&value);
+    assert_eq!(
+        engine
+            .process_event_at_for_tenant(&event, 1002, Some(&a))
+            .correlation_count(),
+        1
+    );
+    let value = login_event("admin");
+    let event = JsonEvent::borrow(&value);
+    assert_eq!(
+        engine
+            .process_event_at_for_tenant(&event, 1002, Some(&b))
+            .correlation_count(),
+        0
+    );
+}
+
+#[test]
+fn a_v2_snapshot_with_tenants_is_discarded_with_tenancy_off() {
+    let snapshot = tenant_engine_snapshot();
+    let mut engine = corr_engine(EVENT_COUNT_YAML);
+    let stats = engine.import_state_detailed(snapshot).unwrap();
+    assert_eq!(stats.restored, 0);
+    assert_eq!(stats.discarded_tenanted, 2);
+    assert_eq!(engine.state_count(), 0);
+}
+
+#[test]
+fn a_v1_per_ruleset_snapshot_imports_into_ruleset_engines() {
+    let collection = parse_sigma_yaml(EVENT_COUNT_YAML).unwrap();
+    let mut correlation = rsigma_eval::CorrelationEngine::new(CorrelationConfig::default());
+    correlation.add_collection(&collection).unwrap();
+    let unit = RulesetUnit {
+        name: Arc::from("a"),
+        when_schemas: Vec::new(),
+        tenants: Vec::new(),
+        engine: UnitEngine::Correlation(Box::new(correlation)),
+        field_set: RuleFieldSet::collect(&collection, &[], true),
+    };
+    let mut engines = RulesetEngines::new(vec![unit], None).unwrap();
+
+    let outer = format!(r#"{{"version":1,"rulesets":{{"a":{}}}}}"#, V1_FIXTURE);
+    let snapshot: CorrelationSnapshot = serde_json::from_str(&outer).unwrap();
+    let stats = engines.import_state_detailed(&snapshot).unwrap();
+    assert_eq!(stats.restored, 1);
+    assert_eq!(engines.state_entries(), 1);
+}
+
+#[test]
+fn an_unknown_snapshot_version_is_rejected() {
+    let mut engine = corr_engine(EVENT_COUNT_YAML);
+    let mut snapshot: CorrelationSnapshot = serde_json::from_str(V1_FIXTURE).unwrap();
+    snapshot.version = 999;
+    assert!(engine.import_state_detailed(snapshot).is_none());
 }

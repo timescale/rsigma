@@ -19,6 +19,8 @@ mod schema;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "daemon")]
+pub(crate) use schema::TenantQuotasPartial;
 pub(crate) use schema::{
     ConvertGroupPartial, Merge, RsigmaConfigPartial, RulesetEntryPartial, WhenPartial,
     manifest_path,
@@ -192,6 +194,9 @@ pub(crate) struct LoadedConfig {
     /// [`PROTECTED_KEYS`] a project file set, paired with that file. They are
     /// not part of [`Self::config`].
     pub ignored_keys: Vec<(PathBuf, &'static str)>,
+    /// Whether a project layer (`./rsigma.yaml`, `./rsigma.yml`, `.rsigmarc`)
+    /// was loaded. Tenancy refuses to start when one was.
+    pub project_layer_loaded: bool,
 }
 
 /// Return the user config directory (`$XDG_CONFIG_HOME/rsigma` or
@@ -426,6 +431,33 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
                         false
                     }
                 })
+        },
+    },
+    // Tenancy identity and the source binding decide which tenant an event
+    // belongs to. Turning tenancy off is the dangerous direction, so a project
+    // file may not set them at all.
+    ProtectedKey {
+        key: "daemon.tenancy",
+        strip: |c, _| take(daemon(c).map(|d| &mut d.tenancy)),
+    },
+    ProtectedKey {
+        key: "daemon.input.tenant",
+        strip: |c, _| {
+            take(
+                daemon(c)
+                    .and_then(|d| d.input.as_mut())
+                    .map(|i| &mut i.tenant),
+            )
+        },
+    },
+    ProtectedKey {
+        key: "daemon.input.nats_tenants",
+        strip: |c, _| {
+            take(
+                daemon(c)
+                    .and_then(|d| d.input.as_mut())
+                    .map(|i| &mut i.nats_tenants),
+            )
         },
     },
     // A durable consumer name could join another deployment's consumer and
@@ -719,6 +751,7 @@ fn load_files(files: Vec<(PathBuf, Layer)>) -> Result<LoadedConfig, ConfigError>
             loaded.unknown_keys.push((path.clone(), key));
         }
         if layer.is_project() {
+            loaded.project_layer_loaded = true;
             let project_dir = path.parent().unwrap_or(Path::new("."));
             for key in strip_untrusted(&mut partial, project_dir) {
                 loaded.ignored_keys.push((path.clone(), key));
@@ -953,6 +986,12 @@ daemon:
     batch_max: 64
   input:
     source: nats://127.0.0.1:4222/events
+    tenant: tenant-a
+    nats_tenants:
+      - subject: tenants.tenant-b.>
+        tenant: tenant-b
+  tenancy:
+    enabled: true
   nats:
     consumer_group: another-deployment
   state:
@@ -997,7 +1036,10 @@ daemon:
         let output = daemon.output.unwrap();
         assert!(output.sinks.is_none() && output.dlq.is_none() && output.webhooks.is_none());
         assert_eq!(output.batch_max, Some(64));
-        assert!(daemon.input.unwrap().source.is_none());
+        let input = daemon.input.unwrap();
+        assert!(input.source.is_none());
+        assert!(input.tenant.is_none() && input.nats_tenants.is_none());
+        assert!(daemon.tenancy.is_none());
         assert!(daemon.nats.unwrap().consumer_group.is_none());
         let state = daemon.state.unwrap();
         assert!(state.db.is_none());

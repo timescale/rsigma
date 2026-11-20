@@ -180,6 +180,7 @@ impl RsigmaMcp {
                 units.push(RulesetUnit {
                     name: std::sync::Arc::from(name.as_str()),
                     when_schemas: Vec::new(),
+                    tenants: Vec::new(),
                     engine,
                     field_set,
                 });

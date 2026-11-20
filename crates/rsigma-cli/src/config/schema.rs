@@ -201,6 +201,69 @@ pub(crate) struct DaemonPartial {
     /// Logsource-aware evaluation (conflict-based pruning) settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logsource_routing: Option<LogsourcePartial>,
+    /// Logical multi-tenancy settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenancy: Option<TenancyPartial>,
+}
+
+/// Logical multi-tenancy settings.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct TenancyPartial {
+    /// Enable tenant isolation. Startup-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Per-tenant state caps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quotas: Option<TenantQuotasPartial>,
+    /// Tenants whose match counts get their own metric label. Others count
+    /// under `other`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_tenant_allowlist: Option<Vec<String>>,
+}
+
+impl Merge for TenancyPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            enabled: over.enabled.or(self.enabled),
+            quotas: merge_opt(self.quotas, over.quotas),
+            metrics_tenant_allowlist: over
+                .metrics_tenant_allowlist
+                .or(self.metrics_tenant_allowlist),
+        }
+    }
+}
+
+/// Per-tenant state caps.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct TenantQuotasPartial {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_state: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_alerts: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incidents: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_entities: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silences: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inhibition_sources: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_sessions: Option<usize>,
+}
+
+impl Merge for TenantQuotasPartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            correlation_state: over.correlation_state.or(self.correlation_state),
+            active_alerts: over.active_alerts.or(self.active_alerts),
+            incidents: over.incidents.or(self.incidents),
+            risk_entities: over.risk_entities.or(self.risk_entities),
+            silences: over.silences.or(self.silences),
+            inhibition_sources: over.inhibition_sources.or(self.inhibition_sources),
+            stream_sessions: over.stream_sessions.or(self.stream_sessions),
+        }
+    }
 }
 
 impl Merge for DaemonPartial {
@@ -230,6 +293,7 @@ impl Merge for DaemonPartial {
             capture: merge_opt(self.capture, over.capture),
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
+            tenancy: merge_opt(self.tenancy, over.tenancy),
         }
     }
 }
@@ -338,6 +402,12 @@ pub(crate) struct AuthTokenPartial {
     /// refuses to start when it is unset or empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
+    /// Tenant this token is bound to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    /// Token may see every tenant. Never implied by a role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_tenants: Option<bool>,
 }
 
 /// Server-side TLS settings (no key password; that stays env-only).
@@ -395,6 +465,26 @@ pub(crate) struct InputPartial {
     /// JSONPath query to extract the event payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsonpath: Option<String>,
+    /// Tenant to bind to the single selected pull source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    /// One NATS subscription per tenant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nats_tenants: Option<Vec<NatsTenantPartial>>,
+}
+
+/// One tenant-bound NATS subscription.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct NatsTenantPartial {
+    /// Exact subject this subscription consumes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Tenant that owns every message from this subscription.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+    /// Optional NATS credentials file for this subscription.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_file: Option<PathBuf>,
 }
 
 impl Merge for InputPartial {
@@ -408,6 +498,8 @@ impl Merge for InputPartial {
             batch_size: over.batch_size.or(self.batch_size),
             jq: over.jq.or(self.jq),
             jsonpath: over.jsonpath.or(self.jsonpath),
+            tenant: over.tenant.or(self.tenant),
+            nats_tenants: over.nats_tenants.or(self.nats_tenants),
         }
     }
 }
@@ -785,6 +877,9 @@ pub(crate) enum RulesetEntryPartial {
         /// Schemas that admit an event to this ruleset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         when: Option<WhenPartial>,
+        /// Tenants that admit an event to this ruleset.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenants: Option<Vec<String>>,
         /// Unknown keys, rejected at validation time.
         #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
         unknown: BTreeMap<String, serde_json::Value>,

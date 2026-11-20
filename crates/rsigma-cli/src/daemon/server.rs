@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use rsigma_eval::{
-    CorrelationConfig, MatchDetailLevel, OnUnknown, Pipeline, ProcessResult, RoutingPlan,
+    CorrelationConfig, MatchDetailLevel, OnUnknown, Pipeline, ProcessResult, RoutingPlan, TenantId,
     load_schema_config,
 };
 use rsigma_runtime::{
@@ -20,11 +20,12 @@ use rsigma_runtime::{
     FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
     IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
     RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
-    SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink, build_alert_pipeline, build_risk_layer,
-    load_alert_pipeline_file, load_risk_file, load_schema_signatures, spawn_source,
-    strip_event_payloads,
+    SilenceRejection, SilenceRemoval, SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink,
+    build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
+    load_schema_signatures, spawn_source, strip_event_payloads,
 };
 
+use super::auth::AuthIdentity;
 use super::bundle::BundleFormat;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -38,6 +39,8 @@ struct DlqEntry {
     original_event: String,
     error: String,
     timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: Option<String>,
 }
 
 /// Minimum gap between two warnings about delivery failures dropped for lack
@@ -93,6 +96,8 @@ struct EvaluatedBatch {
     outcome: BatchProcessOutcome,
     payloads: Vec<String>,
     tokens: Vec<AckToken>,
+    /// Tenant per payload, parallel to `payloads`.
+    tenants: Vec<Option<TenantId>>,
     pipeline_start: Instant,
 }
 
@@ -217,6 +222,9 @@ struct AppState {
     /// Live detection-tail state. `Some` when the tail is enabled; the
     /// `GET /api/v1/detections/stream` handler registers sessions on it.
     tail: Option<super::tail::TailState>,
+    /// Whether tenancy is enabled, so ingest binds every event to a token's
+    /// tenant.
+    tenancy_enabled: bool,
     /// The alert-pipeline config swap, read by `GET /api/v1/incidents` to
     /// resolve the incident include mode.
     alert_pipeline_swap: Arc<ArcSwap<Option<Arc<AlertPipeline>>>>,
@@ -255,6 +263,13 @@ pub struct DaemonConfig {
     pub pipelines: Vec<Pipeline>,
     pub pipeline_paths: Vec<PathBuf>,
     pub corr_config: CorrelationConfig,
+    /// Logical multi-tenancy settings.
+    pub tenancy: super::tenancy::TenancySettings,
+    /// Tenant bound to the single selected pull source.
+    pub input_tenant: Option<rsigma_eval::TenantId>,
+    /// Tenant-bound NATS subscriptions.
+    #[allow(dead_code)]
+    pub nats_tenants: Vec<super::tenancy::NatsTenantBinding>,
     pub include_event: bool,
     pub pretty: bool,
     pub api_addr: super::listen::ListenAddr,
@@ -567,6 +582,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     engine.set_allow_remote_include(config.allow_remote_include);
     engine.set_strict_rules(config.strict_rules);
     engine.set_match_detail(config.match_detail);
+    engine.set_require_tenant(config.tenancy.enabled);
+    engine.set_max_state_entries_per_tenant(config.tenancy.quotas.correlation_state);
     engine.set_bloom_prefilter(config.bloom_prefilter);
     if let Some(budget) = config.bloom_max_bytes {
         engine.set_bloom_max_bytes(budget);
@@ -791,6 +808,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     }
 
     let processor = Arc::new(LogProcessor::new(engine, metrics.clone()));
+    processor.set_tenant_allowlist(config.tenancy.metrics_tenant_allowlist.clone());
+    for tenant in &config.tenancy.metrics_tenant_allowlist {
+        metrics.register_tenant(tenant.as_str());
+    }
 
     // Initial rule load
     match processor.reload_rules() {
@@ -855,7 +876,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 );
                 restore_state = should_restore;
                 if should_restore {
-                    if processor.import_state(&snapshot) {
+                    let stats = processor.import_state_detailed(&snapshot);
+                    if let Some(stats) = &stats {
+                        if stats.discarded_untenanted > 0 || stats.discarded_tenanted > 0 {
+                            tracing::warn!(
+                                untenanted = stats.discarded_untenanted,
+                                tenanted = stats.discarded_tenanted,
+                                "Discarded correlation entries that do not match the tenancy mode"
+                            );
+                        }
                         tracing::info!(
                             state_entries = snapshot.window_entries(),
                             "Correlation state restored from database"
@@ -937,7 +966,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     // started yet.
     if let Some(path) = config.alert_pipeline_path.as_ref() {
         match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
-            Ok(pipeline) => {
+            Ok(mut pipeline) => {
+                pipeline.set_tenant_quotas(config.tenancy.quotas.alert_pipeline());
                 tracing::info!(path = %path.display(), "Alert pipeline loaded");
                 if let Ok(mut state) = alert_state.write() {
                     state
@@ -952,7 +982,25 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let now = chrono::Utc::now().timestamp();
                             let restored = alert_state
                                 .write()
-                                .map(|mut state| pipeline.restore(&mut state, snap, now))
+                                .map(|mut state| {
+                                    let stats = pipeline.restore_detailed(
+                                        &mut state,
+                                        snap,
+                                        now,
+                                        config.tenancy.enabled,
+                                    );
+                                    if let Some(stats) = &stats
+                                        && (stats.discarded_untenanted > 0
+                                            || stats.discarded_tenanted > 0)
+                                    {
+                                        tracing::warn!(
+                                            untenanted = stats.discarded_untenanted,
+                                            tenanted = stats.discarded_tenanted,
+                                            "Discarded alert-pipeline entries that do not match the tenancy mode"
+                                        );
+                                    }
+                                    stats.is_some()
+                                })
                                 .unwrap_or(false);
                             if restored {
                                 tracing::info!("Alert-pipeline state restored from database");
@@ -1018,7 +1066,8 @@ pub async fn run_daemon(config: DaemonConfig) {
     // Build the risk layer. Failures exit cleanly because no I/O has started yet.
     if let Some(path) = config.risk_path.as_ref() {
         match load_risk_file(path).and_then(build_risk_layer) {
-            Ok(layer) => {
+            Ok(mut layer) => {
+                layer.set_max_open_entities_per_tenant(config.tenancy.quotas.risk_entities);
                 tracing::info!(path = %path.display(), "Risk layer loaded");
                 // Restore persisted risk state (unless --clear-state), pruning
                 // entries past their window at boot.
@@ -1028,7 +1077,25 @@ pub async fn run_daemon(config: DaemonConfig) {
                             let now = chrono::Utc::now().timestamp();
                             let restored = risk_state
                                 .write()
-                                .map(|mut state| layer.restore(&mut state, snap, now))
+                                .map(|mut state| {
+                                    let stats = layer.restore_detailed(
+                                        &mut state,
+                                        snap,
+                                        now,
+                                        config.tenancy.enabled,
+                                    );
+                                    if let Some(stats) = &stats
+                                        && (stats.discarded_untenanted > 0
+                                            || stats.discarded_tenanted > 0)
+                                    {
+                                        tracing::warn!(
+                                            untenanted = stats.discarded_untenanted,
+                                            tenanted = stats.discarded_tenanted,
+                                            "Discarded risk entries that do not match the tenancy mode"
+                                        );
+                                    }
+                                    stats.is_some()
+                                })
                                 .unwrap_or(false);
                             if restored {
                                 tracing::info!("Risk state restored from database");
@@ -1159,9 +1226,10 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
 
     let tap = if config.tap.enabled {
-        let registry = rsigma_runtime::TapRegistry::new(
+        let registry = rsigma_runtime::TapRegistry::with_tenant_cap(
             config.tap.buffer_events,
             config.tap.max_sessions,
+            config.tenancy.quotas.stream_sessions,
             config.tap.max_duration,
         );
         processor.set_event_tap(Some(registry.clone()));
@@ -1177,8 +1245,11 @@ pub async fn run_daemon(config: DaemonConfig) {
     };
 
     let (tail, tail_registry) = if config.tail.enabled {
-        let registry =
-            super::tail::TailRegistry::new(config.tail.buffer_events, config.tail.max_sessions);
+        let registry = super::tail::TailRegistry::new(
+            config.tail.buffer_events,
+            config.tail.max_sessions,
+            config.tenancy.quotas.stream_sessions,
+        );
         tracing::info!(
             buffer_events = config.tail.buffer_events,
             max_sessions = config.tail.max_sessions,
@@ -1214,7 +1285,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             match store.load_dispositions().await {
                 Ok(Some(snap)) => {
                     let now = chrono::Utc::now().timestamp();
-                    if state.restore(snap, now) {
+                    if state.restore(snap, now, config.tenancy.enabled) {
                         tracing::info!("Disposition state restored from database");
                     } else {
                         tracing::warn!("Incompatible disposition snapshot version, starting fresh");
@@ -1324,6 +1395,7 @@ pub async fn run_daemon(config: DaemonConfig) {
         schema_observer: schema_observer.clone(),
         tap: tap.clone(),
         tail: tail.clone(),
+        tenancy_enabled: config.tenancy.enabled,
         alert_pipeline_swap: alert_pipeline_swap.clone(),
         alert_state: alert_state.clone(),
         risk_swap: risk_swap.clone(),
@@ -1405,6 +1477,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 auth: auth.clone(),
                 metrics: metrics.clone(),
                 extra_disposition_perm,
+                tenancy: config.tenancy.enabled,
             });
             app.route_layer(axum::middleware::from_fn_with_state(
                 state,
@@ -1481,6 +1554,7 @@ pub async fn run_daemon(config: DaemonConfig) {
             event_tx: event_tx.clone(),
             metrics: metrics.clone(),
             auth: config.api_auth.clone(),
+            tenancy: config.tenancy.enabled,
         })
         .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
         .send_compressed(tonic::codec::CompressionEncoding::Gzip);
@@ -1545,6 +1619,7 @@ pub async fn run_daemon(config: DaemonConfig) {
     let reload_risk_swap = risk_swap.clone();
     let reload_risk_state = risk_state.clone();
     let reload_risk_path = config.risk_path.clone();
+    let reload_tenant_quotas = config.tenancy.quotas;
     #[cfg(feature = "daemon-tls")]
     let reload_tls_state = tls_state.clone();
     #[cfg(feature = "daemon-tls")]
@@ -1714,7 +1789,8 @@ pub async fn run_daemon(config: DaemonConfig) {
             // resolve_timeout, and anything above its caps is trimmed now.
             if let Some(path) = reload_alert_pipeline_path.as_deref() {
                 match load_alert_pipeline_file(path).and_then(build_alert_pipeline) {
-                    Ok(new_pipeline) => {
+                    Ok(mut new_pipeline) => {
+                        new_pipeline.set_tenant_quotas(reload_tenant_quotas.alert_pipeline());
                         // Re-seed static silences (replacing the previous static
                         // set; API-created silences are preserved), trim to the
                         // new caps, and swap under the state lock the sink task
@@ -1748,7 +1824,21 @@ pub async fn run_daemon(config: DaemonConfig) {
             // config swap; stale entries age out via the new window.
             if let Some(path) = reload_risk_path.as_deref() {
                 match load_risk_file(path).and_then(build_risk_layer) {
-                    Ok(new_layer) => {
+                    Ok(mut new_layer) => {
+                        new_layer
+                            .set_max_open_entities_per_tenant(reload_tenant_quotas.risk_entities);
+                        if new_layer.incident_config().is_some()
+                            && let Some(max) = reload_tenant_quotas.risk_entities
+                            && let Ok(mut st) = reload_risk_state.write()
+                        {
+                            let evicted = st.enforce_tenant_cap(max);
+                            if evicted > 0 {
+                                tracing::warn!(
+                                    evicted,
+                                    "Evicted the stalest risk entities to fit the per-tenant quota"
+                                );
+                            }
+                        }
                         // If the reloaded config drops the accumulator, clear
                         // in-flight entities: with no `incident` block the tick
                         // no longer prunes them, so they would otherwise linger
@@ -1856,11 +1946,18 @@ pub async fn run_daemon(config: DaemonConfig) {
     #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
     let mut source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
-            let h = spawn_source(
-                StdinSource::new(),
-                event_tx,
-                Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-            );
+            let h = match config.input_tenant.clone() {
+                Some(tenant) => spawn_source(
+                    rsigma_runtime::WithTenant::new(StdinSource::new(), tenant),
+                    event_tx,
+                    Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                ),
+                None => spawn_source(
+                    StdinSource::new(),
+                    event_tx,
+                    Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                ),
+            };
             tracing::info!(input = "stdin", "Event source started");
             Some(h)
         }
@@ -1868,6 +1965,60 @@ pub async fn run_daemon(config: DaemonConfig) {
             drop(event_tx);
             tracing::info!(input = "http", "Event source started (POST /api/v1/events)");
             None
+        }
+        #[cfg(feature = "daemon-nats")]
+        input if input.starts_with("nats://") && !config.nats_tenants.is_empty() => {
+            let (url, _) = parse_nats_url(input);
+            let mut handles = Vec::new();
+            for binding in &config.nats_tenants {
+                let mut nats_cfg = config.nats_config.clone();
+                nats_cfg.url = url.clone();
+                if let Some(credentials_file) = &binding.credentials_file {
+                    nats_cfg.credentials_file = Some(credentials_file.clone());
+                }
+                let durable = config
+                    .consumer_group
+                    .as_ref()
+                    .map(|group| format!("{group}-{}", binding.tenant.as_str()));
+                match rsigma_runtime::NatsSource::connect(
+                    &nats_cfg,
+                    &binding.subject,
+                    &config.replay_policy,
+                    durable.as_deref(),
+                )
+                .await
+                {
+                    Ok(source) => {
+                        let h = spawn_source(
+                            rsigma_runtime::WithTenant::new(source, binding.tenant.clone()),
+                            event_tx.clone(),
+                            Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                        );
+                        handles.push(h);
+                        tracing::info!(
+                            url = url,
+                            subject = binding.subject,
+                            tenant = binding.tenant.as_str(),
+                            "Tenant-bound NATS source started"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            url = url,
+                            tenant = binding.tenant.as_str(),
+                            "Failed to connect tenant-bound NATS source"
+                        );
+                        std::process::exit(crate::exit_code::CONFIG_ERROR);
+                    }
+                }
+            }
+            let h = tokio::spawn(async move {
+                for handle in handles {
+                    let _ = handle.await;
+                }
+            });
+            Some(h)
         }
         #[cfg(feature = "daemon-nats")]
         input if input.starts_with("nats://") => {
@@ -1883,11 +2034,18 @@ pub async fn run_daemon(config: DaemonConfig) {
             .await
             {
                 Ok(source) => {
-                    let h = spawn_source(
-                        source,
-                        event_tx,
-                        Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-                    );
+                    let h = match config.input_tenant.clone() {
+                        Some(tenant) => spawn_source(
+                            rsigma_runtime::WithTenant::new(source, tenant),
+                            event_tx,
+                            Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                        ),
+                        None => spawn_source(
+                            source,
+                            event_tx,
+                            Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                        ),
+                    };
                     tracing::info!(url = url, subject = subject, "NATS source started");
                     Some(h)
                 }
@@ -1902,11 +2060,18 @@ pub async fn run_daemon(config: DaemonConfig) {
             let path = input.strip_prefix("unix://").unwrap_or(input);
             match rsigma_runtime::UnixSocketSource::bind(std::path::Path::new(path)).await {
                 Ok(source) => {
-                    let h = spawn_source(
-                        source,
-                        event_tx,
-                        Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-                    );
+                    let h = match config.input_tenant.clone() {
+                        Some(tenant) => spawn_source(
+                            rsigma_runtime::WithTenant::new(source, tenant),
+                            event_tx,
+                            Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                        ),
+                        None => spawn_source(
+                            source,
+                            event_tx,
+                            Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+                        ),
+                    };
                     tracing::info!(path = path, "Unix socket source started");
                     Some(h)
                 }
@@ -2014,6 +2179,11 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 original_event: payload,
                                 error: "parse error".to_string(),
                                 timestamp: chrono::Utc::now().to_rfc3339(),
+                                tenant: batch
+                                    .tenants
+                                    .get(index)
+                                    .and_then(|tenant| tenant.clone())
+                                    .map(|tenant| tenant.as_str().to_string()),
                             })
                             .await
                             .is_err()
@@ -2236,9 +2406,11 @@ pub async fn run_daemon(config: DaemonConfig) {
 
             let mut payloads = Vec::with_capacity(batch.len());
             let mut tokens = Vec::with_capacity(batch.len());
+            let mut tenants = Vec::with_capacity(batch.len());
             for raw_event in batch {
                 payloads.push(raw_event.payload);
                 tokens.push(raw_event.ack_token);
+                tenants.push(raw_event.tenant);
             }
 
             if payloads.is_empty() {
@@ -2256,12 +2428,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 // hop, same ordering as before concurrent detection.
                 let process_start = Instant::now();
                 let outcome = match filter.as_ref() {
-                    Some(f) => processor.process_batch_with_format_detailed(
+                    Some(f) => processor.process_batch_with_format_detailed_for_tenants(
                         &payloads,
+                        &tenants,
                         &format,
                         Some(f.as_ref()),
                     ),
-                    None => processor.process_batch_with_format_detailed(&payloads, &format, None),
+                    None => processor.process_batch_with_format_detailed_for_tenants(
+                        &payloads, &tenants, &format, None,
+                    ),
                 };
                 let process_elapsed_ms = process_start.elapsed().as_millis() as u64;
                 let match_count = outcome.results.iter().filter(|r| !r.is_empty()).count();
@@ -2278,6 +2453,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             outcome,
                             payloads,
                             tokens,
+                            tenants,
                             pipeline_start,
                         },
                     ))
@@ -2291,14 +2467,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                 join_set.spawn_blocking(move || {
                     let process_start = Instant::now();
                     let outcome = match filter.as_ref() {
-                        Some(f) => processor.process_batch_with_format_detailed(
+                        Some(f) => processor.process_batch_with_format_detailed_for_tenants(
                             &payloads,
+                            &tenants,
                             &format,
                             Some(f.as_ref()),
                         ),
-                        None => {
-                            processor.process_batch_with_format_detailed(&payloads, &format, None)
-                        }
+                        None => processor.process_batch_with_format_detailed_for_tenants(
+                            &payloads, &tenants, &format, None,
+                        ),
                     };
                     let process_elapsed_ms = process_start.elapsed().as_millis() as u64;
                     let match_count = outcome.results.iter().filter(|r| !r.is_empty()).count();
@@ -2314,6 +2491,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                             outcome,
                             payloads,
                             tokens,
+                            tenants,
                             pipeline_start,
                         },
                     )
@@ -2388,6 +2566,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 original_event: failure.serialized,
                 error: failure.error,
                 timestamp: chrono::Utc::now().to_rfc3339(),
+                tenant: failure.tenant.map(|tenant| tenant.as_str().to_string()),
             };
             if let Err(mpsc::error::SendError(entry)) = dlq_tx.send(entry).await {
                 tracing::warn!(
@@ -2503,10 +2682,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     &[]
                                 };
                                 let env = with_ocsf_lines(
-                                    FormattedIncidentEnvelope::new(IncidentEnvelope::new(
-                                        json,
-                                        subject.clone(),
-                                    )),
+                                    FormattedIncidentEnvelope::new(
+                                        IncidentEnvelope::new(json, subject.clone())
+                                            .with_tenant(tenant_from_json(&event)),
+                                    ),
                                     ocsf,
                                     "risk event",
                                     |opts| {
@@ -2529,7 +2708,8 @@ pub async fn run_daemon(config: DaemonConfig) {
                                     Ok(json) => {
                                         let env = with_ocsf_lines(
                                             FormattedIncidentEnvelope::new(
-                                                IncidentEnvelope::new(json, subject.clone()),
+                                                IncidentEnvelope::new(json, subject.clone())
+                                                    .with_tenant(incident.tenant_id.clone()),
                                             ),
                                             &ocsf_options,
                                             "risk incident",
@@ -2656,7 +2836,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                                 }
                             };
                             let env = with_ocsf_lines(
-                                FormattedIncidentEnvelope::new(IncidentEnvelope::new(json, None)),
+                                FormattedIncidentEnvelope::new(
+                                    IncidentEnvelope::new(json, None)
+                                        .with_tenant(tenant_from_json(line)),
+                                ),
                                 &ocsf_options,
                                 "dedup summary",
                                 |opts| Ok(rsigma_runtime::ocsf::dedup_summary_finding_opts(line, opts)),
@@ -2669,10 +2852,10 @@ pub async fn run_daemon(config: DaemonConfig) {
                             match serde_json::to_string(&incident) {
                                 Ok(json) => {
                                     let env = with_ocsf_lines(
-                                        FormattedIncidentEnvelope::new(IncidentEnvelope::new(
-                                            json,
-                                            subject.clone(),
-                                        )),
+                                        FormattedIncidentEnvelope::new(
+                                            IncidentEnvelope::new(json, subject.clone())
+                                                .with_tenant(incident.tenant_id.clone()),
+                                        ),
                                         &ocsf_options,
                                         "incident",
                                         |opts| {
@@ -2972,6 +3155,14 @@ async fn shutdown_signal(
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("Shutdown signal received");
+}
+
+/// Extract a tenant id from a serialized result or incident.
+fn tenant_from_json(value: &serde_json::Value) -> Option<TenantId> {
+    value
+        .get("tenant_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| TenantId::new(raw).ok())
 }
 
 /// Attach one OCSF line per distinct sink option set to an incident-path
@@ -3284,6 +3475,86 @@ fn otlp_timeout_from_params(
 }
 
 /// Build a single Sink from an output spec string, plus its full-queue policy.
+/// Parse the `tenant=` query parameter on a sink spec.
+fn tenant_filter_from_params(params: &[(&str, &str)]) -> Option<TenantId> {
+    let value = params
+        .iter()
+        .find(|(key, _)| *key == "tenant")
+        .map(|(_, value)| *value)?;
+    if value.is_empty() {
+        eprintln!("error: sink 'tenant=' needs a tenant id");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    match TenantId::new(value) {
+        Ok(tenant) => Some(tenant),
+        Err(error) => {
+            eprintln!("error: sink tenant=: {error}");
+            std::process::exit(crate::exit_code::CONFIG_ERROR);
+        }
+    }
+}
+
+/// Check where a sink spec may route per tenant. Only findings sinks carry a
+/// result tenant, `{tenant}` is understood only in a file path or a NATS
+/// subject (once), and `max_open=` only applies to a `{tenant}` file path.
+fn check_tenant_routing(base: &str, params: &[(&str, &str)], role: SinkRole) -> Result<(), String> {
+    let templated = base.contains("{tenant}");
+    let has_param = |name: &str| params.iter().any(|(key, _)| *key == name);
+    if role != SinkRole::Findings && (templated || has_param("tenant") || has_param("max_open")) {
+        return Err(format!(
+            "{} sink '{base}' cannot use '{{tenant}}', 'tenant=', or 'max_open='; only findings sinks route per tenant",
+            role.label()
+        ));
+    }
+    if templated {
+        if !(base.starts_with("file://") || base.starts_with("nats://")) {
+            return Err(format!(
+                "sink '{base}' uses '{{tenant}}', which only file paths and NATS subjects support"
+            ));
+        }
+        if base.matches("{tenant}").count() > 1 {
+            return Err(format!("sink '{base}' may use '{{tenant}}' only once"));
+        }
+    }
+    if has_param("max_open") && !(templated && base.starts_with("file://")) {
+        return Err(format!(
+            "sink '{base}' sets 'max_open=', which only applies to a file path with '{{tenant}}'"
+        ));
+    }
+    Ok(())
+}
+
+/// Split a file path around a whole-component `{tenant}` token.
+fn tenant_file_template(path: &str) -> Option<(String, String)> {
+    let start = path.find("{tenant}")?;
+    let end = start + "{tenant}".len();
+    let before_ok = start == 0 || path.as_bytes().get(start - 1) == Some(&b'/');
+    let after_ok = end == path.len() || path.as_bytes().get(end) == Some(&b'/');
+    if !before_ok || !after_ok {
+        eprintln!("error: file sink path '{path}' must use '{{tenant}}' as a whole path component");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
+    Some((path[..start].to_string(), path[end..].to_string()))
+}
+
+/// Parse `?max_open=` for a per-tenant file sink (default 64).
+fn max_open_from_params(params: &[(&str, &str)]) -> usize {
+    match params
+        .iter()
+        .find(|(key, _)| *key == "max_open")
+        .map(|(_, value)| *value)
+    {
+        None => 64,
+        Some(value) => match value.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!("error: sink 'max_open=' must be a positive integer");
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+        },
+    }
+}
+
 async fn build_sink(
     spec: &str,
     pretty: bool,
@@ -3291,29 +3562,61 @@ async fn build_sink(
     #[cfg_attr(not(feature = "daemon-nats"), allow(unused))] config: &DaemonConfig,
 ) -> (Sink, OnFull) {
     let (base, params) = split_query(spec);
+    if let Err(message) = check_tenant_routing(base, &params, role) {
+        eprintln!("error: {message}");
+        std::process::exit(crate::exit_code::CONFIG_ERROR);
+    }
     let on_full = on_full_from_params(&params);
     let resolved = resolve_sink_format(&params, base, role);
     let format = resolved.format;
     let ocsf = resolved.ocsf;
+    let tenant_filter = tenant_filter_from_params(&params);
 
     if base == "stdout" || base == "stdout://" {
         return (
             Sink::Stdout(
                 StdoutSink::new(pretty)
                     .with_format(format)
-                    .with_ocsf_options(ocsf),
+                    .with_ocsf_options(ocsf)
+                    .with_tenant_filter(tenant_filter),
             ),
             on_full,
         );
     }
 
     if let Some(path) = base.strip_prefix("file://") {
+        if let Some((before, after)) = tenant_file_template(path) {
+            let max_open = max_open_from_params(&params);
+            return match FileSink::open_template(before, after, max_open) {
+                Ok(file_sink) => {
+                    tracing::info!(path = %path, max_open, "Per-tenant file sink opened");
+                    (
+                        Sink::File(
+                            file_sink
+                                .with_format(format)
+                                .with_ocsf_options(ocsf)
+                                .with_tenant_filter(tenant_filter),
+                        ),
+                        on_full,
+                    )
+                }
+                Err(e) => {
+                    tracing::error!(path, error = %e, "Failed to build per-tenant file sink");
+                    std::process::exit(crate::exit_code::CONFIG_ERROR);
+                }
+            };
+        }
         let path = std::path::Path::new(path);
         return match FileSink::open(path) {
             Ok(file_sink) => {
                 tracing::info!(path = %path.display(), "File sink opened");
                 (
-                    Sink::File(file_sink.with_format(format).with_ocsf_options(ocsf)),
+                    Sink::File(
+                        file_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
+                    ),
                     on_full,
                 )
             }
@@ -3334,7 +3637,10 @@ async fn build_sink(
                 tracing::info!(url = url, subject = subject, "NATS sink started");
                 (
                     Sink::Nats(Box::new(
-                        nats_sink.with_format(format).with_ocsf_options(ocsf),
+                        nats_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
                     )),
                     on_full,
                 )
@@ -3378,7 +3684,10 @@ async fn build_sink(
             });
             return match rsigma_runtime::OtlpSink::new(protocol, endpoint, gzip, tls) {
                 Ok(sink) => {
-                    let sink = sink.with_format(format).with_ocsf_options(ocsf);
+                    let sink = sink
+                        .with_format(format)
+                        .with_ocsf_options(ocsf)
+                        .with_tenant_filter(tenant_filter);
                     let sink = match timeout {
                         Some(t) => sink.with_timeout(t),
                         None => sink,
@@ -3409,7 +3718,10 @@ async fn build_sink(
                 tracing::info!(path, "Unix socket sink started");
                 (
                     Sink::Unix(Box::new(
-                        unix_sink.with_format(format).with_ocsf_options(ocsf),
+                        unix_sink
+                            .with_format(format)
+                            .with_ocsf_options(ocsf)
+                            .with_tenant_filter(tenant_filter),
                     )),
                     on_full,
                 )
@@ -3639,19 +3951,69 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-async fn list_rules(State(state): State<AppState>) -> impl IntoResponse {
+/// Resolve the tenant an API read should be scoped to. `Ok(None)` means every
+/// tenant, `Ok(Some)` means exactly one.
+#[allow(clippy::result_large_err)]
+fn read_tenant(
+    state: &AppState,
+    identity: Option<&AuthIdentity>,
+    requested: Option<&str>,
+) -> Result<Option<TenantId>, Response> {
+    match super::tenancy::tenant_filter(state.tenancy_enabled, identity, requested)? {
+        super::tenancy::TenantFilter::All => Ok(None),
+        super::tenancy::TenantFilter::Only(tenant) => Ok(Some(tenant)),
+    }
+}
+
+fn incident_visible(incident: &IncidentResult, tenant: Option<&TenantId>) -> bool {
+    tenant.is_none_or(|tenant| incident.tenant_id.as_ref() == Some(tenant))
+}
+
+/// `GET /api/v1/rules` — loaded rule counts and per-ruleset statistics.
+async fn list_rules(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let stats = state.processor.stats();
-    let rulesets = state.processor.ruleset_stats();
+    let mut rulesets = state.processor.ruleset_stats();
+    let ruleset_mode = !rulesets.is_empty();
+    let (mut detection_rules, mut correlation_rules) =
+        (stats.detection_rules, stats.correlation_rules);
+    if let Some(tenant) = &tenant
+        && ruleset_mode
+    {
+        rulesets.retain(|ruleset| {
+            ruleset.tenants.is_empty() || ruleset.tenants.iter().any(|t| t == tenant)
+        });
+        // Counts and bindings describe only what this tenant can see, so a
+        // shared binding does not reveal the other tenants it names.
+        for ruleset in &mut rulesets {
+            if !ruleset.tenants.is_empty() {
+                ruleset.tenants = vec![tenant.clone()];
+            }
+        }
+        detection_rules = rulesets.iter().map(|r| r.detection_rules).sum();
+        correlation_rules = rulesets.iter().map(|r| r.correlation_rules).sum();
+    }
     let mut value = serde_json::json!({
-        "detection_rules": stats.detection_rules,
-        "correlation_rules": stats.correlation_rules,
+        "detection_rules": detection_rules,
+        "correlation_rules": correlation_rules,
     });
-    if rulesets.is_empty() {
+    if !ruleset_mode {
         value["rules_path"] = serde_json::json!(state.processor.rules_path().display().to_string());
     } else {
         value["rulesets"] = serde_json::json!(rulesets);
     }
-    Json(value)
+    Json(value).into_response()
 }
 
 #[derive(Serialize)]
@@ -3679,7 +4041,19 @@ struct DynamicSourcesSummary {
 }
 
 /// `GET /api/v1/incidents` — open incidents from the grouping stage.
-async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_incidents(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let include = state
         .alert_pipeline_swap
         .load_full()
@@ -3689,10 +4063,14 @@ async fn list_incidents(State(state): State<AppState>) -> impl IntoResponse {
         .unwrap_or(IncludeMode::Refs);
     let incidents = {
         let st = state.alert_state.read().unwrap_or_else(|e| e.into_inner());
-        st.incidents.snapshot(include)
+        st.incidents
+            .snapshot(include)
+            .into_iter()
+            .filter(|incident| incident_visible(incident, tenant.as_ref()))
+            .collect::<Vec<_>>()
     };
     let count = incidents.len();
-    Json(serde_json::json!({ "incidents": incidents, "count": count }))
+    Json(serde_json::json!({ "incidents": incidents, "count": count })).into_response()
 }
 
 /// The 503 body returned by the per-incident routes when grouping is off.
@@ -3727,14 +4105,26 @@ fn incident_include(state: &AppState) -> Option<IncludeMode> {
 /// list entry.
 async fn get_incident(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    Query(query): Query<super::tenancy::TenantQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let Some(include) = incident_include(&state) else {
         return grouping_disabled();
     };
     match snapshot_incident(&state, &id, include) {
-        Some(incident) => Json(incident).into_response(),
-        None => incident_not_found(&id),
+        Some(incident) if incident_visible(&incident, tenant.as_ref()) => {
+            Json(incident).into_response()
+        }
+        Some(_) | None => incident_not_found(&id),
     }
 }
 
@@ -3743,15 +4133,26 @@ async fn get_incident(
 struct BundleQuery {
     /// `json` (default) or `markdown`.
     format: Option<String>,
+    /// Narrow the read to one tenant.
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/incidents/{id}/bundle` — the incident joined to its rules'
 /// documentation and the risk entities it overlaps.
 async fn get_incident_bundle(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     Query(query): Query<BundleQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let format = match query.format.as_deref() {
         None => BundleFormat::Json,
         Some(requested) => match BundleFormat::parse(requested) {
@@ -3775,6 +4176,9 @@ async fn get_incident_bundle(
     let Some(incident) = snapshot_incident(&state, &id, include) else {
         return incident_not_found(&id);
     };
+    if !incident_visible(&incident, tenant.as_ref()) {
+        return incident_not_found(&id);
+    }
     if incident.bundle_ready == Some(false) {
         return (
             StatusCode::CONFLICT,
@@ -3801,7 +4205,7 @@ async fn get_incident_bundle(
         .map(|cfg| {
             let now = chrono::Utc::now().timestamp();
             let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
-            st.views(cfg, now)
+            same_tenant_entities(st.views(cfg, now), incident.tenant_id.as_ref())
         });
 
     let generated_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -3821,6 +4225,18 @@ async fn get_incident_bundle(
         BundleFormat::Markdown => super::bundle::render_markdown(&bundle),
     };
     ([(header::CONTENT_TYPE, format.content_type())], body).into_response()
+}
+
+/// Keep only the risk entities of `tenant`, so a bundle never joins an
+/// incident to another tenant's entity that shares a value.
+fn same_tenant_entities(
+    entities: Vec<rsigma_runtime::RiskEntityView>,
+    tenant: Option<&TenantId>,
+) -> Vec<rsigma_runtime::RiskEntityView> {
+    entities
+        .into_iter()
+        .filter(|entity| entity.tenant_id.as_ref() == tenant)
+        .collect()
 }
 
 fn snapshot_incident(state: &AppState, id: &str, include: IncludeMode) -> Option<IncidentResult> {
@@ -3843,30 +4259,78 @@ fn incident_not_found(id: &str) -> Response {
 /// `GET /api/v1/risk` — open entities tracked by the risk accumulator, with
 /// their current window score, distinct tactic count, source count, and window
 /// bounds. Empty when no risk accumulator is configured.
-async fn list_risk_entities(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_risk_entities(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let snapshot = state.risk_swap.load_full();
     let entities = match snapshot.as_ref().as_ref().and_then(|l| l.incident_config()) {
         Some(cfg) => {
             let now = chrono::Utc::now().timestamp();
             let st = state.risk_state.read().unwrap_or_else(|e| e.into_inner());
             st.views(cfg, now)
+                .into_iter()
+                .filter(|entity| {
+                    tenant
+                        .as_ref()
+                        .is_none_or(|tenant| entity.tenant_id.as_ref() == Some(tenant))
+                })
+                .collect::<Vec<_>>()
         }
         None => Vec::new(),
     };
     let count = entities.len();
-    Json(serde_json::json!({ "entities": entities, "count": count }))
+    Json(serde_json::json!({ "entities": entities, "count": count })).into_response()
 }
 
 /// `GET /api/v1/correlations` — the compiled correlation list with per-group
 /// counts (no window contents). Empty when the engine has no correlation rules.
-async fn list_correlations(State(state): State<AppState>) -> impl IntoResponse {
-    let correlations = state
+async fn list_correlations(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    let mut correlations = state
         .processor
-        .introspect_correlations(None, None)
+        .introspect_correlations_for_tenant(None, None, tenant.as_ref())
         .map(|s| s.correlations)
         .unwrap_or_default();
+    if let Some(tenant) = &tenant {
+        let allowed: std::collections::HashSet<String> = state
+            .processor
+            .ruleset_stats()
+            .into_iter()
+            .filter(|ruleset| {
+                ruleset.tenants.is_empty() || ruleset.tenants.iter().any(|t| t == tenant)
+            })
+            .map(|ruleset| ruleset.name.to_string())
+            .collect();
+        correlations.retain(|correlation| {
+            correlation
+                .ruleset
+                .as_deref()
+                .is_none_or(|ruleset| allowed.contains(ruleset))
+        });
+    }
     let count = correlations.len();
-    Json(serde_json::json!({ "correlations": correlations, "count": count }))
+    Json(serde_json::json!({ "correlations": correlations, "count": count })).into_response()
 }
 
 /// Query parameters for `GET /api/v1/correlations/state`.
@@ -3877,6 +4341,8 @@ struct CorrelationStateQuery {
     /// Keep only groups whose rendered key (`field=value, ...`) contains this
     /// substring.
     group: Option<String>,
+    /// Narrow the read to one tenant.
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/correlations/state` — the live per-group window snapshot
@@ -3885,11 +4351,22 @@ struct CorrelationStateQuery {
 /// engine has no correlation rules.
 async fn correlations_state(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<CorrelationStateQuery>,
-) -> impl IntoResponse {
-    let snapshot = state
-        .processor
-        .introspect_correlations(query.id.as_deref(), query.group.as_deref());
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    let snapshot = state.processor.introspect_correlations_for_tenant(
+        query.id.as_deref(),
+        query.group.as_deref(),
+        tenant.as_ref(),
+    );
     match snapshot {
         Some(s) => {
             let count = s.groups.len();
@@ -3898,8 +4375,10 @@ async fn correlations_state(
                 "groups": s.groups,
                 "count": count,
             }))
+            .into_response()
         }
-        None => Json(serde_json::json!({ "correlations": [], "groups": [], "count": 0 })),
+        None => Json(serde_json::json!({ "correlations": [], "groups": [], "count": 0 }))
+            .into_response(),
     }
 }
 
@@ -3935,19 +4414,33 @@ struct AuditQuery {
     offset: Option<u64>,
     since: Option<i64>,
     until: Option<i64>,
+    tenant: Option<String>,
 }
 
 /// `GET /api/v1/audit` — paginated control-plane mutation audit log.
 async fn list_audit(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<AuditQuery>,
 ) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let Some(audit) = state.audit.as_ref() else {
         return audit_disabled();
     };
     let limit = query.limit.unwrap_or(100).min(1000);
     let offset = query.offset.unwrap_or(0);
-    match audit.query(limit, offset, query.since, query.until).await {
+    let tenant = tenant.map(|tenant| tenant.as_str().to_string());
+    match audit
+        .query(limit, offset, query.since, query.until, tenant)
+        .await
+    {
         Ok((count, entries)) => Json(serde_json::json!({
             "count": count,
             "entries": entries,
@@ -3963,42 +4456,101 @@ async fn list_audit(
 
 /// `POST /api/v1/dispositions` — ingest one or more analyst dispositions (a
 /// single object, a JSON array, or NDJSON). Returns the ingest summary.
-async fn ingest_dispositions(State(state): State<AppState>, body: String) -> Response {
+async fn ingest_dispositions(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    body: String,
+) -> Response {
     let Some(dispositions) = state.disposition_state.as_ref() else {
         return dispositions_disabled();
     };
-    match dispositions.ingest(&body, "api") {
+    // Every record's `tenant` is checked against the token by `write_tenant`,
+    // which refuses a foreign tenant with 403, so a batch may name at most one.
+    let mut body_tenants: Vec<String> = rsigma_runtime::parse_dispositions(&body)
+        .map(|raws| raws.into_iter().filter_map(|raw| raw.tenant).collect())
+        .unwrap_or_default();
+    body_tenants.sort();
+    body_tenants.dedup();
+    if body_tenants.len() > 1 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "a disposition batch may name only one tenant"
+            })),
+        )
+            .into_response();
+    }
+    let body_tenant = body_tenants.pop();
+    let tenant = match super::tenancy::write_tenant(
+        state.tenancy_enabled,
+        identity.as_ref().map(|e| &e.0),
+        body_tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    let target = tenant.clone();
+    let response = match dispositions.ingest_with_tenant(&body, "api", tenant) {
         Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
-    }
+    };
+    super::audit::with_audit_target(response, target.as_ref())
 }
 
 /// `GET /api/v1/dispositions` — the per-rule false-positive ratio view.
-async fn list_dispositions(State(state): State<AppState>) -> Response {
+async fn list_dispositions(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     match state.disposition_state.as_ref() {
-        Some(dispositions) => Json(dispositions.view()).into_response(),
+        Some(dispositions) => Json(dispositions.view_for_tenant(tenant.as_ref())).into_response(),
         None => dispositions_disabled(),
     }
 }
 
 /// `GET /api/v1/silences` — operator silences and their state.
-async fn list_silences(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_silences(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let now = chrono::Utc::now().timestamp();
     let silences = {
         let st = state.alert_state.read().unwrap_or_else(|e| e.into_inner());
-        st.silences.snapshot(now)
+        st.silences.snapshot_scoped(now, tenant.as_ref())
     };
     let count = silences.len();
-    Json(serde_json::json!({ "silences": silences, "count": count }))
+    Json(serde_json::json!({ "silences": silences, "count": count })).into_response()
 }
 
 /// `POST /api/v1/silences` — create a silence. Returns the assigned id.
-async fn create_silence(State(state): State<AppState>, body: String) -> Response {
-    let spec: SilenceSpec = match serde_json::from_str(&body) {
+async fn create_silence(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    body: String,
+) -> Response {
+    let mut spec: SilenceSpec = match serde_json::from_str(&body) {
         Ok(spec) => spec,
         Err(e) => {
             return (
@@ -4008,12 +4560,34 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                 .into_response();
         }
     };
-    let Some((max_silences, limits)) = state
+    let body_tenant = spec.tenant.as_ref().map(|t| t.as_str().to_string());
+    let tenant = match super::tenancy::write_tenant(
+        state.tenancy_enabled,
+        identity.as_ref().map(|e| &e.0),
+        body_tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
+    let target = tenant.clone();
+    spec.tenant = tenant;
+    let response = create_silence_for(&state, spec).await;
+    super::audit::with_audit_target(response, target.as_ref())
+}
+
+async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
+    let Some((max_silences, max_per_tenant, limits)) = state
         .alert_pipeline_swap
         .load_full()
         .as_ref()
         .as_ref()
-        .map(|p| (p.max_dynamic_silences(), p.silence_limits()))
+        .map(|p| {
+            (
+                p.max_dynamic_silences(),
+                p.max_dynamic_silences_per_tenant(),
+                p.silence_limits(),
+            )
+        })
     else {
         return (
             StatusCode::CONFLICT,
@@ -4030,16 +4604,24 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
             let id = silence.id().to_string();
             let added = {
                 let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-                st.silences.try_add(silence, max_silences)
+                st.silences
+                    .insert_api(silence, max_silences, max_per_tenant)
             };
-            if added {
-                (
+            match added {
+                Ok(()) => (
                     StatusCode::CREATED,
                     Json(serde_json::json!({ "status": "created", "id": id })),
                 )
-                    .into_response()
-            } else {
-                (
+                    .into_response(),
+                Err(SilenceRejection::DuplicateId) => (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": format!("a silence with id '{id}' already exists"),
+                        "id": id,
+                    })),
+                )
+                    .into_response(),
+                Err(SilenceRejection::Full) => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(serde_json::json!({
                         "error": format!(
@@ -4047,7 +4629,17 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
                         )
                     })),
                 )
-                    .into_response()
+                    .into_response(),
+                Err(SilenceRejection::TenantFull) => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "this tenant's dynamic silence quota is reached ({}); delete silences or raise daemon.tenancy.quotas.silences",
+                            max_per_tenant.unwrap_or_default()
+                        )
+                    })),
+                )
+                    .into_response(),
             }
         }
         Err(e) => {
@@ -4072,22 +4664,45 @@ async fn create_silence(State(state): State<AppState>, body: String) -> Response
 /// `DELETE /api/v1/silences/{id}` — expire (remove) a silence.
 async fn delete_silence(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> impl IntoResponse {
+    Query(query): Query<super::tenancy::TenantQuery>,
+) -> Response {
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
     let removed = {
         let mut st = state.alert_state.write().unwrap_or_else(|e| e.into_inner());
-        st.silences.remove(&id)
+        st.silences.remove_scoped(&id, tenant.as_ref())
     };
-    if removed {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "deleted", "id": id })),
-        )
-    } else {
-        (
+    match removed {
+        SilenceRemoval::Removed(owner) => super::audit::with_audit_target(
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "deleted", "id": id })),
+            )
+                .into_response(),
+            owner.as_ref(),
+        ),
+        SilenceRemoval::NotFound => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such silence", "id": id })),
         )
+            .into_response(),
+        SilenceRemoval::Ambiguous => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!("several tenants have a silence with id '{id}'"),
+                "hint": "name one with ?tenant=<id>",
+                "id": id,
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -4701,6 +5316,7 @@ async fn fields_observer_reset(State(state): State<AppState>) -> Response {
 /// captured / dropped counts so consumers can detect gaps.
 async fn tap_stream(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<super::tap::TapQuery>,
 ) -> Response {
     let Some(tap) = state.tap.as_ref() else {
@@ -4724,13 +5340,21 @@ async fn tap_stream(
                 .into_response();
         }
     };
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
 
-    let Some(handle) = tap.registry.register(params.stage) else {
+    let Some(handle) = tap.registry.register(params.stage, tenant) else {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "tap session capacity reached",
-                "hint": "wait for an active tap to finish, or raise daemon.tap.max_sessions",
+                "hint": "wait for an active tap to finish, or raise daemon.tap.max_sessions (or daemon.tenancy.quotas.stream_sessions)",
             })),
         )
             .into_response();
@@ -4745,6 +5369,7 @@ async fn tap_stream(
 /// reports the streamed / dropped counts.
 async fn detections_stream(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     axum::extract::Query(query): axum::extract::Query<super::tail::TailQuery>,
 ) -> Response {
     let Some(tail) = state.tail.as_ref() else {
@@ -4768,24 +5393,83 @@ async fn detections_stream(
                 .into_response();
         }
     };
+    let tenant = match read_tenant(
+        &state,
+        identity.as_ref().map(|e| &e.0),
+        query.tenant.as_deref(),
+    ) {
+        Ok(tenant) => tenant,
+        Err(response) => return response,
+    };
 
-    match super::tail::stream_response(&tail.registry, params, tail.metrics.clone()) {
+    match super::tail::stream_response(&tail.registry, params, tenant, tail.metrics.clone()) {
         Some(response) => response,
         None => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "tail session capacity reached",
-                "hint": "wait for an active tail to finish, or raise daemon.tail.max_sessions",
+                "hint": "wait for an active tail to finish, or raise daemon.tail.max_sessions (or daemon.tenancy.quotas.stream_sessions)",
             })),
         )
             .into_response(),
     }
 }
 
+/// Resolve the tenant an ingest request binds to. With tenancy on, the
+/// authenticated principal must name exactly one tenant; an `all_tenants`
+/// token has none to bind, so it is refused.
+#[allow(clippy::result_large_err)]
+fn ingest_tenant(
+    enabled: bool,
+    identity: Option<&AuthIdentity>,
+) -> Result<Option<TenantId>, Response> {
+    if !enabled {
+        return Ok(None);
+    }
+    let Some(identity) = identity else {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "tenancy is enabled but the request has no authenticated tenant"
+            })),
+        )
+            .into_response());
+    };
+    if identity.all_tenants {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "an all_tenants token cannot ingest; use a tenant-bound token"
+            })),
+        )
+            .into_response());
+    }
+    identity.tenant.clone().map(Some).ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "the authenticated token has no tenant binding"
+            })),
+        )
+            .into_response()
+    })
+}
+
 /// Accept events via HTTP POST for processing.
 /// Each non-empty line in the request body is parsed using the configured
 /// `--input-format` and forwarded to the engine.
-async fn ingest_events(State(state): State<AppState>, body: String) -> Response {
+async fn ingest_events(
+    State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    body: String,
+) -> Response {
+    let tenant = match ingest_tenant(state.tenancy_enabled, identity.as_ref().map(|e| &e.0)) {
+        Ok(tenant) => tenant,
+        Err(response) => {
+            state.metrics.on_tenant_rejected("rest", "no_tenant");
+            return response;
+        }
+    };
     let event_tx = match &state.event_tx {
         Some(tx) => tx,
         None => {
@@ -4819,6 +5503,7 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
         let raw_event = RawEvent {
             payload: line.to_string(),
             ack_token: AckToken::Noop,
+            tenant: tenant.clone(),
         };
         // Mirror `spawn_source`'s accounting so the input-queue-depth and
         // back-pressure metrics are accurate for the HTTP push source too,
@@ -4873,9 +5558,17 @@ async fn ingest_events(State(state): State<AppState>, body: String) -> Response 
 #[cfg(feature = "daemon-otlp")]
 async fn otlp_http_logs(
     State(state): State<AppState>,
+    identity: Option<Extension<AuthIdentity>>,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
+    let tenant = match ingest_tenant(state.tenancy_enabled, identity.as_ref().map(|e| &e.0)) {
+        Ok(tenant) => tenant,
+        Err(response) => {
+            state.metrics.on_tenant_rejected("otlp_http", "no_tenant");
+            return response;
+        }
+    };
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -4986,7 +5679,7 @@ async fn otlp_http_logs(
             .with_label_values(&["http", encoding])
             .inc();
 
-        let raw_events = rsigma_runtime::logs_request_to_raw_events(&request);
+        let raw_events = rsigma_runtime::logs_request_to_raw_events_for(&request, tenant.as_ref());
         let record_count = raw_events.len();
         state.metrics.otlp_log_records.inc_by(record_count as u64);
         tracing::debug!(record_count, "OTLP logs ingested");
@@ -5080,6 +5773,8 @@ struct OtlpLogsGrpcService {
     /// authenticates its own request metadata and answers with proper gRPC
     /// status codes instead of bare HTTP 401/403.
     auth: Option<super::auth::ApiAuth>,
+    /// Whether tenancy is enabled, so a missing tenant is refused.
+    tenancy: bool,
 }
 
 #[cfg(feature = "daemon-otlp")]
@@ -5089,13 +5784,16 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
         &self,
         request: tonic::Request<rsigma_runtime::ExportLogsServiceRequest>,
     ) -> Result<tonic::Response<rsigma_runtime::ExportLogsServiceResponse>, tonic::Status> {
+        let mut identity = None;
         if let Some(auth) = &self.auth {
             let authorization = request
                 .metadata()
                 .get("authorization")
                 .and_then(|v| v.to_str().ok());
             match auth.check(authorization, super::auth::EVENTS_INGEST) {
-                super::auth::Decision::Allowed(_) => {}
+                super::auth::Decision::Allowed(allowed) => {
+                    identity = Some(allowed);
+                }
                 super::auth::Decision::Unauthorized => {
                     self.metrics
                         .api_auth_failures
@@ -5120,6 +5818,29 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
                 }
             }
         }
+        let tenant = if self.tenancy {
+            match identity.as_ref().and_then(|identity| {
+                if identity.all_tenants {
+                    None
+                } else {
+                    identity.tenant.clone()
+                }
+            }) {
+                Some(tenant) => Some(tenant),
+                None => {
+                    self.metrics
+                        .api_auth_failures
+                        .with_label_values(&["forbidden"])
+                        .inc();
+                    self.metrics.on_tenant_rejected("otlp_grpc", "no_tenant");
+                    return Err(tonic::Status::permission_denied(
+                        "tenancy is enabled; the token must name exactly one tenant to ingest",
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let span = tracing::debug_span!("otlp_ingest", transport = "grpc", encoding = "protobuf");
         async move {
             self.metrics
@@ -5127,7 +5848,10 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
                 .with_label_values(&["grpc", "protobuf"])
                 .inc();
 
-            let raw_events = rsigma_runtime::logs_request_to_raw_events(&request.into_inner());
+            let raw_events = rsigma_runtime::logs_request_to_raw_events_for(
+                &request.into_inner(),
+                tenant.as_ref(),
+            );
             let record_count = raw_events.len();
             self.metrics.otlp_log_records.inc_by(record_count as u64);
             tracing::debug!(record_count, "OTLP logs ingested");
@@ -5155,6 +5879,51 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bundle_joins_only_its_own_tenants_risk_entities() {
+        let entity = |tenant: Option<&str>| rsigma_runtime::RiskEntityView {
+            tenant_id: tenant.map(|t| TenantId::new(t).unwrap()),
+            entity_type: "user".to_string(),
+            entity_value: "alice".to_string(),
+            score: 100,
+            tactic_count: 1,
+            source_count: 1,
+            result_count: 1,
+            window_start: 0,
+            window_end: 60,
+            last_fired: None,
+        };
+        let views = vec![entity(Some("a")), entity(Some("b")), entity(None)];
+        let a = TenantId::new("a").unwrap();
+
+        let kept = same_tenant_entities(views.clone(), Some(&a));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].tenant_id.as_ref(), Some(&a));
+
+        let untenanted = same_tenant_entities(views, None);
+        assert_eq!(untenanted.len(), 1);
+        assert!(untenanted[0].tenant_id.is_none());
+    }
+
+    #[test]
+    fn tenant_routing_is_limited_to_findings_file_and_nats_sinks() {
+        let check = |spec: &str, role| {
+            let (base, params) = split_query(spec);
+            check_tenant_routing(base, &params, role)
+        };
+        assert!(check("file:///out/{tenant}.ndjson?max_open=8", SinkRole::Findings).is_ok());
+        assert!(check("nats://h:4222/det.{tenant}", SinkRole::Findings).is_ok());
+        assert!(check("stdout?tenant=a", SinkRole::Findings).is_ok());
+
+        assert!(check("file:///dlq/{tenant}.ndjson", SinkRole::Dlq).is_err());
+        assert!(check("file:///dlq.ndjson?tenant=a", SinkRole::Dlq).is_err());
+        assert!(check("file:///audit.ndjson?max_open=2", SinkRole::Audit).is_err());
+        assert!(check("otlp://h:4317/{tenant}", SinkRole::Findings).is_err());
+        assert!(check("file:///{tenant}/{tenant}.ndjson", SinkRole::Findings).is_err());
+        assert!(check("file:///out.ndjson?max_open=8", SinkRole::Findings).is_err());
+        assert!(check("nats://h:4222/det.{tenant}?max_open=8", SinkRole::Findings).is_err());
+    }
 
     #[test]
     fn dropped_failure_warnings_are_rate_limited() {
@@ -5291,12 +6060,16 @@ mod tests {
                     role: Some("ingest".into()),
                     permissions: None,
                     token_env: "SHIPPER".into(),
+                    tenant: None,
+                    all_tenants: false,
                 },
                 TokenSpec {
                     name: "viewer".into(),
                     role: Some("reader".into()),
                     permissions: None,
                     token_env: "VIEWER".into(),
+                    tenant: None,
+                    all_tenants: false,
                 },
             ];
             ApiAuth::build(&[], &tokens, &[], |key| match key {
@@ -5314,6 +6087,7 @@ mod tests {
                     event_tx,
                     metrics: Arc::new(Metrics::new()),
                     auth,
+                    tenancy: false,
                 },
                 event_rx,
             )

@@ -129,9 +129,20 @@ pub struct Metrics {
     pub risk_incident_results_total: IntCounter,
     pub audit_records_total: IntCounter,
     pub audit_write_errors_total: IntCounter,
+    pub tenant_rejected_total: IntCounterVec,
+    pub tenant_quota_evictions_total: IntCounterVec,
+    pub detection_matches_by_tenant_total: IntCounterVec,
 }
 
 impl Metrics {
+    /// Pre-register a tenant's match-count label so it appears on `/metrics`
+    /// from startup.
+    pub fn register_tenant(&self, tenant: &str) {
+        self.detection_matches_by_tenant_total
+            .with_label_values(&[tenant])
+            .inc_by(0);
+    }
+
     pub fn new() -> Self {
         let registry = Registry::new();
 
@@ -1320,6 +1331,59 @@ impl Metrics {
             "Audit trail SQLite or sink write failures",
         ))
         .unwrap();
+        let tenant_rejected_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tenant_rejected_total",
+                "Ingest that had no tenant binding or was skipped for lack of one",
+            ),
+            &["channel", "reason"],
+        )
+        .unwrap();
+        for channel in ["rest", "otlp_http", "otlp_grpc", "engine"] {
+            for reason in ["no_tenant", "untenanted_event"] {
+                tenant_rejected_total
+                    .with_label_values(&[channel, reason])
+                    .inc_by(0);
+            }
+        }
+        let tenant_quota_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tenant_quota_evictions_total",
+                "Entries evicted because a tenant hit its quota",
+            ),
+            &["store"],
+        )
+        .unwrap();
+        for store in [
+            "correlation_state",
+            "active_alerts",
+            "incidents",
+            "risk_entities",
+        ] {
+            tenant_quota_evictions_total
+                .with_label_values(&[store])
+                .inc_by(0);
+        }
+        let detection_matches_by_tenant_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_detection_matches_by_tenant_total",
+                "Detection and correlation matches per tenant",
+            ),
+            &["tenant"],
+        )
+        .unwrap();
+        detection_matches_by_tenant_total
+            .with_label_values(&["other"])
+            .inc_by(0);
+        registry
+            .register(Box::new(tenant_rejected_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tenant_quota_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(detection_matches_by_tenant_total.clone()))
+            .unwrap();
         // Pre-materialise the fixed label sets and zero the gauges so the
         // `# HELP` / `# TYPE` lines and zero series render on the first scrape.
         for action in ["scored", "no_entity", "skipped"] {
@@ -1492,6 +1556,9 @@ impl Metrics {
             risk_incident_results_total,
             audit_records_total,
             audit_write_errors_total,
+            tenant_rejected_total,
+            tenant_quota_evictions_total,
+            detection_matches_by_tenant_total,
         }
     }
 
@@ -1603,6 +1670,24 @@ impl Metrics {
 
 /// Bridge from rsigma-runtime's MetricsHook trait to the Prometheus-backed Metrics struct.
 impl MetricsHook for Metrics {
+    fn on_tenant_rejected(&self, channel: &'static str, reason: &'static str) {
+        self.tenant_rejected_total
+            .with_label_values(&[channel, reason])
+            .inc();
+    }
+
+    fn on_tenant_quota_eviction(&self, store: &'static str) {
+        self.tenant_quota_evictions_total
+            .with_label_values(&[store])
+            .inc();
+    }
+
+    fn on_tenant_match(&self, tenant: &str) {
+        self.detection_matches_by_tenant_total
+            .with_label_values(&[tenant])
+            .inc();
+    }
+
     fn register_ruleset(&self, ruleset: &str) {
         for kind in ["detection", "correlation"] {
             self.ruleset_rules_loaded

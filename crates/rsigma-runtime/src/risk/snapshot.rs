@@ -6,12 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use rsigma_eval::TenantId;
+
 use super::accumulator::Contribution;
 
 /// Snapshot format version. Bump on any breaking change to the layout below; a
 /// loaded snapshot whose version differs is discarded and the accumulator
 /// starts empty.
-pub const SNAPSHOT_VERSION: u32 = 1;
+pub const SNAPSHOT_VERSION: u32 = 2;
 
 /// A point-in-time capture of the whole accumulator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +27,9 @@ pub struct RiskStateSnapshot {
 /// One tracked entity's window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitySnapshot {
+    /// Tenant that owns this entity, when tenancy is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<TenantId>,
     /// The risk-object type.
     pub entity_type: String,
     /// The entity value.

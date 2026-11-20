@@ -81,24 +81,58 @@ impl DispositionState {
 
     /// Restore a persisted snapshot at `now`, pruning entries past the window,
     /// then refresh the ratio gauges. Returns `false` on a version mismatch.
-    pub fn restore(&self, snapshot: rsigma_runtime::DispositionSnapshot, now: i64) -> bool {
-        let restored = self
+    pub fn restore(
+        &self,
+        snapshot: rsigma_runtime::DispositionSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> bool {
+        let stats = self
             .store
             .write()
-            .map(|mut s| s.restore(snapshot, now))
-            .unwrap_or(false);
-        if restored {
+            .map(|mut s| s.restore_detailed(snapshot, now, tenancy))
+            .unwrap_or(None);
+        if let Some(stats) = &stats {
+            if stats.discarded_untenanted > 0 || stats.discarded_tenanted > 0 {
+                tracing::warn!(
+                    untenanted = stats.discarded_untenanted,
+                    tenanted = stats.discarded_tenanted,
+                    "Discarded disposition buckets that do not match the tenancy mode"
+                );
+            }
             self.refresh_all_gauges();
+            true
+        } else {
+            false
         }
-        restored
     }
 
     /// Ingest a batch from `body` (a single object, a JSON array, or NDJSON),
     /// labeling metrics with `source` (`api`, `file`, `http`, or `nats`).
     /// Returns `Err` only when the whole payload fails to parse.
     pub fn ingest(&self, body: &str, source: &str) -> Result<IngestSummary, String> {
+        self.ingest_inner(body, source, None)
+    }
+
+    /// Ingest a batch and bind every disposition to `tenant`, replacing any
+    /// `tenant` in the body (`None` clears it).
+    pub fn ingest_with_tenant(
+        &self,
+        body: &str,
+        source: &str,
+        tenant: Option<rsigma_eval::TenantId>,
+    ) -> Result<IngestSummary, String> {
+        self.ingest_inner(body, source, tenant)
+    }
+
+    fn ingest_inner(
+        &self,
+        body: &str,
+        source: &str,
+        tenant: Option<rsigma_eval::TenantId>,
+    ) -> Result<IngestSummary, String> {
         let now = chrono::Utc::now().timestamp();
-        let raws = match parse_dispositions(body) {
+        let mut raws = match parse_dispositions(body) {
             Ok(r) => r,
             Err(e) => {
                 self.metrics
@@ -108,6 +142,11 @@ impl DispositionState {
                 return Err(e.to_string());
             }
         };
+        // A record's own `tenant` is never identity: only the API principal
+        // binds one, and every other source ingests untenanted records.
+        for raw in &mut raws {
+            raw.tenant = tenant.as_ref().map(|t| t.as_str().to_string());
+        }
         let mut summary = IngestSummary::default();
         for raw in raws {
             match Disposition::from_raw(raw, now) {
@@ -134,7 +173,7 @@ impl DispositionState {
             let rules = disp
                 .incident_id
                 .as_deref()
-                .map(|id| self.resolve_incident_rules(id))
+                .map(|id| self.resolve_incident_rules(disp.tenant.as_ref(), id))
                 .unwrap_or_default();
             if rules.is_empty() {
                 self.count_ingest(source, "rejected");
@@ -348,35 +387,33 @@ impl DispositionState {
     }
 
     /// Recompute every rule's ratio gauge (after a bulk source ingest or a
-    /// state restore).
+    /// state restore). The gauge is labeled by rule only, so each value sums
+    /// the rule's dispositions across tenants.
     pub fn refresh_all_gauges(&self) {
-        if let Ok(store) = self.store.read() {
-            for summary in store.summaries() {
-                match summary.fp_ratio {
-                    Some(r) => self
-                        .metrics
-                        .rule_false_positive_ratio
-                        .with_label_values(&[&summary.rule_id])
-                        .set(r),
-                    None => {
-                        let _ = self
-                            .metrics
-                            .rule_false_positive_ratio
-                            .remove_label_values(&[&summary.rule_id]);
-                    }
-                }
-            }
+        let rules: std::collections::BTreeSet<String> = self
+            .store
+            .read()
+            .ok()
+            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
+            .unwrap_or_default();
+        for rule_id in rules {
+            self.refresh_gauge(&rule_id);
         }
     }
 
     /// Resolve an incident id to its contributing rule identities through the
-    /// live alert-pipeline incident map. Empty when the incident is unknown.
-    fn resolve_incident_rules(&self, incident_id: &str) -> Vec<String> {
+    /// live alert-pipeline incident map. Empty when the incident is unknown or
+    /// belongs to another tenant.
+    fn resolve_incident_rules(
+        &self,
+        tenant: Option<&rsigma_eval::TenantId>,
+        incident_id: &str,
+    ) -> Vec<String> {
         let Ok(state) = self.alert_state.read() else {
             return Vec::new();
         };
         for inc in state.incidents.snapshot(IncludeMode::Refs) {
-            if inc.incident_id == incident_id {
+            if inc.incident_id == incident_id && inc.tenant_id.as_ref() == tenant {
                 return inc.rule_counts.into_keys().collect();
             }
         }
@@ -384,7 +421,13 @@ impl DispositionState {
     }
 
     /// The per-rule ratio view served by `GET /api/v1/dispositions`.
+    #[allow(dead_code)]
     pub fn view(&self) -> serde_json::Value {
+        self.view_for_tenant(None)
+    }
+
+    /// The per-rule view scoped to `tenant`. `None` shows every tenant.
+    pub fn view_for_tenant(&self, tenant: Option<&rsigma_eval::TenantId>) -> serde_json::Value {
         let Ok(store) = self.store.read() else {
             return json!({ "error": "store lock poisoned" });
         };
@@ -392,9 +435,14 @@ impl DispositionState {
         let rules: Vec<serde_json::Value> = store
             .summaries()
             .into_iter()
+            .filter(|s| match tenant {
+                None => true,
+                Some(tenant) => s.tenant.as_ref() == Some(tenant),
+            })
             .map(|s| {
                 json!({
                     "rule_id": s.rule_id,
+                    "tenant_id": s.tenant.as_ref().map(|t| t.as_str()),
                     "true_positives": s.true_positives,
                     "false_positives": s.false_positives,
                     "benign_true_positives": s.benign_true_positives,
@@ -550,12 +598,41 @@ mod tests {
 
         let restored = state(1);
         let now = chrono::Utc::now().timestamp();
-        assert!(restored.restore(snap, now));
+        assert!(restored.restore(snap, now, false));
 
         // The restored view matches and the gauge was refreshed on restore.
         assert_eq!(restored.view()["rules"][0]["total"], 2);
         assert_eq!(
             restored
+                .metrics
+                .rule_false_positive_ratio
+                .with_label_values(&["r1"])
+                .get(),
+            0.5
+        );
+    }
+
+    #[test]
+    fn the_ratio_gauge_sums_a_rule_across_tenants() {
+        let state = state(1);
+        let tenant = |id: &str| Some(rsigma_eval::TenantId::new(id).unwrap());
+        state
+            .ingest_with_tenant(
+                r#"{"rule_id":"r1","verdict":"true_positive","fingerprint":"x"}"#,
+                "api",
+                tenant("a"),
+            )
+            .unwrap();
+        state
+            .ingest_with_tenant(
+                r#"{"rule_id":"r1","verdict":"false_positive","fingerprint":"y"}"#,
+                "api",
+                tenant("b"),
+            )
+            .unwrap();
+        state.refresh_all_gauges();
+        assert_eq!(
+            state
                 .metrics
                 .rule_false_positive_ratio
                 .with_label_values(&["r1"])

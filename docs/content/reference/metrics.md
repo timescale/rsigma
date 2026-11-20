@@ -27,6 +27,9 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_ruleset_rules_loaded` | gauge | `ruleset`, `kind` | Rules loaded per named ruleset, split into detection and correlation counts. Stays absent unless the daemon runs named rulesets. {{ added "unreleased" }} |
 | `rsigma_ruleset_matches_total` | counter | `ruleset`, `kind` | Matches produced per named ruleset, split into detection and correlation. Stays absent unless the daemon runs named rulesets. {{ added "unreleased" }} |
 | `rsigma_ruleset_events_skipped_total` | counter | `ruleset` | Events kept away from a named ruleset by its `when` schema binding. Stays absent unless the daemon runs named rulesets. {{ added "unreleased" }} |
+| `rsigma_tenant_rejected_total` | counter | `channel`, `reason` | Ingest that had no tenant binding or was skipped for lack of one. `channel` is `rest`, `otlp_http`, `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`. Registered unconditionally. {{ added "unreleased" }} |
+| `rsigma_tenant_quota_evictions_total` | counter | `store` | Entries evicted because a tenant hit its quota. `store` is `correlation_state`, `active_alerts`, `incidents`, or `risk_entities`. {{ added "unreleased" }} |
+| `rsigma_detection_matches_by_tenant_total` | counter | `tenant` | Detection and correlation matches per tenant. Tenants outside `daemon.tenancy.metrics_tenant_allowlist` count under `other`, so the label set stays bounded. Registered unconditionally and never incremented while tenancy is disabled. {{ added "unreleased" }} |
 | `rsigma_api_auth_failures_total` | counter | `reason` (`unauthorized`, `forbidden`) | API requests rejected by [bearer-token authentication](http-api.md#authentication): `unauthorized` is a missing or unrecognized token, `forbidden` a recognized token without the required permission. Each label value surfaces after its first rejection. Stays absent while authentication is disabled. |
 | `rsigma_audit_records_total` | counter | none | Control-plane API calls recorded in the [audit trail](http-api-state.md#audit-trail). Stays absent when audit is disabled (no `--state-db`). |
 | `rsigma_audit_write_errors_total` | counter | none | Audit trail SQLite insert or optional sink emission failures. |
@@ -124,7 +127,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_silences_active` | gauge | none | Currently-active silences. |
 | `rsigma_inhibited_total` | counter | `rule` | Results muted by an inhibition rule, by rule name. |
 | `rsigma_inhibit_sources_active` | gauge | none | Currently-active inhibition sources. |
-| `rsigma_inhibit_sources_refused_total` | counter | `rule` | Results that would have opened a new inhibition source but were not tracked because `max_inhibit_sources` was reached, by rule name. Appears once a source is first refused. {{ added "0.25.0" }} |
+| `rsigma_inhibit_sources_refused_total` | counter | `rule` | Results that would have opened a new inhibition source but were not tracked because `max_inhibit_sources` or the tenant's `daemon.tenancy.quotas.inhibition_sources` was reached, by rule name. Appears once a source is first refused. {{ added "0.25.0" }} |
 | `rsigma_alert_pipeline_duration_seconds` | histogram | none | Alert-pipeline stage duration in seconds. |
 
 ## Risk-based alerting (9 metrics)
@@ -220,7 +223,7 @@ Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: 
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. |
+| `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. With tenancy enabled, the ratio sums the rule's dispositions across tenants; per-tenant ratios are in `GET /api/v1/dispositions`. {{ added "unreleased" }} |
 | `rsigma_dispositions_total` | counter | `rule_title`, `verdict` | Analyst dispositions counted, by rule and verdict (`true_positive`, `false_positive`, `benign_true_positive`). |
 | `rsigma_disposition_ingest_total` | counter | `source`, `result` | Ingest outcomes by source (`api`, `file`, `http`, `nats`) and result (`accepted`, `duplicate`, `rejected`). |
 | `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). |
