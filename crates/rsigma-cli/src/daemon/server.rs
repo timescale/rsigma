@@ -3486,9 +3486,7 @@ fn tenant_filter_from_params(params: &[(&str, &str)]) -> Option<TenantId> {
 
 /// Split a file path around a whole-component `{tenant}` token.
 fn tenant_file_template(path: &str) -> Option<(String, String)> {
-    let Some(start) = path.find("{tenant}") else {
-        return None;
-    };
+    let start = path.find("{tenant}")?;
     let end = start + "{tenant}".len();
     let before_ok = start == 0 || path.as_bytes().get(start - 1) == Some(&b'/');
     let after_ok = end == path.len() || path.as_bytes().get(end) == Some(&b'/');
@@ -3911,6 +3909,7 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
 
 /// Resolve the tenant an API read should be scoped to. `Ok(None)` means every
 /// tenant, `Ok(Some)` means exactly one.
+#[allow(clippy::result_large_err)]
 fn read_tenant(
     state: &AppState,
     identity: Option<&AuthIdentity>,
@@ -4238,11 +4237,28 @@ async fn list_correlations(
         Ok(tenant) => tenant,
         Err(response) => return response,
     };
-    let correlations = state
+    let mut correlations = state
         .processor
         .introspect_correlations_for_tenant(None, None, tenant.as_ref())
         .map(|s| s.correlations)
         .unwrap_or_default();
+    if let Some(tenant) = &tenant {
+        let allowed: std::collections::HashSet<String> = state
+            .processor
+            .ruleset_stats()
+            .into_iter()
+            .filter(|ruleset| {
+                ruleset.tenants.is_empty() || ruleset.tenants.iter().any(|t| t == tenant)
+            })
+            .map(|ruleset| ruleset.name.to_string())
+            .collect();
+        correlations.retain(|correlation| {
+            correlation
+                .ruleset
+                .as_deref()
+                .is_none_or(|ruleset| allowed.contains(ruleset))
+        });
+    }
     let count = correlations.len();
     Json(serde_json::json!({ "correlations": correlations, "count": count })).into_response()
 }
@@ -5289,6 +5305,7 @@ async fn detections_stream(
 /// Resolve the tenant an ingest request binds to. With tenancy on, the
 /// authenticated principal must name exactly one tenant; an `all_tenants`
 /// token has none to bind, so it is refused.
+#[allow(clippy::result_large_err)]
 fn ingest_tenant(
     enabled: bool,
     identity: Option<&AuthIdentity>,

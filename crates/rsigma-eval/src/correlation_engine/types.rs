@@ -180,7 +180,7 @@ pub struct CorrelationConfig {
     pub max_state_entries_per_tenant: Option<usize>,
 
     /// Skip correlation for events that carry no tenant, counting them in
-    /// [`CorrelationEngine::untenanted_skipped`].
+    /// [`crate::CorrelationEngine::untenanted_skipped`].
     ///
     /// Set when tenancy is enabled so a bug that lets an untenanted event
     /// through cannot form a shared `None` bucket. Default: `false`.

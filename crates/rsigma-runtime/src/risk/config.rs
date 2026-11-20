@@ -131,6 +131,9 @@ pub struct ScopeConfig {
     /// Severity levels.
     #[serde(default)]
     pub levels: Vec<String>,
+    /// Tenants the layer acts on. Empty means every tenant.
+    #[serde(default)]
+    pub tenants: Vec<String>,
 }
 
 /// `score:` block.
@@ -242,7 +245,17 @@ pub fn parse_risk_config(text: &str) -> Result<RiskLayer, RiskConfigError> {
 /// Validate a parsed file into a runnable [`RiskLayer`].
 pub fn build_risk_layer(file: RiskFile) -> Result<RiskLayer, RiskConfigError> {
     let scope = match file.scope {
-        Some(s) => Scope::new(s.rules, s.tags, s.levels).map_err(RiskConfigError::Scope)?,
+        Some(s) => {
+            let tenants = s
+                .tenants
+                .iter()
+                .map(|tenant| rsigma_eval::TenantId::new(tenant))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| RiskConfigError::Scope(error.to_string()))?;
+            Scope::new(s.rules, s.tags, s.levels)
+                .map_err(RiskConfigError::Scope)?
+                .with_tenants(tenants)
+        }
         None => Scope::default(),
     };
 

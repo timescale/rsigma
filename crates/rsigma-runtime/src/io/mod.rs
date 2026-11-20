@@ -568,7 +568,9 @@ impl Sink {
     {
         Box::pin(async move {
             match self {
-                Sink::Stdout(s) => blocking_write(|| s.send_raw(&env.json)),
+                Sink::Stdout(s) => {
+                    blocking_write(|| s.send_raw_for_tenant(&env.json, env.tenant.as_ref()))
+                }
                 Sink::File(s) => {
                     blocking_write(|| s.send_raw_for_tenant(&env.json, env.tenant.as_ref()))
                 }
@@ -581,7 +583,7 @@ impl Sink {
                 Sink::Otlp(_) => Ok(()),
                 Sink::Webhook(_) => Ok(()),
                 #[cfg(all(unix, feature = "uds"))]
-                Sink::Unix(s) => s.send_raw(&env.json).await,
+                Sink::Unix(s) => s.send_raw_for_tenant(&env.json, env.tenant.as_ref()).await,
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {
                         if let Err(e) = sink.send_incident(env).await {
@@ -610,7 +612,7 @@ impl Sink {
             match self {
                 Sink::Stdout(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    blocking_write(|| s.send_raw(&line))
+                    blocking_write(|| s.send_raw_for_tenant(&line, env.native().tenant.as_ref()))
                 }
                 Sink::File(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
@@ -632,7 +634,8 @@ impl Sink {
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => {
                     let line = formatted_incident_line(env, s.format(), s.ocsf_options())?;
-                    s.send_raw(&line).await
+                    s.send_raw_for_tenant(&line, env.native().tenant.as_ref())
+                        .await
                 }
                 Sink::FanOut(sinks) => {
                     for (idx, sink) in sinks.iter_mut().enumerate() {

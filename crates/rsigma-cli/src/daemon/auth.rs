@@ -21,6 +21,8 @@
 
 use std::sync::Arc;
 
+use rsigma_runtime::MetricsHook;
+
 use axum::extract::{MatchedPath, Request, State};
 use axum::http::{Method, StatusCode, header::AUTHORIZATION};
 use axum::middleware::Next;
@@ -535,6 +537,14 @@ pub async fn api_auth_middleware(
                         .api_auth_failures
                         .with_label_values(&["forbidden"])
                         .inc();
+                    if matches!(class, TenancyClass::Ingest) {
+                        let channel = if path == "/v1/logs" {
+                            "otlp_http"
+                        } else {
+                            "rest"
+                        };
+                        state.metrics.on_tenant_rejected(channel, "no_tenant");
+                    }
                     tracing::warn!(
                         path = %path,
                         token = ?identity.token,

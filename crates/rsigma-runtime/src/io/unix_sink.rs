@@ -132,6 +132,20 @@ impl UnixSocketSink {
         self.write_batch(&batch).await.map_err(|(_, err)| err)
     }
 
+    /// Write a pre-serialized line when it belongs to `tenant`.
+    pub async fn send_raw_for_tenant(
+        &mut self,
+        json: &str,
+        tenant: Option<&TenantId>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(filter) = &self.tenant_filter
+            && tenant != Some(filter)
+        {
+            return Ok(());
+        }
+        self.send_raw(json).await
+    }
+
     /// Write `batch`, reconnecting once if the socket has gone away. A failure
     /// reports how many whole lines were written.
     async fn write_batch(&mut self, batch: &LineBatch) -> Result<(), (usize, RuntimeError)> {

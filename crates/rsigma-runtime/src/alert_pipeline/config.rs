@@ -144,6 +144,9 @@ pub struct ScopeConfig {
     /// Severity levels.
     #[serde(default)]
     pub levels: Vec<String>,
+    /// Tenants the layer acts on. Empty means every tenant.
+    #[serde(default)]
+    pub tenants: Vec<String>,
 }
 
 /// `dedup:` block.
@@ -329,7 +332,15 @@ pub fn build_alert_pipeline(
 ) -> Result<AlertPipeline, AlertPipelineConfigError> {
     let scope = match file.scope {
         Some(s) => {
-            Scope::new(s.rules, s.tags, s.levels).map_err(AlertPipelineConfigError::Scope)?
+            let tenants = s
+                .tenants
+                .iter()
+                .map(|tenant| rsigma_eval::TenantId::new(tenant))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| AlertPipelineConfigError::Scope(error.to_string()))?;
+            Scope::new(s.rules, s.tags, s.levels)
+                .map_err(AlertPipelineConfigError::Scope)?
+                .with_tenants(tenants)
         }
         None => Scope::default(),
     };

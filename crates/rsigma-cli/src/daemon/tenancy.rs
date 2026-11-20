@@ -1,4 +1,5 @@
 //! Logical multi-tenancy: settings, startup refusals, and API tenant scoping.
+#![allow(clippy::items_after_test_module)]
 
 use std::path::PathBuf;
 
@@ -331,6 +332,7 @@ pub(crate) struct TenantQuery {
 
 /// Resolve the tenant filter for a read. `?tenant=` only narrows: a tenant
 /// token may not name another tenant, and `?tenant=` needs tenancy.
+#[allow(clippy::result_large_err)]
 pub(crate) fn tenant_filter(
     enabled: bool,
     identity: Option<&AuthIdentity>,
@@ -365,6 +367,7 @@ pub(crate) fn tenant_filter(
 
 /// Resolve the tenant a write binds to. A tenant token always binds to its
 /// own tenant; an `all_tenants` token must name one in the body.
+#[allow(clippy::result_large_err)]
 pub(crate) fn write_tenant(
     enabled: bool,
     identity: Option<&AuthIdentity>,
@@ -394,6 +397,7 @@ pub(crate) fn write_tenant(
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_tenant(raw: &str) -> Result<TenantId, Response> {
     TenantId::new(raw).map_err(|error| bad_request(&error.to_string()))
 }
@@ -510,8 +514,10 @@ pub(crate) fn resolve_tenancy_settings(
 ) -> Result<(TenancySettings, Option<TenantId>, Vec<NatsTenantBinding>), String> {
     let daemon = base.daemon.as_ref();
     let tenancy = daemon.and_then(|d| d.tenancy.as_ref());
-    let mut settings = TenancySettings::default();
-    settings.enabled = cli_tenancy || tenancy.and_then(|t| t.enabled).unwrap_or(false);
+    let mut settings = TenancySettings {
+        enabled: cli_tenancy || tenancy.and_then(|t| t.enabled).unwrap_or(false),
+        ..Default::default()
+    };
     if let Some(quotas) = tenancy.and_then(|t| t.quotas.clone()) {
         settings.quotas = quotas.into();
     }
@@ -637,6 +643,59 @@ pub(crate) fn validate_tenancy_from_config(
         .and_then(|d| d.output.as_ref())
         .and_then(|o| o.sinks.clone())
         .unwrap_or_default();
+    let mut alert_pipeline_nats_subjects = Vec::new();
+    let mut scope_tenants: Vec<Vec<String>> = Vec::new();
+    if let Some(path) = base.daemon.as_ref().and_then(|d| d.alert_pipeline.as_ref())
+        && let Ok(file) = rsigma_runtime::load_alert_pipeline_file(path)
+    {
+        if let Some(group) = &file.group
+            && let Some(subject) = &group.nats_subject
+        {
+            alert_pipeline_nats_subjects.push(subject.clone());
+        }
+        if let Some(scope) = &file.scope {
+            scope_tenants.push(scope.tenants.clone());
+        }
+    }
+    if let Some(path) = base.daemon.as_ref().and_then(|d| d.risk.as_ref())
+        && let Ok(file) = rsigma_runtime::load_risk_file(path)
+    {
+        if let Some(subject) = &file.nats_subject {
+            alert_pipeline_nats_subjects.push(subject.clone());
+        }
+        if let Some(incident) = &file.incident
+            && let Some(subject) = &incident.nats_subject
+        {
+            alert_pipeline_nats_subjects.push(subject.clone());
+        }
+        if let Some(scope) = &file.scope {
+            scope_tenants.push(scope.tenants.clone());
+        }
+    }
+    if let Some(path) = base.daemon.as_ref().and_then(|d| d.enrichers.as_ref())
+        && let Ok(file) = rsigma_runtime::load_enrichers_file(path)
+    {
+        for enricher in &file.enrichers {
+            if let Some(scope) = &enricher.scope {
+                scope_tenants.push(scope.tenants.clone());
+            }
+        }
+    }
+    for path in base
+        .daemon
+        .as_ref()
+        .and_then(|d| d.output.as_ref())
+        .and_then(|o| o.webhooks.clone())
+        .unwrap_or_default()
+    {
+        if let Ok(file) = rsigma_runtime::load_webhooks_file(std::path::Path::new(&path)) {
+            for webhook in &file.webhooks {
+                if let Some(scope) = &webhook.scope {
+                    scope_tenants.push(scope.tenants.clone());
+                }
+            }
+        }
+    }
     let input_tenant_str = input_tenant.map(|t| t.as_str().to_string());
     validate_tenancy(&TenancyValidation {
         settings,
@@ -650,7 +709,7 @@ pub(crate) fn validate_tenancy_from_config(
         ruleset_tenants,
         project_layer_loaded,
         sink_specs: &sink_specs,
-        alert_pipeline_nats_subjects: &[],
-        scope_tenants: &[],
+        alert_pipeline_nats_subjects: &alert_pipeline_nats_subjects,
+        scope_tenants: &scope_tenants,
     })
 }

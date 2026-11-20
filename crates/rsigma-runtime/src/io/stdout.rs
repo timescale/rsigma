@@ -103,4 +103,18 @@ impl StdoutSink {
         writeln!(out, "{json}")?;
         Ok(())
     }
+
+    /// Write a pre-serialized line when it belongs to `tenant`.
+    pub fn send_raw_for_tenant(
+        &self,
+        json: &str,
+        tenant: Option<&TenantId>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(filter) = &self.tenant_filter
+            && tenant != Some(filter)
+        {
+            return Ok(());
+        }
+        self.send_raw(json)
+    }
 }
