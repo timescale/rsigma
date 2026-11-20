@@ -20,6 +20,8 @@ The daemon accepts four bindings:
 - `daemon.input.tenant` on the single selected pull source (`stdin`, `unix://`, or a NATS URL). Every event from that source belongs to that tenant.
 - `daemon.input.nats_tenants`, one exact subject and tenant per subscription. Every message from a subscription belongs to its tenant.
 
+A tenant id is 1 to 64 ASCII letters, digits, `_`, and `-`, and starts with a letter or digit. A `.` is refused, so an id is always exactly one NATS subject token and one path component.
+
 `daemon.input.nats_tenants` needs a subject-less `nats://host:port` source. A subscriber never sees the publisher's authenticated user, so the broker, not the daemon, must enforce the subject-to-tenant binding. The recommended layout is one NATS account per tenant exporting its stream into the daemon's account under `tenants.<id>.`.
 
 ## Example
@@ -161,7 +163,7 @@ A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset rec
 
 ## Sink routing
 
-A sink can filter by tenant with `tenant=<id>`, route NATS subjects with `{tenant}` as a whole dot-separated token, and route file paths with `{tenant}` as a whole path component. File sinks open one handle per tenant and keep at most `max_open` (default 64). A result without a tenant on a `{tenant}` subject or path is a permanent delivery failure and reaches the DLQ. OTLP sinks carry `tenant_id` as a log-record attribute automatically.
+A sink can filter by tenant with `tenant=<id>`, route NATS subjects with `{tenant}` as a whole dot-separated token, and route file paths with `{tenant}` as a whole path component. `{tenant}` may appear once, and only in a file path or a NATS subject; the alert pipeline and risk `nats_subject` keys follow the same rule. A `{tenant}` NATS subject publishes into one JetStream stream whose subject has `*` in place of `{tenant}`. File sinks create the tenant's directory on first write, open one handle per tenant, and keep at most `max_open` (default 64); `max_open` is refused on any other sink. The DLQ and audit sinks carry no result tenant, so `{tenant}`, `tenant=`, and `max_open=` are refused there. A result without a tenant on a `{tenant}` subject or path is a permanent delivery failure and reaches the DLQ. OTLP sinks carry `tenant_id` as a log-record attribute automatically.
 
 ## Metrics
 
