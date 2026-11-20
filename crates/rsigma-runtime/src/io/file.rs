@@ -200,6 +200,9 @@ impl FileSink {
                     None => break,
                 }
             }
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
             let file = OpenOptions::new().create(true).append(true).open(path)?;
             self.tenant_handles.insert(
                 tenant.clone(),
@@ -218,7 +221,9 @@ impl FileSink {
     pub fn send_raw(&mut self, json: &str) -> Result<(), RuntimeError> {
         match self.out.as_mut() {
             Some(out) => out.write_line(json),
-            None => Ok(()),
+            None => Err(RuntimeError::Permanent(
+                "a {tenant} file sink received a line without a tenant".to_string(),
+            )),
         }
     }
 
@@ -531,5 +536,25 @@ mod tests {
         assert_eq!(written.lines().count(), 1);
         assert!(written.contains("\"tenant_id\":\"a\""));
         assert!(!written.contains("\"tenant_id\":\"b\""));
+    }
+
+    #[test]
+    fn a_tenant_directory_is_created_on_first_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        sink.send(&vec![tenanted("a", "a")]).unwrap();
+        assert!(dir.path().join("a/findings.ndjson").is_file());
+    }
+
+    #[test]
+    fn a_raw_line_on_a_tenant_path_is_a_permanent_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, ".ndjson".to_string(), 4).unwrap();
+        assert!(matches!(
+            sink.send_raw("{}"),
+            Err(RuntimeError::Permanent(_))
+        ));
     }
 }

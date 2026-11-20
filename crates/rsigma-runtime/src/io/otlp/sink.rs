@@ -198,31 +198,42 @@ impl OtlpSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        if result.is_empty() {
-            return Ok(());
+        match self.build_request(result, ctx) {
+            Some(request) => self.export(request).await,
+            None => Ok(()),
         }
-        let filtered: ProcessResult = result
+    }
+
+    /// The export request for the results this sink delivers, or `None` when
+    /// the tenant filter leaves nothing.
+    fn build_request(
+        &self,
+        result: &ProcessResult,
+        ctx: Option<&DeliveryContext>,
+    ) -> Option<ExportLogsServiceRequest> {
+        // Original batch positions, so a finding uid matches every other sink.
+        let (positions, filtered): (Vec<usize>, ProcessResult) = result
             .iter()
-            .filter(|r| {
+            .enumerate()
+            .filter(|(_, r)| {
                 self.tenant_filter
                     .as_ref()
                     .is_none_or(|tenant| r.header.tenant_id.as_ref() == Some(tenant))
             })
-            .cloned()
-            .collect();
+            .map(|(index, r)| (index, r.clone()))
+            .unzip();
         if filtered.is_empty() {
-            return Ok(());
+            return None;
         }
-        let request = match self.format {
+        Some(match self.format {
             SinkFormat::Ndjson => evaluation_results_to_logs_request(&filtered),
             SinkFormat::Ocsf => {
                 let ocsf = &self.ocsf;
                 ocsf_findings_to_logs_request(&filtered, |index, r| {
-                    ocsf_finding(r, ctx.map(|c| (c, index)), ocsf)
+                    ocsf_finding(r, ctx.map(|c| (c, positions[index])), ocsf)
                 })
             }
-        };
-        self.export(request).await
+        })
     }
 
     /// Export a pre-serialized line as a single OTLP log-record body. Used when
@@ -625,6 +636,33 @@ mod tests {
         assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(0));
         assert_eq!(finding["metadata"]["version"], "1.3.0");
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_tenant_filter_keeps_the_original_finding_uid() {
+        use opentelemetry_proto::tonic::common::v1::any_value;
+
+        let tenanted = |tenant: &str| {
+            let mut r = one_detection().remove(0);
+            r.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+            r
+        };
+        let batch = vec![tenanted("a"), tenanted("b")];
+        let sink = OtlpSink::new(OtlpProtocol::Grpc, "127.0.0.1:4317", false, None)
+            .unwrap()
+            .with_format(SinkFormat::Ocsf)
+            .with_tenant_filter(Some(rsigma_eval::TenantId::new("b").unwrap()));
+        let ctx = DeliveryContext::new();
+        let request = sink.build_request(&batch, Some(&ctx)).expect("tenant b");
+        let records = &request.resource_logs[0].scope_logs[0].log_records;
+        assert_eq!(records.len(), 1);
+        let Some(any_value::Value::StringValue(raw)) =
+            records[0].body.as_ref().and_then(|b| b.value.as_ref())
+        else {
+            panic!("finding body");
+        };
+        let finding: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(1));
     }
 
     /// A CA, a server leaf (SAN `127.0.0.1` + `localhost`), and a client leaf,
