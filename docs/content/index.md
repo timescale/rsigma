@@ -8,7 +8,7 @@ toc: false
 ::: hero layout:split glow:true
 # Sigma detection engineering in one Rust binary
 
-Parse, lint, evaluate, correlate, and convert [Sigma](https://sigmahq.io/) rules from a single self-contained binary or embeddable Rust workspace. Built on open standards: [Sigma v2.1.0](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification), [OpenTelemetry](https://opentelemetry.io/), and [STIX](https://oasis-open.github.io/cti-documentation/stix/intro)/[TAXII](https://oasis-open.github.io/cti-documentation/taxii/intro).
+Parse, lint, evaluate, correlate, and convert [Sigma](https://sigmahq.io/) rules from a single self-contained binary or embeddable Rust workspace. Built on open standards: [Sigma v2.1.0](https://github.com/SigmaHQ/sigma-specification/tree/0c857d07da0e71eaaab2d667b3cce6f2c8469578/specification), [OpenTelemetry](https://opentelemetry.io/), [STIX](https://oasis-open.github.io/cti-documentation/stix/intro), [TAXII](https://oasis-open.github.io/cti-documentation/taxii/intro) and [OCSF](https://ocsf.io/).
 
 ::: tag "v{{ rsigma.version }}" icon:tag ::: ::: tag "MIT" icon:scale ::: ::: tag "{{ rsigma.lint.rules }} lint rules" icon:shield-check ::: ::: tag "All 8 correlations" icon:git-branch ::: {.rsigma-hero-tags}
 
