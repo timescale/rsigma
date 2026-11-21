@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For a streaming daemon shape, wire an `EventSource` (`StdinSource`, `NatsSource`, …) through `spawn_source` into your own loop, batch the channel into `Vec<String>`, and feed it to `process_batch_lines`. The daemon code in `rsigma-cli/src/daemon/server.rs` is the reference implementation.
+For a streaming daemon shape, wire an `EventSource` (`StdinSource`, `NatsSource`, …) through `spawn_source` into your own loop, batch the channel into `Vec<String>`, and feed it to `process_batch_lines`. The daemon code in `rsigma-cli/src/daemon/server.rs` is the reference implementation. `StdinSource::read_status` returns a `StdinReadStatus` that reports whether the stdin reader stopped on a read error instead of end of input, so a batch runner can tell a clean end of input from a failed read. {{ added "unreleased" }}
 
 Sinks work on both multi-threaded and current-thread Tokio runtimes; on a current-thread runtime the stdout and file sinks write inline. `load_rules` is synchronous, so it can only resolve dynamic sources referenced by pipelines on a multi-threaded runtime and returns an error on a current-thread one, leaving the previous engine in place. {{ added "0.25.0" }}
 

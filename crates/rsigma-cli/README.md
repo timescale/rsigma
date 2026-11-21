@@ -284,6 +284,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--rules` / `-r` | path | required | Path to Sigma rule file or directory |
 | `--pipeline` / `-p` | repeatable | `[]` | Processing pipeline YAML file(s), applied in priority order |
 | `--input` | string | `"stdin"` | Event input source: `stdin`, `http`, or `nats://<host>:<port>/<subject>` |
+| `--stdin-mode` | string | `"batch"` | How a stdin input ends: `batch` exits at end of input with the batch result as the exit code, `stream` keeps running until a shutdown signal |
 | `--output` | repeatable | `["stdout"]` | Detection output sink (fan-out): `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>` |
 | `--input-format` | string | `"auto"` | Input log format: `auto`, `json`, `syslog`, `plain`, `logfmt`\*, `cef`\* |
 | `--syslog-tz` | string | `"+00:00"` | Default timezone for RFC 3164 syslog (e.g. `+05:00`, `-08:00`) |

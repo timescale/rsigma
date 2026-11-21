@@ -152,6 +152,14 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "input", default_value = config::defaults::INPUT_SOURCE)]
     pub input: String,
 
+    /// How a stdin input ends. 'batch' (default): exit at end of input with
+    /// the batch result as the exit code. 'stream': keep running after end
+    /// of input until a shutdown signal, and exit 0 like the other inputs.
+    /// Ignored for other inputs.
+    #[arg(long = "stdin-mode", default_value = config::defaults::STDIN_MODE,
+           value_parser = ["batch", "stream"])]
+    pub stdin_mode: String,
+
     /// Detection output sink (can be repeated for fan-out).
     /// Supported schemes: `stdout`, `file://<path>`,
     /// `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC),
@@ -801,6 +809,7 @@ pub(crate) fn cmd_daemon(
         state_db,
         state_save_interval,
         input,
+        stdin_mode,
         output,
         buffer_size,
         batch_size,
@@ -936,6 +945,15 @@ pub(crate) fn cmd_daemon(
         rsigma_runtime::ReplayPolicy::Resume
     };
 
+    let stdin_mode = match stdin_mode.as_str() {
+        "batch" => daemon::server::StdinMode::Batch,
+        "stream" => daemon::server::StdinMode::Stream,
+        other => {
+            eprintln!("Invalid daemon.input.stdin_mode '{other}': expected batch or stream");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
+
     let state_restore_mode = if clear_state {
         daemon::server::StateRestoreMode::ForceClear
     } else if keep_state {
@@ -992,6 +1010,7 @@ pub(crate) fn cmd_daemon(
         state_db,
         state_save_interval,
         input,
+        stdin_mode,
         output,
         buffer_size,
         batch_size,
@@ -1499,6 +1518,11 @@ fn apply_daemon_config(
         {
             args.input = v;
         }
+        if !explicit("stdin_mode")
+            && let Some(v) = input.stdin_mode
+        {
+            args.stdin_mode = v;
+        }
         if !explicit("input_format")
             && let Some(v) = input.format
         {
@@ -2002,6 +2026,7 @@ fn run_daemon(
     state_db: Option<PathBuf>,
     state_save_interval: u64,
     input: String,
+    stdin_mode: daemon::server::StdinMode,
     output: Vec<String>,
     buffer_size: usize,
     batch_size: usize,
@@ -2211,6 +2236,7 @@ fn run_daemon(
         state_db,
         state_save_interval,
         input,
+        stdin_mode,
         output,
         buffer_size,
         batch_size,
@@ -2269,7 +2295,13 @@ fn run_daemon(
             process::exit(exit_code::CONFIG_ERROR);
         });
 
-    rt.block_on(daemon::run_daemon(config));
+    let code = rt.block_on(daemon::run_daemon(config));
+    // Dropping the runtime closes the state database, which folds its
+    // write-ahead log back into the file.
+    drop(rt);
+    if code != exit_code::SUCCESS {
+        process::exit(code);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2609,6 +2641,22 @@ mod tests {
         let base = partial("daemon:\n  input:\n    syslog_strip_bom: false\n");
         apply_daemon_config(&mut args, &matches, base);
         assert!(args.syslog_strip_bom);
+    }
+
+    #[test]
+    fn stdin_mode_default_batch_config_stream_flag_wins() {
+        let (args, _) = parse(&["daemon", "--rules", "/r"]);
+        assert_eq!(args.stdin_mode, "batch");
+
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r"]);
+        let base = partial("daemon:\n  input:\n    stdin_mode: stream\n");
+        apply_daemon_config(&mut args, &matches, base);
+        assert_eq!(args.stdin_mode, "stream");
+
+        let (mut args, matches) = parse(&["daemon", "--rules", "/r", "--stdin-mode", "batch"]);
+        let base = partial("daemon:\n  input:\n    stdin_mode: stream\n");
+        apply_daemon_config(&mut args, &matches, base);
+        assert_eq!(args.stdin_mode, "batch");
     }
 
     #[test]

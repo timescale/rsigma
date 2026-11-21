@@ -356,6 +356,7 @@ export default {
         { title: "Docker", path: "/deployment/docker" },
         { title: "Kubernetes", path: "/deployment/kubernetes" },
         { title: "systemd", path: "/deployment/systemd" },
+        { title: "Serverless", path: "/deployment/serverless" },
       ],
     },
     {

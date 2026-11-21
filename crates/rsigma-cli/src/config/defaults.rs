@@ -16,6 +16,7 @@ pub(crate) const CONFIG_VERSION: u32 = 1;
 pub(crate) const LOG_FORMAT: &str = "text";
 pub(crate) const API_ADDR: &str = "0.0.0.0:9090";
 pub(crate) const INPUT_SOURCE: &str = "stdin";
+pub(crate) const STDIN_MODE: &str = "batch";
 pub(crate) const INPUT_FORMAT: &str = "auto";
 pub(crate) const SYSLOG_TZ: &str = "+00:00";
 pub(crate) const SYSLOG_STRIP_BOM: bool = true;
@@ -154,6 +155,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
             }),
             input: Some(InputPartial {
                 source: Some(INPUT_SOURCE.to_string()),
+                stdin_mode: Some(STDIN_MODE.to_string()),
                 format: Some(INPUT_FORMAT.to_string()),
                 syslog_tz: Some(SYSLOG_TZ.to_string()),
                 syslog_strip_bom: Some(SYSLOG_STRIP_BOM),

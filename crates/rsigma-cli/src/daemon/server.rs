@@ -20,12 +20,13 @@ use rsigma_runtime::{
     FieldObserver, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, IncidentResult,
     IncludeMode, InputFormat, LogProcessor, MetricsHook, OnFull, RawEvent, RiskLayer, RiskState,
     RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
-    SilenceRejection, SilenceRemoval, SilenceSpec, Sink, SinkFormat, StdinSource, StdoutSink,
-    build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
+    SilenceRejection, SilenceRemoval, SilenceSpec, Sink, SinkFormat, StdinReadStatus, StdinSource,
+    StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
     load_schema_signatures, spawn_source, strip_event_payloads,
 };
 
 use super::auth::AuthIdentity;
+use super::batch;
 use super::bundle::BundleFormat;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -190,6 +191,16 @@ pub enum StateRestoreMode {
     ForceKeep,
 }
 
+/// How a daemon reading stdin treats the end of its input (`--stdin-mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdinMode {
+    /// Exit at end of input and report the batch result in the exit code.
+    Batch,
+    /// Keep running after end of input until a shutdown signal, with the
+    /// same restore and exit behavior as the other inputs.
+    Stream,
+}
+
 #[derive(Clone)]
 struct AppState {
     processor: Arc<LogProcessor>,
@@ -277,6 +288,7 @@ pub struct DaemonConfig {
     pub state_db: Option<PathBuf>,
     pub state_save_interval: u64,
     pub input: String,
+    pub stdin_mode: StdinMode,
     pub output: Vec<String>,
     pub buffer_size: usize,
     pub batch_size: usize,
@@ -517,7 +529,8 @@ fn default_detect_inflight(workers: usize) -> usize {
     }
 }
 
-pub async fn run_daemon(config: DaemonConfig) {
+pub async fn run_daemon(config: DaemonConfig) -> i32 {
+    let batch = config.runs_batch();
     let metrics = Arc::new(Metrics::new());
     let health = HealthState::new();
 
@@ -890,6 +903,15 @@ pub async fn run_daemon(config: DaemonConfig) {
                             "Correlation state restored from database"
                         );
                     } else {
+                        if batch {
+                            batch::exit_unrestorable(
+                                "correlation",
+                                &format!(
+                                    "snapshot version {} is not supported, or its ruleset layout does not match the loaded rules",
+                                    snapshot.version
+                                ),
+                            );
+                        }
                         tracing::warn!(
                             snapshot_version = snapshot.version,
                             snapshot_rulesets = snapshot.rulesets.len(),
@@ -904,6 +926,11 @@ pub async fn run_daemon(config: DaemonConfig) {
                 tracing::info!("No previous correlation state found in database");
             }
             Err(e) => {
+                // A --clear-state run never attempts a restore, so an
+                // unreadable snapshot is not a failure there.
+                if batch && restore_state {
+                    batch::exit_unrestorable("correlation", &e);
+                }
                 tracing::warn!(error = %e, "Failed to load state from database, starting fresh");
             }
         }
@@ -979,6 +1006,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_alert_pipeline().await {
                         Ok(Some(snap)) => {
+                            let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
                             let restored = alert_state
                                 .write()
@@ -1005,6 +1033,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                             if restored {
                                 tracing::info!("Alert-pipeline state restored from database");
                             } else {
+                                if batch {
+                                    batch::exit_unrestorable(
+                                        "alert_pipeline",
+                                        &format!("snapshot version {version} is not supported"),
+                                    );
+                                }
                                 tracing::warn!(
                                     "Incompatible alert-pipeline snapshot version, starting fresh"
                                 );
@@ -1012,6 +1046,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                         Ok(None) => {}
                         Err(e) => {
+                            if batch {
+                                batch::exit_unrestorable("alert_pipeline", &e);
+                            }
                             tracing::warn!(error = %e, "Failed to load alert-pipeline state");
                         }
                     }
@@ -1074,6 +1111,7 @@ pub async fn run_daemon(config: DaemonConfig) {
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_risk().await {
                         Ok(Some(snap)) => {
+                            let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
                             let restored = risk_state
                                 .write()
@@ -1100,6 +1138,12 @@ pub async fn run_daemon(config: DaemonConfig) {
                             if restored {
                                 tracing::info!("Risk state restored from database");
                             } else {
+                                if batch {
+                                    batch::exit_unrestorable(
+                                        "risk",
+                                        &format!("snapshot version {version} is not supported"),
+                                    );
+                                }
                                 tracing::warn!(
                                     "Incompatible risk snapshot version, starting fresh"
                                 );
@@ -1107,6 +1151,9 @@ pub async fn run_daemon(config: DaemonConfig) {
                         }
                         Ok(None) => {}
                         Err(e) => {
+                            if batch {
+                                batch::exit_unrestorable("risk", &e);
+                            }
                             tracing::warn!(error = %e, "Failed to load risk state");
                         }
                     }
@@ -1284,15 +1331,27 @@ pub async fn run_daemon(config: DaemonConfig) {
         if restore_state && let Some(ref store) = state_store {
             match store.load_dispositions().await {
                 Ok(Some(snap)) => {
+                    let version = snap.version;
                     let now = chrono::Utc::now().timestamp();
                     if state.restore(snap, now, config.tenancy.enabled) {
                         tracing::info!("Disposition state restored from database");
                     } else {
+                        if batch {
+                            batch::exit_unrestorable(
+                                "dispositions",
+                                &format!("snapshot version {version} is not supported"),
+                            );
+                        }
                         tracing::warn!("Incompatible disposition snapshot version, starting fresh");
                     }
                 }
                 Ok(None) => {}
-                Err(e) => tracing::warn!(error = %e, "Failed to load disposition state"),
+                Err(e) => {
+                    if batch {
+                        batch::exit_unrestorable("dispositions", &e);
+                    }
+                    tracing::warn!(error = %e, "Failed to load disposition state");
+                }
             }
         }
         // Optional pull source: load the declared dynamic source(s) and ingest
@@ -1943,22 +2002,21 @@ pub async fn run_daemon(config: DaemonConfig) {
     let (ack_tx, mut ack_rx) = mpsc::unbounded_channel::<AckToken>();
 
     // Select source based on --input flag
+    let mut stdin_status: Option<StdinReadStatus> = None;
     #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
     let mut source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
-            let h = match config.input_tenant.clone() {
-                Some(tenant) => spawn_source(
-                    rsigma_runtime::WithTenant::new(StdinSource::new(), tenant),
-                    event_tx,
-                    Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-                ),
-                None => spawn_source(
-                    StdinSource::new(),
-                    event_tx,
-                    Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
-                ),
+            let source = StdinSource::new();
+            stdin_status = Some(source.read_status());
+            let hook = Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>);
+            let tenant = config.input_tenant.clone();
+            let h = match config.stdin_mode {
+                StdinMode::Batch => spawn_input_source(source, tenant, event_tx, hook),
+                StdinMode::Stream => {
+                    spawn_input_source(batch::HoldOpen::new(source), tenant, event_tx, hook)
+                }
             };
-            tracing::info!(input = "stdin", "Event source started");
+            tracing::info!(input = "stdin", mode = ?config.stdin_mode, "Event source started");
             Some(h)
         }
         "http" => {
@@ -2893,7 +2951,9 @@ pub async fn run_daemon(config: DaemonConfig) {
     // DLQ writer task: writes DLQ entries to the configured DLQ sink. Without
     // one, only delivery failures arrive here (parse errors are not routed),
     // and they are dropped with a rate-limited warning.
+    let undelivered = Arc::new(AtomicU64::new(0));
     let dlq_metrics = metrics.clone();
+    let undelivered_for_dlq = undelivered.clone();
     let dlq_handle = tokio::spawn(async move {
         tracing::debug!("DLQ task started");
         let mut dlq_sink = dlq_sink;
@@ -2904,9 +2964,11 @@ pub async fn run_daemon(config: DaemonConfig) {
                 let json = serde_json::to_string(&entry).unwrap_or_default();
                 if let Err(e) = sink.send_raw(&json).await {
                     dlq_metrics.dlq_write_failures.inc();
+                    undelivered_for_dlq.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(error = %e, "Failed to write to DLQ sink, entry dropped");
                 }
             } else {
+                undelivered_for_dlq.fetch_add(1, Ordering::Relaxed);
                 dropped.record(&entry.error, Instant::now());
             }
         }
@@ -3004,14 +3066,17 @@ pub async fn run_daemon(config: DaemonConfig) {
         }
     };
 
+    let mut task_failed = false;
     let shutdown_triggered = tokio::select! {
         _ = &mut serve_handle => true,
-        _ = async {
-            let _ = engine_handle.await;
-            let _ = dispatch_handle.await;
+        failed = async {
+            let engine = batch::task_failed("engine", engine_handle.await);
+            let dispatch = batch::task_failed("dispatch", dispatch_handle.await);
+            engine | dispatch
         } => {
             tracing::info!("Streaming pipeline complete");
             serve_handle.abort();
+            task_failed |= failed;
             false
         }
     };
@@ -3035,48 +3100,82 @@ pub async fn run_daemon(config: DaemonConfig) {
         source_done_notify.notify_one();
 
         let drain = async {
-            let _ = sink_handle.await;
+            let mut failed = batch::task_failed("sink", sink_handle.await);
             tracing::debug!("Sink task finished");
-            let _ = df_handle.await;
+            failed |= batch::task_failed("dlq_bridge", df_handle.await);
             tracing::debug!("DLQ bridge finished");
-            let _ = dlq_handle.await;
+            failed |= batch::task_failed("dlq", dlq_handle.await);
             tracing::debug!("DLQ task finished");
-            let _ = ack_handle.await;
+            failed |= batch::task_failed("ack", ack_handle.await);
             tracing::debug!("Ack task finished");
+            failed
         };
-        if tokio::time::timeout(drain_duration, drain).await.is_err() {
-            tracing::warn!(
+        match tokio::time::timeout(drain_duration, drain).await {
+            Ok(failed) => task_failed |= failed,
+            Err(_) => tracing::warn!(
                 timeout_secs = config.drain_timeout,
                 "Drain timeout exceeded, some events may be lost"
-            );
+            ),
         }
     } else {
-        let _ = sink_handle.await;
+        task_failed |= batch::task_failed("sink", sink_handle.await);
         tracing::debug!("Sink task finished");
-        let _ = df_handle.await;
+        task_failed |= batch::task_failed("dlq_bridge", df_handle.await);
         tracing::debug!("DLQ bridge finished");
-        let _ = dlq_handle.await;
+        task_failed |= batch::task_failed("dlq", dlq_handle.await);
         tracing::debug!("DLQ task finished");
-        let _ = ack_handle.await;
+        task_failed |= batch::task_failed("ack", ack_handle.await);
         tracing::debug!("Ack task finished");
     }
 
     // Save state on shutdown. After a drain timeout the ack task may still be
     // advancing the position; `capture` reads it before exporting, so the
     // saved position never runs ahead of the snapshots.
-    if let Some(ref store) = state_store {
-        let cut = state_sources.capture();
-        match store.save_all(&cut).await {
-            Ok(_) => match cut.position {
-                Some(pos) => tracing::info!(
-                    source_sequence = pos.sequence,
-                    "State saved to database on shutdown"
-                ),
-                None => tracing::info!("State saved to database on shutdown"),
-            },
-            Err(e) => tracing::error!(error = %e, "Failed to save state on shutdown"),
+    let state_save_failed = match &state_store {
+        Some(store) => {
+            let cut = state_sources.capture();
+            match store.save_all(&cut).await {
+                Ok(_) => {
+                    match cut.position {
+                        Some(pos) => tracing::info!(
+                            source_sequence = pos.sequence,
+                            "State saved to database on shutdown"
+                        ),
+                        None => tracing::info!("State saved to database on shutdown"),
+                    }
+                    false
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to save state on shutdown");
+                    true
+                }
+            }
         }
+        None => false,
+    };
+
+    if !batch {
+        return crate::exit_code::SUCCESS;
     }
+
+    let failures = batch::BatchFailures {
+        interrupted: shutdown_triggered,
+        input_read_error: stdin_status.as_ref().is_some_and(StdinReadStatus::failed),
+        undelivered: undelivered.load(Ordering::Relaxed),
+        state_save_failed,
+        task_failed,
+    };
+    if !failures.is_clean() {
+        tracing::error!(
+            interrupted = failures.interrupted,
+            input_read_error = failures.input_read_error,
+            undelivered = failures.undelivered,
+            state_save_failed = failures.state_save_failed,
+            task_failed = failures.task_failed,
+            "Batch run did not complete cleanly"
+        );
+    }
+    failures.exit_code()
 }
 
 /// The live state the periodic and shutdown savers persist.
@@ -3112,6 +3211,22 @@ impl StateSources {
                 dispositions: self.dispositions.as_ref().and_then(|d| d.snapshot()),
             },
         )
+    }
+}
+
+fn spawn_input_source<S: rsigma_runtime::EventSource>(
+    source: S,
+    tenant: Option<rsigma_eval::TenantId>,
+    event_tx: mpsc::Sender<RawEvent>,
+    hook: Option<Arc<dyn MetricsHook>>,
+) -> tokio::task::JoinHandle<()> {
+    match tenant {
+        Some(tenant) => spawn_source(
+            rsigma_runtime::WithTenant::new(source, tenant),
+            event_tx,
+            hook,
+        ),
+        None => spawn_source(source, event_tx, hook),
     }
 }
 

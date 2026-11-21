@@ -23,3 +23,10 @@ pub const RULE_ERROR: i32 = 2;
 /// A pipeline file could not be loaded, a CLI argument was invalid,
 /// or the tool was misconfigured.
 pub const CONFIG_ERROR: i32 = 3;
+
+/// The run started but did not complete cleanly.
+/// For `engine daemon --input stdin`: a signal stopped it before end of
+/// input, reading stdin failed, output reached neither its sink nor the
+/// DLQ, the final state save failed, or a pipeline task panicked.
+#[cfg(feature = "daemon")]
+pub const RUNTIME_ERROR: i32 = 4;

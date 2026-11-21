@@ -102,6 +102,9 @@ daemon:
   input:
     # Event source: stdin | http | nats://host:port/subject
     source: stdin
+    # How a stdin source ends: batch (exit at end of input with the batch
+    # result) | stream (keep running until a shutdown signal).
+    stdin_mode: batch
     # Log format: auto | json | syslog | plain | logfmt | cef
     format: auto
     # Default timezone offset for RFC 3164 syslog.

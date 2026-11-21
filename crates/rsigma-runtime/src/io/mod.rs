@@ -29,7 +29,7 @@ pub use nats_config::NatsConnectConfig;
 pub use nats_sink::NatsSink;
 #[cfg(feature = "nats")]
 pub use nats_source::{NatsSource, ReplayPolicy};
-pub use stdin::StdinSource;
+pub use stdin::{StdinReadStatus, StdinSource};
 pub use stdout::StdoutSink;
 #[cfg(all(unix, feature = "uds"))]
 pub use unix::{UnixSocketGuard, bind_unix_listener, parse_unix_scheme};

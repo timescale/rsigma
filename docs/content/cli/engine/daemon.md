@@ -76,6 +76,7 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--input <URL>` | `stdin` | Event source. Schemes: `stdin`, `http` (accepts `POST /api/v1/events`), `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock` (newline-delimited events over a Unix domain socket). |
+| `--stdin-mode <MODE>` | `batch` | How a stdin input ends (config `daemon.input.stdin_mode`). `batch` exits at end of input and reports the [batch result](#batch-runs) in the exit code. `stream` keeps the daemon running after end of input until a shutdown signal, restores state like the other inputs, and exits `0`. Ignored for other inputs. {{ added "unreleased" }} |
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With features: `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog (`+HH:MM` or `-HH:MM`). |
 | `--syslog-strip-bom <BOOL>` | `true` | Strip a leading UTF-8 BOM (`U+FEFF`) from RFC 5424 syslog messages. RFC 5424 treats the BOM as an encoding marker, not content. Pass `--syslog-strip-bom false` to keep it byte-for-byte. |
@@ -205,7 +206,7 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 |------|---------|-------------|
 | `--state-db <PATH>` | unset | SQLite database for persisting correlation, alert-pipeline, risk-accumulator, and watchlist-indicator state across restarts. When set, state is loaded on startup and saved periodically and on shutdown. Watchlist rows are written before the HTTP response. A restart loads at most the source cap and logs how many saved indicators were left out. |
 | `--state-save-interval <SECONDS>` | `30` | Periodic snapshot interval. No effect without `--state-db`. |
-| `--clear-state` | off | Clear stored state on startup, including watchlist indicators. With `--replay-from-*`, forces a clean slate even if the replay starts after the stored position. |
+| `--clear-state` | off | Clear stored state on startup, including watchlist indicators. With `--replay-from-*`, forces a clean slate even if the replay starts after the stored position. In a stdin batch run, the only way to start fresh when the stored state cannot be restored. {{ added "unreleased" }} |
 | `--keep-state` | off | Force restore stored state even during replay. Use for forward catch-up where you want to preserve cross-boundary correlation windows. Mutually exclusive with `--clear-state`. |
 
 ### Tenancy
@@ -390,7 +391,7 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/events \
   --data '{"CommandLine":"whoami /priv"}'
 ```
 
-Accepts `POST /api/v1/events`; detections write to stdout. Default `--input stdin` is for a long-lived writer; closing stdin drains and exits the daemon. Prefer [`engine eval`](eval.md) for one-shot pipes. See [Streaming Detection: Start the daemon](../../guide/streaming-detection.md#start-the-daemon).
+Accepts `POST /api/v1/events`; detections write to stdout. Default `--input stdin` is for a long-lived writer; closing stdin drains and exits the daemon unless `--stdin-mode stream` is set. Use [`engine eval`](eval.md) for one-shot evaluation without state, and [Batch runs](#batch-runs) for stateful batches that carry correlation windows between runs. See [Streaming Detection: Start the daemon](../../guide/streaming-detection.md#start-the-daemon).
 
 ### HTTP ingest with persistent state
 
@@ -497,6 +498,48 @@ rsigma engine daemon -r rules/ \
 
 Full HTTP API reference: [HTTP API](../../reference/http-api.md). All metric definitions: [Prometheus metrics](../../reference/metrics.md).
 
+## Batch runs
+{{ added "unreleased" }}
+
+With `--input stdin` (or `--input stdin://`) and the default `--stdin-mode batch`, `engine daemon` is a one-shot batch runner: it reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, because the stored state is restored at startup.
+
+The recommended shape for a serverless invocation or a cron job:
+
+```bash
+rsigma engine daemon -r rules/ --input stdin --state-db state.db --api-addr 127.0.0.1:0 --timestamp-fallback skip < batch.ndjson
+```
+
+`--api-addr 127.0.0.1:0` binds an ephemeral loopback port so concurrent runs never clash. `--timestamp-fallback skip` leaves events without a timestamp out of correlation windows instead of stamping them with the run time, which would collapse every event in a batch into the same window. Use `--output` for the findings; stdout is the default sink.
+
+After a clean exit, `state.db` is a single file with no `-wal` or `-shm` sidecar, so copy it as one unit. Treat the exit code as the batch result. On `0`, keep the new state file and checkpoint the input position. On `4`, discard the new state and replay the batch from the previous position. On `2` or `3`, the run did not start and the stored state is unchanged, so a replay fails the same way until the rules, the configuration, or the stored state are fixed.
+
+A generic caller that restores the last good state, runs, and keeps the new state only on success:
+
+```sh
+rm -f state.db state.db-wal state.db-shm
+if [ -f last-good.db ]; then
+  cp last-good.db state.db
+fi
+rsigma engine daemon -r rules/ --input stdin --state-db state.db --api-addr 127.0.0.1:0 --timestamp-fallback skip < batch.ndjson
+code=$?
+if [ "$code" -eq 0 ]; then
+  cp state.db last-good.db
+fi
+exit "$code"
+```
+
+Removing the old files first keeps a failed run's state, or a sidecar left by a killed process, from leaking into the next run.
+
+A run exits `3` when the stored state cannot be restored, because the snapshot version is not supported, its ruleset layout cannot be mapped onto the loaded rulesets (for example, state saved by a single engine loaded into several rulesets), or the stored JSON cannot be read. Nothing is written in that case, so the stored snapshot is left for inspection. Pass `--clear-state` to start fresh on purpose; the next save overwrites the stored snapshots. A run exits `4` (`RUNTIME_ERROR`) when it did not complete cleanly: a signal stopped it before end of input, reading stdin failed, output reached neither its sink nor the DLQ, the final state save failed, or a pipeline task panicked. The shutdown save still runs on an incomplete run, so the caller decides whether to keep it.
+
+Callers whose input can be redelivered should store the input position next to the state file, so a replay starts where the previous batch ended. Lines that fail to parse are counted on the parse metrics and do not fail the run when no `--dlq` is set, and `on_full=drop` queue drops are the configured lossy policy, not a failure.
+
+See [Serverless](../../deployment/serverless.md) for an AWS Lambda handler and a wrapper for scheduled container jobs.
+
+### Long-running stdin
+
+`--stdin-mode stream` turns the batch contract off for a writer that is not a batch, such as `tail -F app.log | rsigma engine daemon --stdin-mode stream`. The daemon keeps running after stdin ends, so the API, metrics, hot reload, and periodic state saves stay up until `SIGTERM` or `SIGINT`. A stored snapshot that cannot be restored logs a warning and starts fresh, and a signal exits `0`, the same as the HTTP, NATS, and unix-socket inputs.
+
 ## Shutdown
 
 `SIGTERM` and `SIGINT` trigger a graceful drain bounded by `--drain-timeout`. In-flight events are processed and acknowledged before the daemon exits. With `--state-db`, the final correlation state snapshot is written during shutdown.
@@ -507,7 +550,8 @@ Full HTTP API reference: [HTTP API](../../reference/http-api.md). All metric def
 |------|---------|
 | `0` | Normal shutdown (including `--dry-run`). |
 | `2` | Initial rules could not be loaded or compiled. |
-| `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. |
+| `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. In a stdin batch run, also stored state that cannot be restored. {{ added "unreleased" }} |
+| `4` | `RUNTIME_ERROR`: a stdin batch run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "unreleased" }} |
 
 ## See also
 

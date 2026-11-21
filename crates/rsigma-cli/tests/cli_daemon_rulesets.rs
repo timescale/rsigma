@@ -449,3 +449,37 @@ fn correlation_state_survives_a_restart_per_ruleset() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn batch_run_refuses_a_single_engine_snapshot_across_several_rulesets() {
+    let dir = fixture_copy();
+    let state_db = dir.path().join("state.db");
+    let batch = |rules: &[&str]| {
+        let mut cmd = rsigma();
+        cmd.current_dir(dir.path())
+            .args(["engine", "daemon"])
+            .args(rules)
+            .args([
+                "--input",
+                "stdin",
+                "--api-addr",
+                "127.0.0.1:0",
+                "--state-db",
+                state_db.to_str().unwrap(),
+                "--no-detections",
+            ]);
+        cmd
+    };
+
+    // A single-engine snapshot with state cannot be split across several rulesets.
+    batch(&["-r", "corr"])
+        .write_stdin("{\"Image\":\"whoami\",\"timestamp\":\"2026-01-01T00:00:00Z\"}\n")
+        .assert()
+        .success();
+
+    batch(&["--config", "rsigma.yaml"])
+        .write_stdin("{\"Image\":\"whoami\",\"timestamp\":\"2026-01-01T00:00:30Z\"}\n")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("Stored state cannot be restored"));
+}

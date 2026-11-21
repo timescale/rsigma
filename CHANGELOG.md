@@ -4,6 +4,20 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Daemon batch runs over stdin (#714)
+
+`rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.
+
+A stdin run whose stored state cannot be restored now exits `3` instead of starting fresh. A stdin run that did not complete cleanly exits `4` (`RUNTIME_ERROR`) after logging one summary line: a signal stopped it before end of input, reading stdin failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. Parse errors without a `--dlq` and `on_full=drop` queue drops do not fail a run.
+
+`--stdin-mode stream` (config `daemon.input.stdin_mode`) opts a stdin daemon out of the batch contract for a long-running pipe. It keeps running after end of input until a shutdown signal, restores state with a warning and a fresh start when the stored snapshot cannot be restored, and exits `0`. The default is `batch`.
+
+The library surface adds `StdinReadStatus` and `StdinSource::read_status`, which report whether the stdin reader stopped on a read error rather than at end of input.
+
+Breaking changes: with `--input stdin`, an unrestorable stored snapshot now exits `3` instead of starting fresh, and an interrupted run, a stdin read error, lost output, or a failed final save now exits `4` instead of `0`. HTTP, NATS, and unix-socket inputs keep their warn-and-start-fresh restore and exit `0` at shutdown. Pass `--stdin-mode stream` to keep that behavior for stdin, with the daemon now staying up after end of input.
+
+See [Daemon batch runs](https://rsigma.io/cli/engine/daemon/#batch-runs). A new [Serverless](https://rsigma.io/deployment/serverless/) deployment page covers an AWS Lambda handler over Kinesis and a wrapper for scheduled container jobs.
+
 ### Fibratus output rejects unsafe field names and escapes YAML line breaks (security, #734)
 
 The Fibratus backend passed field names through unchanged, so a field name such as `ps.name = evil or 1 = 1 or ps.name` rewrote the logic of the generated filter expression, in detection rules and in a correlation's `group-by` and `value_count` field ([GHSA-98v4-pmv2-h8qq](https://github.com/timescale/rsigma/security/advisories/GHSA-98v4-pmv2-h8qq)). The YAML rule envelope also split block scalars only on `\n` and wrote label keys unquoted, while YAML loaders such as the one Fibratus uses also break lines on `\r`, NEL, U+2028, and U+2029. A carriage return in a value, field name, or description, or a newline in a tag, could end the `condition`, `description`, or `labels` block and add top-level keys such as an `action` list with `kill` or `isolate` ([GHSA-gx4c-rpx5-2w58](https://github.com/timescale/rsigma/security/advisories/GHSA-gx4c-rpx5-2w58)).
