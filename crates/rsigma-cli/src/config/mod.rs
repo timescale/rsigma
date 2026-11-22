@@ -832,6 +832,15 @@ pub(crate) fn inactive_sections(config: &RsigmaConfigPartial) -> Vec<&'static st
         inactive.push("daemon.api.tls");
     }
 
+    #[cfg(not(feature = "stix-enrich"))]
+    if config
+        .daemon
+        .as_ref()
+        .is_some_and(|d| d.stix_store.is_some() || d.stix_store_allow_custom)
+    {
+        inactive.push("daemon.stix_store");
+    }
+
     inactive
 }
 
@@ -864,6 +873,24 @@ mod tests {
         assert_eq!(partial.version, Some(1));
         assert!(unknown.iter().any(|k| k == "bogus_key"));
         assert!(unknown.iter().any(|k| k == "daemon.nope"), "{unknown:?}");
+    }
+
+    #[test]
+    fn feature_gated_keys_are_known_in_every_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rsigma.yaml");
+        std::fs::write(
+            &path,
+            "daemon:\n  stix_store: ./stix\n  stix_store_allow_custom: true\n  nats:\n    consumer_group: workers\n  api:\n    tls:\n      cert: ./cert.pem\n",
+        )
+        .unwrap();
+
+        let (partial, unknown) = load_file(&path).unwrap();
+        assert!(unknown.is_empty(), "{unknown:?}");
+        #[cfg(not(feature = "stix-enrich"))]
+        assert!(inactive_sections(&partial).contains(&"daemon.stix_store"));
+        #[cfg(feature = "stix-enrich")]
+        assert!(!inactive_sections(&partial).contains(&"daemon.stix_store"));
     }
 
     #[test]

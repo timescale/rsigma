@@ -8,7 +8,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 Enricher, webhook, risk, and dynamic source configs now reject keys that are unknown or that do not apply to an entry's type, at every level including `scope`, `retry`, `signing`, `stix`, `auth`, and `extract`. Each error names the key and lists the supported ones, so a typo such as `defualt:` or `fromat:` fails at load instead of being ignored. A dynamic source with an unknown `format`, `on_error`, or `refresh` value, an invalid `timeout`, or a `required` that is not a boolean fails instead of falling back to a default. In an enricher entry, a key set to an empty value (`headers: {}`, `default: null`) counts as absent. Duration errors in enricher, webhook, and risk configs now include the bad value.
 
-Unknown `rsigma.yaml` keys are errors. Every command that reads the config prints `error: unknown config key '<key>' in <path>` for each one and exits `3`, and `rsigma config validate` fails on them. `rsigma config show` still prints the effective config.
+Unknown `rsigma.yaml` keys are errors. Every command that reads the config prints `error: unknown config key '<key>' in <path>` for each one and exits `3`, and `rsigma config validate` fails on them. `rsigma config show` still prints the effective config. Keys of a feature this build leaves out, such as `daemon.stix_store` without `stix-enrich`, are known keys that only warn that the section is inert.
 
 Bespoke enricher types registered with `register_builtin` now receive their custom keys, as the developer docs described. HTTP sources honor the documented `max_body_size` and command sources honor `max_stdout`, which override the 10 MiB cap for one source.
 
