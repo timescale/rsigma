@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{PIPELINE_YAML, SIMPLE_RULE, rsigma, temp_file};
+use common::{PIPELINE_YAML, SIMPLE_RULE, assert_golden, rsigma, temp_file};
 use predicates::prelude::*;
 
 /// Multi-document YAML: a detection rule + an event_count correlation.
@@ -1029,4 +1029,54 @@ fn observe_fields_off_by_default_emits_no_report() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("\"events_observed\""));
     assert!(!stderr.contains("\"unknown\""));
+}
+
+/// Run `engine eval` over the chained-correlation fixtures with `extra` flags
+/// and return stdout.
+fn eval_chained_events(extra: &[&str]) -> String {
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chained_events");
+    let output = rsigma()
+        .current_dir(fixtures)
+        .args(["engine", "eval", "-r", "rules.yml", "-e", "@events.ndjson"])
+        .args(extra)
+        .output()
+        .expect("run rsigma");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn eval_chained_correlation_carries_child_events_in_full_mode() {
+    let text = eval_chained_events(&["--correlation-event-mode", "full"]);
+    assert_golden("eval_chained_events/full.ndjson", &text);
+}
+
+#[test]
+fn eval_chained_correlation_carries_capped_refs() {
+    let text = eval_chained_events(&[
+        "--correlation-event-mode",
+        "refs",
+        "--max-correlation-events",
+        "2",
+    ]);
+    assert_golden("eval_chained_events/refs.ndjson", &text);
+}
+
+#[test]
+fn eval_chained_correlation_with_every_hop_emitted() {
+    let text = eval_chained_events(&["--correlation-event-mode", "full", "--emit-detections"]);
+    assert_golden("eval_chained_events/emit_all.ndjson", &text);
+}
+
+#[test]
+fn eval_chained_correlation_without_event_mode_has_no_events() {
+    let text = eval_chained_events(&[]);
+    assert!(text.contains("Repeated brute force bursts"), "{text}");
+    assert!(!text.contains("\"events\""), "{text}");
+    assert!(!text.contains("\"event_sources\""), "{text}");
 }

@@ -1,0 +1,38 @@
+title: Failed login
+id: 5b0c6f7e-0000-4000-8000-000000000001
+name: failed_login
+status: test
+logsource:
+    product: test
+detection:
+    selection:
+        action: login_failed
+    condition: selection
+level: low
+---
+title: Brute force burst
+id: 5b0c6f7e-0000-4000-8000-000000000002
+name: brute_burst
+correlation:
+    type: event_count
+    rules:
+        - failed_login
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 3
+level: medium
+---
+title: Repeated brute force bursts
+id: 5b0c6f7e-0000-4000-8000-000000000003
+correlation:
+    type: event_count
+    rules:
+        - brute_burst
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 2
+level: high

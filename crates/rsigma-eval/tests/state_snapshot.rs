@@ -661,3 +661,141 @@ fn an_unknown_snapshot_version_is_rejected() {
     snapshot.version = 999;
     assert!(engine.import_state_detailed(snapshot).is_none());
 }
+
+/// Detection, a child counting logins per user, and a parent counting the
+/// child's firings. `{parent_attrs}` is the parent's trailing YAML.
+fn chain_yaml(parent_attrs: &str) -> String {
+    format!(
+        r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Login Burst
+id: login-burst
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 2
+level: medium
+---
+title: Repeated Bursts
+id: repeated-bursts
+correlation:
+    type: event_count
+    rules:
+        - login-burst
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 2
+level: high
+{parent_attrs}
+"#
+    )
+}
+
+const PARENT_FULL: &str = "custom_attributes:\n    rsigma.correlation_event_mode: full";
+
+fn numbered_login(n: i64) -> serde_json::Value {
+    json!({"EventType": "login", "User": "alice", "n": n})
+}
+
+fn parent_events(
+    result: &[rsigma_eval::EvaluationResult],
+) -> (Vec<i64>, Vec<rsigma_eval::EventSource>) {
+    let body = result
+        .correlations()
+        .find(|c| c.header.rule_title == "Repeated Bursts")
+        .expect("parent fires")
+        .as_correlation()
+        .unwrap();
+    let ns = body
+        .events
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|e| e["n"].as_i64().unwrap())
+        .collect();
+    (ns, body.event_sources.clone().unwrap())
+}
+
+#[test]
+fn chained_parent_events_survive_export_and_import() {
+    let yaml = chain_yaml(PARENT_FULL);
+    let mut engine = corr_engine(&yaml);
+    process(&mut engine, numbered_login(1), 1000);
+    process(&mut engine, numbered_login(2), 1001);
+
+    let json = serde_json::to_string(&engine.export_state()).unwrap();
+    let snapshot: CorrelationSnapshot = serde_json::from_str(&json).unwrap();
+    let mut restored = corr_engine(&yaml);
+    assert!(restored.import_state(snapshot));
+
+    // The child hands over clicks 1 and 2 again; the parent already holds
+    // them from before the export and keeps one copy.
+    let r = process(&mut restored, numbered_login(3), 1002);
+    let (ns, sources) = parent_events(&r);
+    assert_eq!(ns, [1, 2, 3]);
+    assert!(sources.iter().all(|s| {
+        s.rule.as_deref() == Some("login-rule") && s.via.as_deref() == Some("login-burst")
+    }));
+}
+
+#[test]
+fn snapshot_from_before_chained_events_feeds_a_retaining_parent() {
+    // An older binary buffered only correlations with their own event mode,
+    // and wrote entries without `seq`, `rule`, or `via`.
+    let child_full = chain_yaml("").replace(
+        "level: medium\n",
+        "level: medium\ncustom_attributes:\n    rsigma.correlation_event_mode: full\n",
+    );
+    let mut old = corr_engine(&child_full);
+    process(&mut old, numbered_login(1), 1000);
+    process(&mut old, numbered_login(2), 1001);
+    let mut value = serde_json::to_value(old.export_state()).unwrap();
+    strip_entry_keys(&mut value);
+    let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
+
+    let mut engine = corr_engine(&chain_yaml(PARENT_FULL));
+    assert!(engine.import_state(snapshot));
+
+    let r = process(&mut engine, numbered_login(3), 1002);
+    assert_eq!(parent_events(&r).0, [1, 2, 3]);
+
+    // The child re-fires with every login it holds; the restored entries got
+    // sequence numbers on import, so the parent does not duplicate them.
+    let r = process(&mut engine, numbered_login(4), 1003);
+    let (ns, sources) = parent_events(&r);
+    assert_eq!(ns, [1, 2, 3, 4]);
+    assert_eq!(sources[0].rule, None, "restored entries carry no rule");
+    assert_eq!(sources[0].via.as_deref(), Some("login-burst"));
+    assert_eq!(sources[3].rule.as_deref(), Some("login-rule"));
+}
+
+/// Remove the per-entry `seq`, `rule`, and `via` keys an older binary did not write.
+fn strip_entry_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.contains_key("ts") && map.contains_key("data") {
+                for key in ["seq", "rule", "via"] {
+                    map.remove(key);
+                }
+            }
+            map.values_mut().for_each(strip_entry_keys);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_entry_keys),
+        _ => {}
+    }
+}
