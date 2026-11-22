@@ -116,7 +116,8 @@ fn yaml_blocks(root: &Path) -> Vec<Block> {
             .strip_prefix(root)
             .unwrap_or(&path)
             .display()
-            .to_string();
+            .to_string()
+            .replace('\\', "/");
         let mut open: Option<(usize, String, String)> = None;
         for (index, line) in text.lines().enumerate() {
             let trimmed = line.trim_start();

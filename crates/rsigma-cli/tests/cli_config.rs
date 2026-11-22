@@ -651,7 +651,8 @@ fn documented_config_blocks(root: &std::path::Path) -> Vec<(String, String)> {
             .strip_prefix(root)
             .unwrap_or(&path)
             .display()
-            .to_string();
+            .to_string()
+            .replace('\\', "/");
         let mut open: Option<(usize, usize, String)> = None;
         for (index, line) in text.lines().enumerate() {
             let trimmed = line.trim_start();
