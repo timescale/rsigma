@@ -234,12 +234,15 @@ impl EventBuffer {
     /// dropped.
     pub(crate) fn merge(&mut self, entries: &[FullEntry], via: Option<&Arc<str>>) {
         for entry in entries {
-            if entry.seq != 0 && self.entries.iter().any(|e| e.seq == entry.seq) {
-                continue;
-            }
+            // An event is processed once with one timestamp, so a nonzero seq
+            // always comes with the same `ts` and a duplicate sorts right
+            // before the insertion point.
             let pos = self
                 .entries
                 .partition_point(|e| (e.ts, e.seq) <= (entry.ts, entry.seq));
+            if entry.seq != 0 && pos > 0 && self.entries[pos - 1].seq == entry.seq {
+                continue;
+            }
             let mut entry = entry.clone();
             entry.via = via.cloned();
             self.entries.insert(pos, entry);
@@ -431,12 +434,14 @@ impl EventRefBuffer {
     /// dropped.
     pub(crate) fn merge(&mut self, entries: &[RefEntry], via: Option<&Arc<str>>) {
         for entry in entries {
-            if entry.seq != 0 && self.entries.iter().any(|e| e.seq == entry.seq) {
-                continue;
-            }
+            // See `EventBuffer::merge`: a duplicate sorts right before the
+            // insertion point.
             let pos = self
                 .entries
                 .partition_point(|e| (e.r.timestamp, e.seq) <= (entry.r.timestamp, entry.seq));
+            if entry.seq != 0 && pos > 0 && self.entries[pos - 1].seq == entry.seq {
+                continue;
+            }
             let mut entry = entry.clone();
             entry.via = via.cloned();
             self.entries.insert(pos, entry);

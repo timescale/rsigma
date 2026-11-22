@@ -1009,11 +1009,14 @@ fn test_event_buffer_merge_skips_seen_seq_and_orders_by_seq() {
     };
     assert_eq!(seqs, [2, 5, 9]);
 
-    // A nonzero sequence already present is skipped.
-    buf.merge(&[entry(9, 99)], None);
+    // A nonzero sequence already present is skipped, wherever it sits.
+    buf.merge(&[entry(9, 99), entry(5, 55), entry(2, 22)], None);
     assert_eq!(buf.len(), 3);
     let events = buf.decompress_all();
-    assert_eq!(events[2], json!({"idx": 9}));
+    assert_eq!(
+        events,
+        [json!({"idx": 2}), json!({"idx": 5}), json!({"idx": 9})]
+    );
 }
 
 #[test]
