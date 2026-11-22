@@ -1,0 +1,89 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "evidences": [
+    {
+      "data": {
+        "event_refs": [
+          {
+            "id": "e-1",
+            "timestamp": 1700000000
+          },
+          {
+            "id": "e-2",
+            "timestamp": 1700000030
+          }
+        ],
+        "event_sources": [
+          {
+            "rule": "failed_login",
+            "via": "brute-burst"
+          },
+          {
+            "rule": "failed_login",
+            "via": "brute-burst"
+          }
+        ]
+      }
+    }
+  ],
+  "finding_info": {
+    "analytic": {
+      "name": "Repeated brute force bursts",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "corr-2"
+    },
+    "attacks": [
+      {
+        "tactic": {
+          "name": "Credential Access",
+          "uid": "TA0006"
+        }
+      }
+    ],
+    "title": "Repeated brute force bursts",
+    "uid": "00000000-0000-4000-8000-000000000001"
+  },
+  "message": "Repeated brute force bursts",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.27.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.1.0"
+  },
+  "severity": "High",
+  "severity_id": 4,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Create",
+  "type_uid": 200401,
+  "unmapped": {
+    "aggregated_value": 2.0,
+    "correlation_type": "event_count",
+    "group_key": [
+      [
+        "User",
+        "alice"
+      ]
+    ],
+    "tags": [
+      "attack.credential_access"
+    ],
+    "timespan_secs": 3600
+  }
+}
