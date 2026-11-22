@@ -289,8 +289,9 @@ pub(crate) struct ValidateArgs {
     #[arg(long, value_parser = ["text", "json"])]
     pub format: Option<String>,
 
-    /// Treat unknown keys as errors (non-zero exit)
-    #[arg(long)]
+    /// Accepted for compatibility and changes nothing: unknown keys always
+    /// fail validation.
+    #[arg(long, hide = true)]
     pub strict: bool,
 }
 
@@ -437,7 +438,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
             semantic_errors.extend(eval_ruleset_errors(&loaded.config));
             semantic_errors.extend(daemon_ruleset_errors(&loaded.config));
             semantic_errors.extend(convert_errors(&loaded.config));
-            let failed = (args.strict && unknown_count > 0) || !semantic_errors.is_empty();
+            let failed = unknown_count > 0 || !semantic_errors.is_empty();
 
             let envelope = serde_json::json!({
                 "ok": !failed,
@@ -522,7 +523,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                         }
                     }
                     for (path, key) in &loaded.unknown_keys {
-                        eprintln!("warning: unknown key '{key}' in {}", path.display());
+                        eprintln!("error: unknown key '{key}' in {}", path.display());
                     }
                     for (path, key) in &loaded.ignored_keys {
                         eprintln!("{}", ignored_key_warning(path, key));
@@ -537,7 +538,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     }
                     if failed {
                         if unknown_count > 0 {
-                            eprintln!("{unknown_count} unknown key(s) found (--strict)");
+                            eprintln!("{unknown_count} unknown key(s) found");
                         }
                         if !semantic_errors.is_empty() {
                             eprintln!("{} configuration error(s) found", semantic_errors.len());

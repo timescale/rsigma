@@ -72,21 +72,86 @@ fn init_refuses_overwrite_without_force() {
 }
 
 #[test]
-fn validate_warns_unknown_keys_and_strict_fails() {
+fn validate_fails_on_unknown_keys_with_or_without_strict() {
     let cfg = temp_file(".yaml", "version: 1\nbogus_key: true\n");
     let path = cfg.path().to_str().unwrap();
 
     rsigma()
         .args(["config", "validate", "-c", path])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("unknown key 'bogus_key'"));
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("error: unknown key 'bogus_key'"))
+        .stderr(predicate::str::contains("1 unknown key(s) found"));
 
     rsigma()
         .args(["config", "validate", "-c", path, "--strict"])
         .assert()
         .failure()
         .code(3);
+
+    let output = rsigma()
+        .args(["config", "validate", "-c", path, "--format", "json"])
+        .assert()
+        .failure()
+        .code(3)
+        .get_output()
+        .stdout
+        .clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(envelope["ok"], serde_json::json!(false));
+    assert_eq!(envelope["unknown_keys"][0]["key"], "bogus_key");
+}
+
+#[test]
+fn strict_flag_is_hidden_from_help() {
+    rsigma()
+        .args(["config", "validate", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--strict").not());
+}
+
+#[test]
+fn unknown_key_stops_a_command_that_reads_the_config() {
+    let cfg = temp_file(
+        ".yaml",
+        "version: 1\nbogus_key: true\neval:\n  bogus_nested: 1\n",
+    );
+    let rule = temp_file(".yml", RULE);
+
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--event",
+            r#"{"foo": "bar"}"#,
+        ])
+        .assert()
+        .failure()
+        .code(3)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "error: unknown config key 'bogus_key'",
+        ))
+        .stderr(predicate::str::contains(
+            "error: unknown config key 'eval.bogus_nested'",
+        ));
+}
+
+#[test]
+fn show_still_prints_a_config_with_unknown_keys() {
+    let cfg = temp_file(".yaml", "version: 1\nbogus_key: true\n");
+
+    rsigma()
+        .args(["config", "show", "-c", cfg.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("daemon"));
 }
 
 #[test]
