@@ -529,6 +529,16 @@ fn default_detect_inflight(workers: usize) -> usize {
     }
 }
 
+/// The directory to watch for a config file. Watching the parent instead of
+/// the file keeps the watch alive when an editor replaces the file on save.
+fn watch_dir_for_file(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(parent) if parent.as_os_str().is_empty() => PathBuf::from("."),
+        Some(parent) => parent.to_path_buf(),
+        None => path.to_path_buf(),
+    }
+}
+
 pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let batch = config.runs_batch();
     let metrics = Arc::new(Metrics::new());
@@ -1205,13 +1215,26 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         });
     }
 
-    // File watcher for hot-reload (rules, overlays, and pipeline files)
+    // File watcher for hot-reload (rules, overlays, pipeline files, and the
+    // enrichers, alert-pipeline, and risk files a reload re-reads)
     let rule_source = if config.rulesets.is_empty() {
         rsigma_runtime::RuleSource::Path(config.rules_path.clone())
     } else {
         rsigma_runtime::RuleSource::Rulesets(config.rulesets.clone())
     };
-    let watched = rsigma_runtime::watch_paths(&rule_source, &config.pipeline_paths);
+    let mut watched = rsigma_runtime::watch_paths(&rule_source, &config.pipeline_paths);
+    for path in [
+        &config.enrichers_path,
+        &config.alert_pipeline_path,
+        &config.risk_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        watched.push((watch_dir_for_file(path), false));
+    }
+    watched.sort();
+    watched.dedup();
     let _watcher = reload::spawn_file_watcher(&watched, reload_tx.clone());
 
     let start_time = Instant::now();
