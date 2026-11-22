@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Events and event sources on chained correlations
+### Events and event sources on chained correlations (#737)
 
 A chained correlation in `full` or `refs` event mode now carries the contributing `events` or `event_refs`, which it never did before. A parent receives the events its child correlations retained when they fired and fed it, so raw events behind a child that never fired are left out. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, `rsigma.action`, and `rsigma.max_correlation_events` cap decide which events it keeps.
 
