@@ -1,0 +1,7 @@
+enrichers:
+  - id: e
+    kind: detection
+    inject_field: out
+    type: lookup
+    source: users
+    default: null

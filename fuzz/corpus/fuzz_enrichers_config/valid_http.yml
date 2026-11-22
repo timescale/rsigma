@@ -1,0 +1,15 @@
+enrichers:
+  - id: hash_virustotal
+    kind: detection
+    type: http
+    inject_field: file_reputation
+    url: "https://www.virustotal.com/api/v3/files/${detection.fields.SHA256}"
+    method: GET                      # default GET
+    headers:
+      x-apikey: "${VIRUSTOTAL_API_KEY}"
+    cache_ttl: 1h                    # mandatory for the 4 req/min free tier
+    extract: ".data.attributes.last_analysis_stats"
+    extract_type: jq
+    on_error: skip
+    scope:
+      tags: ["attack.execution", "attack.defense_evasion"]

@@ -1,0 +1,9 @@
+base: &base
+  kind: detection
+  inject_field: out
+enrichers:
+  - <<: *base
+    id: a
+    type: template
+    template: x
+  - *base

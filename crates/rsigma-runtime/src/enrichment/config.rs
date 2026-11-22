@@ -524,11 +524,28 @@ impl std::fmt::Display for EnrichersConfigError {
 
 impl std::error::Error for EnrichersConfigError {}
 
-/// Read and deserialize an enrichers config file.
+/// Read, deserialize, and validate an enrichers config file with
+/// [`parse_enrichers_config`].
 pub fn load_enrichers_file(path: &Path) -> Result<EnrichersFile, EnrichersConfigError> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| EnrichersConfigError::Io(e, path.to_path_buf()))?;
-    let parsed: EnrichersFile = yaml_serde::from_str(&text).map_err(EnrichersConfigError::Yaml)?;
+    parse_enrichers_config(&text)
+}
+
+/// Parse an enrichers config and run every check that needs no I/O.
+///
+/// Rejects malformed YAML, unknown top-level and `scope` keys, enricher
+/// keys that are unknown or do not apply to the entry's `type:`, template
+/// references outside the entry's `kind:` namespace, invalid scopes, and
+/// unknown `extract_type` values. It does not open databases, build HTTP
+/// clients, or resolve sources. [`build_enrichers`] runs the same checks
+/// before building each enricher.
+pub fn parse_enrichers_config(text: &str) -> Result<EnrichersFile, EnrichersConfigError> {
+    let parsed: EnrichersFile = yaml_serde::from_str(text).map_err(EnrichersConfigError::Yaml)?;
+    for cfg in &parsed.enrichers {
+        validate_entry(cfg)?;
+        build_extract_expr(cfg)?;
+    }
     Ok(parsed)
 }
 
@@ -1989,6 +2006,60 @@ enrichers:
                 "{key} is both common and type-specific"
             );
         }
+    }
+
+    #[test]
+    fn parse_enrichers_config_accepts_every_builtin_without_resources() {
+        assert_eq!(
+            parse_enrichers_config(cfg_template_yaml())
+                .unwrap()
+                .enrichers
+                .len(),
+            2
+        );
+        let mut yaml = String::from("enrichers:\n");
+        for (i, (type_name, extra)) in complete_entries().into_iter().enumerate() {
+            yaml.push_str(&format!(
+                "  - id: e{i}\n    kind: detection\n    type: {type_name}\n    inject_field: out{i}\n"
+            ));
+            for line in extra.lines() {
+                yaml.push_str(&format!("    {line}\n"));
+            }
+        }
+        let parsed = parse_enrichers_config(&yaml).unwrap();
+        assert_eq!(parsed.enrichers.len(), 7);
+    }
+
+    #[test]
+    fn parse_enrichers_config_matches_build_errors() {
+        let cases = [
+            entry_yaml("lookup", "source: users\ndefualt: {}"),
+            entry_yaml("http", "url: \"https://example.com/\"\nfields: { a: b }"),
+            entry_yaml("template", "template: \"x\"\ndefault: 1"),
+            entry_yaml("template", "template: \"${correlation.rule.id}\""),
+            entry_yaml(
+                "http",
+                "url: \"https://example.com/\"\nextract: x\nextract_type: xpath",
+            ),
+            entry_yaml("template", "template: \"x\"\nscope:\n  levels: [loud]"),
+        ];
+        for yaml in &cases {
+            let parsed = parse_enrichers_config(yaml).unwrap_err();
+            let built = build_err(yaml);
+            assert_eq!(
+                std::mem::discriminant(&parsed),
+                std::mem::discriminant(&built),
+                "parse: {parsed}, build: {built}"
+            );
+            assert_eq!(parsed.to_string(), built.to_string());
+        }
+        assert!(matches!(
+            parse_enrichers_config(&entry_yaml(
+                "template",
+                "template: \"x\"\nscope:\n  tag: []"
+            )),
+            Err(EnrichersConfigError::Yaml(_))
+        ));
     }
 
     #[test]

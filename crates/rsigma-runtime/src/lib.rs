@@ -95,7 +95,7 @@ pub use egress::{
 pub use engine::{EngineStats, RoutingSpec, RuntimeEngine, SourceFetch};
 pub use enrichment::config::{
     EnricherConfig, EnricherResources, EnrichersConfigError, EnrichersFile, build_enrichers,
-    build_enrichers_full, load_enrichers_file,
+    build_enrichers_full, load_enrichers_file, parse_enrichers_config,
 };
 pub use enrichment::{
     CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,

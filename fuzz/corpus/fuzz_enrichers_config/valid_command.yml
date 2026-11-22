@@ -1,0 +1,13 @@
+enrichers:
+  - id: ip_reputation
+    kind: detection
+    type: command
+    inject_field: ip_reputation
+    command:
+      - "/usr/local/bin/check-ip-rep"
+      - "${detection.fields.SourceIp}"
+    env:
+      REP_LOCAL_DB: "/var/lib/iprep.db"
+    output: json                     # json (default) | raw
+    timeout: 3s
+    on_error: skip

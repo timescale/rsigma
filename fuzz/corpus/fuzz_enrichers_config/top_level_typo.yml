@@ -1,0 +1,6 @@
+enricher:
+  - id: e
+    kind: detection
+    type: template
+    inject_field: out
+    template: x

@@ -1,0 +1,6 @@
+enrichers:
+  - id: runbook_det
+    kind: detection
+    type: template
+    inject_field: runbook_url
+    template: "https://wiki.internal/runbooks/${detection.rule.id}"

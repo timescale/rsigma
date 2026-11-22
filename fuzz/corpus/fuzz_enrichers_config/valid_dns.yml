@@ -1,0 +1,13 @@
+enrichers:
+  - id: resolve_domain
+    kind: detection
+    type: dns
+    inject_field: resolved
+    record_type: IP
+    key: "${detection.fields.Domain}"
+    cache_ttl: 5m                    # default 5m; cap on positive TTLs
+    negative_cache_ttl: 1m           # default 1m; cap on negative TTLs
+    cache_max_entries: 10000         # default 10000; must be greater than 0
+    nameservers: ["10.0.0.53", "[2001:db8::53]:5353"]   # optional; empty uses the system resolver
+    default: []                      # optional; used on miss
+    on_error: skip

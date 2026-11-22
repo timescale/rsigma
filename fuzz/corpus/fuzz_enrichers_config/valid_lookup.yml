@@ -1,0 +1,10 @@
+enrichers:
+  - id: asset_context_corr
+    kind: correlation
+    type: lookup
+    inject_field: asset_context
+    source: asset_inventory          # id of a dynamic source configured on the daemon
+    extract: '.assets[] | select(.hostname == "${correlation.group_key.HostName}")'
+    extract_type: jq                 # jq | jsonpath | cel; defaults to jq
+    default: "unknown"               # injected on cache miss / no extract match
+    on_error: skip                   # applied only when default is not configured
