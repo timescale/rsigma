@@ -22,7 +22,7 @@ use rsigma_runtime::{
     RoutingSpec, RuntimeEngine, SchemaClassifier, SchemaObserver, Silence, SilenceError,
     SilenceRejection, SilenceRemoval, SilenceSpec, Sink, SinkFormat, StdinReadStatus, StdinSource,
     StdoutSink, build_alert_pipeline, build_risk_layer, load_alert_pipeline_file, load_risk_file,
-    load_schema_signatures, spawn_source, strip_event_payloads,
+    load_schema_signatures, spawn_source, strip_auto_retained_event,
 };
 
 use super::auth::AuthIdentity;
@@ -281,6 +281,8 @@ pub struct DaemonConfig {
     /// Tenant-bound NATS subscriptions.
     #[allow(dead_code)]
     pub nats_tenants: Vec<super::tenancy::NatsTenantBinding>,
+    /// Retain detection events engine-wide: `--include-event` or capture.
+    /// Enrichers that read the event also turn retention on.
     pub include_event: bool,
     pub pretty: bool,
     pub api_addr: super::listen::ListenAddr,
@@ -990,6 +992,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                     path = %path.display(),
                     "Enrichment pipeline loaded"
                 );
+                apply_event_retention(&processor, config.include_event || p.needs_event());
                 enrichment_swap.store(Arc::new(Some(Arc::new(p))));
             }
             Err(e) => {
@@ -1690,6 +1693,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let reload_health = health.clone();
     let reload_enrichment_swap = enrichment_swap.clone();
     let reload_enrichers_path = config.enrichers_path.clone();
+    let reload_base_include_event = config.include_event;
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
     let reload_applied = applied_sources.clone();
@@ -1845,7 +1849,16 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                             .map(|p| p.len())
                             .unwrap_or(0);
                         let new_count = new_pipeline.len();
+                        // Retain before the new enrichers can read the event,
+                        // and stop only once the old ones are gone.
+                        let retain = reload_base_include_event || new_pipeline.needs_event();
+                        if retain {
+                            apply_event_retention(&reload_processor, true);
+                        }
                         reload_enrichment_swap.store(Arc::new(Some(Arc::new(new_pipeline))));
+                        if !retain {
+                            apply_event_retention(&reload_processor, false);
+                        }
                         tracing::info!(
                             previous = prev_count,
                             current = new_count,
@@ -2672,6 +2685,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         );
     }
     let operator_include_event = config.capture.operator_include_event;
+    // Without `--include-event` or capture, any retained detection event is
+    // there only for enrichers that read it.
+    let strip_retained_for_enrichment = !config.include_event && config.enrichers_path.is_some();
 
     let sink_metrics = metrics.clone();
     let enrichment_swap_for_sink = enrichment_swap.clone();
@@ -2715,6 +2731,11 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                                 let _ = empty_ack_tx.send(token);
                             }
                             continue;
+                        }
+                    }
+                    if strip_retained_for_enrichment {
+                        for r in &mut result {
+                            strip_auto_retained_event(r);
                         }
                     }
 
@@ -2861,7 +2882,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                             };
                             if ring.is_some() && !operator_include_event {
                                 for result in &mut kept {
-                                    strip_event_payloads(result);
+                                    strip_auto_retained_event(result);
                                 }
                             }
                             kept
@@ -5046,6 +5067,16 @@ fn parse_on_unknown_policy(s: &str) -> OnUnknown {
             std::process::exit(crate::exit_code::CONFIG_ERROR);
         }
     }
+}
+
+/// Set whether the engine retains detection events, logging the new value
+/// when it changes.
+fn apply_event_retention(processor: &LogProcessor, include: bool) {
+    if processor.include_event() == include {
+        return;
+    }
+    processor.set_include_event(include);
+    tracing::info!(include_event = include, "Detection event retention changed");
 }
 
 /// Build a [`RoutingSpec`] from the schema config (signatures + routing

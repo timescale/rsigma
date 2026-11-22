@@ -82,6 +82,55 @@ fn capture_requires_group_by() {
 }
 
 #[test]
+fn capture_keeps_an_event_the_rule_asked_for() {
+    let rules = temp_file(
+        ".yml",
+        &format!("{SIMPLE_RULE}custom_attributes:\n    rsigma.include_event: \"true\"\n"),
+    );
+    let pipeline = temp_file(".yml", GROUP_PIPELINE_YAML);
+    let spool = TempDir::new().unwrap();
+    let config = temp_file(".yaml", &capture_config(spool.path()));
+    let sink = tempfile::NamedTempFile::new().unwrap();
+    let sink_path = sink.path().to_str().unwrap().to_string();
+
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rules.path().to_str().unwrap(),
+        "--alert-pipeline",
+        pipeline.path().to_str().unwrap(),
+        "--config",
+        config.path().to_str().unwrap(),
+        "--enable-capture",
+        "--enable-dispositions",
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--output",
+        &format!("file://{sink_path}"),
+    ]);
+
+    let body = serde_json::to_string(&serde_json::json!({"CommandLine": "malware x"})).unwrap();
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), &body);
+    assert_eq!(status, 200);
+
+    let line = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(&sink_path).ok()?;
+        text.lines()
+            .find(|l| l.contains("Test Rule"))
+            .map(str::to_string)
+    })
+    .expect("the detection never reached the sink");
+    let delivered: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        delivered["event"]["CommandLine"], "malware x",
+        "capture must not strip an event the rule asked for: {delivered}"
+    );
+}
+
+#[test]
 fn accepted_tp_writes_backtestable_bundle() {
     let rules = temp_file(".yml", SIMPLE_RULE);
     let pipeline = temp_file(".yml", GROUP_PIPELINE_YAML);
