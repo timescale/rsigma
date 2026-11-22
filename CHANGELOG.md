@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Hosted GeoIP API recipe (docs)
+### Hosted GeoIP API recipe (docs) (#735)
 
 The `enrich_ip_geoip` recipe gains a hosted-API variant: an `http` enricher with a response cache, the API key in a header instead of the URL, and a jq `extract` that injects the same `{country, region, city}` shape as the `mmdb` variant, with `{country: "unknown"}` for addresses the provider has no record for. The CLI README lists the three GeoIP variants together again. Docs only.
 
