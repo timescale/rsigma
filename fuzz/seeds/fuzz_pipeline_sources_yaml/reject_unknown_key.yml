@@ -1,0 +1,5 @@
+sources:
+  - id: data
+    type: file
+    path: ./data.json
+    fromat: json

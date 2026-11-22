@@ -12,7 +12,7 @@ sources:
     extract:
       expr: "$.indicators[*].value"
       type: jsonpath
-    refresh: interval 300s
+    refresh: 300s
     timeout: 30s
     on_error: use_cached
     required: true
@@ -23,7 +23,7 @@ sources:
     extract:
       expr: "data.field_mappings"
       type: cel
-    refresh: interval 3600s
+    refresh: 3600s
     on_error: fail
     required: true
 vars:

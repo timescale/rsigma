@@ -6,7 +6,7 @@ sources:
     command: /usr/local/bin/fetch-assets --format json
     format: json
     extract: ".hosts[].hostname"
-    refresh: interval 120s
+    refresh: 120s
     on_error: use_default
     required: false
     default: []
