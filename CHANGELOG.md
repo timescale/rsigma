@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Enrichers read unmatched fields from the event
+### Enrichers read unmatched fields from the event (#739)
 
 `${detection.fields.<name>}` in an enricher template now resolves fields the rule did not match on. A matched field still wins, even when its value is null or empty; otherwise the name is read from the event, as a whole top-level key first and then as a dotted path. Before, the value came only from `matched_fields`, so an `mmdb` or `dns` key such as `${detection.fields.SourceIp}` rendered empty for the usual rule that does not select on the address, and every lookup failed. An `mmdb` or `dns` key that still renders empty now says the field is neither a matched field nor present in the event. Webhook templates keep their behavior.
 
