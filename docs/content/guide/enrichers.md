@@ -499,7 +499,37 @@ enrichers:
     default: { country: "unknown" }
 ```
 
-For vendor APIs, use `http` with a `cache_ttl` instead of shipping a dump (same shape as the VirusTotal recipe below).
+For a hosted GeoIP API, use `http` with a `cache_ttl`, so repeated detections from one address cost one request per `cache_ttl`:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_geoip
+    kind: detection
+    type: http
+    inject_field: geoip
+    url: "https://geoip.example.com/v1/${detection.fields.SourceIp}"
+    headers:
+      Authorization: "Bearer ${GEOIP_API_KEY}"
+    cache_ttl: 24h
+    extract: >-
+      if .country_code
+      then {country: .country_code, region: .region_code, city: .city}
+      else {country: "unknown"}
+      end
+    extract_type: jq
+    on_error: skip
+```
+
+To use it with a provider, adapt three fields:
+
+- `url`: the provider's lookup endpoint. The IP is percent-encoded as one URL component, which works for IPv4 and IPv6 alike.
+- `headers`: how the provider takes its key. Send the key in a header rather than a query parameter, because `${ENV_VAR}` values in `url` are inserted verbatim and a failed request logs the full URL. For a keyless tier, remove `headers`; a provider can reject an empty key instead of treating it as keyless.
+- `extract`: the response paths on the right of each key.
+
+The `extract` injects the same shape as the `mmdb` recipe, including `{country: "unknown"}` on a miss, so moving between a hosted API and a local database does not change what downstream consumers read. Providers commonly answer private and reserved addresses with HTTP 200 and a body that flags the miss, and each flags it differently; testing for the field you need catches all of them. A rejected key or an exhausted quota typically returns a non-2xx status, which goes through `on_error`.
+
+Every lookup sends the address to the provider, internal addresses included. Use `mmdb` when addresses must stay inside your network.
 
 ### `enrich_ip_rdns`: reverse DNS name by IP
 
