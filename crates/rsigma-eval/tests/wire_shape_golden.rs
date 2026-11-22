@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rsigma_eval::{
-    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, MatcherKind, ResultBody,
-    RuleHeader,
+    CorrelationBody, DetectionBody, EvaluationResult, EventSource, FieldMatch, MatcherKind,
+    ResultBody, RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
 
@@ -186,6 +186,7 @@ fn correlation_golden_ndjson_line() {
             timespan_secs: 300,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     };
 
@@ -201,6 +202,40 @@ fn correlation_golden_ndjson_line() {
     let parsed: serde_json::Value = serde_json::from_str(&actual).unwrap();
     assert!(parsed.get("correlation_type").is_some());
     assert!(parsed.get("matched_fields").is_none());
+}
+
+/// A correlation carrying retained events emits `events` and then
+/// `event_sources`, one source per event, after the aggregate fields.
+#[test]
+fn correlation_with_events_golden_ndjson_line() {
+    let result = EvaluationResult {
+        header: header("Repeated brute force bursts"),
+        body: ResultBody::Correlation(CorrelationBody {
+            correlation_type: CorrelationType::EventCount,
+            group_key: vec![("User".to_string(), "alice".to_string())],
+            aggregated_value: 2.0,
+            timespan_secs: 3600,
+            events: Some(vec![
+                serde_json::json!({"User": "alice", "action": "login_failed"}),
+                serde_json::json!({"User": "alice", "action": "login_failed"}),
+            ]),
+            event_refs: None,
+            event_sources: Some(vec![
+                EventSource {
+                    rule: Some("failed_login".to_string()),
+                    via: Some("brute-burst".to_string()),
+                },
+                EventSource::default(),
+            ]),
+        }),
+    };
+
+    let actual = serde_json::to_string(&result).unwrap();
+    let expected = r#"{"rule_title":"Repeated brute force bursts","rule_id":"Repeated brute force bursts-id","level":"high","tags":["attack.execution","attack.t1059.001"],"correlation_type":"event_count","group_key":[["User","alice"]],"aggregated_value":2.0,"timespan_secs":3600,"events":[{"User":"alice","action":"login_failed"},{"User":"alice","action":"login_failed"}],"event_sources":[{"rule":"failed_login","via":"brute-burst"},{}]}"#;
+    assert_eq!(
+        actual, expected,
+        "Correlation-with-events wire shape drift. If intentional, update this golden and the CHANGELOG."
+    );
 }
 
 /// `tenant_id` is `None` by default and must be skipped from serialization.

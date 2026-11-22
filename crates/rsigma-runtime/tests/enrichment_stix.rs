@@ -206,6 +206,7 @@ async fn stix_enricher_skips_correlation_results_for_detection_kind() {
             timespan_secs: 60,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     }];
     pipeline.run(&mut results).await;

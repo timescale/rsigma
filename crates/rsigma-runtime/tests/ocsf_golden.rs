@@ -253,6 +253,7 @@ fn correlation_with_group_key() {
             timespan_secs: 300,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     };
 
@@ -631,6 +632,7 @@ fn correlation_detection() -> EvaluationResult {
             timespan_secs: 300,
             events: Some(vec![json!({"User": "alice"})]),
             event_refs: None,
+            event_sources: None,
         }),
     }
 }

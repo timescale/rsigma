@@ -756,6 +756,7 @@ pub fn strip_event_payloads(result: &mut EvaluationResult) {
     if let Some(correlation) = result.as_correlation_mut() {
         correlation.events = None;
         correlation.event_refs = None;
+        correlation.event_sources = None;
     }
 }
 
@@ -915,6 +916,26 @@ mod tests {
         // on event.raw (one incident opened).
         assert!(kept[0].as_detection().unwrap().event.is_none());
         assert_eq!(st.incidents.len(), 1);
+    }
+
+    #[test]
+    fn strip_event_payloads_drops_correlation_events_and_sources() {
+        let mut result = EvaluationResult {
+            header: detection("10.0.0.1", Level::High).header,
+            body: ResultBody::Correlation(rsigma_eval::CorrelationBody {
+                correlation_type: rsigma_parser::CorrelationType::EventCount,
+                group_key: vec![],
+                aggregated_value: 1.0,
+                timespan_secs: 60,
+                events: None,
+                event_refs: Some(vec![]),
+                event_sources: Some(vec![]),
+            }),
+        };
+        strip_event_payloads(&mut result);
+        let correlation = result.as_correlation().unwrap();
+        assert!(correlation.event_refs.is_none());
+        assert!(correlation.event_sources.is_none());
     }
 
     #[test]
@@ -1247,6 +1268,7 @@ mod tests {
                 timespan_secs: 60,
                 events: None,
                 event_refs: None,
+                event_sources: None,
             }),
         };
         p.process_with_capture(vec![correlation], &mut st, 0, &NoopMetrics, Some(&mut sink));

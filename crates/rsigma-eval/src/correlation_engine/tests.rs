@@ -4703,7 +4703,7 @@ level: high
 
     let snapshot = engine.export_state();
     let mut value = serde_json::to_value(&snapshot).unwrap();
-    strip_seq_keys(&mut value);
+    strip_legacy_entry_keys(&mut value);
     let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
 
     let mut restored = CorrelationEngine::new(config);
@@ -4743,20 +4743,23 @@ level: high
     );
 }
 
-/// Remove `seq` from every serialized buffer entry, as an older binary wrote it.
-fn strip_seq_keys(value: &mut serde_json::Value) {
+/// Remove `seq`, `rule`, and `via` from every serialized buffer entry, as an
+/// older binary wrote it.
+fn strip_legacy_entry_keys(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             if map.contains_key("ts") && map.contains_key("data") {
                 map.remove("seq");
+                map.remove("rule");
+                map.remove("via");
             }
             for child in map.values_mut() {
-                strip_seq_keys(child);
+                strip_legacy_entry_keys(child);
             }
         }
         serde_json::Value::Array(items) => {
             for child in items {
-                strip_seq_keys(child);
+                strip_legacy_entry_keys(child);
             }
         }
         _ => {}
@@ -5484,4 +5487,235 @@ fn test_parent_with_unbuildable_group_key_merges_nothing() {
     let r = click(&mut engine, 1000, 1);
     assert!(fired(&r, "correlation B").is_none());
     assert!(engine.event_buffers.keys().all(|k| k.corr_idx == 0));
+}
+
+// =========================================================================
+// Event sources
+// =========================================================================
+
+fn source(rule: &str, via: Option<&str>) -> EventSource {
+    EventSource {
+        rule: Some(rule.to_string()),
+        via: via.map(str::to_string),
+    }
+}
+
+fn sources(body: &CorrelationBody) -> &[EventSource] {
+    body.event_sources
+        .as_deref()
+        .expect("event sources present")
+}
+
+#[test]
+fn test_direct_correlation_sources_name_the_matched_rule() {
+    let yaml = chain_events_yaml(Hop::new(2).extra(FULL), Hop::new(1));
+    let mut engine = chain_events_engine(&yaml, emit_every_hop());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    let a = fired(&r, "correlation A").unwrap();
+    assert_eq!(
+        sources(a),
+        [source("det-rule", None), source("det-rule", None)]
+    );
+}
+
+#[test]
+fn test_temporal_sources_tell_its_rules_apart() {
+    let yaml = format!(
+        r#"
+title: click
+id: det-click
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: view
+id: det-view
+logsource:
+    product: test
+detection:
+    selection:
+        action: view
+    condition: selection
+---
+title: click then view
+id: corr-both
+correlation:
+    type: temporal
+    rules:
+        - det-click
+        - det-view
+    group-by:
+        - User
+    timespan: 5m
+level: high
+{REFS}
+"#
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let v = json!({"action": "view", "User": "alice", "id": "v1"});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let v = json!({"action": "click", "User": "alice", "id": "c1"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1001);
+    let both = fired(&r, "click then view").unwrap();
+    assert_eq!(ref_ids(both), ["v1", "c1"]);
+    assert_eq!(
+        sources(both),
+        [source("det-view", None), source("det-click", None)]
+    );
+}
+
+#[test]
+fn test_chained_sources_name_the_child_correlation() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(2).extra(FULL));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(
+        sources(b),
+        [
+            source("det-rule", Some("corr-a")),
+            source("det-rule", Some("corr-a"))
+        ]
+    );
+}
+
+#[test]
+fn test_chained_source_uses_the_name_of_a_child_without_id() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(1).extra(FULL))
+        .replace("id: corr-a\n", "name: burst\n")
+        .replace("        - corr-a\n", "        - burst\n");
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(sources(b), [source("det-rule", Some("burst"))]);
+}
+
+#[test]
+fn test_event_delivered_by_two_children_keeps_the_first_source() {
+    let yaml = format!(
+        r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: first
+id: corr-first
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: second
+id: corr-second
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: both children
+id: corr-both
+correlation:
+    type: temporal
+    rules:
+        - corr-first
+        - corr-second
+    group-by:
+        - User
+    timespan: 5m
+level: high
+{FULL}
+"#
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let both = fired(&r, "both children").unwrap();
+    assert_eq!(event_ns(both), [1]);
+    assert_eq!(sources(both), [source("det-rule", Some("corr-first"))]);
+}
+
+#[test]
+fn test_top_of_three_level_chain_names_its_immediate_child() {
+    let yaml = format!(
+        "{}---\ntitle: correlation C\nid: corr-c\ncorrelation:\n    type: event_count\n    rules:\n        - corr-b\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 1\nlevel: high\n{FULL}\n",
+        chain_events_yaml(Hop::new(1), Hop::new(1))
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let c = fired(&r, "correlation C").unwrap();
+    assert_eq!(sources(c), [source("det-rule", Some("corr-b"))]);
+}
+
+#[test]
+fn test_capped_sources_stay_aligned_with_events() {
+    let yaml = chain_events_yaml(
+        Hop::new(1),
+        Hop::new(3).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: refs\n    rsigma.max_correlation_events: \"2\"",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    click(&mut engine, 1001, 2);
+    let r = click(&mut engine, 1002, 3);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(ref_ids(b), ["e2", "e3"]);
+    assert_eq!(sources(b).len(), 2);
+}
+
+#[test]
+fn test_entries_restored_without_sources_report_empty_sources() {
+    let yaml = chain_events_yaml(Hop::new(3).extra(FULL), Hop::new(1));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    click(&mut engine, 1001, 2);
+
+    let mut value = serde_json::to_value(engine.export_state()).unwrap();
+    strip_legacy_entry_keys(&mut value);
+    let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
+    let mut restored = chain_events_engine(&yaml, emit_every_hop());
+    assert!(restored.import_state(snapshot));
+
+    let r = click(&mut restored, 1002, 3);
+    let a = fired(&r, "correlation A").unwrap();
+    assert_eq!(event_ns(a), [1, 2, 3]);
+    assert_eq!(
+        sources(a),
+        [
+            EventSource::default(),
+            EventSource::default(),
+            source("det-rule", None)
+        ]
+    );
+}
+
+#[test]
+fn test_no_event_mode_emits_no_sources() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let a = fired(&r, "correlation A").unwrap();
+    assert!(a.event_sources.is_none());
+    assert!(fired(&r, "correlation B").unwrap().event_sources.is_some());
 }

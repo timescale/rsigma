@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
 use std::io::{Read as IoRead, Write as IoWrite};
+use std::sync::Arc;
 
 use flate2::Compression;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use serde::Serialize;
+
+use crate::result::EventSource;
 
 // =============================================================================
 // Compressed Event Buffer
@@ -15,16 +18,21 @@ use serde::Serialize;
 const COMPRESSION_LEVEL: Compression = Compression::fast();
 
 /// One retained event body: the sequence number the event was processed with,
-/// its timestamp, and its deflate-compressed JSON.
+/// its timestamp, its deflate-compressed JSON, and where it came from.
 #[derive(Debug, Clone)]
 pub(crate) struct FullEntry {
     pub(crate) seq: u64,
     pub(crate) ts: i64,
     pub(crate) data: Vec<u8>,
+    /// Referenced rule the event matched.
+    pub(crate) rule: Option<Arc<str>>,
+    /// Child correlation that delivered the event to this buffer.
+    pub(crate) via: Option<Arc<str>>,
 }
 
 impl FullEntry {
-    /// Convert this entry to a reference entry, keeping its sequence number.
+    /// Convert this entry to a reference entry, keeping its sequence number
+    /// and source.
     pub(crate) fn to_ref(&self) -> Option<RefEntry> {
         let event = decompress_event(&self.data)?;
         Some(RefEntry {
@@ -33,7 +41,16 @@ impl FullEntry {
                 id: extract_event_id(&event),
             },
             seq: self.seq,
+            rule: self.rule.clone(),
+            via: self.via.clone(),
         })
+    }
+}
+
+fn event_source(rule: &Option<Arc<str>>, via: &Option<Arc<str>>) -> EventSource {
+    EventSource {
+        rule: rule.as_deref().map(str::to_owned),
+        via: via.as_deref().map(str::to_owned),
     }
 }
 
@@ -66,6 +83,7 @@ pub struct EventBuffer {
 mod event_buffer_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::VecDeque;
+    use std::sync::Arc;
 
     use super::FullEntry;
 
@@ -76,6 +94,10 @@ mod event_buffer_serde {
         data: Vec<u8>,
         #[serde(default)]
         seq: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rule: Option<Arc<str>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<Arc<str>>,
     }
 
     mod base64_bytes {
@@ -103,6 +125,8 @@ mod event_buffer_serde {
                 ts: e.ts,
                 data: e.data.clone(),
                 seq: e.seq,
+                rule: e.rule.clone(),
+                via: e.via.clone(),
             })
             .collect();
         v.serialize(s)
@@ -115,6 +139,8 @@ mod event_buffer_serde {
                 seq: e.seq,
                 ts: e.ts,
                 data: e.data,
+                rule: e.rule,
+                via: e.via,
             })
             .collect())
     }
@@ -129,14 +155,21 @@ impl EventBuffer {
         }
     }
 
-    /// Compress and store an event with sequence number 0, meaning unsequenced.
+    /// Compress and store an event with sequence number 0, meaning unsequenced,
+    /// and no source.
     pub fn push(&mut self, ts: i64, event: &serde_json::Value) {
-        self.push_seq(0, ts, event);
+        self.push_seq(0, ts, event, None);
     }
 
-    /// Compress and store an event under its processing sequence number.
-    /// Evicts the oldest entry if at capacity.
-    pub(crate) fn push_seq(&mut self, seq: u64, ts: i64, event: &serde_json::Value) {
+    /// Compress and store an event under its processing sequence number and
+    /// the referenced rule it matched. Evicts the oldest entry if at capacity.
+    pub(crate) fn push_seq(
+        &mut self,
+        seq: u64,
+        ts: i64,
+        event: &serde_json::Value,
+        rule: Option<Arc<str>>,
+    ) {
         // Compress the event JSON with deflate
         if let Some(compressed) = compress_event(event) {
             if self.entries.len() >= self.max_events {
@@ -146,6 +179,8 @@ impl EventBuffer {
                 seq,
                 ts,
                 data: compressed,
+                rule,
+                via: None,
             });
         }
     }
@@ -190,12 +225,14 @@ impl EventBuffer {
         Retained::Full(self.entries.iter().cloned().collect())
     }
 
-    /// Merge entries delivered by a firing child correlation into this buffer.
+    /// Merge entries delivered by the firing child correlation `via` into this
+    /// buffer.
     ///
-    /// Entries are inserted in `(timestamp, seq)` order, an entry with a
-    /// nonzero seq that is already present is skipped, and the oldest entries
-    /// above the cap are dropped.
-    pub(crate) fn merge(&mut self, entries: &[FullEntry]) {
+    /// Entries are inserted in `(timestamp, seq)` order with `via` as their
+    /// source, an entry with a nonzero seq that is already present is skipped
+    /// and keeps its existing source, and the oldest entries above the cap are
+    /// dropped.
+    pub(crate) fn merge(&mut self, entries: &[FullEntry], via: Option<&Arc<str>>) {
         for entry in entries {
             if entry.seq != 0 && self.entries.iter().any(|e| e.seq == entry.seq) {
                 continue;
@@ -203,32 +240,39 @@ impl EventBuffer {
             let pos = self
                 .entries
                 .partition_point(|e| (e.ts, e.seq) <= (entry.ts, entry.seq));
-            self.entries.insert(pos, entry.clone());
+            let mut entry = entry.clone();
+            entry.via = via.cloned();
+            self.entries.insert(pos, entry);
         }
         while self.entries.len() > self.max_events {
             self.entries.pop_front();
         }
     }
 
-    /// Decompress the newest `n` entries, oldest first.
-    pub(crate) fn newest_events(&self, n: usize) -> Vec<serde_json::Value> {
+    /// Decompress the newest `n` entries, oldest first, with their sources
+    /// index for index.
+    pub(crate) fn newest_events(&self, n: usize) -> (Vec<serde_json::Value>, Vec<EventSource>) {
         let start = self.entries.len().saturating_sub(n);
         self.entries
             .iter()
             .skip(start)
-            .filter_map(|e| decompress_event(&e.data))
-            .collect()
+            .filter_map(|e| Some((decompress_event(&e.data)?, event_source(&e.rule, &e.via))))
+            .unzip()
     }
 
-    /// Convert the newest `n` entries to event references, oldest first.
-    pub(crate) fn newest_refs(&self, n: usize) -> Vec<EventRef> {
+    /// Convert the newest `n` entries to event references, oldest first, with
+    /// their sources index for index.
+    pub(crate) fn newest_refs(&self, n: usize) -> (Vec<EventRef>, Vec<EventSource>) {
         let start = self.entries.len().saturating_sub(n);
         self.entries
             .iter()
             .skip(start)
             .filter_map(FullEntry::to_ref)
-            .map(|e| e.r)
-            .collect()
+            .map(|e| {
+                let source = event_source(&e.rule, &e.via);
+                (e.r, source)
+            })
+            .unzip()
     }
 
     /// Highest sequence number currently retained.
@@ -283,13 +327,19 @@ pub struct EventRef {
 }
 
 /// One retained event reference: the reference plus the sequence number the
-/// event was processed with.
+/// event was processed with and where it came from.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub(crate) struct RefEntry {
     #[serde(flatten)]
     pub(crate) r: EventRef,
     #[serde(default)]
     pub(crate) seq: u64,
+    /// Referenced rule the event matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rule: Option<Arc<str>>,
+    /// Child correlation that delivered the event to this buffer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) via: Option<Arc<str>>,
 }
 
 /// Lightweight event reference buffer for `Refs` mode.
@@ -313,14 +363,21 @@ impl EventRefBuffer {
         }
     }
 
-    /// Store a reference to an event with sequence number 0, meaning unsequenced.
+    /// Store a reference to an event with sequence number 0, meaning
+    /// unsequenced, and no source.
     pub fn push(&mut self, ts: i64, event: &serde_json::Value) {
-        self.push_seq(0, ts, event);
+        self.push_seq(0, ts, event, None);
     }
 
-    /// Store a reference to an event under its processing sequence number.
-    /// Evicts the oldest ref if at capacity.
-    pub(crate) fn push_seq(&mut self, seq: u64, ts: i64, event: &serde_json::Value) {
+    /// Store a reference to an event under its processing sequence number and
+    /// the referenced rule it matched. Evicts the oldest ref if at capacity.
+    pub(crate) fn push_seq(
+        &mut self,
+        seq: u64,
+        ts: i64,
+        event: &serde_json::Value,
+        rule: Option<Arc<str>>,
+    ) {
         if self.entries.len() >= self.max_events {
             self.entries.pop_front();
         }
@@ -328,6 +385,8 @@ impl EventRefBuffer {
         self.entries.push_back(RefEntry {
             r: EventRef { timestamp: ts, id },
             seq,
+            rule,
+            via: None,
         });
     }
 
@@ -363,39 +422,39 @@ impl EventRefBuffer {
         Retained::Refs(self.entries.iter().cloned().collect())
     }
 
-    /// Merge entries delivered by a firing child correlation into this buffer.
+    /// Merge entries delivered by the firing child correlation `via` into this
+    /// buffer.
     ///
-    /// Entries are inserted in `(timestamp, seq)` order, an entry with a
-    /// nonzero seq that is already present is skipped, and the oldest entries
-    /// above the cap are dropped.
-    pub(crate) fn merge(&mut self, entries: &[RefEntry]) {
+    /// Entries are inserted in `(timestamp, seq)` order with `via` as their
+    /// source, an entry with a nonzero seq that is already present is skipped
+    /// and keeps its existing source, and the oldest entries above the cap are
+    /// dropped.
+    pub(crate) fn merge(&mut self, entries: &[RefEntry], via: Option<&Arc<str>>) {
         for entry in entries {
-            if entry.seq != 0
-                && self
-                    .entries
-                    .iter()
-                    .any(|e| e.seq != 0 && e.seq == entry.seq)
-            {
+            if entry.seq != 0 && self.entries.iter().any(|e| e.seq == entry.seq) {
                 continue;
             }
             let pos = self
                 .entries
                 .partition_point(|e| (e.r.timestamp, e.seq) <= (entry.r.timestamp, entry.seq));
-            self.entries.insert(pos, entry.clone());
+            let mut entry = entry.clone();
+            entry.via = via.cloned();
+            self.entries.insert(pos, entry);
         }
         while self.entries.len() > self.max_events {
             self.entries.pop_front();
         }
     }
 
-    /// Clone the newest `n` entries, oldest first.
-    pub(crate) fn newest_refs(&self, n: usize) -> Vec<EventRef> {
+    /// Clone the newest `n` entries, oldest first, with their sources index
+    /// for index.
+    pub(crate) fn newest_refs(&self, n: usize) -> (Vec<EventRef>, Vec<EventSource>) {
         let start = self.entries.len().saturating_sub(n);
         self.entries
             .iter()
             .skip(start)
-            .map(|e| e.r.clone())
-            .collect()
+            .map(|e| (e.r.clone(), event_source(&e.rule, &e.via)))
+            .unzip()
     }
 
     /// Highest sequence number currently retained.
