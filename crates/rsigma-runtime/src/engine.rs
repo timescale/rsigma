@@ -859,6 +859,21 @@ impl RuntimeEngine {
         self.include_event
     }
 
+    /// Set whether detection results include the matched event, on the
+    /// loaded engine and on every engine a later `load_rules()` builds.
+    ///
+    /// Rules that set `rsigma.include_event: "true"` keep their event either
+    /// way.
+    pub fn set_include_event(&mut self, include: bool) {
+        self.include_event = include;
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(engine) => engine.set_include_event(include),
+            EngineVariant::WithCorrelations(engine) => engine.set_include_event(include),
+            EngineVariant::Routed(router) => router.set_include_event(include),
+            EngineVariant::Rulesets(engines) => engines.set_include_event(include),
+        }
+    }
+
     /// Export correlation state as a serializable snapshot.
     /// Returns `None` if the engine is detection-only (no correlation state to persist).
     pub fn export_state(&self) -> Option<CorrelationSnapshot> {
@@ -1679,5 +1694,188 @@ correlation:
         );
         engine.load_rules().unwrap();
         assert!(!engine.allows_concurrent_detection());
+    }
+
+    /// One rule that leaves event retention to the engine, and one that asks
+    /// for its event.
+    const RETENTION_RULES_YAML: &str = r#"
+title: Plain
+id: plain
+logsource:
+    product: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Keeps
+id: keeps
+logsource:
+    product: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+custom_attributes:
+    rsigma.include_event: "true"
+"#;
+
+    const RETENTION_CORRELATION_YAML: &str = r#"
+---
+title: Counted
+id: counted
+logsource:
+    product: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Burst
+id: burst
+correlation:
+    type: event_count
+    rules: [counted]
+    group-by: [EventID]
+    timespan: 5m
+    condition:
+        gte: 100
+"#;
+
+    /// Rule id to whether its detection carried the event, for one event.
+    fn retained_events(engine: &mut RuntimeEngine) -> Vec<(String, bool)> {
+        let value = serde_json::json!({"EventID": 1});
+        let event = rsigma_eval::JsonEvent::borrow(&value);
+        let mut out: Vec<(String, bool)> = engine.process_batch(&[&event])[0]
+            .iter()
+            .filter_map(|r| {
+                let body = r.as_detection()?;
+                Some((r.header.rule_id.clone()?, body.event.is_some()))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn assert_toggle(mut engine: RuntimeEngine) {
+        engine.load_rules().unwrap();
+        let only_keeps = vec![("keeps".to_string(), true), ("plain".to_string(), false)];
+        let both = vec![("keeps".to_string(), true), ("plain".to_string(), true)];
+        assert_eq!(retained_events(&mut engine), only_keeps);
+
+        engine.set_include_event(true);
+        assert!(engine.include_event());
+        assert_eq!(retained_events(&mut engine), both);
+
+        engine.load_rules().unwrap();
+        assert_eq!(
+            retained_events(&mut engine),
+            both,
+            "a rule reload keeps the toggled value"
+        );
+
+        engine.set_include_event(false);
+        assert!(!engine.include_event());
+        assert_eq!(retained_events(&mut engine), only_keeps);
+    }
+
+    fn write_rules(dir: &Path, yaml: &str) -> PathBuf {
+        let rules = dir.join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("rules.yml"), yaml).unwrap();
+        rules
+    }
+
+    #[test]
+    fn include_event_toggles_on_a_detection_only_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = write_rules(dir.path(), RETENTION_RULES_YAML);
+        let engine = RuntimeEngine::new(rules, Vec::new(), CorrelationConfig::default(), false);
+        assert_toggle(engine);
+    }
+
+    #[test]
+    fn include_event_toggles_on_a_correlation_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = write_rules(
+            dir.path(),
+            &format!("{RETENTION_RULES_YAML}{RETENTION_CORRELATION_YAML}"),
+        );
+        let mut engine = RuntimeEngine::new(rules, Vec::new(), CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        assert!(matches!(engine.engine, EngineVariant::WithCorrelations(_)));
+        assert_toggle(engine);
+    }
+
+    #[test]
+    fn include_event_toggles_on_a_routed_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = write_rules(
+            dir.path(),
+            &format!("{RETENTION_RULES_YAML}{RETENTION_CORRELATION_YAML}"),
+        );
+        let mut engine = RuntimeEngine::new(rules, Vec::new(), CorrelationConfig::default(), false);
+        engine.set_routing(Some(default_routing_spec()));
+        engine.load_rules().unwrap();
+        assert!(matches!(engine.engine, EngineVariant::Routed(_)));
+        assert_toggle(engine);
+    }
+
+    fn default_routing_spec() -> RoutingSpec {
+        RoutingSpec {
+            classifier: SchemaClassifier::builtin(),
+            plan: RoutingPlan::from_config(&rsigma_eval::RoutingConfig::default()),
+            pipeline_sets: vec![Vec::new()],
+            partition_rules: false,
+        }
+    }
+
+    #[test]
+    fn include_event_toggles_on_ruleset_engines() {
+        let dir = tempfile::tempdir().unwrap();
+        let detection_root = dir.path().join("detection");
+        write_rules(&detection_root, RETENTION_RULES_YAML);
+        let correlation_root = dir.path().join("correlation");
+        write_rules(
+            &correlation_root,
+            &format!("{RETENTION_RULES_YAML}{RETENTION_CORRELATION_YAML}"),
+        );
+
+        let engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding("detection", &detection_root, Vec::new())],
+            CorrelationConfig::default(),
+            false,
+        );
+        assert_toggle(engine);
+
+        let engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding(
+                "correlation",
+                &correlation_root,
+                Vec::new(),
+            )],
+            CorrelationConfig::default(),
+            false,
+        );
+        assert_toggle(engine);
+
+        let mut engine = RuntimeEngine::with_rulesets(
+            vec![ruleset_binding(
+                "correlation",
+                &correlation_root,
+                Vec::new(),
+            )],
+            CorrelationConfig::default(),
+            false,
+        );
+        engine.set_routing(Some(default_routing_spec()));
+        engine.load_rules().unwrap();
+        match &engine.engine {
+            EngineVariant::Rulesets(engines) => {
+                assert!(matches!(engines.units()[0].engine, UnitEngine::Routed(_)))
+            }
+            _ => panic!("expected ruleset engines"),
+        }
+        assert_toggle(engine);
     }
 }
