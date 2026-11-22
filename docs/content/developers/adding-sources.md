@@ -53,8 +53,7 @@ sources:
     key: snapshot.json
     region: us-east-1
     format: json
-    refresh:
-      interval: 600s
+    refresh: 600s
     on_error: use_cached
 ```
 

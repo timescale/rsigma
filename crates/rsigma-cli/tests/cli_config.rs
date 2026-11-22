@@ -602,3 +602,134 @@ fn show_rulesets_section() {
         "only the rulesets section should be shown"
     );
 }
+
+/// Top-level `rsigma.yaml` sections.
+const CONFIG_SECTIONS: &[&str] = &[
+    "version",
+    "global",
+    "daemon",
+    "eval",
+    "backtest",
+    "coverage",
+    "scorecard",
+    "visibility",
+    "doc",
+    "hygiene",
+    "mcp",
+    "rulesets",
+    "convert",
+];
+
+/// Fenced `yaml` and `yml` blocks in the docs and READMEs whose top-level
+/// keys are all `rsigma.yaml` sections, as `(path:line, text)`.
+fn documented_config_blocks(root: &std::path::Path) -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for path in entries.flatten().map(|e| e.path()) {
+            if path.is_dir() {
+                if path.file_name().is_none_or(|n| n != "node_modules") {
+                    walk(&path, out);
+                }
+            } else if path.extension().is_some_and(|e| e == "md") {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&root.join("docs/content"), &mut files);
+    walk(&root.join("skills"), &mut files);
+    walk(&root.join("crates"), &mut files);
+    files.push(root.join("README.md"));
+    files.sort();
+
+    let mut blocks = Vec::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let file = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let mut open: Option<(usize, usize, String)> = None;
+        for (index, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+            match &mut open {
+                None if trimmed == "```yaml" || trimmed == "```yml" => {
+                    open = Some((index + 1, indent, String::new()));
+                }
+                None => {}
+                Some((start, _, body)) if trimmed.starts_with("```") => {
+                    let value: Option<yaml_serde::Value> = yaml_serde::from_str(body).ok();
+                    let keys: Option<Vec<String>> = value.as_ref().and_then(|v| {
+                        v.as_mapping().map(|m| {
+                            m.keys()
+                                .filter_map(|k| k.as_str().map(String::from))
+                                .collect()
+                        })
+                    });
+                    if let Some(keys) = keys
+                        && !keys.is_empty()
+                        && keys.iter().all(|k| CONFIG_SECTIONS.contains(&k.as_str()))
+                    {
+                        blocks.push((format!("{file}:{start}"), std::mem::take(body)));
+                    }
+                    open = None;
+                }
+                Some((_, fence_indent, body)) => {
+                    body.push_str(line.get(*fence_indent..).unwrap_or(line.trim_start()));
+                    body.push('\n');
+                }
+            }
+        }
+    }
+    blocks
+}
+
+#[test]
+fn documented_rsigma_yaml_examples_validate() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if !root.join("docs/content").is_dir() {
+        eprintln!("docs/content not found, skipping documented config checks");
+        return;
+    }
+    let blocks = documented_config_blocks(&root);
+    let mut failures = Vec::new();
+    for (location, text) in &blocks {
+        let cfg = temp_file(".yaml", text);
+        let output = rsigma()
+            .args([
+                "config",
+                "validate",
+                "-c",
+                cfg.path().to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("{location}: no JSON envelope ({e})"));
+        if let Some(keys) = envelope["unknown_keys"]
+            .as_array()
+            .filter(|k| !k.is_empty())
+        {
+            failures.push(format!("{location}: unknown keys {keys:?}"));
+        }
+        if let Some(error) = envelope["error"].as_str() {
+            failures.push(format!("{location}: {error}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "documented rsigma.yaml examples fail to validate:\n{}",
+        failures.join("\n")
+    );
+    assert!(
+        blocks.len() >= 26,
+        "expected at least 26 documented rsigma.yaml examples, found {}",
+        blocks.len()
+    );
+}
