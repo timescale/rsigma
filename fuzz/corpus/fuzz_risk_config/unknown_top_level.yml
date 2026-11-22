@@ -1,0 +1,4 @@
+objects:
+  - type: user
+    selector: enrichment.user
+strip_evnt: true

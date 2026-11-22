@@ -1,0 +1,4 @@
+objects:
+  - type: user
+    selector: enrichment.user
+    weight: 2

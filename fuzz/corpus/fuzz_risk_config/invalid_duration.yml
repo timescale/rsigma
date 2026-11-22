@@ -1,0 +1,5 @@
+objects:
+  - type: user
+    selector: enrichment.user
+incident:
+  window: soon

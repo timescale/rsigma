@@ -1,0 +1,6 @@
+objects:
+  - type: user
+    selector: enrichment.user
+incident:
+  caps:
+    max_open_entity: 1

@@ -62,6 +62,7 @@ pub const DEFAULT_WEBHOOK_QUEUE_SIZE: usize = 1024;
 ///       levels: [high, critical]
 /// ```
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WebhooksFile {
     /// Per-webhook configurations. An empty list (or missing key) is allowed
     /// so an operator can keep a webhooks file around during a rollout.
@@ -71,6 +72,7 @@ pub struct WebhooksFile {
 
 /// One webhook's YAML config block.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookConfig {
     /// Stable identifier; used as the metric label and in config errors.
     pub id: String,
@@ -122,6 +124,7 @@ pub struct WebhookConfig {
 
 /// `tls:` block. PEM file paths read at startup.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookTlsConfig {
     /// Custom CA bundle (PEM file path) to trust in addition to the system
     /// roots. Use for an internal relay served by a private CA.
@@ -148,6 +151,7 @@ pub struct WebhookTlsConfig {
 ///   scheme: standard            # standard (default) | github | custom
 /// ```
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SigningConfig {
     /// Environment variable holding the HMAC key. Required.
     pub secret_env: String,
@@ -170,6 +174,7 @@ pub struct SigningConfig {
 
 /// `signing.custom:` block. Honored only when `scheme: custom`.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomSigningConfig {
     /// HMAC hash: `sha256` (default) or `sha512`.
     #[serde(default)]
@@ -194,6 +199,7 @@ pub struct CustomSigningConfig {
 
 /// `retry:` block. Each field overrides a delivery-layer default.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetryConfig {
     /// Total tries (one initial plus retries). Defaults to
     /// [`DEFAULT_WEBHOOK_ATTEMPTS`]; must be at least 1.
@@ -209,6 +215,7 @@ pub struct RetryConfig {
 
 /// `rate_limit:` block. `requests` per `per`, burst = `requests`.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     /// Sustained request budget per window.
     pub requests: u32,
@@ -219,6 +226,7 @@ pub struct RateLimitConfig {
 
 /// `scope:` block. Mirrors the enrichment scope axes.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeConfig {
     #[serde(default)]
     pub rules: Vec<String>,
@@ -930,7 +938,7 @@ mod humantime_opt {
         match raw {
             Some(s) => humantime::parse_duration(&s)
                 .map(Some)
-                .map_err(serde::de::Error::custom),
+                .map_err(|e| serde::de::Error::custom(format_args!("invalid duration {s:?}: {e}"))),
             None => Ok(None),
         }
     }
@@ -947,7 +955,8 @@ mod humantime_dur {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(d)?;
-        humantime::parse_duration(&s).map_err(serde::de::Error::custom)
+        humantime::parse_duration(&s)
+            .map_err(|e| serde::de::Error::custom(format_args!("invalid duration {s:?}: {e}")))
     }
 }
 
@@ -1408,6 +1417,50 @@ webhooks:
         assert!(
             err.to_string()
                 .contains("signing header 'webhook-signature' collides"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected_at_every_level() {
+        let hook =
+            "webhooks:\n  - id: soc\n    kind: detection\n    url: https://example.test/hook\n";
+        let cases = [
+            ("webhook:\n  - id: soc\n".to_string(), "webhook"),
+            (format!("{hook}    retires: {{ attempts: 3 }}\n"), "retires"),
+            (format!("{hook}    retry: {{ attempt: 3 }}\n"), "attempt"),
+            (
+                format!("{hook}    rate_limit: {{ requests: 1, per: 1s, burst: 2 }}\n"),
+                "burst",
+            ),
+            (format!("{hook}    scope: {{ tag: [] }}\n"), "tag"),
+            (format!("{hook}    tls: {{ ca_file: x }}\n"), "ca_file"),
+            (
+                format!("{hook}    signing: {{ secret_envv: X }}\n"),
+                "secret_envv",
+            ),
+            (
+                format!(
+                    "{hook}    signing:\n      secret_env: X\n      custom: {{ signature_header: a, value_format: b, signed_payload: c, algo: d }}\n"
+                ),
+                "algo",
+            ),
+        ];
+        for (yaml, key) in cases {
+            let err = yaml_serde::from_str::<WebhooksFile>(&yaml).unwrap_err();
+            assert!(
+                err.to_string().contains(&format!("unknown field `{key}`")),
+                "{key}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_duration_names_the_value() {
+        let yaml = "webhooks:\n  - id: soc\n    kind: detection\n    url: https://example.test/hook\n    timeout: soon\n";
+        let err = yaml_serde::from_str::<WebhooksFile>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid duration \"soon\""),
             "{err}"
         );
     }
