@@ -53,7 +53,6 @@ pub mod error;
 pub mod finding_links;
 pub mod input;
 pub mod io;
-#[cfg_attr(not(test), allow(dead_code))]
 mod log_throttle;
 pub mod metrics;
 pub mod ocsf;

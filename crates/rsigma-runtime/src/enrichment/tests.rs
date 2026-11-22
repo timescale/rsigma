@@ -809,6 +809,26 @@ struct ErroringEnricher {
     inject_field: String,
     on_error: OnError,
     scope: Scope,
+    error: EnrichErrorKind,
+}
+
+fn erroring(on_error: OnError, error: EnrichErrorKind) -> Box<dyn Enricher> {
+    Box::new(ErroringEnricher {
+        id: "boom".to_string(),
+        kind: EnricherKind::Detection,
+        inject_field: "out".to_string(),
+        on_error,
+        scope: Scope::default(),
+        error,
+    })
+}
+
+fn fetch_error() -> EnrichErrorKind {
+    EnrichErrorKind::Fetch("synthetic".to_string())
+}
+
+fn miss_error() -> EnrichErrorKind {
+    EnrichErrorKind::Miss("synthetic".to_string())
 }
 
 #[async_trait::async_trait]
@@ -834,7 +854,7 @@ impl Enricher for ErroringEnricher {
     async fn enrich(&self, _: &mut EvaluationResult) -> Result<(), EnrichError> {
         Err(EnrichError {
             enricher_id: self.id.clone(),
-            kind: EnrichErrorKind::Fetch("synthetic".to_string()),
+            kind: self.error.clone(),
         })
     }
 }
@@ -842,13 +862,7 @@ impl Enricher for ErroringEnricher {
 #[tokio::test]
 async fn on_error_skip_leaves_enrichments_alone() {
     let mut results = vec![detection_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Skip,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Skip, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     assert!(results[0].header.enrichments.is_none());
 }
@@ -856,13 +870,7 @@ async fn on_error_skip_leaves_enrichments_alone() {
 #[tokio::test]
 async fn on_error_null_injects_null() {
     let mut results = vec![detection_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Null,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Null, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     let map = results[0].header.enrichments.as_ref().unwrap();
     assert_eq!(map.get("out").unwrap(), &serde_json::Value::Null);
@@ -871,17 +879,81 @@ async fn on_error_null_injects_null() {
 #[tokio::test]
 async fn on_error_drop_removes_result_from_vec() {
     let mut results = vec![detection_result(), correlation_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Drop,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Drop, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     // Detection got dropped, correlation survived.
     assert_eq!(results.len(), 1);
     assert!(results[0].is_correlation());
+}
+
+#[tokio::test]
+async fn miss_applies_on_error_like_a_failure() {
+    let mut skipped = vec![detection_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Skip, miss_error())], 1)
+        .run(&mut skipped)
+        .await;
+    assert!(skipped[0].header.enrichments.is_none());
+
+    let mut nulled = vec![detection_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Null, miss_error())], 1)
+        .run(&mut nulled)
+        .await;
+    assert_eq!(
+        nulled[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
+
+    let mut dropped = vec![detection_result(), correlation_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Drop, miss_error())], 1)
+        .run(&mut dropped)
+        .await;
+    assert_eq!(dropped.len(), 1);
+    assert!(dropped[0].is_correlation());
+}
+
+#[tokio::test]
+async fn throttled_failure_warnings_still_apply_on_error() {
+    let pipeline = EnrichmentPipeline::new(vec![erroring(OnError::Null, fetch_error())], 1);
+    let mut first = vec![detection_result()];
+    pipeline.run(&mut first).await;
+    let mut second = vec![detection_result()];
+    pipeline.run(&mut second).await;
+    for results in [&first, &second] {
+        assert_eq!(
+            results[0].header.enrichments.as_ref().unwrap()["out"],
+            serde_json::Value::Null
+        );
+    }
+
+    let pipeline = EnrichmentPipeline::new(vec![erroring(OnError::Drop, fetch_error())], 1);
+    let mut results = vec![detection_result(), detection_result()];
+    pipeline.run(&mut results).await;
+    assert!(results.is_empty());
+}
+
+#[test]
+fn failure_logs_throttle_per_enricher_id() {
+    let logs = super::FailureLogs::default();
+    let now = std::time::Instant::now();
+    assert_eq!(logs.record("a", now), Some(1));
+    assert_eq!(logs.record("a", now), None);
+    assert_eq!(logs.record("b", now), Some(1));
+    assert_eq!(
+        logs.record(
+            "a",
+            now + crate::log_throttle::WarnThrottle::DEFAULT_INTERVAL
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn cloned_pipelines_share_failure_logs() {
+    let pipeline = EnrichmentPipeline::default();
+    let clone = pipeline.clone();
+    let now = std::time::Instant::now();
+    assert_eq!(pipeline.failure_logs.record("a", now), Some(1));
+    assert_eq!(clone.failure_logs.record("a", now), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,13 +1138,7 @@ async fn metrics_records_success_and_queue_depth() {
 #[tokio::test(flavor = "multi_thread")]
 async fn metrics_records_skip_status_on_error() {
     let m = std::sync::Arc::new(CollectingMetrics::default());
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Skip,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Skip, fetch_error());
     let pipeline = EnrichmentPipeline::new(vec![e], 1)
         .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
     let mut results = vec![detection_result()];
@@ -1090,6 +1156,7 @@ async fn metrics_records_drop_status() {
         inject_field: "out".to_string(),
         on_error: OnError::Drop,
         scope: Scope::default(),
+        error: fetch_error(),
     }) as Box<dyn Enricher>;
     let pipeline = EnrichmentPipeline::new(vec![e], 1)
         .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);

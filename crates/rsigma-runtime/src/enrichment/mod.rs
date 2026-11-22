@@ -37,14 +37,21 @@
 //! `skip` the field, inject a JSON `null` for it, or `drop` the entire
 //! result before serialization. Timeouts are enforced via
 //! [`tokio::time::timeout`] using each enricher's [`Enricher::timeout`].
+//!
+//! A miss ([`EnrichErrorKind::Miss`]) logs at debug level. Every other
+//! failure logs a warning at most once per 10 seconds per enricher id; the
+//! next warning carries a `suppressed` count of the failures in between.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use rsigma_eval::{EvaluationResult, ResultBody};
 use tokio::sync::Semaphore;
 
+use crate::log_throttle::WarnThrottle;
 use crate::metrics::{MetricsHook, NoopMetrics};
 
 mod command;
@@ -131,7 +138,7 @@ impl EnricherKind {
 /// enrichment never breaks the result stream.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OnError {
-    /// Deliver the result unenriched for this field. Default. Logs a warning.
+    /// Deliver the result unenriched for this field. Default.
     #[default]
     Skip,
     /// Inject `null` under `inject_field` so downstream consumers see a
@@ -284,6 +291,43 @@ pub struct EnrichmentPipeline {
     semaphore: Arc<Semaphore>,
     metrics: Arc<dyn MetricsHook>,
     needs_event: bool,
+    failure_logs: Arc<FailureLogs>,
+}
+
+/// Rate limits the failure warnings of each enricher id.
+#[derive(Default)]
+struct FailureLogs {
+    throttles: Mutex<HashMap<String, WarnThrottle>>,
+}
+
+impl FailureLogs {
+    /// Count one failure of `enricher_id`. Returns the failures the warning
+    /// should cover, or `None` when the warning is deferred.
+    fn record(&self, enricher_id: &str, now: Instant) -> Option<u64> {
+        let mut throttles = self.throttles.lock();
+        match throttles.get_mut(enricher_id) {
+            Some(throttle) => throttle.record(now),
+            None => throttles
+                .entry(enricher_id.to_string())
+                .or_default()
+                .record(now),
+        }
+    }
+}
+
+impl Drop for FailureLogs {
+    fn drop(&mut self) {
+        for (enricher_id, throttle) in self.throttles.get_mut().iter_mut() {
+            let suppressed = throttle.take_pending();
+            if suppressed > 0 {
+                tracing::warn!(
+                    enricher_id = %enricher_id,
+                    suppressed,
+                    "Enricher failures suppressed since the last warning"
+                );
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for EnrichmentPipeline {
@@ -315,6 +359,7 @@ impl EnrichmentPipeline {
             semaphore: Arc::new(Semaphore::new(permits)),
             metrics: Arc::new(NoopMetrics),
             needs_event: false,
+            failure_logs: Arc::default(),
         }
     }
 
@@ -425,7 +470,7 @@ impl EnrichmentPipeline {
 
             let mut should_drop = false;
             for enricher in &self.enrichers {
-                match Self::run_one(enricher.as_ref(), result, self.metrics.as_ref()).await {
+                match self.run_one(enricher.as_ref(), result).await {
                     EnrichOutcome::Drop => {
                         should_drop = true;
                         break;
@@ -455,10 +500,11 @@ impl EnrichmentPipeline {
     /// `rsigma_enrichment_duration_seconds{enricher_id, kind}` via the
     /// configured `MetricsHook` for every non-filtered call.
     async fn run_one(
+        &self,
         enricher: &dyn Enricher,
         result: &mut EvaluationResult,
-        metrics: &dyn MetricsHook,
     ) -> EnrichOutcome {
+        let metrics = self.metrics.as_ref();
         if !enricher.kind().matches(&result.body) {
             return EnrichOutcome::Filtered;
         }
@@ -491,14 +537,28 @@ impl EnrichmentPipeline {
         };
 
         let is_timeout = matches!(err.kind, EnrichErrorKind::Timeout);
+        let warn = if matches!(err.kind, EnrichErrorKind::Miss(_)) {
+            tracing::debug!(
+                enricher_id = %id,
+                kind = %kind_label,
+                error = %err,
+                "Enricher found no data"
+            );
+            None
+        } else {
+            self.failure_logs.record(&id, Instant::now())
+        };
         match on_error {
             OnError::Skip => {
-                tracing::warn!(
-                    enricher_id = %id,
-                    kind = %kind_label,
-                    error = %err,
-                    "Enricher failed, skipping"
-                );
+                if let Some(failures) = warn {
+                    tracing::warn!(
+                        enricher_id = %id,
+                        kind = %kind_label,
+                        error = %err,
+                        suppressed = failures - 1,
+                        "Enricher failed, skipping"
+                    );
+                }
                 metrics.on_enrichment_completed(
                     &id,
                     kind_label,
@@ -508,12 +568,15 @@ impl EnrichmentPipeline {
                 EnrichOutcome::Skip
             }
             OnError::Null => {
-                tracing::warn!(
-                    enricher_id = %id,
-                    kind = %kind_label,
-                    error = %err,
-                    "Enricher failed, injecting null"
-                );
+                if let Some(failures) = warn {
+                    tracing::warn!(
+                        enricher_id = %id,
+                        kind = %kind_label,
+                        error = %err,
+                        suppressed = failures - 1,
+                        "Enricher failed, injecting null"
+                    );
+                }
                 let map = result
                     .header
                     .enrichments
@@ -528,12 +591,15 @@ impl EnrichmentPipeline {
                 EnrichOutcome::Null
             }
             OnError::Drop => {
-                tracing::warn!(
-                    enricher_id = %id,
-                    kind = %kind_label,
-                    error = %err,
-                    "Enricher failed, dropping result"
-                );
+                if let Some(failures) = warn {
+                    tracing::warn!(
+                        enricher_id = %id,
+                        kind = %kind_label,
+                        error = %err,
+                        suppressed = failures - 1,
+                        "Enricher failed, dropping result"
+                    );
+                }
                 metrics.on_enrichment_completed(&id, kind_label, "drop", elapsed);
                 EnrichOutcome::Drop
             }
@@ -562,6 +628,7 @@ impl Clone for EnrichmentPipeline {
             semaphore: Arc::clone(&self.semaphore),
             metrics: Arc::clone(&self.metrics),
             needs_event: self.needs_event,
+            failure_logs: Arc::clone(&self.failure_logs),
         }
     }
 }
