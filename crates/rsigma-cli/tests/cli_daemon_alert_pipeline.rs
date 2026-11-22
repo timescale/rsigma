@@ -449,7 +449,13 @@ fn reload_with_a_lowered_incident_cap_trims_open_incidents() {
         format!("{pipeline}  caps:\n    max_open_incidents: 1\n"),
     )
     .unwrap();
-    assert_eq!(http_post(&daemon.url("/api/v1/reload"), "").0, 200);
+    // The file watcher may already have queued a reload for this write, in
+    // which case the API answers 429 and the queued reload applies the edit.
+    let status = http_post(&daemon.url("/api/v1/reload"), "").0;
+    assert!(
+        status == 200 || status == 429,
+        "reload POST should return 200 or 429, got {status}"
+    );
 
     let kept = poll_until(Duration::from_secs(5), || {
         let keys = open_incident_keys(&daemon);

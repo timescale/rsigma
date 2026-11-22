@@ -6,7 +6,7 @@ mod common;
 
 #[cfg(unix)]
 use common::terminate_child;
-use common::{SIMPLE_RULE, rsigma, temp_file};
+use common::{DaemonProcess, SIMPLE_RULE, http_post, poll_until, rsigma, temp_file};
 use rusqlite::params;
 use tempfile::TempDir;
 
@@ -1028,4 +1028,139 @@ fn daemon_stdin_exits_promptly_on_sigint() {
         summary.contains("\"interrupted\":true"),
         "the summary should report the interruption, got: {summary}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Config-file watching
+// ---------------------------------------------------------------------------
+
+/// Enrichers config with one template enricher injecting `value`.
+fn tag_enricher(value: &str) -> String {
+    format!(
+        "enrichers:\n  - id: tag\n    kind: detection\n    type: template\n    inject_field: tag\n    template: \"{value}\"\n"
+    )
+}
+
+fn count_stderr(daemon: &DaemonProcess, needle: &str) -> usize {
+    daemon
+        .stderr_lines()
+        .iter()
+        .filter(|line| line.contains(needle))
+        .count()
+}
+
+/// Wait until more than `before` stderr lines contain `needle`, and return
+/// the newest one.
+fn wait_for_new_log(daemon: &DaemonProcess, needle: &str, before: usize) -> String {
+    poll_until(std::time::Duration::from_secs(10), || {
+        let lines: Vec<String> = daemon
+            .stderr_lines()
+            .into_iter()
+            .filter(|line| line.contains(needle))
+            .collect();
+        (lines.len() > before).then(|| lines.last().cloned().unwrap())
+    })
+    .unwrap_or_else(|| {
+        panic!(
+            "timed out waiting for '{needle}'; stderr: {:#?}",
+            daemon.stderr_lines()
+        )
+    })
+}
+
+/// Post a matching event and return the `tag` enrichment of the output line
+/// it produced.
+fn post_and_read_tag(daemon: &DaemonProcess, output: &std::path::Path, seen: usize) -> String {
+    let (status, _) = http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"CommandLine": "malware"}"#,
+    );
+    assert_eq!(status, 200);
+    let line = poll_until(std::time::Duration::from_secs(10), || {
+        let text = std::fs::read_to_string(output).ok()?;
+        text.lines().nth(seen).map(str::to_string)
+    })
+    .expect("the event should reach the file sink");
+    let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+    value["enrichments"]["tag"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn editing_the_enrichers_file_reloads_and_a_bad_edit_keeps_the_previous_pipeline() {
+    // Separate directories so only the enrichers file's own watch can fire.
+    let rules_dir = TempDir::new().unwrap();
+    let config_dir = TempDir::new().unwrap();
+    let output_dir = TempDir::new().unwrap();
+    let rule = rules_dir.path().join("rule.yml");
+    std::fs::write(&rule, SIMPLE_RULE).unwrap();
+    let enrichers = config_dir.path().join("enrichers.yml");
+    std::fs::write(&enrichers, tag_enricher("v1")).unwrap();
+    let output = output_dir.path().join("out.ndjson");
+
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.to_str().unwrap(),
+        &[
+            "--enrichers",
+            enrichers.to_str().unwrap(),
+            "--output",
+            &format!("file://{}", output.display()),
+        ],
+    );
+    assert_eq!(post_and_read_tag(&daemon, &output, 0), "v1");
+
+    let reloaded = count_stderr(&daemon, "Enrichment pipeline reloaded");
+    std::fs::write(&enrichers, tag_enricher("v2")).unwrap();
+    wait_for_new_log(&daemon, "Enrichment pipeline reloaded", reloaded);
+    assert_eq!(post_and_read_tag(&daemon, &output, 1), "v2");
+
+    let failed = count_stderr(&daemon, "Failed to reload enrichers config");
+    std::fs::write(
+        &enrichers,
+        format!("{}    defualt: x\n", tag_enricher("v3")),
+    )
+    .unwrap();
+    let line = wait_for_new_log(&daemon, "Failed to reload enrichers config", failed);
+    assert!(line.contains("unknown field 'defualt'"), "{line}");
+    assert_eq!(post_and_read_tag(&daemon, &output, 2), "v2");
+}
+
+#[test]
+fn editing_the_alert_pipeline_or_risk_file_reloads() {
+    let rules_dir = TempDir::new().unwrap();
+    let alert_dir = TempDir::new().unwrap();
+    let risk_dir = TempDir::new().unwrap();
+    let rule = rules_dir.path().join("rule.yml");
+    std::fs::write(&rule, SIMPLE_RULE).unwrap();
+    let alert_pipeline = alert_dir.path().join("alert-pipeline.yml");
+    let pipeline = "group:\n  by: [match.CommandLine]\n  group_wait: 1h\n  resolve_timeout: 1h\n";
+    std::fs::write(&alert_pipeline, pipeline).unwrap();
+    let risk = risk_dir.path().join("risk.yml");
+    let risk_yaml = "score:\n  default_score: 60\nobjects:\n  - type: rule\n    selector: rule\n";
+    std::fs::write(&risk, risk_yaml).unwrap();
+
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.to_str().unwrap(),
+        &[
+            "--alert-pipeline",
+            alert_pipeline.to_str().unwrap(),
+            "--risk",
+            risk.to_str().unwrap(),
+        ],
+    );
+
+    let before = count_stderr(&daemon, "Alert pipeline reloaded");
+    std::fs::write(&alert_pipeline, format!("{pipeline}  group_interval: 5m\n")).unwrap();
+    wait_for_new_log(&daemon, "Alert pipeline reloaded", before);
+
+    let before = count_stderr(&daemon, "Risk layer reloaded");
+    std::fs::write(&risk, risk_yaml.replace("60", "70")).unwrap();
+    wait_for_new_log(&daemon, "Risk layer reloaded", before);
+
+    let failed = count_stderr(&daemon, "Failed to reload risk layer");
+    std::fs::write(&risk, format!("{risk_yaml}strip_evnt: true\n")).unwrap();
+    let line = wait_for_new_log(&daemon, "Failed to reload risk layer", failed);
+    assert!(line.contains("unknown field `strip_evnt`"), "{line}");
 }

@@ -1,0 +1,12 @@
+enrichers:
+  - id: hash_intel
+    kind: detection
+    type: stix
+    inject_field: stix_indicators
+    text_search: "${detection.fields.SHA256}"
+    type_filter: [indicator]
+    max_results: 3
+    extract: ".[0]"
+    extract_type: jq
+    default: []
+    on_error: skip

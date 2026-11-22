@@ -6,7 +6,7 @@ sources:
     path: /etc/rsigma/admin_emails.json
     format: json
     extract: ".emails[]"
-    refresh: interval 60s
+    refresh: 60s
     on_error: use_cached
     required: true
   - id: ip_blocklist

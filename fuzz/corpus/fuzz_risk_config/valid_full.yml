@@ -1,0 +1,22 @@
+strip_event: true
+scope:
+  levels: [high, critical]
+score:
+  attribute: risk_score
+  tag_scores:
+    "attack.*": 10
+  tag_reducer: max
+  level_scores:
+    critical: 40
+  default_score: 5
+objects:
+  - type: user
+    selector: enrichment.user
+emit_risk_events: true
+incident:
+  window: 24h
+  score_threshold: 100
+  tactic_count_threshold: 3
+  cooldown: 1h
+  caps:
+    max_open_entities: 1000

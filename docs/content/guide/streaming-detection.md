@@ -164,9 +164,9 @@ For a 50 K/s ingest target, `--buffer-size 50000 --batch-size 64 --drain-timeout
 
 ## Hot-reload
 
-Three triggers cause the daemon to re-read its rules and pipelines, debounced at 500 ms:
+Three triggers cause the daemon to re-read its rules, pipelines, and the enrichers, alert-pipeline, and risk files, debounced at 500 ms:
 
-1. A file system change to any `.yml` or `.yaml` file under the rules directory or to any pipeline file passed via `-p`.
+1. A file system change to any `.yml` or `.yaml` file under the rules directory, or in the directory of a pipeline file passed via `-p` or of the `--enrichers`, `--alert-pipeline`, or `--risk` file. {{ added "unreleased" }}
 2. A `SIGHUP` signal (Unix only). This also triggers re-resolution of dynamic sources.
 3. A `POST /api/v1/reload` request.
 

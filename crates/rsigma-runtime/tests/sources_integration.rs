@@ -686,6 +686,68 @@ async fn command_source_stdout_size_limit() {
     }
 }
 
+fn declared_source(yaml: &str) -> DynamicSource {
+    let value: yaml_serde::Value =
+        yaml_serde::from_str(&format!("- {}", yaml.replace('\n', "\n  "))).unwrap();
+    rsigma_eval::parse_sources(&value).unwrap().remove(0)
+}
+
+async fn resolve_kind(source: &DynamicSource) -> Result<(), rsigma_runtime::SourceErrorKind> {
+    DefaultSourceResolver::new()
+        .resolve(source)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.kind)
+}
+
+#[tokio::test]
+async fn http_source_max_body_size_overrides_the_default_cap() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(format!("[{}]", "1,".repeat(50) + "1")),
+        )
+        .mount(&server)
+        .await;
+
+    let capped = declared_source(&format!(
+        "id: feed\ntype: http\nurl: {}/feed\nformat: json\nmax_body_size: 16\n",
+        server.uri()
+    ));
+    assert!(matches!(
+        resolve_kind(&capped).await,
+        Err(rsigma_runtime::SourceErrorKind::ResourceLimit(_))
+    ));
+
+    let uncapped = declared_source(&format!(
+        "id: feed\ntype: http\nurl: {}/feed\nformat: json\n",
+        server.uri()
+    ));
+    let result = resolve_kind(&uncapped).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_source_max_stdout_overrides_the_default_cap() {
+    let capped = declared_source(
+        "id: feed\ntype: command\ncommand: [sh, -c, \"yes | head -n 200\"]\nformat: lines\nmax_stdout: 100\n",
+    );
+    assert!(matches!(
+        resolve_kind(&capped).await,
+        Err(rsigma_runtime::SourceErrorKind::ResourceLimit(_))
+    ));
+
+    let uncapped = declared_source(
+        "id: feed\ntype: command\ncommand: [sh, -c, \"yes | head -n 200\"]\nformat: lines\n",
+    );
+    let result = resolve_kind(&uncapped).await;
+    assert!(result.is_ok(), "{result:?}");
+}
+
 #[cfg(feature = "nats")]
 #[test]
 fn nats_payload_size_rejected() {

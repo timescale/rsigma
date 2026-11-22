@@ -78,11 +78,13 @@ sources:
     timeout: <duration>       # default 30s for http/command
     on_error: <use_cached|fail|use_default>
     default: <value>          # required if on_error=use_default
-    max_body_size: <bytes>    # default 10485760 (10 MiB)
+    max_body_size: <bytes>    # http type only; default 10485760 (10 MiB)
     max_stdout: <bytes>       # command type only
 ```
 
 The full Rust type lives at [`rsigma_eval::pipeline::sources::DynamicSource`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/sources.rs). The parser is at [`rsigma_eval::pipeline::parsing`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs).
+
+A declaration fails to load, with an error naming the source and the key, when it sets a key that is unknown or that does not apply to its `type:` (for example `path` on an `http` source, or `refresh` on a `watchlist`), when a `stix:`, `auth:`, or `extract:` mapping has an unknown key, or when `format`, `on_error`, `refresh`, `timeout`, or `required` has a value outside its supported set. A sources file whose top level has any key other than `sources` fails the same way. {{ added "unreleased" }}
 
 A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`). Pipelines reference it as `${source.<id>}` and `lookup` enrichers use it in their `source:` field. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "0.25.0" }}
 
@@ -163,7 +165,7 @@ A POST query with a request body:
 | `extract` | string or object | no | Filter applied after parsing. Rejected when `format` is `stix`. |
 | `stix` | object | no | Options for `format: stix`. See [format: stix](#format-stix). |
 | `timeout` | duration | no | Request timeout. Default `30s`. |
-| `max_body_size` | bytes | no | Per-source override for the 10 MiB default. |
+| `max_body_size` | bytes | no | Per-source override for the 10 MiB response body cap. A positive integer. {{ added "unreleased" }} |
 
 ### `command`
 
@@ -184,7 +186,7 @@ Runs a local executable, captures stdout, parses it according to `format`. Usefu
 | `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
 | `extract` | string or object | no | Filter applied after parsing. |
 | `timeout` | duration | no | Execution wall-clock cap. Default `30s`. |
-| `max_stdout` | bytes | no | Per-source override for the 10 MiB stdout cap. |
+| `max_stdout` | bytes | no | Per-source override for the 10 MiB stdout cap. A positive integer. {{ added "unreleased" }} |
 
 The runtime additionally caps stderr at 64 KiB regardless of `max_stdout`. Stderr is logged on failure but not parsed.
 

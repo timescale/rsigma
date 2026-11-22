@@ -1,0 +1,8 @@
+enrichers:
+  - id: e
+    kind: detection
+    inject_field: out
+    type: http
+    url: "https://example.com/"
+    extract: ".["
+    extract_type: xpath

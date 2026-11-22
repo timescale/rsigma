@@ -36,7 +36,7 @@ daemon:
       - /etc/rsigma/webhooks/
 ```
 
-Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. Hot reload is not supported: webhook changes take effect on restart.
+Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. An unknown key at any level, such as `retires:` for `retry:`, is rejected the same way. {{ added "unreleased" }} Hot reload is not supported: webhook changes take effect on restart.
 
 ## Config reference
 

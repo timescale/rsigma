@@ -1,0 +1,5 @@
+sources:
+  - id: data
+    type: http
+    url: https://example.test/data
+    path: ./data.json

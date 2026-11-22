@@ -1,0 +1,14 @@
+enrichers:
+  - &first
+    id: a
+    kind: &k detection
+    type: template
+    inject_field: &f out
+    template: x
+  - id: b
+    kind: *k
+    type: template
+    inject_field: *f
+    template: y
+  - <<: *first
+    id: c

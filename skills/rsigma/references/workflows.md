@@ -31,7 +31,7 @@ The API binds `0.0.0.0:9090` by default, and a non-loopback address refuses to s
 
 A rule that fails to parse is skipped and counted on the `rsigma_rule_parse_errors` gauge. A load in which every rule fails is refused: at startup the daemon exits `2`, and a refused reload keeps the current rules. Pass `--strict-rules` in deployments and CI to refuse any load with a parse error, so a broken rule cannot drop out unnoticed.
 
-Enrichers add context to each result after evaluation (`--enrichers`): `template`, `lookup` from a dynamic source, `http`, `command`, `stix` from a local store filled by `rsigma taxii`, and `mmdb` for IP lookups in a MaxMind-format database. The MCP `evaluate_events` tool accepts enrichers too, but refuses `${ENV_VAR}` references in templates. Guide: [Enrichers](https://rsigma.io/guide/enrichers/).
+Enrichers add context to each result after evaluation (`--enrichers`): `template`, `lookup` from a dynamic source, `http`, `command`, `stix` from a local store filled by `rsigma taxii`, `mmdb` for IP lookups in a MaxMind-format database, and `dns` for DNS lookups. The MCP `evaluate_events` tool accepts enrichers too, but refuses `${ENV_VAR}` references in templates. A typo in an enricher, source, webhook, risk, or `rsigma.yaml` key fails at load with an error naming the key, so fix the key rather than looking for a silent default. Guide: [Enrichers](https://rsigma.io/guide/enrichers/).
 
 Guide: [Evaluating rules](https://rsigma.io/guide/evaluating-rules/), [Streaming detection](https://rsigma.io/guide/streaming-detection/).
 

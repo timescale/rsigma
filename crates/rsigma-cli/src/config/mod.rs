@@ -28,19 +28,20 @@ pub(crate) use schema::{
 
 /// Load the config files and fold them with the compiled defaults and the
 /// `RSIGMA_*` environment layer into one typed partial (precedence:
-/// default < file < env). Unknown keys are warned about on stderr. Exits with
-/// `CONFIG_ERROR` if a discovered file cannot be read or parsed.
+/// default < file < env). Exits with `CONFIG_ERROR` if a discovered file
+/// cannot be read or parsed, or sets a key the schema does not know, after
+/// printing every unknown key.
 ///
 /// The CLI-flag layer is applied separately by each command, since only the
 /// command knows which of its flags were set explicitly.
 pub(crate) fn load_and_merge(explicit: Option<&Path>) -> RsigmaConfigPartial {
     match load_layered(explicit) {
         Ok(loaded) => {
-            for (path, key) in &loaded.unknown_keys {
-                warn_once(format!(
-                    "warning: unknown config key '{key}' in {}",
-                    path.display()
-                ));
+            if !loaded.unknown_keys.is_empty() {
+                for (path, key) in &loaded.unknown_keys {
+                    eprintln!("error: unknown config key '{key}' in {}", path.display());
+                }
+                std::process::exit(crate::exit_code::CONFIG_ERROR);
             }
             for (path, key) in &loaded.ignored_keys {
                 warn_once(ignored_key_warning(path, key));
@@ -698,6 +699,31 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     out
 }
 
+/// Render an ignored-key path as the dotted key an operator writes, such as
+/// `daemon.api.adr`. `serde_ignored` prints `?` for each `Option` and newtype
+/// layer, which is not part of the YAML.
+fn dotted_key(path: &serde_ignored::Path<'_>) -> String {
+    fn push(path: &serde_ignored::Path<'_>, segments: &mut Vec<String>) {
+        match path {
+            serde_ignored::Path::Root => {}
+            serde_ignored::Path::Seq { parent, index } => {
+                push(parent, segments);
+                segments.push(index.to_string());
+            }
+            serde_ignored::Path::Map { parent, key } => {
+                push(parent, segments);
+                segments.push(key.clone());
+            }
+            serde_ignored::Path::Some { parent }
+            | serde_ignored::Path::NewtypeStruct { parent }
+            | serde_ignored::Path::NewtypeVariant { parent } => push(parent, segments),
+        }
+    }
+    let mut segments = Vec::new();
+    push(path, &mut segments);
+    segments.join(".")
+}
+
 /// Parse a single config file into a partial plus the unknown keys it carried.
 fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigError> {
     let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -713,7 +739,7 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
     };
 
     let partial: RsigmaConfigPartial =
-        serde_ignored::deserialize(doc, |path| unknown.push(path.to_string())).map_err(|e| {
+        serde_ignored::deserialize(doc, |path| unknown.push(dotted_key(&path))).map_err(|e| {
             let raw = e.to_string();
             // A top-level scalar/sequence/null produces serde's terse
             // "invalid type: …, expected struct RsigmaConfigPartial". Rewrite it
@@ -806,6 +832,15 @@ pub(crate) fn inactive_sections(config: &RsigmaConfigPartial) -> Vec<&'static st
         inactive.push("daemon.api.tls");
     }
 
+    #[cfg(not(feature = "stix-enrich"))]
+    if config
+        .daemon
+        .as_ref()
+        .is_some_and(|d| d.stix_store.is_some() || d.stix_store_allow_custom)
+    {
+        inactive.push("daemon.stix_store");
+    }
+
     inactive
 }
 
@@ -837,7 +872,25 @@ mod tests {
         let (partial, unknown) = load_file(&path).unwrap();
         assert_eq!(partial.version, Some(1));
         assert!(unknown.iter().any(|k| k == "bogus_key"));
-        assert!(unknown.iter().any(|k| k.contains("nope")));
+        assert!(unknown.iter().any(|k| k == "daemon.nope"), "{unknown:?}");
+    }
+
+    #[test]
+    fn feature_gated_keys_are_known_in_every_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rsigma.yaml");
+        std::fs::write(
+            &path,
+            "daemon:\n  stix_store: ./stix\n  stix_store_allow_custom: true\n  nats:\n    consumer_group: workers\n  api:\n    tls:\n      cert: ./cert.pem\n",
+        )
+        .unwrap();
+
+        let (partial, unknown) = load_file(&path).unwrap();
+        assert!(unknown.is_empty(), "{unknown:?}");
+        #[cfg(not(feature = "stix-enrich"))]
+        assert!(inactive_sections(&partial).contains(&"daemon.stix_store"));
+        #[cfg(feature = "stix-enrich")]
+        assert!(!inactive_sections(&partial).contains(&"daemon.stix_store"));
     }
 
     #[test]

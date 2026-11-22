@@ -1,0 +1,7 @@
+sources:
+  - id: data
+    type: file
+    path: ./indicators.json
+    format: stix
+    stix:
+      min_confidense: 50

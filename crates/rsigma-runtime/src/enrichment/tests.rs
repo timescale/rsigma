@@ -806,3 +806,44 @@ fn lookup_builtin_returns_registered_factory() {
     assert!(super::lookup_builtin("enrich_test_thing").is_some());
     assert!(super::lookup_builtin("missing").is_none());
 }
+
+#[test]
+fn bespoke_factory_receives_custom_keys() {
+    let _guard = registry_test_lock().lock().unwrap();
+    super::clear_builtin_registry();
+    let seen = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let seen_in_factory = Arc::clone(&seen);
+    let factory: super::EnricherFactory = Arc::new(move |raw| {
+        *seen_in_factory.lock().unwrap() = Some(raw.clone());
+        Ok(Box::new(template_enricher(
+            raw["id"].as_str().unwrap(),
+            EnricherKind::Detection,
+            raw["inject_field"].as_str().unwrap(),
+            "static",
+        )) as Box<dyn Enricher>)
+    });
+    register_builtin("passive_dns", factory).unwrap();
+
+    let file: crate::EnrichersFile = yaml_serde::from_str(
+        r#"
+enrichers:
+  - id: pdns
+    kind: detection
+    type: passive_dns
+    inject_field: pdns
+    timeout: 3s
+    api_key_env: PASSIVEDNS_API_KEY
+    key_field: SourceIp
+"#,
+    )
+    .unwrap();
+    let pipeline = crate::build_enrichers(file).unwrap();
+    assert_eq!(pipeline.len(), 1);
+
+    let raw = seen.lock().unwrap().take().expect("factory was called");
+    assert_eq!(raw["api_key_env"], "PASSIVEDNS_API_KEY");
+    assert_eq!(raw["key_field"], "SourceIp");
+    assert_eq!(raw["type"], "passive_dns");
+    assert_eq!(raw["timeout_ms"], 3000);
+    assert!(raw.get("timeout").is_none());
+}

@@ -1,0 +1,6 @@
+enrichers:
+  - id: e
+    kind: detection
+    inject_field: out
+    type: template
+    template: "${correlation.rule.id} ${bogus.x}"

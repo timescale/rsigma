@@ -45,6 +45,7 @@ use super::score::{Reducer, ScoreConfig};
 /// emit_risk_events: false
 /// ```
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskFile {
     /// Retain the event for selector resolution but drop raw event payloads
     /// before sink delivery.
@@ -73,6 +74,7 @@ pub struct RiskFile {
 
 /// `incident:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IncidentFile {
     /// Accumulation window (humantime, e.g. `24h`). Defaults to 24h.
     #[serde(default, with = "humantime_opt")]
@@ -110,6 +112,7 @@ pub enum IncludeLabel {
 
 /// `incident.caps:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RiskCapsFile {
     #[serde(default)]
     pub max_open_entities: Option<usize>,
@@ -121,6 +124,7 @@ pub struct RiskCapsFile {
 
 /// `scope:` block, mirroring the alert-pipeline config.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeConfig {
     /// Rule-id exact matches or rule-title globs.
     #[serde(default)]
@@ -138,6 +142,7 @@ pub struct ScopeConfig {
 
 /// `score:` block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScoreFile {
     /// Custom-attribute key carrying an explicit per-rule score. Defaults to
     /// `rsigma.risk_score`.
@@ -170,6 +175,7 @@ pub enum ReducerLabel {
 
 /// `objects:` entry.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObjectFile {
     /// The risk-object type, e.g. `user`, `host`, `src_ip`.
     #[serde(rename = "type")]
@@ -365,7 +371,7 @@ mod humantime_opt {
         match raw {
             Some(s) => humantime::parse_duration(&s)
                 .map(Some)
-                .map_err(serde::de::Error::custom),
+                .map_err(|e| serde::de::Error::custom(format_args!("invalid duration {s:?}: {e}"))),
             None => Ok(None),
         }
     }
@@ -434,5 +440,45 @@ nats_subject: risk.events
         let yaml = "scope:\n  rules: [\"[unclosed\"]\nobjects:\n  - type: user\n    selector: enrichment.user\n";
         let err = parse_risk_config(yaml).unwrap_err();
         assert!(matches!(err, RiskConfigError::Scope(_)));
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected_at_every_level() {
+        let object = "objects:\n  - type: user\n    selector: enrichment.user\n";
+        let cases = [
+            (format!("{object}strip_evnt: true\n"), "strip_evnt"),
+            (format!("{object}scope:\n  tag: []\n"), "tag"),
+            (
+                format!("{object}score:\n  default_scor: 1\n"),
+                "default_scor",
+            ),
+            (format!("{object}incident:\n  windw: 1h\n"), "windw"),
+            (
+                format!("{object}incident:\n  caps:\n    max_open_entity: 1\n"),
+                "max_open_entity",
+            ),
+            (
+                "objects:\n  - type: user\n    selector: enrichment.user\n    weight: 2\n"
+                    .to_string(),
+                "weight",
+            ),
+        ];
+        for (yaml, key) in cases {
+            let err = parse_risk_config(&yaml).unwrap_err();
+            assert!(matches!(err, RiskConfigError::Yaml(_)), "{key}: {err}");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(&format!("unknown field `{key}`")),
+                "{key}: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_duration_names_the_value() {
+        let yaml =
+            "objects:\n  - type: user\n    selector: enrichment.user\nincident:\n  window: soon\n";
+        let msg = parse_risk_config(yaml).unwrap_err().to_string();
+        assert!(msg.contains("invalid duration \"soon\""), "got: {msg}");
     }
 }

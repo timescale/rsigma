@@ -1136,11 +1136,11 @@ fn test_parse_taxii_and_stix_rejections() {
         ),
         (
             "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    extract: .[]\n",
-            "does not accept 'extract'",
+            "field 'extract' does not apply to type 'taxii'",
         ),
         (
             "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    format: stix\n",
-            "does not accept 'format'",
+            "field 'format' does not apply to type 'taxii'",
         ),
         (
             "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth:\n      bearer_token_env: TAXII_TOKEN\n      api_key_env: TAXII_KEY\n",
@@ -1217,10 +1217,22 @@ sources:
 #[test]
 fn test_parse_watchlist_source_rejects_fetch_fields_and_reserved_ids() {
     let cases = [
-        ("refresh: 5m\n", "does not accept 'refresh'"),
-        ("format: json\n", "does not accept 'format'"),
-        ("extract: .[]\n", "does not accept 'extract'"),
-        ("timeout: 10s\n", "does not accept 'timeout'"),
+        (
+            "refresh: 5m\n",
+            "field 'refresh' does not apply to type 'watchlist'",
+        ),
+        (
+            "format: json\n",
+            "field 'format' does not apply to type 'watchlist'",
+        ),
+        (
+            "extract: .[]\n",
+            "field 'extract' does not apply to type 'watchlist'",
+        ),
+        (
+            "timeout: 10s\n",
+            "field 'timeout' does not apply to type 'watchlist'",
+        ),
         (
             "max_indicators: 0\n",
             "max_indicators must be greater than 0",
@@ -2063,6 +2075,266 @@ fn test_parse_sources_file_missing_key() {
 
     let err = parsing::parse_sources_file(&path).unwrap_err();
     assert!(err.to_string().contains("sources:"));
+}
+
+#[test]
+fn test_parse_sources_file_rejects_other_top_level_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sources.yml");
+    std::fs::write(
+        &path,
+        "sources:\n  - id: a\n    type: file\n    path: a.json\nsource:\n  - id: b\n",
+    )
+    .unwrap();
+    let err = parsing::parse_sources_file(&path).unwrap_err().to_string();
+    assert!(
+        err.contains("does not accept top-level key 'source'"),
+        "got: {err}"
+    );
+}
+
+/// The minimal valid body for each source type, indented under the entry.
+const MINIMAL_SOURCES: &[(&str, &str)] = &[
+    ("http", "url: https://example.test/data\n"),
+    ("command", "command: [cat, data.json]\n"),
+    ("file", "path: ./data.json\n"),
+    ("nats", "subject: data\n"),
+    ("watchlist", "max_indicators: 100\n"),
+    (
+        "taxii",
+        "url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n",
+    ),
+];
+
+fn source_yaml(type_name: &str, body: &str, extra: &str) -> String {
+    format!("sources:\n  - id: src\n    type: {type_name}\n    {body}    {extra}")
+}
+
+#[test]
+fn test_parse_source_rejects_unknown_keys_for_every_type() {
+    for (type_name, body) in MINIMAL_SOURCES {
+        let yaml = source_yaml(type_name, body, "fromat: json\n");
+        let err = parse_source_list(&yaml).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!(
+                "source 'src' (type: {type_name}): unknown field 'fromat'"
+            )) && err.contains("supported: id, type"),
+            "type {type_name}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_source_rejects_keys_from_other_types() {
+    let cases = [
+        ("http", "path: ./data.json\n", "path"),
+        ("file", "collection: x\n", "collection"),
+        ("command", "url: https://example.test/\n", "url"),
+        ("nats", "default_ttl: 1d\n", "default_ttl"),
+        ("watchlist", "url: https://example.test/\n", "url"),
+        ("taxii", "headers: { a: b }\n", "headers"),
+    ];
+    for (type_name, extra, field) in cases {
+        let body = MINIMAL_SOURCES
+            .iter()
+            .find(|(t, _)| *t == type_name)
+            .unwrap()
+            .1;
+        let err = parse_source_list(&source_yaml(type_name, body, extra))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "field '{field}' does not apply to type '{type_name}'"
+            )),
+            "type {type_name}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_source_rejects_unknown_nested_keys() {
+    let cases = [
+        (
+            "file",
+            "path: ./data.json\n    format: stix\n    stix:\n      min_confidense: 10\n",
+            "stix block does not accept 'min_confidense'",
+        ),
+        (
+            "taxii",
+            "url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth:\n      bearer_token: X\n",
+            "auth does not accept 'bearer_token'",
+        ),
+        (
+            "file",
+            "path: ./data.json\n    extract:\n      expr: .a\n      kind: jq\n",
+            "extract does not accept 'kind'",
+        ),
+    ];
+    for (type_name, body, needle) in cases {
+        let err = parse_source_list(&source_yaml(type_name, body, ""))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(needle), "{needle}: {err}");
+    }
+}
+
+#[test]
+fn test_parse_source_rejects_unknown_values() {
+    let cases = [
+        (
+            "format: jsn\n",
+            "unknown format 'jsn'",
+            "json, yaml, yml, lines, csv, stix",
+        ),
+        ("format: 5\n", "format must be a string", "json, yaml"),
+        (
+            "on_error: fial\n",
+            "unknown on_error 'fial'",
+            "use_cached, fail, use_default",
+        ),
+        (
+            "refresh: sometimes\n",
+            "unknown refresh 'sometimes'",
+            "once, watch, push, on_demand",
+        ),
+        ("refresh: 5\n", "refresh must be a string", "once, watch"),
+        ("timeout: soon\n", "invalid timeout 'soon'", "30s"),
+        ("required: \"no\"\n", "required must be true or false", ""),
+    ];
+    for (extra, needle, supported) in cases {
+        let err = parse_source_list(&source_yaml("file", "path: ./data.json\n", extra))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("source 'src'") && err.contains(needle) && err.contains(supported),
+            "{extra}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_source_size_caps() {
+    let http = |cap: &str| {
+        source_yaml(
+            "http",
+            "url: https://example.test/data\n    format: json\n",
+            &format!("max_body_size: {cap}\n"),
+        )
+    };
+    let command = |cap: &str| {
+        source_yaml(
+            "command",
+            "command: [cat, data.json]\n    format: json\n",
+            &format!("max_stdout: {cap}\n"),
+        )
+    };
+
+    let sources = parse_source_list(&http("2048")).unwrap();
+    assert!(matches!(
+        sources[0].source_type,
+        sources::SourceType::Http {
+            max_body_size: Some(2048),
+            ..
+        }
+    ));
+    let sources = parse_source_list(&command("4096")).unwrap();
+    assert!(matches!(
+        sources[0].source_type,
+        sources::SourceType::Command {
+            max_stdout: Some(4096),
+            ..
+        }
+    ));
+
+    for bad in ["0", "-1", "10MiB", "1.5"] {
+        for (yaml, key) in [(http(bad), "max_body_size"), (command(bad), "max_stdout")] {
+            let err = parse_source_list(&yaml).unwrap_err().to_string();
+            assert!(
+                err.contains(&format!(
+                    "source 'src' {key} must be a positive integer number of bytes"
+                )),
+                "{key}: {bad}: {err}"
+            );
+        }
+    }
+
+    for (type_name, body, key) in [
+        ("http", "url: https://example.test/data\n", "max_stdout"),
+        ("command", "command: [cat, data.json]\n", "max_body_size"),
+        ("file", "path: ./data.json\n", "max_body_size"),
+        ("nats", "subject: data\n", "max_body_size"),
+    ] {
+        let err = parse_source_list(&source_yaml(type_name, body, &format!("{key}: 1024\n")))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "field '{key}' does not apply to type '{type_name}'"
+            )),
+            "{type_name}: {err}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_source_accepts_every_refresh_mode_and_interval() {
+    for refresh in [
+        "once",
+        "watch",
+        "push",
+        "on_demand",
+        "30s",
+        "5m",
+        "1h",
+        "1d",
+    ] {
+        let yaml = source_yaml(
+            "file",
+            "path: ./data.json\n",
+            &format!("refresh: {refresh}\n"),
+        );
+        parse_source_list(&yaml).unwrap_or_else(|e| panic!("refresh {refresh}: {e}"));
+    }
+}
+
+#[test]
+fn test_parse_source_accepts_every_key_its_type_lists() {
+    let cases = [
+        (
+            "http",
+            "url: https://example.test/data\n    method: POST\n    headers: { A: b }\n    body: \"{}\"\n    format: stix\n    stix: { min_confidence: 10 }\n    refresh: 5m\n    timeout: 10s\n",
+        ),
+        (
+            "http",
+            "url: https://example.test/data\n    format: json\n    extract: .a\n    max_body_size: 1048576\n",
+        ),
+        (
+            "command",
+            "command: [cat, data.json]\n    format: lines\n    extract: .a\n    refresh: once\n    timeout: 5s\n    max_stdout: 1048576\n",
+        ),
+        (
+            "file",
+            "path: ./data.json\n    format: stix\n    stix: { observables: [ipv4] }\n    refresh: watch\n    timeout: 5s\n",
+        ),
+        (
+            "nats",
+            "url: nats://localhost:4222\n    subject: data\n    format: json\n    extract: .a\n    refresh: push\n    timeout: 5s\n",
+        ),
+        (
+            "watchlist",
+            "max_indicators: 10\n    max_value_length: 64\n    default_ttl: 1d\n",
+        ),
+        (
+            "taxii",
+            "url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth: { bearer_token_env: TOKEN }\n    page_size: 100\n    stix: { max_indicators: 10 }\n    refresh: 1h\n    timeout: 30s\n",
+        ),
+    ];
+    let common = "on_error: use_default\n    required: false\n    default: []\n";
+    for (type_name, body) in cases {
+        let yaml = source_yaml(type_name, body, common);
+        parse_source_list(&yaml).unwrap_or_else(|e| panic!("type {type_name}: {e}"));
+    }
 }
 
 #[test]

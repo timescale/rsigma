@@ -28,10 +28,12 @@ crates/rsigma-eval/src/pipeline/sources.rs
 ```rust
 pub enum SourceType {
     File   { path: PathBuf, format: DataFormat, extract: Option<ExtractExpr> },
-    Command{ command: Vec<String>, format: DataFormat, extract: Option<ExtractExpr> },
+    Command{ command: Vec<String>, format: DataFormat, extract: Option<ExtractExpr>,
+             max_stdout: Option<usize> },
     Http   { url: String, method: Option<String>, headers: HashMap<String,String>,
              body: Option<String>,
-             format: DataFormat, extract: Option<ExtractExpr> },
+             format: DataFormat, extract: Option<ExtractExpr>,
+             max_body_size: Option<usize> },
     Nats   { url: String, subject: String, format: DataFormat, extract: Option<ExtractExpr> },
     S3     { bucket: String, key: String, region: Option<String>,        // ← new
              format: DataFormat, extract: Option<ExtractExpr> },
@@ -40,7 +42,7 @@ pub enum SourceType {
 
 `Http` already includes an optional `body` field (verbatim after `${VAR}` expansion; when set and `method` is unset, the request defaults to `POST`). Preserve that when you touch the enum.
 
-Step 2: parse the YAML. Every existing variant has a `parse_<type>_source` block in [`crates/rsigma-eval/src/pipeline/parsing.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs); copy one as a template. Keep the same field-name conventions (`format`, `extract`, `refresh`, `on_error`, `required`) so operators only learn one mental model.
+Step 2: parse the YAML. Every existing variant has a `parse_<type>_source` block in [`crates/rsigma-eval/src/pipeline/parsing.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs); copy one as a template. Keep the same field-name conventions (`format`, `extract`, `refresh`, `on_error`, `required`) so operators only learn one mental model. Add the type and its keys to `source_type_keys` and `SOURCE_TYPES` in the same file: the parser rejects any key a type does not list, and names the type a key belongs to when it is set on another one. {{ added "unreleased" }}
 
 Put the new type in a **standalone** source file (not inside a pipeline):
 
@@ -53,8 +55,7 @@ sources:
     key: snapshot.json
     region: us-east-1
     format: json
-    refresh:
-      interval: 600s
+    refresh: 600s
     on_error: use_cached
 ```
 

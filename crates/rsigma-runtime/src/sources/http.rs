@@ -86,7 +86,8 @@ pub async fn resolve_http(
     .await
 }
 
-/// Inner implementation with a configurable size limit (for testing).
+/// Same as [`resolve_http`] but with a configurable response body size limit
+/// and parser.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn resolve_http_with_limit<F>(
     url: &str,

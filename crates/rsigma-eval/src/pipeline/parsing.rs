@@ -1310,8 +1310,9 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
         .get(ykey("type"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| EvalError::Pipeline(format!("source '{id}' must have a 'type' field")))?;
+    check_source_keys(&id, type_str, obj)?;
 
-    let format = parse_data_format(obj.get(ykey("format")));
+    let format = parse_data_format(&id, obj.get(ykey("format")))?;
     let extract = parse_extract_expr(obj.get(ykey("extract")), &id)?;
 
     let source_type = match type_str {
@@ -1344,6 +1345,7 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 format,
                 extract,
                 stix,
+                max_body_size: parse_byte_limit(&id, obj, "max_body_size")?,
             }
         }
         "command" => {
@@ -1359,6 +1361,7 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 command,
                 format,
                 extract,
+                max_stdout: parse_byte_limit(&id, obj, "max_stdout")?,
             }
         }
         "file" => {
@@ -1404,13 +1407,6 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
             }
         }
         "watchlist" => {
-            for key in ["refresh", "format", "extract", "timeout"] {
-                if obj.get(ykey(key)).is_some() {
-                    return Err(EvalError::Pipeline(format!(
-                        "source '{id}' of type 'watchlist' does not accept '{key}'"
-                    )));
-                }
-            }
             if id == "resolve" || id == "cache" {
                 return Err(EvalError::Pipeline(format!(
                     "source id '{id}' is reserved and cannot be a watchlist"
@@ -1465,16 +1461,6 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
             }
         }
         "taxii" => {
-            if extract.is_some() {
-                return Err(EvalError::Pipeline(format!(
-                    "source '{id}' of type 'taxii' does not accept 'extract'"
-                )));
-            }
-            if obj.get(ykey("format")).is_some() {
-                return Err(EvalError::Pipeline(format!(
-                    "source '{id}' of type 'taxii' does not accept 'format'"
-                )));
-            }
             let url = obj
                 .get(ykey("url"))
                 .and_then(|v| v.as_str())
@@ -1531,7 +1517,7 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
         }
     };
 
-    let refresh = parse_refresh_policy(obj.get(ykey("refresh")));
+    let refresh = parse_refresh_policy(&id, obj.get(ykey("refresh")))?;
     if matches!(source_type, SourceType::Taxii { .. }) {
         let mode = match refresh {
             RefreshPolicy::Watch => Some("watch"),
@@ -1544,12 +1530,14 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
             )));
         }
     }
-    let timeout = parse_duration_field(obj.get(ykey("timeout")));
-    let on_error = parse_error_policy(obj.get(ykey("on_error")));
-    let required = obj
-        .get(ykey("required"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let timeout = parse_timeout(&id, obj.get(ykey("timeout")))?;
+    let on_error = parse_error_policy(&id, obj.get(ykey("on_error")))?;
+    let required = match obj.get(ykey("required")) {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            EvalError::Pipeline(format!("source '{id}': required must be true or false"))
+        })?,
+    };
     let default = obj.get(ykey("default")).cloned();
 
     Ok(DynamicSource {
@@ -1581,12 +1569,18 @@ pub fn parse_sources_file(path: &Path) -> Result<Vec<DynamicSource>> {
     let obj = value
         .as_mapping()
         .ok_or_else(|| EvalError::Pipeline("sources file must be a YAML mapping".to_string()))?;
-    match obj.get(ykey("sources")) {
-        Some(items) => parse_sources(items),
-        None => Err(EvalError::Pipeline(
+    let Some(items) = obj.get(ykey("sources")) else {
+        return Err(EvalError::Pipeline(
             "sources file must contain a top-level 'sources:' key".to_string(),
-        )),
+        ));
+    };
+    if let Some(key) = obj.keys().find(|k| k.as_str() != Some("sources")) {
+        return Err(EvalError::Pipeline(format!(
+            "sources file does not accept top-level key '{}' (supported: sources)",
+            key.as_str().unwrap_or("<non-string>")
+        )));
     }
+    parse_sources(items)
 }
 
 /// Load all `*.yml` and `*.yaml` files from a directory as source files,
@@ -1630,6 +1624,14 @@ fn parse_extract_expr(
     }
 
     if let Some(map) = val.as_mapping() {
+        for key in map.keys() {
+            let name = key.as_str().unwrap_or("<non-string>");
+            if !matches!(name, "expr" | "type") {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{source_id}' extract does not accept '{name}' (supported: expr, type)"
+                )));
+            }
+        }
         let expr = map
             .get(ykey("expr"))
             .and_then(|v| v.as_str())
@@ -1664,15 +1666,132 @@ fn parse_extract_expr(
     )))
 }
 
-fn parse_data_format(value: Option<&yaml_serde::Value>) -> DataFormat {
-    match value.and_then(|v| v.as_str()) {
-        Some("json") => DataFormat::Json,
+/// Keys every dynamic source type accepts.
+const SOURCE_COMMON_KEYS: &[&str] = &["id", "type", "on_error", "required", "default"];
+
+/// Type-specific keys each dynamic source type accepts, or `None` for an
+/// unknown type.
+fn source_type_keys(type_name: &str) -> Option<&'static [&'static str]> {
+    Some(match type_name {
+        "http" => &[
+            "refresh",
+            "timeout",
+            "format",
+            "extract",
+            "url",
+            "method",
+            "headers",
+            "body",
+            "stix",
+            "max_body_size",
+        ],
+        "command" => &[
+            "refresh",
+            "timeout",
+            "format",
+            "extract",
+            "command",
+            "stix",
+            "max_stdout",
+        ],
+        "file" => &["refresh", "timeout", "format", "extract", "path", "stix"],
+        "nats" => &[
+            "refresh", "timeout", "format", "extract", "url", "subject", "stix",
+        ],
+        "watchlist" => &["max_indicators", "max_value_length", "default_ttl"],
+        "taxii" => &[
+            "refresh",
+            "timeout",
+            "url",
+            "collection",
+            "auth",
+            "page_size",
+            "stix",
+        ],
+        _ => return None,
+    })
+}
+
+/// Read an optional byte cap. It must be a positive integer.
+fn parse_byte_limit(id: &str, obj: &yaml_serde::Mapping, key: &str) -> Result<Option<usize>> {
+    let Some(value) = obj.get(ykey(key)) else {
+        return Ok(None);
+    };
+    match value.as_u64() {
+        Some(n) if n > 0 => Ok(Some(usize::try_from(n).unwrap_or(usize::MAX))),
+        _ => Err(EvalError::Pipeline(format!(
+            "source '{id}' {key} must be a positive integer number of bytes"
+        ))),
+    }
+}
+
+const SOURCE_TYPES: &[&str] = &["http", "command", "file", "nats", "watchlist", "taxii"];
+
+/// Reject keys the source's type does not accept. An unknown type is left
+/// to the type dispatch, which reports it.
+fn check_source_keys(id: &str, type_name: &str, obj: &yaml_serde::Mapping) -> Result<()> {
+    let Some(keys) = source_type_keys(type_name) else {
+        return Ok(());
+    };
+    for key in obj.keys() {
+        let name = key.as_str().unwrap_or("<non-string>");
+        if SOURCE_COMMON_KEYS.contains(&name) || keys.contains(&name) {
+            continue;
+        }
+        let supported = SOURCE_COMMON_KEYS
+            .iter()
+            .chain(keys)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let elsewhere = SOURCE_TYPES
+            .iter()
+            .filter_map(|t| source_type_keys(t))
+            .any(|k| k.contains(&name));
+        return Err(EvalError::Pipeline(if elsewhere {
+            format!(
+                "source '{id}' (type: {type_name}): field '{name}' does not apply to type '{type_name}' (supported: {supported})"
+            )
+        } else {
+            format!(
+                "source '{id}' (type: {type_name}): unknown field '{name}' (supported: {supported})"
+            )
+        }));
+    }
+    Ok(())
+}
+
+/// Read an optional string-valued key, rejecting a non-string value.
+fn optional_str<'a>(
+    id: &str,
+    key: &str,
+    value: Option<&'a yaml_serde::Value>,
+    supported: &str,
+) -> Result<Option<&'a str>> {
+    match value {
+        None => Ok(None),
+        Some(v) => v.as_str().map(Some).ok_or_else(|| {
+            EvalError::Pipeline(format!(
+                "source '{id}': {key} must be a string (supported: {supported})"
+            ))
+        }),
+    }
+}
+
+fn parse_data_format(id: &str, value: Option<&yaml_serde::Value>) -> Result<DataFormat> {
+    const SUPPORTED: &str = "json, yaml, yml, lines, csv, stix";
+    Ok(match optional_str(id, "format", value, SUPPORTED)? {
+        None | Some("json") => DataFormat::Json,
         Some("yaml" | "yml") => DataFormat::Yaml,
         Some("lines") => DataFormat::Lines,
         Some("csv") => DataFormat::Csv,
         Some("stix") => DataFormat::Stix,
-        _ => DataFormat::Json,
-    }
+        Some(other) => {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}': unknown format '{other}' (supported: {SUPPORTED})"
+            )));
+        }
+    })
 }
 
 fn bind_stix_format(
@@ -1872,34 +1991,48 @@ fn is_collection_uuid(value: &str) -> bool {
     }) && parts.next().is_none()
 }
 
-fn parse_refresh_policy(value: Option<&yaml_serde::Value>) -> RefreshPolicy {
-    match value.and_then(|v| v.as_str()) {
-        Some("once") => RefreshPolicy::Once,
+fn parse_refresh_policy(id: &str, value: Option<&yaml_serde::Value>) -> Result<RefreshPolicy> {
+    const SUPPORTED: &str = "once, watch, push, on_demand, or an interval such as 5m";
+    Ok(match optional_str(id, "refresh", value, SUPPORTED)? {
+        None | Some("once") => RefreshPolicy::Once,
         Some("watch") => RefreshPolicy::Watch,
         Some("push") => RefreshPolicy::Push,
         Some("on_demand") => RefreshPolicy::OnDemand,
-        Some(s) => {
-            if let Some(dur) = parse_duration_str(s) {
-                RefreshPolicy::Interval(dur)
-            } else {
-                RefreshPolicy::Once
+        Some(s) => match parse_duration_str(s) {
+            Some(dur) => RefreshPolicy::Interval(dur),
+            None => {
+                return Err(EvalError::Pipeline(format!(
+                    "source '{id}': unknown refresh '{s}' (supported: {SUPPORTED})"
+                )));
             }
-        }
-        None => RefreshPolicy::Once,
-    }
+        },
+    })
 }
 
-fn parse_error_policy(value: Option<&yaml_serde::Value>) -> ErrorPolicy {
-    match value.and_then(|v| v.as_str()) {
-        Some("use_cached") => ErrorPolicy::UseCached,
+fn parse_error_policy(id: &str, value: Option<&yaml_serde::Value>) -> Result<ErrorPolicy> {
+    const SUPPORTED: &str = "use_cached, fail, use_default";
+    Ok(match optional_str(id, "on_error", value, SUPPORTED)? {
+        None | Some("use_cached") => ErrorPolicy::UseCached,
         Some("fail") => ErrorPolicy::Fail,
         Some("use_default") => ErrorPolicy::UseDefault,
-        _ => ErrorPolicy::UseCached,
-    }
+        Some(other) => {
+            return Err(EvalError::Pipeline(format!(
+                "source '{id}': unknown on_error '{other}' (supported: {SUPPORTED})"
+            )));
+        }
+    })
 }
 
-fn parse_duration_field(value: Option<&yaml_serde::Value>) -> Option<Duration> {
-    value.and_then(|v| v.as_str()).and_then(parse_duration_str)
+fn parse_timeout(id: &str, value: Option<&yaml_serde::Value>) -> Result<Option<Duration>> {
+    const SUPPORTED: &str = "a duration such as 30s";
+    match optional_str(id, "timeout", value, SUPPORTED)? {
+        None => Ok(None),
+        Some(s) => parse_duration_str(s).map(Some).ok_or_else(|| {
+            EvalError::Pipeline(format!(
+                "source '{id}': invalid timeout '{s}' (supported: {SUPPORTED})"
+            ))
+        }),
+    }
 }
 
 /// Parse a duration string like "5m", "30s", "1h", "24h", "500ms".

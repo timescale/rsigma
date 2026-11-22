@@ -1,0 +1,8 @@
+enrichers:
+  - id: e
+    kind: detection
+    inject_field: out
+    type: template
+    template: x
+    scope:
+      tag: ["attack.*"]

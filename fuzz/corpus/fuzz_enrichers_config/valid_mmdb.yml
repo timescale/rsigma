@@ -1,0 +1,14 @@
+enrichers:
+  - id: geo_src
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: /var/lib/geoip/GeoLite2-City.mmdb
+    key: "${detection.fields.SourceIp}"
+    fields:                          # optional; omit to inject the full decoded record
+      country_code: country.iso_code
+      country_name: country.names.en
+      region: subdivisions.0.iso_code
+      lat: location.latitude
+    default: { country_code: "unknown" }   # optional; used on miss
+    on_error: skip
