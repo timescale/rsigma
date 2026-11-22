@@ -4661,3 +4661,104 @@ fn the_global_cap_still_applies_without_a_per_tenant_cap() {
     assert!(engine.state_count() <= 2);
     assert_eq!(engine.take_tenant_quota_evictions(), 0);
 }
+
+#[test]
+fn imported_buffers_without_seqs_get_distinct_sequences() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 5
+level: high
+"#;
+    let config = CorrelationConfig {
+        correlation_event_mode: CorrelationEventMode::Full,
+        max_correlation_events: 10,
+        ..Default::default()
+    };
+    let mut engine = CorrelationEngine::new(config.clone());
+    engine
+        .add_collection(&parse_sigma_yaml(yaml).unwrap())
+        .unwrap();
+    for i in 0..3 {
+        let v = json!({"EventType": "login", "User": "alice"});
+        engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i);
+    }
+
+    let snapshot = engine.export_state();
+    let mut value = serde_json::to_value(&snapshot).unwrap();
+    strip_seq_keys(&mut value);
+    let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
+
+    let mut restored = CorrelationEngine::new(config);
+    restored
+        .add_collection(&parse_sigma_yaml(yaml).unwrap())
+        .unwrap();
+    assert!(restored.import_state(snapshot));
+
+    let mut seqs = Vec::new();
+    for buf in restored.event_buffers.values() {
+        if let crate::correlation::Retained::Full(entries) = buf.retained() {
+            seqs.extend(entries.iter().map(|e| e.seq));
+        }
+    }
+    assert_eq!(seqs.len(), 3, "every restored entry is still buffered");
+    assert!(seqs.iter().all(|&s| s != 0), "seqs are assigned: {seqs:?}");
+    let unique: std::collections::HashSet<_> = seqs.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "seqs are distinct: {seqs:?}");
+    let highest = *seqs.iter().max().unwrap();
+    assert!(
+        restored.next_event_seq > highest,
+        "next_event_seq {} must exceed {highest}",
+        restored.next_event_seq
+    );
+
+    let v = json!({"EventType": "login", "User": "alice"});
+    restored.process_event_at(&JsonEvent::borrow(&v), 1003);
+    let after = restored
+        .event_buffers
+        .values()
+        .map(|b| b.max_seq())
+        .max()
+        .unwrap();
+    assert!(
+        after > highest,
+        "the next processed event gets a seq above the restored ones: {after} vs {highest}"
+    );
+}
+
+/// Remove `seq` from every serialized buffer entry, as an older binary wrote it.
+fn strip_seq_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.contains_key("ts") && map.contains_key("data") {
+                map.remove("seq");
+            }
+            for child in map.values_mut() {
+                strip_seq_keys(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                strip_seq_keys(child);
+            }
+        }
+        _ => {}
+    }
+}

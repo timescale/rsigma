@@ -107,6 +107,9 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     tenant_keys: HashMap<Option<TenantId>, HashSet<StateKey>>,
     /// Entries evicted because a tenant hit its quota.
     tenant_quota_evictions: u64,
+    /// Sequence number the next processed event gets. Retained buffer entries
+    /// carry it so a parent correlation can skip an event it already merged.
+    next_event_seq: u64,
 }
 
 impl CorrelationEngine {
@@ -140,6 +143,7 @@ impl<L> CorrelationEngine<L> {
             untenanted_skipped: 0,
             tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
+            next_event_seq: 1,
         }
     }
 
@@ -698,6 +702,9 @@ impl<L> CorrelationEngine<L> {
             self.evict_all(timestamp_secs);
         }
 
+        let event_seq = self.next_event_seq;
+        self.next_event_seq = self.next_event_seq.saturating_add(1);
+
         // Feed detection matches into correlations
         let mut correlations: Vec<EvaluationResult> = Vec::new();
         let mut fired_indices = Vec::new();
@@ -706,6 +713,7 @@ impl<L> CorrelationEngine<L> {
             &identities,
             timestamp_secs,
             tenant,
+            event_seq,
             &mut correlations,
             &mut fired_indices,
         );
@@ -924,12 +932,14 @@ impl<L> CorrelationEngine<L> {
     }
 
     /// Feed detection matches into correlation window states.
+    #[allow(clippy::too_many_arguments)]
     fn feed_detections(
         &mut self,
         event: &impl Event,
         identities: &[RuleIdentity],
         ts: i64,
         tenant: Option<&TenantId>,
+        event_seq: u64,
         out: &mut Vec<EvaluationResult>,
         fired_indices: &mut Vec<usize>,
     ) {
@@ -961,7 +971,9 @@ impl<L> CorrelationEngine<L> {
 
         for (corr_idx, rule_id, rule_name) in work {
             let before = out.len();
-            self.update_correlation(corr_idx, event, ts, tenant, &rule_id, &rule_name, out);
+            self.update_correlation(
+                corr_idx, event, ts, tenant, &rule_id, &rule_name, event_seq, out,
+            );
             if out.len() > before {
                 fired_indices.push(corr_idx);
             }
@@ -1005,6 +1017,7 @@ impl<L> CorrelationEngine<L> {
         tenant: Option<&TenantId>,
         rule_id: &Option<String>,
         rule_name: &Option<String>,
+        event_seq: u64,
         out: &mut Vec<EvaluationResult>,
     ) {
         // Copy the scalars and resolve the group key while borrowing the
@@ -1165,7 +1178,7 @@ impl<L> CorrelationEngine<L> {
                     buf.clear();
                 }
                 let json = event.to_json();
-                buf.push(ts, &json);
+                buf.push_seq(event_seq, ts, &json);
             }
             CorrelationEventMode::Refs => {
                 let buf = self
@@ -1178,7 +1191,7 @@ impl<L> CorrelationEngine<L> {
                     buf.clear();
                 }
                 let json = event.to_json();
-                buf.push(ts, &json);
+                buf.push_seq(event_seq, ts, &json);
             }
             CorrelationEventMode::None => {}
         }
@@ -2035,7 +2048,32 @@ impl<L> CorrelationEngine<L> {
             }
         }
 
+        self.resequence_imported_buffers();
+
         Some(stats)
+    }
+
+    /// Give restored buffer entries distinct sequence numbers, so a snapshot
+    /// written before entries carried one still deduplicates on merge, and
+    /// raise `next_event_seq` above every restored value.
+    fn resequence_imported_buffers(&mut self) {
+        let mut highest = 0u64;
+        for buf in self.event_buffers.values() {
+            highest = highest.max(buf.max_seq());
+        }
+        for buf in self.event_ref_buffers.values() {
+            highest = highest.max(buf.max_seq());
+        }
+        self.next_event_seq = self.next_event_seq.max(highest.saturating_add(1));
+
+        let mut next = self.next_event_seq;
+        for buf in self.event_buffers.values_mut() {
+            buf.sequence_unsequenced(&mut next);
+        }
+        for buf in self.event_ref_buffers.values_mut() {
+            buf.sequence_unsequenced(&mut next);
+        }
+        self.next_event_seq = next;
     }
 
     /// Stable identifier for a correlation rule: prefers id, then name, then title.

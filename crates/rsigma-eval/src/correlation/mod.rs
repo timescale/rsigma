@@ -12,6 +12,7 @@ mod types;
 mod window;
 
 pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
+pub(crate) use buffers::{FullEntry, RefEntry, Retained};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
 pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};
