@@ -318,6 +318,13 @@ impl EnrichmentPipeline {
     /// True when a rendered template references `${detection.fields.*}`,
     /// `${detection.event.*}`, or bare `${detection.event}`. Those references
     /// resolve only when the engine retains the event on the result.
+    ///
+    /// A caller that builds its own engine passes this to
+    /// [`RuntimeEngine::set_include_event`](crate::RuntimeEngine::set_include_event)
+    /// (or [`LogProcessor::set_include_event`](crate::LogProcessor::set_include_event)),
+    /// and, unless it wants events delivered, removes them after
+    /// [`run`](Self::run) with
+    /// [`strip_auto_retained_event`](crate::strip_auto_retained_event).
     pub fn needs_event(&self) -> bool {
         self.needs_event
     }
