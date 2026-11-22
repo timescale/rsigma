@@ -1,0 +1,21 @@
+sources:
+  - id: big_feed
+    type: http
+    url: https://feeds.example.com/indicators.json
+    format: json
+    max_body_size: 52428800
+  - id: inventory
+    type: command
+    command: ["/usr/local/bin/inventory", "--json"]
+    format: json
+    max_stdout: 1048576
+  - id: zero_cap
+    type: http
+    url: https://feeds.example.com/indicators.json
+    format: json
+    max_body_size: 0
+  - id: wrong_type_cap
+    type: file
+    path: ./data.json
+    format: json
+    max_stdout: 1024

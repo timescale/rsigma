@@ -2214,6 +2214,70 @@ fn test_parse_source_rejects_unknown_values() {
 }
 
 #[test]
+fn test_parse_source_size_caps() {
+    let http = |cap: &str| {
+        source_yaml(
+            "http",
+            "url: https://example.test/data\n    format: json\n",
+            &format!("max_body_size: {cap}\n"),
+        )
+    };
+    let command = |cap: &str| {
+        source_yaml(
+            "command",
+            "command: [cat, data.json]\n    format: json\n",
+            &format!("max_stdout: {cap}\n"),
+        )
+    };
+
+    let sources = parse_source_list(&http("2048")).unwrap();
+    assert!(matches!(
+        sources[0].source_type,
+        sources::SourceType::Http {
+            max_body_size: Some(2048),
+            ..
+        }
+    ));
+    let sources = parse_source_list(&command("4096")).unwrap();
+    assert!(matches!(
+        sources[0].source_type,
+        sources::SourceType::Command {
+            max_stdout: Some(4096),
+            ..
+        }
+    ));
+
+    for bad in ["0", "-1", "10MiB", "1.5"] {
+        for (yaml, key) in [(http(bad), "max_body_size"), (command(bad), "max_stdout")] {
+            let err = parse_source_list(&yaml).unwrap_err().to_string();
+            assert!(
+                err.contains(&format!(
+                    "source 'src' {key} must be a positive integer number of bytes"
+                )),
+                "{key}: {bad}: {err}"
+            );
+        }
+    }
+
+    for (type_name, body, key) in [
+        ("http", "url: https://example.test/data\n", "max_stdout"),
+        ("command", "command: [cat, data.json]\n", "max_body_size"),
+        ("file", "path: ./data.json\n", "max_body_size"),
+        ("nats", "subject: data\n", "max_body_size"),
+    ] {
+        let err = parse_source_list(&source_yaml(type_name, body, &format!("{key}: 1024\n")))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "field '{key}' does not apply to type '{type_name}'"
+            )),
+            "{type_name}: {err}"
+        );
+    }
+}
+
+#[test]
 fn test_parse_source_accepts_every_refresh_mode_and_interval() {
     for refresh in [
         "once",
@@ -2243,11 +2307,11 @@ fn test_parse_source_accepts_every_key_its_type_lists() {
         ),
         (
             "http",
-            "url: https://example.test/data\n    format: json\n    extract: .a\n",
+            "url: https://example.test/data\n    format: json\n    extract: .a\n    max_body_size: 1048576\n",
         ),
         (
             "command",
-            "command: [cat, data.json]\n    format: lines\n    extract: .a\n    refresh: once\n    timeout: 5s\n",
+            "command: [cat, data.json]\n    format: lines\n    extract: .a\n    refresh: once\n    timeout: 5s\n    max_stdout: 1048576\n",
         ),
         (
             "file",

@@ -300,6 +300,7 @@ impl DefaultSourceResolver {
         extract: Option<&rsigma_eval::pipeline::sources::ExtractExpr>,
         timeout: Option<Duration>,
         stix: Option<&rsigma_eval::pipeline::sources::StixOptions>,
+        max_body_size: usize,
     ) -> Result<ResolvedValue, SourceError> {
         #[cfg(feature = "stix-source")]
         if format == DataFormat::Stix {
@@ -316,7 +317,7 @@ impl DefaultSourceResolver {
                 body,
                 extract,
                 timeout,
-                MAX_SOURCE_RESPONSE_BYTES,
+                max_body_size,
                 move |text| {
                     let built = stix::build(text, &options, &now)?;
                     if let Some(metrics) = &metrics {
@@ -331,7 +332,17 @@ impl DefaultSourceResolver {
         }
         #[cfg(not(feature = "stix-source"))]
         let _ = (source_id, stix);
-        http::resolve_http(url, method, headers, body, format, extract, timeout).await
+        http::resolve_http_with_limit(
+            url,
+            method,
+            headers,
+            body,
+            extract,
+            timeout,
+            max_body_size,
+            |text| file::parse_data(text, format),
+        )
+        .await
     }
 
     async fn resolve_taxii(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
@@ -404,7 +415,17 @@ impl SourceResolver for DefaultSourceResolver {
                 command,
                 format,
                 extract,
-            } => command::resolve_command(command, *format, extract.as_ref(), source.timeout).await,
+                max_stdout,
+            } => {
+                command::resolve_command_with_limit(
+                    command,
+                    *format,
+                    extract.as_ref(),
+                    source.timeout,
+                    max_stdout.unwrap_or(MAX_SOURCE_RESPONSE_BYTES),
+                )
+                .await
+            }
             SourceType::Http {
                 url,
                 method,
@@ -413,6 +434,7 @@ impl SourceResolver for DefaultSourceResolver {
                 format,
                 extract,
                 stix,
+                max_body_size,
             } => {
                 self.resolve_http_source(
                     &source.id,
@@ -424,6 +446,7 @@ impl SourceResolver for DefaultSourceResolver {
                     extract.as_ref(),
                     source.timeout,
                     stix.as_ref(),
+                    max_body_size.unwrap_or(MAX_SOURCE_RESPONSE_BYTES),
                 )
                 .await
             }

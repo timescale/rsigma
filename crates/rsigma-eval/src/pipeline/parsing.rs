@@ -1345,6 +1345,7 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 format,
                 extract,
                 stix,
+                max_body_size: parse_byte_limit(&id, obj, "max_body_size")?,
             }
         }
         "command" => {
@@ -1360,6 +1361,7 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
                 command,
                 format,
                 extract,
+                max_stdout: parse_byte_limit(&id, obj, "max_stdout")?,
             }
         }
         "file" => {
@@ -1672,9 +1674,26 @@ const SOURCE_COMMON_KEYS: &[&str] = &["id", "type", "on_error", "required", "def
 fn source_type_keys(type_name: &str) -> Option<&'static [&'static str]> {
     Some(match type_name {
         "http" => &[
-            "refresh", "timeout", "format", "extract", "url", "method", "headers", "body", "stix",
+            "refresh",
+            "timeout",
+            "format",
+            "extract",
+            "url",
+            "method",
+            "headers",
+            "body",
+            "stix",
+            "max_body_size",
         ],
-        "command" => &["refresh", "timeout", "format", "extract", "command", "stix"],
+        "command" => &[
+            "refresh",
+            "timeout",
+            "format",
+            "extract",
+            "command",
+            "stix",
+            "max_stdout",
+        ],
         "file" => &["refresh", "timeout", "format", "extract", "path", "stix"],
         "nats" => &[
             "refresh", "timeout", "format", "extract", "url", "subject", "stix",
@@ -1691,6 +1710,19 @@ fn source_type_keys(type_name: &str) -> Option<&'static [&'static str]> {
         ],
         _ => return None,
     })
+}
+
+/// Read an optional byte cap. It must be a positive integer.
+fn parse_byte_limit(id: &str, obj: &yaml_serde::Mapping, key: &str) -> Result<Option<usize>> {
+    let Some(value) = obj.get(ykey(key)) else {
+        return Ok(None);
+    };
+    match value.as_u64() {
+        Some(n) if n > 0 => Ok(Some(usize::try_from(n).unwrap_or(usize::MAX))),
+        _ => Err(EvalError::Pipeline(format!(
+            "source '{id}' {key} must be a positive integer number of bytes"
+        ))),
+    }
 }
 
 const SOURCE_TYPES: &[&str] = &["http", "command", "file", "nats", "watchlist", "taxii"];

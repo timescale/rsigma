@@ -54,12 +54,16 @@ pub enum SourceType {
         extract: Option<ExtractExpr>,
         /// Set when `format` is [`DataFormat::Stix`].
         stix: Option<StixOptions>,
+        /// Response body cap in bytes. `None` uses the runtime default.
+        max_body_size: Option<usize>,
     },
     /// Run a local command and capture its stdout.
     Command {
         command: Vec<String>,
         format: DataFormat,
         extract: Option<ExtractExpr>,
+        /// Stdout cap in bytes. `None` uses the runtime default.
+        max_stdout: Option<usize>,
     },
     /// Read data from a local file.
     File {
