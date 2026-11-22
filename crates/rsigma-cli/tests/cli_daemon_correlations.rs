@@ -126,3 +126,43 @@ fn correlation_endpoints_empty_without_correlations() {
     assert_eq!(v2["count"], 0);
     assert_eq!(v2["groups"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn daemon_chained_correlation_carries_child_events() {
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chained_events");
+    let rules = fixtures.join("rules.yml");
+    let out = temp_file(".ndjson", "");
+    let out_spec = format!("file://{}", out.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rules.to_str().unwrap(),
+        &["--correlation-event-mode", "full", "--output", &out_spec],
+    );
+
+    let events = std::fs::read_to_string(fixtures.join("events.ndjson")).unwrap();
+    for event in events.lines() {
+        assert_eq!(http_post(&daemon.url("/api/v1/events"), event).0, 200);
+    }
+
+    let parent = poll_until(Duration::from_secs(5), || {
+        std::fs::read_to_string(out.path())
+            .unwrap_or_default()
+            .lines()
+            .find(|line| line.contains("Repeated brute force bursts"))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+    })
+    .expect("the chained correlation reaches the sink");
+
+    let ids: Vec<&str> = parent["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["a1", "a2", "a3", "a4"]);
+    let sources = parent["event_sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 4);
+    assert!(sources.iter().all(|s| {
+        s["rule"] == "failed_login" && s["via"] == "5b0c6f7e-0000-4000-8000-000000000002"
+    }));
+}

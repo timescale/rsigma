@@ -25,7 +25,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rsigma_eval::{
-    CorrelationBody, DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader,
+    CorrelationBody, DetectionBody, EvaluationResult, EventRef, EventSource, FieldMatch,
+    ResultBody, RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::RiskEvent;
@@ -253,11 +254,64 @@ fn correlation_with_group_key() {
             timespan_secs: 300,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     };
 
     check_both_versions("correlation", |opts| {
         detection_finding_with_opts(&result, &FixedSource::new(), opts)
+    });
+}
+
+/// Retained event refs and their sources land side by side in `evidences[].data`.
+#[test]
+fn correlation_with_event_refs_and_sources() {
+    let result = EvaluationResult {
+        header: RuleHeader {
+            rule_title: "Repeated brute force bursts".to_string(),
+            rule_id: Some("corr-2".to_string()),
+            tenant_id: None,
+            level: Some(Level::High),
+            tags: vec!["attack.credential_access".to_string()],
+            custom_attributes: Arc::new(HashMap::new()),
+            enrichments: None,
+            ruleset: None,
+        },
+        body: ResultBody::Correlation(CorrelationBody {
+            correlation_type: CorrelationType::EventCount,
+            group_key: vec![("User".to_string(), "alice".to_string())],
+            aggregated_value: 2.0,
+            timespan_secs: 3600,
+            events: None,
+            event_refs: Some(vec![
+                EventRef {
+                    timestamp: 1_700_000_000,
+                    id: Some("e-1".to_string()),
+                },
+                EventRef {
+                    timestamp: 1_700_000_030,
+                    id: Some("e-2".to_string()),
+                },
+            ]),
+            event_sources: Some(vec![
+                EventSource {
+                    rule: Some("failed_login".to_string()),
+                    via: Some("brute-burst".to_string()),
+                },
+                EventSource {
+                    rule: Some("failed_login".to_string()),
+                    via: Some("brute-burst".to_string()),
+                },
+            ]),
+        }),
+    };
+
+    check_both_versions("correlation_event_refs", |opts| {
+        let finding = detection_finding_with_opts(&result, &FixedSource::new(), opts);
+        let data = &finding["evidences"][0]["data"];
+        assert_eq!(data["event_refs"][1]["id"], "e-2");
+        assert_eq!(data["event_sources"][1]["via"], "brute-burst");
+        finding
     });
 }
 
@@ -575,6 +629,7 @@ fn dedup_repeat_from_a_correlation_keeps_the_correlation_body() {
     let mut retained = wire.clone();
     retained["events"] = json!([{"User": "alice"}]);
     retained["event_refs"] = json!([{"id": "e-1"}]);
+    retained["event_sources"] = json!([{"rule": "ssh-failed-login"}]);
     let retained_finding =
         dedup_summary_finding_with_opts(&retained, &FixedSource::new(), OcsfOptions::default());
     assert_eq!(
@@ -584,6 +639,10 @@ fn dedup_repeat_from_a_correlation_keeps_the_correlation_body() {
     assert_eq!(
         retained_finding["evidences"][0]["data"]["event_refs"][0]["id"],
         "e-1"
+    );
+    assert_eq!(
+        retained_finding["evidences"][0]["data"]["event_sources"][0]["rule"],
+        "ssh-failed-login"
     );
     assert_eq!(
         retained_finding["unmapped"]["correlation_type"],
@@ -631,6 +690,10 @@ fn correlation_detection() -> EvaluationResult {
             timespan_secs: 300,
             events: Some(vec![json!({"User": "alice"})]),
             event_refs: None,
+            event_sources: Some(vec![EventSource {
+                rule: Some("ssh-failed-login".to_string()),
+                via: None,
+            }]),
         }),
     }
 }

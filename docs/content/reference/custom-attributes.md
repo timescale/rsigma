@@ -19,8 +19,8 @@ CLI flags and library API calls always take precedence over `custom_attributes` 
 | `rsigma.suppress` | Suppression window for repeated correlation alerts. Duration string: `5m`, `1h`, `30s`. | `--suppress` | Engine + per-correlation |
 | `rsigma.action` | Post-fire action: `alert` (keep state, re-alert) or `reset` (clear window). | `--action` | Engine + per-correlation |
 | `rsigma.include_event` | Embed the full event JSON in detection output for this rule. `"true"` or `"false"`. | `--include-event` | Per-rule |
-| `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). | `--correlation-event-mode` | Per-correlation |
-| `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. | `--max-correlation-events` | Per-correlation |
+| `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). On a chained parent, also makes its child correlations retain events for it, while their own output keeps their own mode. {{ added "unreleased" }} | `--correlation-event-mode` | Per-correlation |
+| `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. On a chained parent, also raises its child correlations' retention cap to at least this value. {{ added "unreleased" }} | `--max-correlation-events` | Per-correlation |
 | `rsigma.max_group_entries` | Cap on retained entries within a single group's window state for this rule (timestamps, value pairs, or per-rule hits). Oldest entries are dropped; session windows keep their span anchor. Integer, quoted. | `--max-group-entries` | Per-correlation |
 | `rsigma.exemplars` | Embedded example events that should or should not match this rule. The engine never interprets them at match time; [`rule test`](../cli/rule/test.md) executes them. | `rule test` | Per-rule |
 

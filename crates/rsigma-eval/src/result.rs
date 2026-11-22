@@ -171,6 +171,50 @@ pub struct CorrelationBody {
     /// Lightweight event references, included when `correlation_event_mode` is `Refs`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_refs: Option<Vec<EventRef>>,
+    /// Where each event in `events` or `event_refs` came from, index for
+    /// index. Present exactly when one of them is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_sources: Option<Vec<EventSource>>,
+}
+
+/// Where one event retained by a correlation came from.
+///
+/// `rule` is the reference the event matched, as written in the `rules:` list
+/// of the correlation that buffered it. `via` names the child correlation that
+/// delivered the event to a chained correlation, by its id, else its name,
+/// else its title, and is absent on events a correlation matched directly.
+/// Both are absent on events restored from a state snapshot that predates
+/// them.
+///
+/// ```
+/// use rsigma_eval::EventSource;
+///
+/// let direct = EventSource {
+///     rule: Some("failed_login".into()),
+///     via: None,
+/// };
+/// assert_eq!(
+///     serde_json::to_string(&direct).unwrap(),
+///     r#"{"rule":"failed_login"}"#
+/// );
+///
+/// let chained = EventSource {
+///     rule: Some("failed_login".into()),
+///     via: Some("brute-burst".into()),
+/// };
+/// assert_eq!(
+///     serde_json::to_string(&chained).unwrap(),
+///     r#"{"rule":"failed_login","via":"brute-burst"}"#
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct EventSource {
+    /// The referenced rule the event matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// The child correlation that delivered the event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 /// Verbosity of the match detail attached to detection results.
@@ -381,6 +425,7 @@ mod tests {
                 timespan_secs: 300,
                 events: None,
                 event_refs: None,
+                event_sources: None,
             }),
         };
 
@@ -419,6 +464,7 @@ mod tests {
                 timespan_secs: 0,
                 events: None,
                 event_refs: None,
+                event_sources: None,
             }),
         };
         assert!(corr.is_correlation());

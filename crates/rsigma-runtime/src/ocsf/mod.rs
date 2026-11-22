@@ -1344,6 +1344,9 @@ fn correlation_evidences(body: &rsigma_eval::CorrelationBody) -> Option<Value> {
     if let Some(refs) = &body.event_refs {
         data.insert("event_refs".to_string(), json!(refs));
     }
+    if let Some(sources) = &body.event_sources {
+        data.insert("event_sources".to_string(), json!(sources));
+    }
     (!data.is_empty()).then(|| json!([{ "data": Value::Object(data) }]))
 }
 
@@ -1379,6 +1382,9 @@ fn wire_correlation_evidences(wire: &Value) -> Option<Value> {
     }
     if let Some(refs) = wire.get("event_refs") {
         data.insert("event_refs".to_string(), refs.clone());
+    }
+    if let Some(sources) = wire.get("event_sources") {
+        data.insert("event_sources".to_string(), sources.clone());
     }
     (!data.is_empty()).then(|| json!([{ "data": Value::Object(data) }]))
 }

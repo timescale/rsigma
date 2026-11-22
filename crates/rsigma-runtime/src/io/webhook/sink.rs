@@ -590,6 +590,7 @@ mod tests {
                 group_key: vec![],
                 events: None,
                 event_refs: None,
+                event_sources: None,
             }),
         };
         let result: ProcessResult = vec![correlation];

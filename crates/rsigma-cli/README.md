@@ -761,6 +761,8 @@ Sigma rules can include `rsigma.*` custom attributes to override CLI defaults on
 | `rsigma.correlation_event_mode` | correlation rules | `"none"`, `"full"`, or `"refs"`, overrides `--correlation-event-mode` |
 | `rsigma.max_correlation_events` | correlation rules | Integer as string (e.g. `"25"`), overrides `--max-correlation-events` |
 
+Set on a chained parent, `rsigma.correlation_event_mode` and `rsigma.max_correlation_events` also make its child correlations retain events up to that cap, so the parent's result carries the events behind each child firing along with `event_sources`. The children's own output keeps their own mode.
+
 Example rule YAML:
 
 ```yaml

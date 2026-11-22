@@ -59,6 +59,7 @@ fn correlation_result() -> EvaluationResult {
             timespan_secs: 0,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     }
 }

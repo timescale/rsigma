@@ -391,6 +391,7 @@ fn strip_event_payloads(result: &mut EvaluationResult) {
     if let Some(correlation) = result.as_correlation_mut() {
         correlation.events = None;
         correlation.event_refs = None;
+        correlation.event_sources = None;
     }
 }
 
@@ -572,5 +573,25 @@ mod tests {
             out.kept[0].header.enrichments.as_ref().unwrap()["risk.objects"],
             serde_json::json!([{"type": "host", "value": "event"}])
         );
+    }
+
+    #[test]
+    fn strip_event_payloads_drops_correlation_events_and_sources() {
+        let mut result = EvaluationResult {
+            header: detection("10.0.0.1", Level::High, vec![]).header,
+            body: ResultBody::Correlation(rsigma_eval::CorrelationBody {
+                correlation_type: rsigma_parser::CorrelationType::EventCount,
+                group_key: vec![],
+                aggregated_value: 1.0,
+                timespan_secs: 60,
+                events: Some(vec![serde_json::json!({"raw": "event"})]),
+                event_refs: None,
+                event_sources: Some(vec![rsigma_eval::EventSource::default()]),
+            }),
+        };
+        strip_event_payloads(&mut result);
+        let correlation = result.as_correlation().unwrap();
+        assert!(correlation.events.is_none());
+        assert!(correlation.event_sources.is_none());
     }
 }

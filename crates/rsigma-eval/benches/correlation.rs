@@ -2,7 +2,8 @@
 //!
 //! Measures event_count and temporal correlation performance, end-to-end
 //! throughput with mixed detection + correlation, state map pressure from
-//! many unique group keys, and percentile/median checks over large windows.
+//! many unique group keys, percentile/median checks over large windows, and
+//! chained correlations that carry events up the chain.
 
 mod datagen;
 
@@ -10,7 +11,9 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::RngExt;
-use rsigma_eval::{CorrelationConfig, CorrelationEngine, JsonEvent, ProcessResultExt};
+use rsigma_eval::{
+    CorrelationConfig, CorrelationEngine, CorrelationEventMode, JsonEvent, ProcessResultExt,
+};
 use rsigma_parser::parse_sigma_yaml;
 
 // ---------------------------------------------------------------------------
@@ -500,6 +503,53 @@ fn bench_correlation_tenants(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: chained correlations with event retention
+// ---------------------------------------------------------------------------
+
+fn bench_correlation_chained_events(c: &mut Criterion) {
+    let mut group = c.benchmark_group("correlation_chained_events");
+    group.sample_size(20);
+
+    let yaml = datagen::gen_rules_with_chained_correlations(10);
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+
+    let event_values = datagen::gen_event_values(1_000);
+    let events: Vec<JsonEvent> = event_values.iter().map(JsonEvent::borrow).collect();
+
+    group.throughput(criterion::Throughput::Elements(1_000));
+
+    for (label, mode) in [
+        ("none", CorrelationEventMode::None),
+        ("refs", CorrelationEventMode::Refs),
+        ("full", CorrelationEventMode::Full),
+    ] {
+        let config = CorrelationConfig {
+            correlation_event_mode: mode,
+            ..CorrelationConfig::default()
+        };
+
+        group.bench_with_input(BenchmarkId::new("mode", label), &events, |b, events| {
+            b.iter_with_setup(
+                || {
+                    let mut engine = CorrelationEngine::new(config.clone());
+                    engine.add_collection(&collection).unwrap();
+                    engine
+                },
+                |mut engine| {
+                    let base_ts = 1_000_000i64;
+                    for (i, event) in events.iter().enumerate() {
+                        let result = engine.process_event_at(black_box(event), base_ts + i as i64);
+                        black_box(&result);
+                    }
+                },
+            );
+        });
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -513,5 +563,6 @@ criterion_group!(
     bench_correlation_window_modes,
     bench_correlation_numeric_window,
     bench_correlation_tenants,
+    bench_correlation_chained_events,
 );
 criterion_main!(benches);

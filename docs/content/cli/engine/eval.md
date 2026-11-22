@@ -80,8 +80,8 @@ The global `--output-format`, `--color`, `--quiet`, and `--no-stats` flags apply
 |------|---------|-------------|
 | `--suppress <DURATION>` | unset | Suppress duplicate correlation alerts within the window (`5m`, `1h`, `30s`). |
 | `--action <ACTION>` | `alert` | Post-fire action for correlations: `alert` (keep state, re-alert on next match) or `reset` (clear window state). |
-| `--correlation-event-mode <MODE>` | `none` | Whether to embed contributing events in correlation output: `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). |
-| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window when `--correlation-event-mode` is not `none`. Oldest evicted. |
+| `--correlation-event-mode <MODE>` | `none` | Whether to embed contributing events in correlation output: `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "unreleased" }} |
+| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window when `--correlation-event-mode` is not `none`. Oldest evicted. A chained parent applies its own cap to the events its children deliver. {{ added "unreleased" }} |
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded. Equivalent to the `rsigma.max_group_entries` custom attribute. |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction priority list. Default list: `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`. Repeatable. |

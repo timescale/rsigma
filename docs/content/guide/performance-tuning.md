@@ -209,6 +209,7 @@ Tune by:
 - Lowering `--max-state-entries` on memory-constrained deployments, or raising it when the eviction warning fires during legitimate high-cardinality traffic.
 - Setting `--max-correlation-events 5` (or via `rsigma.max_correlation_events` per-rule) to cap the per-window event list.
 - Setting `--correlation-event-mode refs` to store lightweight references instead of full event bodies. `refs` mode keeps timestamps and event IDs only; `full` retains the deflate-compressed event JSON. `none` (the default) keeps no events.
+- Accounting for chains. A chained parent with an event mode adds an event buffer per active child group and one per active parent group, each bounded by the largest cap among the correlations that retain through it. Event sources share one string per rule reference, so they add a fixed cost per buffered entry rather than an allocation per event. {{ added "unreleased" }}
 
 See [Evaluating Rules](evaluating-rules.md#correlation-in-eval-mode) for the matching `engine eval` flags and [Streaming Detection](streaming-detection.md#state-persistence) for the daemon's SQLite snapshot path.
 

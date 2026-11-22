@@ -3126,8 +3126,8 @@ level: high
 
 #[test]
 fn test_chaining_in_full_event_mode() {
-    // Child results carry retained events in full mode; the chained parent
-    // still sees the child's group and fires without events of its own.
+    // The chained parent carries the events its child retained at each firing,
+    // each once, oldest first, and keeps the child's group.
     let yaml = r#"
 title: click
 id: det-rule
@@ -3174,7 +3174,7 @@ level: high
 
     let mut last = None;
     for i in 0..3 {
-        let v = json!({"action": "click", "User": "alice"});
+        let v = json!({"action": "click", "User": "alice", "n": i + 1});
         last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1_000 + i));
     }
     let result = last.unwrap();
@@ -3186,7 +3186,7 @@ level: high
         panic!("expected A then chained B, got {bodies:?}");
     };
     assert_eq!(a.events.as_ref().map(Vec::len), Some(3));
-    assert!(b.events.is_none());
+    assert_eq!(event_ns(b), [1, 2, 3]);
     assert_eq!(b.group_key, [("User".to_string(), "alice".to_string())]);
     assert_eq!(b.aggregated_value, 2.0);
 }
@@ -4660,4 +4660,1062 @@ fn the_global_cap_still_applies_without_a_per_tenant_cap() {
     }
     assert!(engine.state_count() <= 2);
     assert_eq!(engine.take_tenant_quota_evictions(), 0);
+}
+
+#[test]
+fn imported_buffers_without_seqs_get_distinct_sequences() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 300s
+    condition:
+        gte: 5
+level: high
+"#;
+    let config = CorrelationConfig {
+        correlation_event_mode: CorrelationEventMode::Full,
+        max_correlation_events: 10,
+        ..Default::default()
+    };
+    let mut engine = CorrelationEngine::new(config.clone());
+    engine
+        .add_collection(&parse_sigma_yaml(yaml).unwrap())
+        .unwrap();
+    for i in 0..3 {
+        let v = json!({"EventType": "login", "User": "alice"});
+        engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i);
+    }
+
+    let snapshot = engine.export_state();
+    let mut value = serde_json::to_value(&snapshot).unwrap();
+    strip_legacy_entry_keys(&mut value);
+    let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
+
+    let mut restored = CorrelationEngine::new(config);
+    restored
+        .add_collection(&parse_sigma_yaml(yaml).unwrap())
+        .unwrap();
+    assert!(restored.import_state(snapshot));
+
+    let mut seqs = Vec::new();
+    for buf in restored.event_buffers.values() {
+        if let crate::correlation::Retained::Full(entries) = buf.retained() {
+            seqs.extend(entries.iter().map(|e| e.seq));
+        }
+    }
+    assert_eq!(seqs.len(), 3, "every restored entry is still buffered");
+    assert!(seqs.iter().all(|&s| s != 0), "seqs are assigned: {seqs:?}");
+    let unique: std::collections::HashSet<_> = seqs.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "seqs are distinct: {seqs:?}");
+    let highest = *seqs.iter().max().unwrap();
+    assert!(
+        restored.next_event_seq > highest,
+        "next_event_seq {} must exceed {highest}",
+        restored.next_event_seq
+    );
+
+    let v = json!({"EventType": "login", "User": "alice"});
+    restored.process_event_at(&JsonEvent::borrow(&v), 1003);
+    let after = restored
+        .event_buffers
+        .values()
+        .map(|b| b.max_seq())
+        .max()
+        .unwrap();
+    assert!(
+        after > highest,
+        "the next processed event gets a seq above the restored ones: {after} vs {highest}"
+    );
+}
+
+/// Remove `seq`, `rule`, and `via` from every serialized buffer entry, as an
+/// older binary wrote it.
+fn strip_legacy_entry_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.contains_key("ts") && map.contains_key("data") {
+                map.remove("seq");
+                map.remove("rule");
+                map.remove("via");
+            }
+            for child in map.values_mut() {
+                strip_legacy_entry_keys(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                strip_legacy_entry_keys(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+// =========================================================================
+// Chain retention
+// =========================================================================
+
+const RETENTION_CHAIN: &str = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+"#;
+
+#[test]
+fn test_child_without_own_mode_buffers_for_full_parent_but_emits_no_events() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    assert!(
+        a.as_correlation().unwrap().events.is_none(),
+        "own mode none emits no events"
+    );
+    assert!(
+        engine.event_buffers.keys().any(|k| k.corr_idx == 0),
+        "the child buffers events for its parent"
+    );
+}
+
+#[test]
+fn test_refs_child_under_full_parent_emits_ids_from_events() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: refs
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let mut last = None;
+    for i in 0..2 {
+        let v = json!({"action": "click", "User": "alice", "id": format!("e-{i}")});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    let refs = a
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .as_ref()
+        .expect("refs mode emits refs");
+    let ids: Vec<_> = refs.iter().filter_map(|r| r.id.as_deref()).collect();
+    assert_eq!(ids, ["e-0", "e-1"]);
+}
+
+#[test]
+fn test_child_own_cap_bounds_its_output_under_a_larger_parent_cap() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 5
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+    rsigma.max_correlation_events: "3"
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+    rsigma.max_correlation_events: "10"
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let mut last = None;
+    for i in 0..5 {
+        let v = json!({"action": "click", "User": "alice", "idx": i});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    let events = a
+        .as_correlation()
+        .unwrap()
+        .events
+        .as_ref()
+        .expect("full mode emits events");
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["idx"], 2);
+    assert_eq!(events[2]["idx"], 4);
+}
+
+#[test]
+fn test_no_event_buffers_without_an_event_mode() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    // The chain YAML sets full on the parent, so strip it for this case.
+    let mut collection = collection;
+    for corr in &mut collection.correlations {
+        corr.custom_attributes
+            .remove("rsigma.correlation_event_mode");
+    }
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let v = json!({"action": "click", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    assert_eq!(engine.event_buffer_count(), 0);
+    assert_eq!(engine.event_ref_buffer_count(), 0);
+}
+
+#[test]
+fn test_event_mode_set_after_collection_takes_effect_on_next_event() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    engine.set_correlation_event_mode(CorrelationEventMode::Full);
+
+    let mut last = None;
+    for i in 0..2 {
+        let v = json!({"EventType": "login", "User": "admin"});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let corr = r.correlations().next().expect("correlation fires");
+    assert!(
+        corr.as_correlation().unwrap().events.is_some(),
+        "the mode set after loading applies to the next event"
+    );
+}
+
+#[test]
+fn test_correlation_cycle_loaded_without_validation_terminates_retention_walk() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+        - corr-b
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    for rule in &collection.rules {
+        engine.add_rule(rule).unwrap();
+    }
+    for corr in &collection.correlations {
+        engine.add_correlation(corr).unwrap();
+    }
+
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    assert!(!r.correlations().next().is_none());
+    assert!(engine.state_count() > 0);
+}
+
+// =========================================================================
+// Chained correlation events
+// =========================================================================
+
+/// One correlation in a [`chain_events_yaml`] chain: its threshold, the window
+/// lines under `correlation:`, and the document's trailing YAML lines.
+struct Hop {
+    gte: u32,
+    window: &'static str,
+    extra: &'static str,
+}
+
+impl Hop {
+    fn new(gte: u32) -> Self {
+        Hop {
+            gte,
+            window: "    timespan: 1h",
+            extra: "",
+        }
+    }
+
+    fn window(mut self, window: &'static str) -> Self {
+        self.window = window;
+        self
+    }
+
+    fn extra(mut self, extra: &'static str) -> Self {
+        self.extra = extra;
+        self
+    }
+}
+
+/// Detection `det-rule` on clicks, child `corr-a` counting clicks per `User`,
+/// and parent `corr-b` counting the child's firings per `User`.
+fn chain_events_yaml(child: Hop, parent: Hop) -> String {
+    format!(
+        r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+{}
+    condition:
+        gte: {}
+level: high
+{}
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+{}
+    condition:
+        gte: {}
+level: high
+{}
+"#,
+        child.window, child.gte, child.extra, parent.window, parent.gte, parent.extra
+    )
+}
+
+fn chain_events_engine(yaml: &str, config: CorrelationConfig) -> CorrelationEngine {
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(config);
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+const FULL: &str = "custom_attributes:\n    rsigma.correlation_event_mode: full";
+const REFS: &str = "custom_attributes:\n    rsigma.correlation_event_mode: refs";
+
+/// Feed click number `n` for `alice` at `ts`.
+fn click(engine: &mut CorrelationEngine, ts: i64, n: i64) -> ProcessResult {
+    let v = json!({"action": "click", "User": "alice", "n": n, "id": format!("e{n}")});
+    engine.process_event_at(&JsonEvent::borrow(&v), ts)
+}
+
+/// The body of the result titled `title`, if it fired.
+fn fired<'a>(result: &'a ProcessResult, title: &str) -> Option<&'a CorrelationBody> {
+    result
+        .correlations()
+        .find(|c| c.header.rule_title == title)
+        .and_then(|c| c.as_correlation())
+}
+
+/// The `n` markers of a result's events, in order.
+fn event_ns(body: &CorrelationBody) -> Vec<i64> {
+    body.events
+        .as_ref()
+        .expect("events present")
+        .iter()
+        .map(|e| e["n"].as_i64().unwrap())
+        .collect()
+}
+
+/// The ids of a result's event refs, in order.
+fn ref_ids(body: &CorrelationBody) -> Vec<String> {
+    body.event_refs
+        .as_ref()
+        .expect("event refs present")
+        .iter()
+        .map(|r| r.id.clone().unwrap())
+        .collect()
+}
+
+#[test]
+fn test_chained_parent_reports_refs() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(2).extra(REFS));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    let b = fired(&r, "correlation B").expect("parent fires");
+    assert!(b.events.is_none());
+    assert_eq!(ref_ids(b), ["e1", "e2"]);
+}
+
+#[test]
+fn test_chained_events_reach_the_top_of_a_three_level_chain() {
+    let yaml = format!(
+        "{}---\ntitle: correlation C\nid: corr-c\ncorrelation:\n    type: event_count\n    rules:\n        - corr-b\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 2\nlevel: high\n{FULL}\n",
+        chain_events_yaml(Hop::new(1), Hop::new(1))
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    assert!(fired(&click(&mut engine, 1000, 1), "correlation C").is_none());
+    let r = click(&mut engine, 1001, 2);
+    let c = fired(&r, "correlation C").expect("top correlation fires");
+    assert_eq!(event_ns(c), [1, 2]);
+}
+
+#[test]
+fn test_refiring_child_does_not_duplicate_parent_events() {
+    // The child re-fires on every click once it has two, each time handing
+    // over every click it holds.
+    let yaml = chain_events_yaml(Hop::new(2), Hop::new(3).extra(FULL));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    for n in 1..=3 {
+        assert!(fired(&click(&mut engine, 1000 + n, n), "correlation B").is_none());
+    }
+    let r = click(&mut engine, 1004, 4);
+    let b = fired(&r, "correlation B").expect("parent fires on the third child firing");
+    assert_eq!(event_ns(b), [1, 2, 3, 4]);
+}
+
+#[test]
+fn test_temporal_parent_carries_events_from_both_children() {
+    let yaml = format!(
+        r#"
+title: click
+id: det-click
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: view
+id: det-view
+logsource:
+    product: test
+detection:
+    selection:
+        action: view
+    condition: selection
+---
+title: clicks
+id: corr-clicks
+correlation:
+    type: event_count
+    rules:
+        - det-click
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: views
+id: corr-views
+correlation:
+    type: event_count
+    rules:
+        - det-view
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: clicks and views
+id: corr-both
+correlation:
+    type: temporal
+    rules:
+        - corr-clicks
+        - corr-views
+    group-by:
+        - User
+    timespan: 5m
+level: high
+{FULL}
+"#
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let v = json!({"action": "click", "User": "alice", "n": 1});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let v = json!({"action": "view", "User": "alice", "n": 2});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1001);
+    let both = fired(&r, "clicks and views").expect("temporal parent fires");
+    assert_eq!(event_ns(both), [1, 2]);
+}
+
+#[test]
+fn test_resetting_child_still_hands_events_to_its_parent() {
+    // A correlation's `rsigma.action` also becomes the engine default, so the
+    // parent pins its own.
+    let yaml = chain_events_yaml(
+        Hop::new(2).extra("custom_attributes:\n    rsigma.action: reset"),
+        Hop::new(1).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: full\n    rsigma.action: alert",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2]);
+
+    // The child starts over, but the parent keeps what it already merged.
+    click(&mut engine, 1002, 3);
+    let r = click(&mut engine, 1003, 4);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2, 3, 4]);
+}
+
+#[test]
+fn test_resetting_parent_reports_only_events_after_its_last_firing() {
+    let yaml = chain_events_yaml(
+        Hop::new(1).window("    timespan: 1s"),
+        Hop::new(2).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: full\n    rsigma.action: reset",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1010, 2);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2]);
+    click(&mut engine, 1020, 3);
+    let r = click(&mut engine, 1030, 4);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [3, 4]);
+}
+
+#[test]
+fn test_sliding_parent_drops_child_events_older_than_its_timespan() {
+    let yaml = chain_events_yaml(
+        Hop::new(1).window("    timespan: 5m"),
+        Hop::new(2)
+            .window("    timespan: 10s\n    window: sliding")
+            .extra(FULL),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1005, 2);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2]);
+
+    // The child still holds clicks 1 and 2 and hands them over again, but
+    // they are older than the parent's 10s window.
+    assert!(fired(&click(&mut engine, 1030, 3), "correlation B").is_none());
+    let r = click(&mut engine, 1031, 4);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [3, 4]);
+}
+
+#[test]
+fn test_tumbling_parent_clears_events_when_its_bucket_resets() {
+    let yaml = chain_events_yaml(
+        Hop::new(1).window("    timespan: 5s"),
+        Hop::new(2)
+            .window("    timespan: 60s\n    window: tumbling")
+            .extra(FULL),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1001, 1);
+    let r = click(&mut engine, 1010, 2);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2]);
+    click(&mut engine, 1030, 3);
+    let r = click(&mut engine, 1040, 4);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [3, 4]);
+}
+
+#[test]
+fn test_session_parent_clears_events_when_its_session_resets() {
+    let yaml = chain_events_yaml(
+        Hop::new(1).window("    timespan: 5s"),
+        Hop::new(2)
+            .window("    window: session\n    gap: 30s\n    timespan: 1h")
+            .extra(FULL),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1010, 2);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2]);
+    click(&mut engine, 1100, 3);
+    let r = click(&mut engine, 1110, 4);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [3, 4]);
+}
+
+#[test]
+fn test_suppressed_parent_keeps_events_for_its_next_firing() {
+    // A correlation's `rsigma.suppress` also becomes the engine default, so the
+    // child pins a window short enough to fire on every click.
+    let yaml = chain_events_yaml(
+        Hop::new(1)
+            .window("    timespan: 5s")
+            .extra("custom_attributes:\n    rsigma.suppress: 1s"),
+        Hop::new(1).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: full\n    rsigma.suppress: 10s",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1]);
+    assert!(fired(&click(&mut engine, 1002, 2), "correlation B").is_none());
+    let r = click(&mut engine, 1020, 3);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 2, 3]);
+}
+
+#[test]
+fn test_parent_event_mode_alone_gives_the_parent_events() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(1).extra(FULL));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    assert_eq!(
+        engine.config.correlation_event_mode,
+        CorrelationEventMode::None
+    );
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1]);
+}
+
+#[test]
+fn test_refs_parent_over_full_child_converts_events_to_refs() {
+    let yaml = chain_events_yaml(Hop::new(1).extra(FULL), Hop::new(2).extra(REFS));
+    let mut engine = chain_events_engine(&yaml, emit_every_hop());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    assert_eq!(event_ns(fired(&r, "correlation A").unwrap()), [1, 2]);
+    let b = fired(&r, "correlation B").unwrap();
+    assert!(b.events.is_none());
+    assert_eq!(ref_ids(b), ["e1", "e2"]);
+}
+
+#[test]
+fn test_parent_cap_smaller_than_child_retention_keeps_the_newest() {
+    let yaml = chain_events_yaml(
+        Hop::new(1).extra(FULL),
+        Hop::new(3).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: full\n    rsigma.max_correlation_events: \"2\"",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, emit_every_hop());
+    click(&mut engine, 1000, 1);
+    click(&mut engine, 1001, 2);
+    let r = click(&mut engine, 1002, 3);
+    assert_eq!(event_ns(fired(&r, "correlation A").unwrap()), [1, 2, 3]);
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [2, 3]);
+}
+
+#[test]
+fn test_chained_events_stay_within_their_tenant() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(2).extra(FULL));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let a = crate::tenant::TenantId::new("a").unwrap();
+    let b = crate::tenant::TenantId::new("b").unwrap();
+    let event = |n: i64| json!({"action": "click", "User": "alice", "n": n});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event(1)), 1000, Some(&a));
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event(2)), 1001, Some(&b));
+    let r = engine.process_event_at_for_tenant(&JsonEvent::borrow(&event(3)), 1002, Some(&a));
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [1, 3]);
+    let r = engine.process_event_at_for_tenant(&JsonEvent::borrow(&event(4)), 1003, Some(&b));
+    assert_eq!(event_ns(fired(&r, "correlation B").unwrap()), [2, 4]);
+}
+
+#[test]
+fn test_parent_with_unbuildable_group_key_merges_nothing() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(1).extra(FULL)).replace(
+        "        - corr-a\n    group-by:\n        - User",
+        "        - corr-a\n    group-by:\n        - Host",
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    assert!(fired(&r, "correlation B").is_none());
+    assert!(engine.event_buffers.keys().all(|k| k.corr_idx == 0));
+}
+
+// =========================================================================
+// Event sources
+// =========================================================================
+
+fn source(rule: &str, via: Option<&str>) -> EventSource {
+    EventSource {
+        rule: Some(rule.to_string()),
+        via: via.map(str::to_string),
+    }
+}
+
+fn sources(body: &CorrelationBody) -> &[EventSource] {
+    body.event_sources
+        .as_deref()
+        .expect("event sources present")
+}
+
+#[test]
+fn test_direct_correlation_sources_name_the_matched_rule() {
+    let yaml = chain_events_yaml(Hop::new(2).extra(FULL), Hop::new(1));
+    let mut engine = chain_events_engine(&yaml, emit_every_hop());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    let a = fired(&r, "correlation A").unwrap();
+    assert_eq!(
+        sources(a),
+        [source("det-rule", None), source("det-rule", None)]
+    );
+}
+
+#[test]
+fn test_temporal_sources_tell_its_rules_apart() {
+    let yaml = format!(
+        r#"
+title: click
+id: det-click
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: view
+id: det-view
+logsource:
+    product: test
+detection:
+    selection:
+        action: view
+    condition: selection
+---
+title: click then view
+id: corr-both
+correlation:
+    type: temporal
+    rules:
+        - det-click
+        - det-view
+    group-by:
+        - User
+    timespan: 5m
+level: high
+{REFS}
+"#
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let v = json!({"action": "view", "User": "alice", "id": "v1"});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let v = json!({"action": "click", "User": "alice", "id": "c1"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1001);
+    let both = fired(&r, "click then view").unwrap();
+    assert_eq!(ref_ids(both), ["v1", "c1"]);
+    assert_eq!(
+        sources(both),
+        [source("det-view", None), source("det-click", None)]
+    );
+}
+
+#[test]
+fn test_chained_sources_name_the_child_correlation() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(2).extra(FULL));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    let r = click(&mut engine, 1001, 2);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(
+        sources(b),
+        [
+            source("det-rule", Some("corr-a")),
+            source("det-rule", Some("corr-a"))
+        ]
+    );
+}
+
+#[test]
+fn test_chained_source_uses_the_name_of_a_child_without_id() {
+    let yaml = chain_events_yaml(Hop::new(1), Hop::new(1).extra(FULL))
+        .replace("id: corr-a\n", "name: burst\n")
+        .replace("        - corr-a\n", "        - burst\n");
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(sources(b), [source("det-rule", Some("burst"))]);
+}
+
+#[test]
+fn test_event_delivered_by_two_children_keeps_the_first_source() {
+    let yaml = format!(
+        r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: first
+id: corr-first
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: second
+id: corr-second
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+---
+title: both children
+id: corr-both
+correlation:
+    type: temporal
+    rules:
+        - corr-first
+        - corr-second
+    group-by:
+        - User
+    timespan: 5m
+level: high
+{FULL}
+"#
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let both = fired(&r, "both children").unwrap();
+    assert_eq!(event_ns(both), [1]);
+    assert_eq!(sources(both), [source("det-rule", Some("corr-first"))]);
+}
+
+#[test]
+fn test_top_of_three_level_chain_names_its_immediate_child() {
+    let yaml = format!(
+        "{}---\ntitle: correlation C\nid: corr-c\ncorrelation:\n    type: event_count\n    rules:\n        - corr-b\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 1\nlevel: high\n{FULL}\n",
+        chain_events_yaml(Hop::new(1), Hop::new(1))
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    let r = click(&mut engine, 1000, 1);
+    let c = fired(&r, "correlation C").unwrap();
+    assert_eq!(sources(c), [source("det-rule", Some("corr-b"))]);
+}
+
+#[test]
+fn test_capped_sources_stay_aligned_with_events() {
+    let yaml = chain_events_yaml(
+        Hop::new(1),
+        Hop::new(3).extra(
+            "custom_attributes:\n    rsigma.correlation_event_mode: refs\n    rsigma.max_correlation_events: \"2\"",
+        ),
+    );
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    click(&mut engine, 1001, 2);
+    let r = click(&mut engine, 1002, 3);
+    let b = fired(&r, "correlation B").unwrap();
+    assert_eq!(ref_ids(b), ["e2", "e3"]);
+    assert_eq!(sources(b).len(), 2);
+}
+
+#[test]
+fn test_entries_restored_without_sources_report_empty_sources() {
+    let yaml = chain_events_yaml(Hop::new(3).extra(FULL), Hop::new(1));
+    let mut engine = chain_events_engine(&yaml, CorrelationConfig::default());
+    click(&mut engine, 1000, 1);
+    click(&mut engine, 1001, 2);
+
+    let mut value = serde_json::to_value(engine.export_state()).unwrap();
+    strip_legacy_entry_keys(&mut value);
+    let snapshot: CorrelationSnapshot = serde_json::from_value(value).unwrap();
+    let mut restored = chain_events_engine(&yaml, emit_every_hop());
+    assert!(restored.import_state(snapshot));
+
+    let r = click(&mut restored, 1002, 3);
+    let a = fired(&r, "correlation A").unwrap();
+    assert_eq!(event_ns(a), [1, 2, 3]);
+    assert_eq!(
+        sources(a),
+        [
+            EventSource::default(),
+            EventSource::default(),
+            source("det-rule", None)
+        ]
+    );
+}
+
+#[test]
+fn test_no_event_mode_emits_no_sources() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let a = fired(&r, "correlation A").unwrap();
+    assert!(a.event_sources.is_none());
+    assert!(fired(&r, "correlation B").unwrap().event_sources.is_some());
 }

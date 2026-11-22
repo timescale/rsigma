@@ -191,8 +191,8 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 | `--action <ACTION>` | `alert` | Post-fire action: `alert` (keep state, re-alert on next match) or `reset` (clear window state). |
 | `--emit-detections` | off | Emit output for rules that only feed correlations, including correlations referenced by another correlation. By default, referenced rules are emitted only when a referencing correlation has top-level `generate: true`. {{ added "0.24.0" }} |
 | `--no-detections` | off | Deprecated compatibility flag. Correlation-only detections are suppressed by default. |
-| `--correlation-event-mode <MODE>` | `none` | `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). |
-| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window. |
+| `--correlation-event-mode <MODE>` | `none` | `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "unreleased" }} |
+| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window. A chained parent applies its own cap to the events its children deliver. {{ added "unreleased" }} |
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded, and a correlation with a `timespan` longer than one hour and no `rsigma.max_group_entries` logs a warning at load. {{ added "0.25.0" }} |
 | `--tenancy` | off | Enable logical multi-tenancy. Requires bearer-token auth and a tenant binding on every input source; startup refuses otherwise. Equivalent to `daemon.tenancy.enabled: true`. {{ added "unreleased" }} |

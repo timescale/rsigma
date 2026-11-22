@@ -62,6 +62,7 @@ fn correlation_for_ip(ip: &str) -> EvaluationResult {
             timespan_secs: 60,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     }
 }

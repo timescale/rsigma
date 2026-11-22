@@ -145,7 +145,7 @@ A correlation firing looks like this:
 }
 ```
 
-`events` and `event_refs` appear only when correlation event mode is `Full` or `Refs`. The [HTTP API reference](../reference/http-api.md) and [eval library docs](../library/eval.md) cover the full field set.
+`events` and `event_refs` appear only when correlation event mode is `Full` or `Refs`. Either one comes with `event_sources`, which names the rule each event matched and, on a chained correlation, the child correlation that delivered it. Chained correlation results carry events the same way. {{ added "unreleased" }} The [HTTP API reference](../reference/http-api.md) and [eval library docs](../library/eval.md) cover the full field set.
 
 ## Where to go next
 

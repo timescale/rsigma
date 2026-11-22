@@ -11,7 +11,10 @@ mod tests;
 mod types;
 mod window;
 
+#[cfg(test)]
+use buffers::FullEntry;
 pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
+pub(crate) use buffers::{RefEntry, Retained};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
 pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};

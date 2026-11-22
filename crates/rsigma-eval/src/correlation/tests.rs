@@ -951,6 +951,242 @@ fn test_compress_decompress_roundtrip() {
 }
 
 // =========================================================================
+// Sequenced buffer entries
+// =========================================================================
+
+#[test]
+fn test_event_buffer_push_seq_and_retained() {
+    let mut buf = EventBuffer::new(10);
+    buf.push_seq(7, 1000, &json!({"idx": 0}), None);
+    buf.push_seq(8, 1001, &json!({"idx": 1}), None);
+
+    let Retained::Full(entries) = buf.retained() else {
+        panic!("event buffer must retain full entries");
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].seq, 7);
+    assert_eq!(entries[0].ts, 1000);
+    assert_eq!(entries[1].seq, 8);
+    assert_eq!(
+        decompress_event(&entries[1].data).unwrap(),
+        json!({"idx": 1})
+    );
+}
+
+#[test]
+fn test_event_ref_buffer_push_seq_and_retained() {
+    let mut buf = EventRefBuffer::new(10);
+    buf.push_seq(4, 1000, &json!({"id": "e-1"}), None);
+    buf.push_seq(5, 1001, &json!({"id": "e-2"}), None);
+
+    let Retained::Refs(entries) = buf.retained() else {
+        panic!("ref buffer must retain ref entries");
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].seq, 4);
+    assert_eq!(entries[0].r.id.as_deref(), Some("e-1"));
+    assert_eq!(entries[1].seq, 5);
+    assert_eq!(entries[1].r.timestamp, 1001);
+}
+
+#[test]
+fn test_event_buffer_merge_skips_seen_seq_and_orders_by_seq() {
+    let mut buf = EventBuffer::new(10);
+    buf.push_seq(5, 1000, &json!({"idx": 5}), None);
+
+    let entry = |seq: u64, idx: u64| FullEntry {
+        seq,
+        ts: 1000,
+        data: compress_event(&json!({"idx": idx})).unwrap(),
+        rule: None,
+        via: None,
+    };
+    // Equal timestamps order by sequence number.
+    buf.merge(&[entry(9, 9), entry(2, 2)], None);
+    let seqs: Vec<u64> = match buf.retained() {
+        Retained::Full(entries) => entries.iter().map(|e| e.seq).collect(),
+        Retained::Refs(_) => panic!("wrong retention kind"),
+    };
+    assert_eq!(seqs, [2, 5, 9]);
+
+    // A nonzero sequence already present is skipped, wherever it sits.
+    buf.merge(&[entry(9, 99), entry(5, 55), entry(2, 22)], None);
+    assert_eq!(buf.len(), 3);
+    let events = buf.decompress_all();
+    assert_eq!(
+        events,
+        [json!({"idx": 2}), json!({"idx": 5}), json!({"idx": 9})]
+    );
+}
+
+#[test]
+fn test_event_buffer_merge_keeps_unsequenced_entries_distinct() {
+    let mut buf = EventBuffer::new(10);
+    let zero = |idx: u64| FullEntry {
+        seq: 0,
+        ts: 1000,
+        data: compress_event(&json!({"idx": idx})).unwrap(),
+        rule: None,
+        via: None,
+    };
+    buf.merge(&[zero(1)], None);
+    buf.merge(&[zero(2)], None);
+    assert_eq!(buf.len(), 2);
+    let events = buf.decompress_all();
+    assert_eq!(events[0], json!({"idx": 1}));
+    assert_eq!(events[1], json!({"idx": 2}));
+}
+
+#[test]
+fn test_event_buffer_merge_trims_to_cap_and_trims_readded_old_entry() {
+    let mut buf = EventBuffer::new(2);
+    buf.push_seq(1, 1000, &json!({"idx": 0}), None);
+    buf.push_seq(2, 1001, &json!({"idx": 1}), None);
+
+    let entry = |seq: u64, ts: i64, idx: u64| FullEntry {
+        seq,
+        ts,
+        data: compress_event(&json!({"idx": idx})).unwrap(),
+        rule: None,
+        via: None,
+    };
+    // Adding a third entry trims the oldest.
+    buf.merge(&[entry(3, 1002, 2)], None);
+    assert_eq!(buf.len(), 2);
+    assert_eq!(buf.decompress_all(), [json!({"idx": 1}), json!({"idx": 2})]);
+
+    // Re-delivering the evicted entry inserts it and trims it again.
+    buf.merge(&[entry(1, 1000, 0)], None);
+    assert_eq!(buf.len(), 2);
+    assert_eq!(buf.decompress_all(), [json!({"idx": 1}), json!({"idx": 2})]);
+}
+
+#[test]
+fn test_event_ref_buffer_merge_skips_seen_seq_and_trims_to_cap() {
+    let mut buf = EventRefBuffer::new(2);
+    buf.push_seq(1, 1000, &json!({"id": "a"}), None);
+    buf.push_seq(2, 1001, &json!({"id": "b"}), None);
+
+    let entry = |seq: u64, ts: i64, id: &str| RefEntry {
+        r: EventRef {
+            timestamp: ts,
+            id: Some(id.to_string()),
+        },
+        seq,
+        rule: None,
+        via: None,
+    };
+    buf.merge(&[entry(2, 1001, "dup"), entry(3, 1002, "c")], None);
+    assert_eq!(buf.len(), 2);
+    let refs = buf.refs();
+    assert_eq!(refs[0].id.as_deref(), Some("b"));
+    assert_eq!(refs[1].id.as_deref(), Some("c"));
+
+    // Re-delivering an evicted sequence inserts it, then the cap trims it.
+    buf.merge(&[entry(1, 1000, "a")], None);
+    assert_eq!(buf.len(), 2);
+    assert_eq!(buf.refs()[0].id.as_deref(), Some("b"));
+}
+
+#[test]
+fn test_newest_events_and_refs_return_oldest_first_slice() {
+    let mut buf = EventBuffer::new(10);
+    for i in 0..4 {
+        buf.push_seq(i + 1, 1000 + i as i64, &json!({"idx": i}), None);
+    }
+    let events = buf.newest_events(2).0;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0], json!({"idx": 2}));
+    assert_eq!(events[1], json!({"idx": 3}));
+    assert_eq!(buf.newest_events(10).0.len(), 4);
+
+    let refs = buf.newest_refs(2).0;
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[0].timestamp, 1002);
+    assert_eq!(refs[1].timestamp, 1003);
+
+    let mut ref_buf = EventRefBuffer::new(10);
+    for i in 0..4 {
+        ref_buf.push_seq(
+            i + 1,
+            1000 + i as i64,
+            &json!({"id": format!("e-{i}")}),
+            None,
+        );
+    }
+    let refs = ref_buf.newest_refs(2).0;
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[0].id.as_deref(), Some("e-2"));
+    assert_eq!(refs[1].id.as_deref(), Some("e-3"));
+    assert_eq!(ref_buf.newest_refs(10).0.len(), 4);
+}
+
+#[test]
+fn test_full_entry_to_ref_matches_ref_buffer_push() {
+    let event = json!({"_id": 42, "data": "hello"});
+    let entry = FullEntry {
+        seq: 9,
+        ts: 1000,
+        data: compress_event(&event).unwrap(),
+        rule: None,
+        via: None,
+    };
+    let converted = entry.to_ref().expect("entry decompresses");
+    assert_eq!(converted.seq, 9);
+    assert_eq!(converted.r.timestamp, 1000);
+
+    let mut ref_buf = EventRefBuffer::new(10);
+    ref_buf.push(1000, &event);
+    let pushed = ref_buf.refs();
+    assert_eq!(converted.r.id, pushed[0].id);
+    assert_eq!(converted.r.id.as_deref(), Some("42"));
+}
+
+#[test]
+fn test_buffer_json_without_seq_deserializes_with_seq_zero() {
+    let mut buf = EventBuffer::new(10);
+    buf.push_seq(5, 1000, &json!({"idx": 0}), None);
+    let mut value = serde_json::to_value(&buf).unwrap();
+    for entry in value["entries"].as_array_mut().unwrap() {
+        entry.as_object_mut().unwrap().remove("seq");
+    }
+    let restored: EventBuffer = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored.max_seq(), 0);
+
+    let mut ref_buf = EventRefBuffer::new(10);
+    ref_buf.push_seq(6, 1001, &json!({"id": "e-1"}), None);
+    let mut value = serde_json::to_value(&ref_buf).unwrap();
+    for entry in value["entries"].as_array_mut().unwrap() {
+        entry.as_object_mut().unwrap().remove("seq");
+    }
+    let restored: EventRefBuffer = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored.max_seq(), 0);
+}
+
+#[test]
+fn test_serialized_buffers_carry_seq_but_event_refs_do_not() {
+    let mut buf = EventBuffer::new(10);
+    buf.push_seq(5, 1000, &json!({"idx": 0}), None);
+    let json = serde_json::to_string(&buf).unwrap();
+    assert!(json.contains("\"seq\":5"), "{json}");
+
+    let mut ref_buf = EventRefBuffer::new(10);
+    ref_buf.push_seq(6, 1001, &json!({"id": "e-1"}), None);
+    let json = serde_json::to_string(&ref_buf).unwrap();
+    assert!(json.contains("\"seq\":6"), "{json}");
+
+    let json = serde_json::to_string(&EventRef {
+        timestamp: 1001,
+        id: Some("e-1".to_string()),
+    })
+    .unwrap();
+    assert_eq!(json, r#"{"timestamp":1001,"id":"e-1"}"#);
+    assert!(!json.contains("\"seq\""), "{json}");
+}
+
+// =========================================================================
 // EventRefBuffer tests
 // =========================================================================
 

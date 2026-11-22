@@ -68,6 +68,7 @@ pub fn correlation_result(field: &str, value: Value) -> EvaluationResult {
             timespan_secs: 60,
             events: None,
             event_refs: None,
+            event_sources: None,
         }),
     }
 }
