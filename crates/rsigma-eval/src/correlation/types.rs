@@ -39,6 +39,9 @@ pub struct CompiledCorrelation {
     /// When set, evaluates this expression against fired rules instead of
     /// a simple threshold count.
     pub extended_expr: Option<ConditionExpr>,
+    /// Absence semantics compiled from a negated extended condition.
+    /// `None` for ordinary positive correlation windows.
+    pub absence: Option<CompiledAbsence>,
     /// Whether referenced detection rules should also generate standalone matches.
     pub generate: bool,
     /// Per-correlation suppression window in seconds, resolved from the
@@ -60,6 +63,28 @@ pub struct CompiledCorrelation {
     /// Custom attributes from the original Sigma correlation rule (merged).
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
     pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
+}
+
+/// How an absence window is anchored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbsenceMode {
+    /// The first event of any positive rule opens a fixed forward window.
+    /// Used for `a and not b`: `a` starts the timer, `b` cancels it.
+    FirstPositive,
+    /// Every event of the single negative rule starts or slides the timer.
+    /// Used for `not heartbeat`: the last heartbeat anchors the deadline.
+    LastNegative,
+}
+
+/// Compiled absence metadata for an extended temporal condition.
+#[derive(Debug, Clone)]
+pub struct CompiledAbsence {
+    pub mode: AbsenceMode,
+    /// References that can open a `FirstPositive` window. Empty for
+    /// `LastNegative`.
+    pub positive_refs: Vec<String>,
+    /// References that cancel the window or anchor a `LastNegative` timer.
+    pub negative_refs: Vec<String>,
 }
 
 /// A group-by field, potentially aliased per referenced rule.

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
+use chrono::Utc;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args};
 use rsigma_eval::{
@@ -1191,6 +1192,12 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         }
     }
 
+    for m in &engines.tick_correlations(Utc::now().timestamp()) {
+        had_matches = true;
+        count_ruleset_match(&mut counts, &name_to_index, m);
+        renderer.emit(m);
+    }
+
     if dump_correlation_state {
         match serde_json::to_string_pretty(&engines.introspect()) {
             Ok(json) => eprintln!("--- correlation state snapshot ---\n{json}"),
@@ -1578,7 +1585,7 @@ fn cmd_eval_with_correlations(
         "Rules loaded",
     );
 
-    let had_matches = match event_source {
+    let mut had_matches = match event_source {
         EventSource::SingleJson(json_str) => {
             let value: serde_json::Value = match serde_json::from_str(&json_str) {
                 Ok(v) => v,
@@ -1707,6 +1714,14 @@ fn cmd_eval_with_correlations(
             det_count > 0 || corr_count > 0
         }
     };
+
+    // A one-shot eval has no long-lived ticker: evaluate absence windows at
+    // the end of the observation horizon. Windows whose deadline is still in
+    // the future remain pending (and show up in --dump-correlation-state).
+    for result in engine.finish(Utc::now().timestamp()) {
+        had_matches = true;
+        renderer.emit(&result);
+    }
 
     if dump_correlation_state {
         dump_correlation_snapshot(&engine);

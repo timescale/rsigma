@@ -113,7 +113,7 @@ Apply to detection rules (`detection:` block + `condition:`).
 | `deprecated_detection_timeframe` | `warning` | none | The `detection:` block has a v1.x `timeframe:` key, which has no effect. Use a correlation rule with a `timespan` instead. {{ added "0.24.0" }} |
 | `flattened_array_correlation` | `warning` | none | Two or more sibling keys share a quantified array prefix (e.g. `connections[any].protocol` and `connections[any].ip`). Each opens an independent scope, so they do **not** correlate on the same array element. Use an object-scope block (`connections[any]:` with the fields nested) to require one element to satisfy all of them. See [Array Matching](../guide/array-matching.md). |
 
-## Correlation rules (18)
+## Correlation rules (19)
 
 Apply to correlation rules (`correlation:` block).
 
@@ -136,6 +136,7 @@ Apply to correlation rules (`correlation:` block).
 | `missing_group_by` | `error` | none | `correlation:` has no `group-by:` (required once `type:` is set). |
 | `generate_not_boolean` | `error` | none | The `generate:` field is not a boolean. |
 | `correlation_only_references` | `info` | none | The correlation omits `generate: true`, so referenced rules, detections or correlations, produce no standalone output. {{ added "0.24.0" }} |
+| `absence_semantics` | `info` | none | A negated temporal reference uses deferred absence semantics. The window fires at its deadline if the negated rule never arrives; static conversion backends reject the rule. {{ added "unreleased" }} |
 | `invalid_condition_operator` | `error` | none | A key in `correlation.condition` is not one of `gt`, `gte`, `lt`, `lte`, `eq`, `neq` (the `field` and `percentile` keys are exempt). |
 
 ## Filter rules (9 IDs, 8 emitted)

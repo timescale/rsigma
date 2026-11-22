@@ -2597,3 +2597,32 @@ detection:
         "got: {err}"
     );
 }
+
+#[test]
+fn absence_correlation_is_rejected() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 5m
+    condition: login-success and not mfa-success
+"#,
+    )
+    .unwrap();
+    let backend = PostgresBackend::new();
+    let err = backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("absence/missing-event correlations"), "{err}");
+}

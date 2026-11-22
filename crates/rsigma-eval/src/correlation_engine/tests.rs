@@ -5719,3 +5719,526 @@ fn test_no_event_mode_emits_no_sources() {
     assert!(a.event_sources.is_none());
     assert!(fired(&r, "correlation B").unwrap().event_sources.is_some());
 }
+
+// =========================================================================
+// Absence / missing-event correlations
+// =========================================================================
+
+fn absence_engine(yaml: &str) -> CorrelationEngine {
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+#[test]
+fn test_absence_fires_at_deadline_not_before() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    let result = engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    assert_eq!(result.correlation_count(), 0);
+    assert!(engine.tick(1299).is_empty());
+    let fired = engine.tick(1300);
+    assert_eq!(fired.correlation_count(), 1);
+    assert_eq!(fired[0].header.rule_title, "Login without MFA");
+    assert_eq!(
+        fired[0].as_correlation().unwrap().group_key,
+        vec![("User".to_string(), "alice".to_string())]
+    );
+}
+
+#[test]
+fn test_absence_cancelled_by_negative_within_window() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    let mfa = json!({"EventType": "mfa_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    engine.process_event_at(&JsonEvent::borrow(&mfa), 1100);
+    assert!(engine.tick(1300).is_empty());
+}
+
+#[test]
+fn test_absence_group_isolation() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let alice_login = json!({"EventType": "login_success", "User": "alice"});
+    let bob_mfa = json!({"EventType": "mfa_success", "User": "bob"});
+    engine.process_event_at(&JsonEvent::borrow(&alice_login), 1000);
+    engine.process_event_at(&JsonEvent::borrow(&bob_mfa), 1100);
+    let fired = engine.tick(1300);
+    assert_eq!(fired.correlation_count(), 1);
+    assert_eq!(
+        fired[0].as_correlation().unwrap().group_key,
+        vec![("User".to_string(), "alice".to_string())]
+    );
+}
+
+#[test]
+fn test_absence_deadman_slides_with_heartbeat() {
+    let yaml = r#"
+title: Host Heartbeat
+id: host-heartbeat
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: heartbeat
+    condition: selection
+---
+title: Host Silent
+correlation:
+    type: temporal
+    rules:
+        - host-heartbeat
+    group-by:
+        - Host
+    timespan: 300s
+    condition: not host-heartbeat
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let beat = json!({"EventType": "heartbeat", "Host": "web-1"});
+    engine.process_event_at(&JsonEvent::borrow(&beat), 1000);
+    engine.process_event_at(&JsonEvent::borrow(&beat), 1200);
+    assert!(engine.tick(1400).is_empty());
+    let fired = engine.tick(1500);
+    assert_eq!(fired.correlation_count(), 1);
+    assert_eq!(fired[0].header.rule_title, "Host Silent");
+}
+
+#[test]
+fn test_absence_ordered_positive_stages_only() {
+    let yaml = r#"
+title: Step A
+id: step-a
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: step_a
+    condition: selection
+---
+title: Step B
+id: step-b
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: step_b
+    condition: selection
+---
+title: Blocker C
+id: block-c
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: block_c
+    condition: selection
+---
+title: A then B without C
+correlation:
+    type: temporal_ordered
+    rules:
+        - step-a
+        - step-b
+        - block-c
+    group-by:
+        - User
+    timespan: 300s
+    condition: step-a and step-b and not block-c
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let step_a = json!({"EventType": "step_a", "User": "alice"});
+    let step_b = json!({"EventType": "step_b", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&step_a), 1000);
+    engine.process_event_at(&JsonEvent::borrow(&step_b), 1100);
+    assert_eq!(engine.tick(1300).correlation_count(), 1);
+
+    let mut engine = absence_engine(yaml);
+    engine.process_event_at(&JsonEvent::borrow(&step_b), 1000);
+    engine.process_event_at(&JsonEvent::borrow(&step_a), 1100);
+    assert!(engine.tick(1300).is_empty());
+}
+
+#[test]
+fn test_absence_negative_after_deadline_does_not_cancel() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    let mfa = json!({"EventType": "mfa_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    assert_eq!(engine.tick(1300).correlation_count(), 1);
+    engine.process_event_at(&JsonEvent::borrow(&mfa), 1301);
+    assert!(engine.tick(1600).is_empty());
+}
+
+#[test]
+fn test_absence_state_survives_snapshot_roundtrip() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    let snapshot = engine.export_state();
+
+    let mut restored = absence_engine(yaml);
+    assert!(restored.import_state(snapshot));
+    let fired = restored.tick(1300);
+    assert_eq!(fired.correlation_count(), 1);
+}
+
+#[test]
+fn test_absence_rejects_or_branch_with_negation() {
+    let yaml = r#"
+title: A
+id: rule-a
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: a
+    condition: selection
+---
+title: B
+id: rule-b
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: b
+    condition: selection
+---
+title: Unsupported
+correlation:
+    type: temporal
+    rules:
+        - rule-a
+        - rule-b
+    group-by:
+        - User
+    timespan: 5m
+    condition: rule-a or not rule-b
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    let err = engine.add_collection(&collection).unwrap_err().to_string();
+    assert!(
+        err.contains("absence conditions do not support OR"),
+        "{err}"
+    );
+}
+
+#[test]
+fn test_absence_deadman_requires_group_by() {
+    let yaml = r#"
+title: Heartbeat
+id: heartbeat
+logsource:
+    category: process
+detection:
+    selection:
+        EventType: heartbeat
+    condition: selection
+---
+title: Unsupported
+correlation:
+    type: temporal
+    rules:
+        - heartbeat
+    timespan: 5m
+    condition: not heartbeat
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    let err = engine.add_collection(&collection).unwrap_err().to_string();
+    assert!(err.contains("requires group-by"), "{err}");
+}
+
+#[test]
+fn test_absence_suppression_is_measured_from_deadline() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        suppress: Some(600),
+        ..CorrelationConfig::default()
+    });
+    engine.add_collection(&collection).unwrap();
+
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    assert_eq!(engine.tick(1300).correlation_count(), 1);
+
+    engine.process_event_at(&JsonEvent::borrow(&login), 1301);
+    assert!(engine.tick(1601).is_empty());
+    engine.process_event_at(&JsonEvent::borrow(&login), 1901);
+    assert_eq!(engine.tick(2201).correlation_count(), 1);
+}
+
+#[test]
+fn test_absence_same_event_positive_and_negative_cancels() {
+    let yaml = r#"
+title: Login Success
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let mut engine = absence_engine(yaml);
+    let event = json!({"EventType": "login_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&event), 1000);
+    assert!(engine.tick(1300).is_empty());
+}
+
+#[test]
+fn test_absence_includes_anchor_event_in_full_mode() {
+    let yaml = r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        correlation_event_mode: CorrelationEventMode::Full,
+        ..CorrelationConfig::default()
+    });
+    engine.add_collection(&collection).unwrap();
+    let login = json!({"EventType": "login_success", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&login), 1000);
+    let fired = engine.tick(1300);
+    let events = fired[0].as_correlation().unwrap().events.as_ref().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["User"], "alice");
+}

@@ -17,7 +17,9 @@ pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
 pub(crate) use buffers::{RefEntry, Retained};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
-pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};
+pub use types::{
+    AbsenceMode, CompiledAbsence, CompiledCondition, CompiledCorrelation, GroupByField,
+};
 pub use window::{WindowDecision, WindowState, apply_window_open};
 
 #[cfg(test)]

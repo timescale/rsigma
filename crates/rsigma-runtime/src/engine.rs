@@ -6,9 +6,9 @@ use rsigma_eval::event::Event;
 use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
     CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
-    LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
-    RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier, SchemaPruning,
-    SchemaRouter, TenantId, UnitEngine, parse_pipeline_file,
+    EvaluationResult, LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan,
+    RuleFieldSet, RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier,
+    SchemaPruning, SchemaRouter, TenantId, UnitEngine, parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
@@ -792,6 +792,32 @@ impl RuntimeEngine {
             }
             EngineVariant::Routed(router) => router.process_batch_for_tenants(events, tenants),
             EngineVariant::Rulesets(engines) => engines.process_batch_for_tenants(events, tenants),
+        }
+    }
+
+    /// Emit absence windows whose deadline has passed.
+    pub fn tick_correlations(&mut self, now_secs: i64) -> Vec<EvaluationResult> {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => Vec::new(),
+            EngineVariant::WithCorrelations(engine) => engine.tick(now_secs),
+            EngineVariant::Routed(router) => router.tick_correlations(now_secs),
+            EngineVariant::Rulesets(engines) => engines.tick_correlations(now_secs),
+        }
+    }
+
+    /// Finish a batch observation at `observation_end`, emitting due absence
+    /// windows. This is the batch counterpart to [`Self::tick_correlations`].
+    pub fn finish_correlations(&mut self, observation_end: i64) -> Vec<EvaluationResult> {
+        self.tick_correlations(observation_end)
+    }
+
+    /// Whether the loaded rules contain any absence correlations.
+    pub fn has_absence_correlations(&self) -> bool {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => false,
+            EngineVariant::WithCorrelations(engine) => engine.has_absence_correlations(),
+            EngineVariant::Routed(router) => router.has_absence_correlations(),
+            EngineVariant::Rulesets(engines) => engines.has_absence_correlations(),
         }
     }
 

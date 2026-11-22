@@ -6,8 +6,8 @@ use std::time::Instant;
 use arc_swap::ArcSwap;
 use rayon::prelude::*;
 use rsigma_eval::{
-    Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet, SchemaObserver,
-    TenantId, tenant_at,
+    EvaluationResult, Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt,
+    RuleFieldSet, SchemaObserver, TenantId, tenant_at,
 };
 
 use crate::engine::RuntimeEngine;
@@ -166,6 +166,54 @@ impl LogProcessor {
     /// True for detection-only and routed engines with no correlation rules.
     pub fn allows_concurrent_detection(&self) -> bool {
         self.engine.load().read().allows_concurrent_detection()
+    }
+
+    /// Whether the loaded engine contains absence correlations.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.engine.load().read().has_absence_correlations()
+    }
+
+    /// Emit absence windows whose deadline has passed.
+    ///
+    /// Takes the same ordered write lock as a correlation batch so a timer tick
+    /// cannot race a batch updating the same window state.
+    pub fn tick_correlations(&self, now_secs: i64) -> Vec<EvaluationResult> {
+        let _order_guard = self.processing_order.lock();
+        let engine_guard = self.engine.load();
+        let mut engine = engine_guard.write();
+        let results = engine.tick_correlations(now_secs);
+        let state_entries = engine.stats().state_entries as u64;
+        self.metrics.set_correlation_state_entries(state_entries);
+
+        let count = results
+            .iter()
+            .filter(|result| result.is_correlation())
+            .count() as u64;
+        if count > 0 {
+            self.metrics.on_correlation_matches(count);
+            for result in &results {
+                let level = result
+                    .header
+                    .level
+                    .as_ref()
+                    .map_or("unknown", |l| l.as_str());
+                let title = &result.header.rule_title;
+                if let rsigma_eval::ResultBody::Correlation(body) = &result.body {
+                    self.metrics.on_correlation_match_detail(
+                        title,
+                        level,
+                        body.correlation_type.as_str(),
+                    );
+                }
+            }
+        }
+        results
+    }
+
+    /// Finish a batch observation at `observation_end`, emitting due absence
+    /// windows through the same ordered engine lock as [`Self::tick_correlations`].
+    pub fn finish_correlations(&self, observation_end: i64) -> Vec<EvaluationResult> {
+        self.tick_correlations(observation_end)
     }
 
     /// Process a batch of raw input lines through the engine.
@@ -890,6 +938,49 @@ detection:
             results[1].detection_count() == 0,
             "EventID=2 should not match"
         );
+    }
+
+    #[test]
+    fn tick_correlations_emits_absence_at_deadline() {
+        let proc = make_processor(
+            r#"
+title: Successful Login
+id: login-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login_success
+    condition: selection
+---
+title: MFA Success
+id: mfa-success
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa_success
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 300s
+    condition: login-success and not mfa-success
+level: high
+"#,
+        );
+        let batch =
+            vec![r#"{"@timestamp":1000,"EventType":"login_success","User":"alice"}"#.to_string()];
+        assert!(proc.process_batch_lines(&batch, &identity_filter)[0].is_empty());
+        assert!(proc.has_absence_correlations());
+        assert!(proc.tick_correlations(1299).is_empty());
+        assert_eq!(proc.tick_correlations(1300).correlation_count(), 1);
     }
 
     #[test]

@@ -269,6 +269,30 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Emit due absence windows from every ruleset unit.
+    pub fn tick_correlations(&mut self, now_secs: i64) -> Vec<EvaluationResult> {
+        let mut out = Vec::new();
+        for unit in &mut self.units {
+            let mut results = match &mut unit.engine {
+                UnitEngine::Detection(_) => Vec::new(),
+                UnitEngine::Correlation(engine) => engine.tick(now_secs),
+                UnitEngine::Routed(router) => router.tick_correlations(now_secs),
+            };
+            stamp_results(&unit.name, &mut results);
+            out.extend(results);
+        }
+        out
+    }
+
+    /// Whether any ruleset unit contains absence rules.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.units.iter().any(|unit| match &unit.engine {
+            UnitEngine::Detection(_) => false,
+            UnitEngine::Correlation(engine) => engine.has_absence_correlations(),
+            UnitEngine::Routed(router) => router.has_absence_correlations(),
+        })
+    }
+
     /// Whether concurrent stateless detection is available.
     pub fn allows_concurrent_detection(&self) -> bool {
         self.units
@@ -585,7 +609,7 @@ impl RulesetEngines {
         &mut self,
         snapshot: &CorrelationSnapshot,
     ) -> Option<crate::ImportStats> {
-        if !matches!(snapshot.version, 1 | 2) {
+        if !matches!(snapshot.version, 1..=4) {
             return None;
         }
         if snapshot.rulesets.is_empty() {

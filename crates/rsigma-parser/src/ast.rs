@@ -296,6 +296,36 @@ impl fmt::Display for ConditionExpr {
     }
 }
 
+impl ConditionExpr {
+    /// Whether this condition contains a negated rule reference.
+    ///
+    /// The correlation engine treats such references as deferred absence
+    /// semantics. Static conversion backends use this to reject rules they
+    /// cannot lower faithfully.
+    pub fn has_negated_identifier(&self) -> bool {
+        match self {
+            ConditionExpr::Not(inner) => {
+                contains_identifier(inner) || inner.has_negated_identifier()
+            }
+            ConditionExpr::And(children) | ConditionExpr::Or(children) => {
+                children.iter().any(ConditionExpr::has_negated_identifier)
+            }
+            ConditionExpr::Identifier(_) | ConditionExpr::Selector { .. } => false,
+        }
+    }
+}
+
+fn contains_identifier(expr: &ConditionExpr) -> bool {
+    match expr {
+        ConditionExpr::Identifier(_) => true,
+        ConditionExpr::Not(inner) => contains_identifier(inner),
+        ConditionExpr::And(children) | ConditionExpr::Or(children) => {
+            children.iter().any(contains_identifier)
+        }
+        ConditionExpr::Selector { .. } => false,
+    }
+}
+
 /// Quantifier in a selector expression.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Quantifier {
@@ -696,6 +726,16 @@ pub enum CorrelationCondition {
     },
     /// Extended boolean condition for temporal types: `"rule_a and rule_b"`
     Extended(ConditionExpr),
+}
+
+impl CorrelationCondition {
+    /// Whether the extended condition contains a negated rule reference.
+    pub fn has_negated_refs(&self) -> bool {
+        match self {
+            CorrelationCondition::Threshold { .. } => false,
+            CorrelationCondition::Extended(expr) => expr.has_negated_identifier(),
+        }
+    }
 }
 
 /// Field alias mapping in a correlation rule.

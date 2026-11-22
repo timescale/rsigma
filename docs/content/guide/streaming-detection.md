@@ -128,6 +128,43 @@ Window decisions follow arrival order, the same contract as the existing sliding
 
 All three modes have the same per-event cost (the window decision is O(1)), so choosing `session` over `sliding` is free at evaluation time; what differs is how long state is retained per group. See [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) for the memory characteristics and the [Benchmarks](../benchmarks.md#window-mode-memory-stress) page for measured numbers under high-cardinality and long-lived-session stress.
 
+### Absence and deadman correlations
+
+An extended temporal condition with a negated rule reference is evaluated as **absence**: the window opens from a positive event and fires at its deadline if the negated rule never arrives. This is an rsigma extension; static conversion backends reject it because they cannot honor a wall-clock deadline.
+
+```yaml
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - user.name
+    timespan: 5m
+    condition: login-success and not mfa-success
+```
+
+The first `login-success` event opens a forward window `[A, A + timespan]`. If `mfa-success` occurs inside that window, the window is cancelled. Otherwise the correlation fires at the deadline.
+
+A pure-negative condition is the entity deadman shape:
+
+```yaml
+title: Host heartbeat missing
+correlation:
+    type: temporal
+    rules:
+        - host-heartbeat
+    group-by:
+        - host.id
+    timespan: 10m
+    condition: not host-heartbeat
+```
+
+Each heartbeat starts or slides the group's timer. If no newer heartbeat arrives by `last heartbeat + timespan`, the correlation fires. A group is only tracked after its first heartbeat; empty input never invents entities.
+
+Absence conditions in this release are restricted to a conjunction of positive and negated rule references. `temporal_ordered` orders only the positive references; negated references are absence checks, not stages. OR branches containing a negation are rejected with a lint/compile error. The daemon evaluates deadlines on a one-second timer, and `engine eval` finishes them at the end of its observation horizon. Pending windows survive `--state-db` restarts. {{ added "unreleased" }}
+
 ## Output sinks
 
 The `--output` flag is repeatable, so one daemon can fan out to several sinks. Each match is cloned to every configured sink via a bounded mpsc channel:

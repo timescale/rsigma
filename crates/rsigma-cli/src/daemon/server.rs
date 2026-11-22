@@ -1999,7 +1999,34 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
     // --- Streaming pipeline: source -> engine -> sink -> ack ---
     let (sink_tx, mut sink_rx) = mpsc::channel::<(ProcessResult, Vec<AckToken>)>(buffer_size);
+    let finish_sink_tx = sink_tx.clone();
     let (ack_tx, mut ack_rx) = mpsc::unbounded_channel::<AckToken>();
+
+    // Absence windows fire on wall-clock expiry, not on an incoming event.
+    // The weak sender lets this task exit when the sink pipeline shuts down
+    // without keeping the channel alive.
+    let absence_processor = processor.clone();
+    let absence_sender = sink_tx.downgrade();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let Some(sender) = absence_sender.upgrade() else {
+                break;
+            };
+            if !absence_processor.has_absence_correlations() {
+                continue;
+            }
+            let results = absence_processor.tick_correlations(chrono::Utc::now().timestamp());
+            if results.is_empty() {
+                continue;
+            }
+            if sender.send((results, Vec::new())).await.is_err() {
+                break;
+            }
+        }
+    });
 
     // Select source based on --input flag
     let mut stdin_status: Option<StdinReadStatus> = None;
@@ -3099,6 +3126,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         #[cfg(feature = "daemon-otlp")]
         source_done_notify.notify_one();
 
+        // Do not keep the sink channel open while waiting for it to drain.
+        drop(finish_sink_tx);
+
         let drain = async {
             let mut failed = batch::task_failed("sink", sink_handle.await);
             tracing::debug!("Sink task finished");
@@ -3118,6 +3148,14 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             ),
         }
     } else {
+        // The source is exhausted. Evaluate absence windows at the end of the
+        // observation horizon before the sink drains, so one-shot stdin and
+        // finite NATS runs do not lose a window that expires at shutdown.
+        let finished = processor.finish_correlations(chrono::Utc::now().timestamp());
+        if !finished.is_empty() && finish_sink_tx.send((finished, Vec::new())).await.is_err() {
+            tracing::debug!("Sink channel closed, absence results dropped");
+        }
+        drop(finish_sink_tx);
         task_failed |= batch::task_failed("sink", sink_handle.await);
         tracing::debug!("Sink task finished");
         task_failed |= batch::task_failed("dlq_bridge", df_handle.await);

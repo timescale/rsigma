@@ -16,6 +16,12 @@ impl super::PostgresBackend {
         pipeline_state: &PipelineState,
         warnings: &mut Vec<String>,
     ) -> Result<Vec<String>> {
+        if rule.condition.has_negated_refs() {
+            return Err(ConvertError::UnsupportedCorrelation(
+                "absence/missing-event correlations are engine-only; the Postgres backend cannot honor a wall-clock deadline"
+                    .to_string(),
+            ));
+        }
         let table = self.resolve_table(&rule.custom_attributes, &pipeline_state.state)?;
         let ts = &self.timestamp_field;
         let use_time_bucket =

@@ -35,7 +35,7 @@ use crate::event::{Event, MappedEvent};
 use crate::logsource::{ExtractLogSource, LogSourceExtractor};
 use crate::pipeline::Pipeline;
 use crate::pipeline::transformations::Transformation;
-use crate::result::MatchDetailLevel;
+use crate::result::{EvaluationResult, MatchDetailLevel};
 use crate::rule_metadata::RuleMetadataLookup;
 use crate::schema::{OnUnknown, RouteDecision, RoutingPlan, SchemaClassifier};
 use crate::tenant::{TenantId, tenant_at};
@@ -432,6 +432,21 @@ impl<L> SchemaRouter<L> {
             .as_ref()
             .map(|c| c.state_count())
             .unwrap_or(0)
+    }
+
+    /// Emit due absence windows from the shared correlation store.
+    pub fn tick_correlations(&mut self, now_secs: i64) -> Vec<EvaluationResult> {
+        self.correlation
+            .as_mut()
+            .map(|c| c.tick(now_secs))
+            .unwrap_or_default()
+    }
+
+    /// Whether the shared correlation store contains absence rules.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.correlation
+            .as_ref()
+            .is_some_and(CorrelationEngine::has_absence_correlations)
     }
 
     /// Resolve a rule key (an id, or a title for a rule without one) to the

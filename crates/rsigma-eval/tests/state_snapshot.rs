@@ -583,9 +583,9 @@ fn tenant_engine_snapshot() -> CorrelationSnapshot {
 }
 
 #[test]
-fn a_v2_snapshot_with_tenants_round_trips() {
+fn a_tenant_snapshot_round_trips() {
     let snapshot = tenant_engine_snapshot();
-    assert_eq!(snapshot.version, 2);
+    assert_eq!(snapshot.version, 4);
     assert_eq!(snapshot.tenants.len(), 2);
     assert_eq!(snapshot.window_entries(), 2);
 

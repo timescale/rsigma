@@ -66,7 +66,7 @@ The lint rules are grouped by what part of a rule they inspect (counts match the
 | Infrastructure | 4 | `yaml_parse_error`, `not_a_mapping`, `file_read_error`, `schema_violation` |
 | Shared metadata | 17 | `missing_title`, `invalid_status`, `invalid_level`, `taxonomy_too_long`, `non_lowercase_key` |
 | Detection rules | 20 | `missing_detection`, `missing_condition`, `invalid_tag`, `duplicate_fields`, `flattened_array_correlation` |
-| Correlation rules | 17 | `missing_correlation_type`, `missing_correlation_timespan`, `invalid_correlation_type`, `missing_condition_field` |
+| Correlation rules | 19 | `missing_correlation_type`, `missing_correlation_timespan`, `invalid_correlation_type`, `absence_semantics` |
 | Filter rules | 8 emitted (9 IDs) | `missing_filter_rules`, `missing_filter_selection`, `filter_has_level`, `filter_reference_by_title` |
 | Modifier and `related:` hygiene | 7 | `single_value_all_modifier`, `incompatible_modifiers`, `deprecated_without_related` |
 | Spec version and rule references | 4 | `unsupported_sigma_version`, `array_matching_without_version`, `unknown_rule_reference` |

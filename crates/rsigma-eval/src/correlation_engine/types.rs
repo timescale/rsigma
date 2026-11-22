@@ -191,7 +191,7 @@ pub struct CorrelationConfig {
 /// resolved group values.
 ///
 /// Tenants never share a window even when their group keys are identical.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct StateKey {
     pub(crate) tenant: Option<TenantId>,
     pub(crate) corr_idx: usize,

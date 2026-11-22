@@ -92,6 +92,12 @@ pub fn convert(
     pipeline_state: &PipelineState,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<String>> {
+    if rule.condition.has_negated_refs() {
+        return Err(ConvertError::UnsupportedCorrelation(
+            "absence/missing-event correlations are engine-only; the Fibratus backend cannot honor a wall-clock deadline"
+                .to_string(),
+        ));
+    }
     let rule_queries = load_rule_queries(pipeline_state);
     let cfg = &backend.fibratus;
     for field in &rule.group_by {

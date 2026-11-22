@@ -29,8 +29,9 @@ use chrono::Utc;
 use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule, WindowMode};
 
 use crate::correlation::{
-    CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, RefEntry, Retained,
-    WindowDecision, WindowState, apply_window_open, compile_correlation,
+    AbsenceMode, CompiledAbsence, CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer,
+    GroupKey, RefEntry, Retained, WindowDecision, WindowState, apply_window_open,
+    compile_correlation,
 };
 use crate::engine::{Engine, IdentifiedEvaluation};
 use crate::error::{EvalError, Result};
@@ -49,7 +50,7 @@ type RuleIdentity = (Option<String>, Option<String>);
 // =============================================================================
 
 /// Current snapshot schema version. Bump when the serialized format changes.
-pub(crate) const SNAPSHOT_VERSION: u32 = 2;
+pub(crate) const SNAPSHOT_VERSION: u32 = 4;
 
 /// Parent hops evaluated after a first-level correlation fire in one event.
 /// The first-level result is produced by `feed_detections`; each loop
@@ -109,6 +110,9 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     rule_ids: Vec<(Option<String>, Option<String>, String)>,
     /// Per-(tenant, correlation_index, group_key) window state.
     state: HashMap<StateKey, WindowState>,
+    /// Absence deadlines, bucketed by expiry timestamp. Rebuilt from `state`
+    /// when a snapshot is imported.
+    absence_deadlines: BTreeMap<i64, HashSet<StateKey>>,
     /// Last alert timestamp per (tenant, correlation_index, group_key) for suppression.
     last_alert: HashMap<StateKey, i64>,
     /// Per-(tenant, correlation_index, group_key) compressed event buffer (`Full` mode).
@@ -165,6 +169,7 @@ impl<L> CorrelationEngine<L> {
             rule_index: HashMap::new(),
             rule_ids: Vec::new(),
             state: HashMap::new(),
+            absence_deadlines: BTreeMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
@@ -1014,6 +1019,19 @@ impl<L> CorrelationEngine<L> {
             }
         }
 
+        // For absence, a single event can match both the positive and negative
+        // rule. Process positive refs first so an explicit negative hit is
+        // recorded against the window the positive hit just opened.
+        work.sort_by(|left, right| {
+            left.0.cmp(&right.0).then_with(|| {
+                let left_negative =
+                    self.absence_rule_is_negative(left.0, left.1.as_deref(), left.2.as_deref());
+                let right_negative =
+                    self.absence_rule_is_negative(right.0, right.1.as_deref(), right.2.as_deref());
+                left_negative.cmp(&right_negative)
+            })
+        });
+
         for (corr_idx, rule_id, rule_name) in work {
             let before = out.len();
             let retained = self.update_correlation(
@@ -1024,6 +1042,33 @@ impl<L> CorrelationEngine<L> {
                 fired_retained.push(retained);
             }
         }
+    }
+
+    /// Whether this match is a negative reference for an absence correlation.
+    fn absence_rule_is_negative(
+        &self,
+        corr_idx: usize,
+        rule_id: Option<&str>,
+        rule_name: Option<&str>,
+    ) -> bool {
+        let Some(absence) = self
+            .correlations
+            .get(corr_idx)
+            .and_then(|c| c.absence.as_ref())
+        else {
+            return false;
+        };
+        let mut refs = Vec::with_capacity(2);
+        if let Some(id) = rule_id {
+            refs.push(id);
+        }
+        if let Some(name) = rule_name {
+            refs.push(name);
+        }
+        absence
+            .negative_refs
+            .iter()
+            .any(|negative| refs.iter().any(|reference| *reference == negative))
     }
 
     /// Find the (id, name) for a detection match by searching our rule_ids table.
@@ -1051,6 +1096,283 @@ impl<L> CorrelationEngine<L> {
         }
 
         (det.header.rule_id.clone(), None)
+    }
+
+    /// Update an absence window from a matching rule event.
+    ///
+    /// `FirstPositive` creates a fixed forward window from the first positive
+    /// hit and records negative hits that arrive before its deadline.
+    /// `LastNegative` treats the single negated rule as a heartbeat: every hit
+    /// slides the deadline, and the window fires after `timespan` of silence.
+    #[allow(clippy::too_many_arguments)]
+    fn update_absence(
+        &mut self,
+        corr_idx: usize,
+        absence: &CompiledAbsence,
+        event: &impl Event,
+        ts: i64,
+        tenant: Option<&TenantId>,
+        rule_ref: &str,
+        group_key: GroupKey,
+        event_mode: CorrelationEventMode,
+        max_events: usize,
+        max_group_entries: Option<usize>,
+    ) {
+        if rule_ref.is_empty() {
+            return;
+        }
+
+        let state_key = StateKey {
+            tenant: tenant.cloned(),
+            corr_idx,
+            group_key,
+        };
+        let timespan = self.correlations[corr_idx].timespan_secs as i64;
+
+        match absence.mode {
+            AbsenceMode::FirstPositive => {
+                let is_positive = absence
+                    .positive_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref);
+                let is_negative = absence
+                    .negative_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref);
+                if !is_positive && !is_negative {
+                    return;
+                }
+
+                if is_positive {
+                    let existing_deadline = self
+                        .state
+                        .get(&state_key)
+                        .and_then(WindowState::absence_deadline);
+                    let start_new = existing_deadline.is_none_or(|deadline| ts > deadline);
+
+                    if start_new {
+                        if let Some(deadline) = existing_deadline {
+                            self.unschedule_absence_deadline(&state_key, deadline);
+                        }
+                        let is_new = self.state.remove(&state_key).is_none();
+                        if is_new
+                            && let Some(cap) = self.config.max_state_entries_per_tenant
+                            && self.tenant_len(&state_key.tenant) >= cap
+                        {
+                            self.evict_tenant(tenant, ts);
+                        }
+                        if is_new {
+                            self.note_tenant_insert(&state_key);
+                        }
+                        self.event_buffers.remove(&state_key);
+                        self.event_ref_buffers.remove(&state_key);
+                        let deadline = ts.saturating_add(timespan);
+                        self.state
+                            .insert(state_key.clone(), WindowState::new_absence(ts, deadline));
+                        self.schedule_absence_deadline(&state_key, deadline);
+                    }
+
+                    if let Some(state) = self.state.get_mut(&state_key) {
+                        state.push_positive_absence_hit(ts, rule_ref);
+                        if let Some(cap) = max_group_entries {
+                            state.truncate_oldest(cap, false);
+                        }
+                    }
+                    self.push_absence_event(
+                        &state_key, event, ts, event_mode, max_events, start_new,
+                    );
+                } else if let Some(deadline) = self
+                    .state
+                    .get(&state_key)
+                    .and_then(WindowState::absence_deadline)
+                    && ts <= deadline
+                    && let Some(state) = self.state.get_mut(&state_key)
+                {
+                    state.push_negative_absence_hit(ts, rule_ref);
+                    if let Some(cap) = max_group_entries {
+                        state.truncate_oldest(cap, false);
+                    }
+                }
+            }
+            AbsenceMode::LastNegative => {
+                if !absence
+                    .negative_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref)
+                {
+                    return;
+                }
+
+                if let Some(deadline) = self
+                    .state
+                    .get(&state_key)
+                    .and_then(WindowState::absence_deadline)
+                {
+                    self.unschedule_absence_deadline(&state_key, deadline);
+                }
+                let is_new = !self.state.contains_key(&state_key);
+                if is_new
+                    && let Some(cap) = self.config.max_state_entries_per_tenant
+                    && self.tenant_len(&state_key.tenant) >= cap
+                {
+                    self.evict_tenant(tenant, ts);
+                }
+                if is_new {
+                    self.note_tenant_insert(&state_key);
+                }
+
+                let deadline = ts.saturating_add(timespan);
+                self.state
+                    .insert(state_key.clone(), WindowState::new_absence(ts, deadline));
+                self.schedule_absence_deadline(&state_key, deadline);
+                self.push_absence_event(&state_key, event, ts, event_mode, max_events, true);
+            }
+        }
+    }
+
+    /// Update an absence window from a chained correlation result. Chained
+    /// results have no source event, so this updates timing/hits only.
+    fn update_absence_from_chain(
+        &mut self,
+        corr_idx: usize,
+        absence: &CompiledAbsence,
+        ts: i64,
+        tenant: Option<TenantId>,
+        rule_ref: &str,
+        group_key: GroupKey,
+    ) {
+        if rule_ref.is_empty() {
+            return;
+        }
+        let state_key = StateKey {
+            tenant,
+            corr_idx,
+            group_key,
+        };
+        let timespan = self.correlations[corr_idx].timespan_secs as i64;
+
+        match absence.mode {
+            AbsenceMode::FirstPositive => {
+                let is_positive = absence
+                    .positive_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref);
+                let is_negative = absence
+                    .negative_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref);
+
+                if is_positive {
+                    let existing_deadline = self
+                        .state
+                        .get(&state_key)
+                        .and_then(WindowState::absence_deadline);
+                    if existing_deadline.is_none_or(|deadline| ts > deadline) {
+                        if let Some(deadline) = existing_deadline {
+                            self.unschedule_absence_deadline(&state_key, deadline);
+                        }
+                        let is_new = self.state.remove(&state_key).is_none();
+                        if is_new {
+                            self.note_tenant_insert(&state_key);
+                        }
+                        let deadline = ts.saturating_add(timespan);
+                        self.state
+                            .insert(state_key.clone(), WindowState::new_absence(ts, deadline));
+                        self.schedule_absence_deadline(&state_key, deadline);
+                    }
+                    if let Some(state) = self.state.get_mut(&state_key) {
+                        state.push_positive_absence_hit(ts, rule_ref);
+                    }
+                } else if is_negative
+                    && let Some(deadline) = self
+                        .state
+                        .get(&state_key)
+                        .and_then(WindowState::absence_deadline)
+                    && ts <= deadline
+                    && let Some(state) = self.state.get_mut(&state_key)
+                {
+                    state.push_negative_absence_hit(ts, rule_ref);
+                }
+            }
+            AbsenceMode::LastNegative => {
+                if !absence
+                    .negative_refs
+                    .iter()
+                    .any(|reference| reference == rule_ref)
+                {
+                    return;
+                }
+                if let Some(deadline) = self
+                    .state
+                    .get(&state_key)
+                    .and_then(WindowState::absence_deadline)
+                {
+                    self.unschedule_absence_deadline(&state_key, deadline);
+                }
+                let is_new = !self.state.contains_key(&state_key);
+                if is_new {
+                    self.note_tenant_insert(&state_key);
+                }
+                let deadline = ts.saturating_add(timespan);
+                self.state
+                    .insert(state_key.clone(), WindowState::new_absence(ts, deadline));
+                self.schedule_absence_deadline(&state_key, deadline);
+            }
+        }
+    }
+
+    fn schedule_absence_deadline(&mut self, key: &StateKey, deadline: i64) {
+        self.absence_deadlines
+            .entry(deadline)
+            .or_default()
+            .insert(key.clone());
+    }
+
+    fn unschedule_absence_deadline(&mut self, key: &StateKey, deadline: i64) {
+        if let Some(keys) = self.absence_deadlines.get_mut(&deadline) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.absence_deadlines.remove(&deadline);
+            }
+        }
+    }
+
+    /// Keep absence evidence aligned with the window. `clear` is used when a
+    /// heartbeat slides the deadline so the buffer holds only the latest
+    /// anchor event.
+    fn push_absence_event(
+        &mut self,
+        key: &StateKey,
+        event: &impl Event,
+        ts: i64,
+        event_mode: CorrelationEventMode,
+        max_events: usize,
+        clear: bool,
+    ) {
+        let json = event.to_json();
+        match event_mode {
+            CorrelationEventMode::Full => {
+                let buffer = self
+                    .event_buffers
+                    .entry(key.clone())
+                    .or_insert_with(|| EventBuffer::new(max_events));
+                if clear {
+                    buffer.clear();
+                }
+                buffer.push(ts, &json);
+            }
+            CorrelationEventMode::Refs => {
+                let buffer = self
+                    .event_ref_buffers
+                    .entry(key.clone())
+                    .or_insert_with(|| EventRefBuffer::new(max_events));
+                if clear {
+                    buffer.clear();
+                }
+                buffer.push(ts, &json);
+            }
+            CorrelationEventMode::None => {}
+        }
     }
 
     /// Update a single correlation's state and check its condition.
@@ -1089,10 +1411,12 @@ impl<L> CorrelationEngine<L> {
             rule_ref,
             source_rule,
             group_key,
+            absence,
         ) = {
             let corr = &self.correlations[corr_idx];
             let corr_type = corr.correlation_type;
             let timespan = corr.timespan_secs;
+            let absence = corr.absence.clone();
             let window_mode = corr.window_mode;
             let gap_secs = corr.gap_secs;
             let level = corr.level;
@@ -1147,8 +1471,26 @@ impl<L> CorrelationEngine<L> {
                 rule_ref,
                 source_rule,
                 group_key,
+                absence,
             )
         };
+
+        // Absence windows are evaluated at a deadline, not on every event.
+        if let Some(absence) = absence {
+            self.update_absence(
+                corr_idx,
+                &absence,
+                event,
+                ts,
+                tenant,
+                &rule_ref,
+                group_key,
+                event_mode,
+                max_events,
+                max_group_entries,
+            );
+            return None;
+        }
 
         // Get or create window state
         let state_key = StateKey {
@@ -1622,6 +1964,7 @@ impl<L> CorrelationEngine<L> {
                     max_events,
                     max_group_entries,
                     group_key,
+                    absence,
                 ) = {
                     let corr = &self.correlations[corr_idx];
                     let Some(group_key) = GroupKey::from_pairs(&group_key_pairs, &corr.group_by)
@@ -1642,8 +1985,20 @@ impl<L> CorrelationEngine<L> {
                             .unwrap_or(self.config.max_correlation_events),
                         corr.max_group_entries.or(self.config.max_group_entries),
                         group_key,
+                        corr.absence.clone(),
                     )
                 };
+                if let Some(absence) = absence {
+                    self.update_absence_from_chain(
+                        corr_idx,
+                        &absence,
+                        ts,
+                        tenant.clone(),
+                        &fired_ref,
+                        group_key,
+                    );
+                    continue;
+                }
                 let state_key = StateKey {
                     tenant: tenant.clone(),
                     corr_idx,
@@ -1824,6 +2179,140 @@ impl<L> CorrelationEngine<L> {
     // State management
     // =========================================================================
 
+    /// Emit absence windows whose deadline has passed.
+    ///
+    /// This is the streaming counterpart to a batch run's observation end:
+    /// callers that process events over time must call `tick` periodically so
+    /// an `a and not b` window can fire after `b` has had its full timespan to
+    /// arrive. The daemon wires this to a timer; tests and embedded users can
+    /// call it directly.
+    pub fn tick(&mut self, now_secs: i64) -> Vec<EvaluationResult> {
+        let mut due: Vec<(i64, StateKey)> = self
+            .absence_deadlines
+            .range(..=now_secs)
+            .flat_map(|(&deadline, keys)| keys.iter().cloned().map(move |key| (deadline, key)))
+            .collect();
+        due.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
+        let mut out = Vec::new();
+        for (deadline, key) in due {
+            self.unschedule_absence_deadline(&key, deadline);
+
+            let Some(state) = self.state.remove(&key) else {
+                continue;
+            };
+            self.note_tenant_removal(&key);
+
+            let Some(corr) = self.correlations.get(key.corr_idx) else {
+                self.event_buffers.remove(&key);
+                self.event_ref_buffers.remove(&key);
+                continue;
+            };
+            let Some(absence) = corr.absence.as_ref() else {
+                self.event_buffers.remove(&key);
+                self.event_ref_buffers.remove(&key);
+                continue;
+            };
+            let Some(expr) = corr.extended_expr.as_ref() else {
+                self.event_buffers.remove(&key);
+                self.event_ref_buffers.remove(&key);
+                continue;
+            };
+
+            let ordered = corr.correlation_type == CorrelationType::TemporalOrdered;
+            let fired = state.absence_fired(expr, ordered, &absence.positive_refs);
+            let aggregated_value = state.absence_positive_count(&absence.positive_refs) as f64;
+
+            let suppress_secs = corr.suppress_secs.or(self.config.suppress);
+            let suppressed = suppress_secs.is_some_and(|suppress| {
+                self.last_alert
+                    .get(&key)
+                    .is_some_and(|&last_ts| (deadline - last_ts) < suppress as i64)
+            });
+
+            if !fired || suppressed {
+                self.event_buffers.remove(&key);
+                self.event_ref_buffers.remove(&key);
+                continue;
+            }
+
+            let event_mode = corr
+                .event_mode
+                .unwrap_or(self.config.correlation_event_mode);
+            let max_events = corr
+                .max_events
+                .unwrap_or(self.config.max_correlation_events);
+            let reported = self.reported_events(&key, event_mode, max_events);
+
+            let result = EvaluationResult {
+                header: RuleHeader {
+                    rule_title: corr.title.clone(),
+                    rule_id: corr.id.clone(),
+                    tenant_id: key.tenant.clone(),
+                    level: corr.level,
+                    tags: corr.tags.clone(),
+                    custom_attributes: corr.custom_attributes.clone(),
+                    enrichments: None,
+                    ruleset: None,
+                },
+                body: ResultBody::Correlation(CorrelationBody {
+                    correlation_type: corr.correlation_type,
+                    group_key: key.group_key.to_pairs(&corr.group_by),
+                    aggregated_value,
+                    timespan_secs: corr.timespan_secs,
+                    events: reported.events,
+                    event_refs: reported.event_refs,
+                    event_sources: reported.event_sources,
+                }),
+            };
+
+            self.event_buffers.remove(&key);
+            self.event_ref_buffers.remove(&key);
+            self.last_alert.insert(key.clone(), deadline);
+
+            let mut chained = Vec::new();
+            let mut chained_indices = Vec::new();
+            self.chain_correlations(
+                std::slice::from_ref(&result),
+                &[key.corr_idx],
+                vec![None],
+                deadline,
+                &mut chained,
+                &mut chained_indices,
+            );
+
+            if !self.is_correlation_only_for_idx(key.corr_idx) {
+                out.push(result);
+            }
+            for (chained_result, index) in chained.into_iter().zip(chained_indices) {
+                if !self.is_correlation_only_for_idx(index) {
+                    out.push(chained_result);
+                }
+            }
+        }
+        out
+    }
+
+    /// Finish a batch run at `observation_end`, emitting every absence window
+    /// whose deadline is at or before that instant. Windows still open past the
+    /// horizon remain pending (and are preserved in the state snapshot).
+    pub fn finish(&mut self, observation_end: i64) -> Vec<EvaluationResult> {
+        self.tick(observation_end)
+    }
+
+    /// Whether any loaded correlation uses absence semantics.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.correlations.iter().any(|corr| corr.absence.is_some())
+    }
+
+    fn is_correlation_only_for_idx(&self, index: usize) -> bool {
+        let Some(corr) = self.correlations.get(index) else {
+            return false;
+        };
+        let identities = corr.id.as_deref().into_iter().chain(corr.name.as_deref());
+        self.is_correlation_only(identities)
+    }
+
     /// Manually evict all expired state entries.
     pub fn evict_expired(&mut self, now_secs: i64) {
         self.evict_all(now_secs);
@@ -1856,6 +2345,10 @@ impl<L> CorrelationEngine<L> {
 
     /// Remove one state entry and every sidecar keyed by it.
     fn remove_state_entry(&mut self, key: &StateKey) -> bool {
+        let deadline = self.state.get(key).and_then(WindowState::absence_deadline);
+        if let Some(deadline) = deadline {
+            self.unschedule_absence_deadline(key, deadline);
+        }
         let existed = self.state.remove(key).is_some();
         if existed {
             self.note_tenant_removal(key);
@@ -1887,6 +2380,11 @@ impl<L> CorrelationEngine<L> {
             let Some(state) = self.state.get_mut(key) else {
                 continue;
             };
+            // Absence windows are removed by `tick` at their deadline, not by
+            // time-based window eviction.
+            if matches!(state, WindowState::Absence { .. }) {
+                continue;
+            }
             if let Some(correlation) = self.correlations.get(key.corr_idx) {
                 let timespan = correlation.timespan_secs as i64;
                 match correlation.window_mode {
@@ -1973,6 +2471,11 @@ impl<L> CorrelationEngine<L> {
 
         let mut removed_keys = Vec::new();
         self.state.retain(|key, state| {
+            // Absence windows have their own deadline index and are emitted by
+            // `tick`; do not trim them with the positive-window cutoffs.
+            if matches!(state, WindowState::Absence { .. }) {
+                return true;
+            }
             if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
                 match mode {
                     WindowMode::Sliding => {
@@ -2009,6 +2512,9 @@ impl<L> CorrelationEngine<L> {
         // window state (dropped above when the group went stale).
         let state = &self.state;
         self.event_buffers.retain(|key, buf| {
+            if matches!(state.get(key), Some(WindowState::Absence { .. })) {
+                return true;
+            }
             if let Some(&(timespan, mode, _)) = specs.get(key.corr_idx) {
                 match mode {
                     WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
@@ -2022,6 +2528,9 @@ impl<L> CorrelationEngine<L> {
             !buf.is_empty()
         });
         self.event_ref_buffers.retain(|key, buf| {
+            if matches!(state.get(key), Some(WindowState::Absence { .. })) {
+                return true;
+            }
             if let Some(&(timespan, mode, _)) = specs.get(key.corr_idx) {
                 match mode {
                     WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
@@ -2232,7 +2741,7 @@ impl<L> CorrelationEngine<L> {
         &mut self,
         mut snapshot: CorrelationSnapshot,
     ) -> Option<ImportStats> {
-        if !matches!(snapshot.version, 1 | 2) {
+        if !matches!(snapshot.version, 1..=4) {
             return None;
         }
         if !snapshot.rulesets.is_empty() {
@@ -2242,6 +2751,7 @@ impl<L> CorrelationEngine<L> {
             let (_, inner) = std::mem::take(&mut snapshot.rulesets).pop_first()?;
             return self.import_state_detailed(inner);
         }
+        self.absence_deadlines.clear();
         let id_to_idx = self.build_id_to_index_map();
         let require_tenant = self.config.require_tenant;
         let mut stats = ImportStats::default();
@@ -2281,8 +2791,12 @@ impl<L> CorrelationEngine<L> {
                             corr_idx: idx,
                             group_key: gk,
                         };
+                        let deadline = ws.absence_deadline();
                         if self.state.insert(key.clone(), ws).is_none() {
                             self.note_tenant_insert(&key);
+                        }
+                        if let Some(deadline) = deadline {
+                            self.schedule_absence_deadline(&key, deadline);
                         }
                         stats.restored += 1;
                     }

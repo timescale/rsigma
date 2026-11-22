@@ -1,3 +1,6 @@
+use crate::ast::ConditionExpr;
+use crate::condition::parse_condition;
+
 use super::super::{LintRule, LintWarning, err, get_str, info, key};
 
 /// Valid correlation types.
@@ -245,6 +248,19 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
         }
     }
 
+    // ── absence semantics ────────────────────────────────────────────────
+    if matches!(corr_type, Some("temporal" | "temporal_ordered"))
+        && let Some(condition) = get_str(corr, "condition")
+        && let Ok(expr) = parse_condition(condition)
+        && has_negated_identifier(&expr)
+    {
+        warnings.push(info(
+            LintRule::AbsenceSemantics,
+            "negated temporal references use deferred absence semantics (an rsigma extension): the window fires at its deadline if the negated rule never arrives; static conversion backends reject it",
+            "/correlation/condition",
+        ));
+    }
+
     // ── generate ─────────────────────────────────────────────────────────
     for (path, val) in [
         ("/generate", m.get(key("generate"))),
@@ -268,6 +284,27 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
             "referenced rules produce no standalone output; set 'generate: true' to emit them",
             "/generate",
         ));
+    }
+}
+
+fn has_negated_identifier(expr: &ConditionExpr) -> bool {
+    match expr {
+        ConditionExpr::Not(inner) => contains_identifier(inner) || has_negated_identifier(inner),
+        ConditionExpr::And(children) | ConditionExpr::Or(children) => {
+            children.iter().any(has_negated_identifier)
+        }
+        ConditionExpr::Identifier(_) | ConditionExpr::Selector { .. } => false,
+    }
+}
+
+fn contains_identifier(expr: &ConditionExpr) -> bool {
+    match expr {
+        ConditionExpr::Identifier(_) => true,
+        ConditionExpr::Not(inner) => contains_identifier(inner),
+        ConditionExpr::And(children) | ConditionExpr::Or(children) => {
+            children.iter().any(contains_identifier)
+        }
+        ConditionExpr::Selector { .. } => false,
     }
 }
 
@@ -726,5 +763,46 @@ rsigma.gap: 5m
         assert!(!has_rule(&w, LintRule::MissingSessionGap));
         assert!(!has_rule(&w, LintRule::GapWithoutSession));
         assert!(!has_rule(&w, LintRule::InvalidGapFormat));
+    }
+
+    #[test]
+    fn negated_temporal_condition_warns_about_absence_semantics() {
+        let w = lint(
+            r#"
+title: Login without MFA
+correlation:
+    type: temporal
+    rules:
+        - login-success
+        - mfa-success
+    group-by:
+        - User
+    timespan: 5m
+    condition: login-success and not mfa-success
+"#,
+        );
+        assert!(has_rule(&w, LintRule::AbsenceSemantics));
+        assert!(w.iter().any(|warning| {
+            warning.rule == LintRule::AbsenceSemantics && warning.severity == Severity::Info
+        }));
+    }
+
+    #[test]
+    fn positive_temporal_or_condition_has_no_absence_warning() {
+        let w = lint(
+            r#"
+title: Either Login
+correlation:
+    type: temporal
+    rules:
+        - ssh-login
+        - vpn-login
+    group-by:
+        - User
+    timespan: 5m
+    condition: ssh-login or vpn-login
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::AbsenceSemantics));
     }
 }

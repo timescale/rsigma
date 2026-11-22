@@ -25,6 +25,18 @@ pub enum WindowState {
     /// For `value_sum`, `value_avg`, `value_percentile`, `value_median`:
     /// (timestamp, numeric_value) pairs.
     NumericAgg { entries: VecDeque<(i64, f64)> },
+    /// For absence / missing-event correlations. The anchor is the first
+    /// positive event (or the latest heartbeat for a pure-negative deadman),
+    /// and the window fires at `deadline` rather than on an incoming event.
+    Absence {
+        anchor_ts: i64,
+        deadline: i64,
+        positive_hits: HashMap<String, VecDeque<i64>>,
+        negative_hits: HashMap<String, VecDeque<i64>>,
+        /// Set when a negative hit could not be retained. Firing would risk a
+        /// false absence alert, so the window fails closed instead.
+        negative_overflow: bool,
+    },
 }
 
 impl WindowState {
@@ -46,6 +58,18 @@ impl WindowState {
             | CorrelationType::ValueMedian => WindowState::NumericAgg {
                 entries: VecDeque::new(),
             },
+        }
+    }
+
+    /// Create an absence window anchored at `anchor_ts` with an inclusive
+    /// deadline of `deadline`.
+    pub fn new_absence(anchor_ts: i64, deadline: i64) -> Self {
+        WindowState::Absence {
+            anchor_ts,
+            deadline,
+            positive_hits: HashMap::new(),
+            negative_hits: HashMap::new(),
+            negative_overflow: false,
         }
     }
 
@@ -76,6 +100,14 @@ impl WindowState {
                     entries.pop_front();
                 }
             }
+            WindowState::Absence {
+                positive_hits,
+                negative_hits,
+                ..
+            } => {
+                evict_hit_map(positive_hits, cutoff);
+                evict_hit_map(negative_hits, cutoff);
+            }
         }
     }
 
@@ -86,6 +118,7 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.is_empty(),
             WindowState::Temporal { rule_hits } => rule_hits.is_empty(),
             WindowState::NumericAgg { entries } => entries.is_empty(),
+            WindowState::Absence { .. } => false,
         }
     }
 
@@ -98,6 +131,20 @@ impl WindowState {
                 rule_hits.values().filter_map(|ts| ts.back().copied()).max()
             }
             WindowState::NumericAgg { entries } => entries.back().map(|(t, _)| *t),
+            WindowState::Absence {
+                anchor_ts,
+                positive_hits,
+                negative_hits,
+                ..
+            } => {
+                let mut latest = Some(*anchor_ts);
+                for timestamps in positive_hits.values().chain(negative_hits.values()) {
+                    if let Some(timestamp) = timestamps.back().copied() {
+                        latest = Some(latest.map_or(timestamp, |current| current.max(timestamp)));
+                    }
+                }
+                latest
+            }
         }
     }
 
@@ -115,6 +162,7 @@ impl WindowState {
                 .filter_map(|ts| ts.front().copied())
                 .min(),
             WindowState::NumericAgg { entries } => entries.front().map(|(t, _)| *t),
+            WindowState::Absence { anchor_ts, .. } => Some(*anchor_ts),
         }
     }
 
@@ -163,6 +211,26 @@ impl WindowState {
             WindowState::NumericAgg { entries } => {
                 truncate_deque(entries, cap, preserve_front);
             }
+            WindowState::Absence {
+                positive_hits,
+                negative_hits,
+                negative_overflow,
+                ..
+            } => {
+                for timestamps in positive_hits.values_mut() {
+                    truncate_deque(timestamps, cap, preserve_front);
+                }
+                // Never silently drop a negative hit: that could turn a
+                // non-fire into a false absence alert. Record the overflow and
+                // let the evaluator fail closed instead.
+                let negative_entries: usize = negative_hits.values().map(VecDeque::len).sum();
+                if negative_entries > cap {
+                    *negative_overflow = true;
+                    for timestamps in negative_hits.values_mut() {
+                        truncate_deque(timestamps, cap, preserve_front);
+                    }
+                }
+            }
         }
     }
 
@@ -173,6 +241,16 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.clear(),
             WindowState::Temporal { rule_hits } => rule_hits.clear(),
             WindowState::NumericAgg { entries } => entries.clear(),
+            WindowState::Absence {
+                positive_hits,
+                negative_hits,
+                negative_overflow,
+                ..
+            } => {
+                positive_hits.clear();
+                negative_hits.clear();
+                *negative_overflow = false;
+            }
         }
     }
 
@@ -205,6 +283,98 @@ impl WindowState {
         if let WindowState::NumericAgg { entries } = self {
             entries.push_back((ts, value));
         }
+    }
+
+    /// Record a positive absence hit.
+    pub fn push_positive_absence_hit(&mut self, ts: i64, rule_ref: &str) {
+        if let WindowState::Absence { positive_hits, .. } = self {
+            positive_hits
+                .entry(rule_ref.to_string())
+                .or_default()
+                .push_back(ts);
+        }
+    }
+
+    /// Record a negative absence hit.
+    pub fn push_negative_absence_hit(&mut self, ts: i64, rule_ref: &str) {
+        if let WindowState::Absence { negative_hits, .. } = self {
+            negative_hits
+                .entry(rule_ref.to_string())
+                .or_default()
+                .push_back(ts);
+        }
+    }
+
+    /// Deadline of an absence window, if this is one.
+    pub fn absence_deadline(&self) -> Option<i64> {
+        match self {
+            WindowState::Absence { deadline, .. } => Some(*deadline),
+            _ => None,
+        }
+    }
+
+    /// Move an absence window to a new deadline.
+    pub fn set_absence_deadline(&mut self, new_deadline: i64) {
+        if let WindowState::Absence { deadline, .. } = self {
+            *deadline = new_deadline;
+        }
+    }
+
+    /// Whether a negative hit could not be retained and the window must fail
+    /// closed.
+    pub fn absence_negative_overflow(&self) -> bool {
+        matches!(
+            self,
+            WindowState::Absence {
+                negative_overflow: true,
+                ..
+            }
+        )
+    }
+
+    /// Number of positive references that have fired inside the window.
+    pub fn absence_positive_count(&self, positive_refs: &[String]) -> usize {
+        match self {
+            WindowState::Absence { positive_hits, .. } => positive_refs
+                .iter()
+                .filter(|reference| {
+                    positive_hits
+                        .get(reference.as_str())
+                        .is_some_and(|hits| !hits.is_empty())
+                })
+                .count(),
+            _ => 0,
+        }
+    }
+
+    /// Evaluate an absence window at its deadline.
+    pub fn absence_fired(
+        &self,
+        expr: &ConditionExpr,
+        ordered: bool,
+        positive_refs: &[String],
+    ) -> bool {
+        let WindowState::Absence {
+            positive_hits,
+            negative_hits,
+            negative_overflow,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        if *negative_overflow {
+            return false;
+        }
+
+        let mut hits: HashMap<String, VecDeque<i64>> = HashMap::new();
+        for (rule_ref, timestamps) in positive_hits.iter().chain(negative_hits.iter()) {
+            hits.insert(rule_ref.clone(), timestamps.clone());
+        }
+        if !eval_temporal_expr(expr, &hits) {
+            return false;
+        }
+        !ordered || check_temporal_ordered(positive_refs, &hits)
     }
 
     /// Evaluate the window state against the correlation condition.
@@ -297,6 +467,14 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.len(),
             WindowState::Temporal { rule_hits } => rule_hits.values().map(VecDeque::len).sum(),
             WindowState::NumericAgg { entries } => entries.len(),
+            WindowState::Absence {
+                positive_hits,
+                negative_hits,
+                ..
+            } => {
+                positive_hits.values().map(VecDeque::len).sum::<usize>()
+                    + negative_hits.values().map(VecDeque::len).sum::<usize>()
+            }
         }
     }
 
@@ -346,6 +524,18 @@ impl WindowState {
             _ => None,
         }
     }
+}
+
+fn evict_hit_map(hits: &mut HashMap<String, VecDeque<i64>>, cutoff: i64) {
+    for timestamps in hits.values_mut() {
+        while timestamps
+            .front()
+            .is_some_and(|&timestamp| timestamp < cutoff)
+        {
+            timestamps.pop_front();
+        }
+    }
+    hits.retain(|_, timestamps| !timestamps.is_empty());
 }
 
 /// Start of the tumbling bucket that contains `ts`, aligned to epoch.
