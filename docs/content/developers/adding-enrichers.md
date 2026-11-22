@@ -215,7 +215,7 @@ enrichers:
     key_field: SourceIp
 ```
 
-The daemon's loader passes the entire block through to your factory; the factory deserializes whatever shape it needs. The `kind` field is read from the surrounding YAML, but your config struct can re-deserialize it (as in the example above) to keep the constructor self-contained.
+The daemon's loader passes the entire block through to your factory; the factory deserializes whatever shape it needs. Built-in types reject keys they do not know, but a bespoke type receives every key and validates them itself. {{ added "unreleased" }} Keys the built-in schema knows arrive in their parsed form (`timeout` as `timeout_ms`, `cache_ttl` as `cache_ttl_ms`), and every other key, such as `api_key_env` and `key_field` above, arrives as written. The `kind` field is read from the surrounding YAML, but your config struct can re-deserialize it (as in the example above) to keep the constructor self-contained.
 
 ## Test it
 

@@ -11,21 +11,21 @@ Load every config layer that would apply at runtime and report problems before t
 ## Synopsis
 
 ```text
-rsigma config validate [--config <PATH>] [--format <text|json>] [--strict]
+rsigma config validate [--config <PATH>] [--format <text|json>]
 ```
 
 ## Description
 
 Walks the same [discovery chain](../../reference/configuration.md#discovery) the daemon and eval commands use, deserializes every layer, and reports:
 
-- **Unknown keys** that don't match the schema (typo guard).
+- **Unknown keys** that don't match the schema (typo guard). Each one fails validation with exit 3. {{ added "unreleased" }}
 - **Inactive sections** that are set but inert in this build because the gating Cargo feature is disabled (`daemon` without the `daemon` feature, `daemon.nats` without `daemon-nats`, `daemon.api.tls` without `daemon-tls`).
 - **Errors** that prevent a file from loading at all.
 - **Ruleset errors** from statically checking every declared ruleset: unknown keys, an empty `sources` list, invalid globs, unknown levels, statuses, kinds, and policies, and malformed overlays. Sources are not read, so a missing source, an unresolved correlation reference, or an overlay that matches nothing surfaces when the ruleset is resolved, for example by [`ruleset show`](../ruleset/show.md) or [`ruleset build`](../ruleset/build.md). {{ added "unreleased" }}
 - **Ruleset list errors** in `eval.ruleset`, `eval.rulesets`, and `daemon.rulesets`: undefined or duplicate names, unknown entry or `when` keys, and a list combined with `rules` (or `eval.ruleset` with `eval.rulesets`). Schema names in `when` are checked when `engine eval` or `engine daemon` loads the classifier, because `--schema-config` can add schemas. {{ added "unreleased" }}
 - **Convert group errors** in `convert.groups`: invalid group names, a missing or undefined ruleset, a missing `target` or `output` after `convert.defaults` is applied, and two groups that write the same output or manifest. {{ added "unreleased" }}
 
-By default unknown keys are warnings; `--strict` upgrades them to hard errors so CI can gate on configuration cleanliness. Ruleset errors always fail validation with exit 3, regardless of `--strict`.
+Unknown keys and ruleset errors always fail validation with exit 3, so CI can gate on configuration cleanliness without extra flags. Every other command that reads the config stops with the same exit code on an unknown key. {{ added "unreleased" }}
 
 ## Flags
 
@@ -33,7 +33,7 @@ By default unknown keys are warnings; `--strict` upgrades them to hard errors so
 |------|---------|-------------|
 | `-c, --config <PATH>` | discovery chain | Load only this file (bypasses discovery). |
 | `--format <text\|json>` | `text` when unset | Human-readable summary on stderr or a machine-readable envelope on stdout. When unset, the global `--output-format` is used (`json`/`ndjson`/`table`/`csv`/`tsv`). Local `--format` wins over the global selector and prints a precedence warning. See [Output Formats](../../reference/output.md). |
-| `--strict` | off | Exit with code `3` when any unknown key is reported. |
+| `--strict` | off | Deprecated. Accepted for compatibility and changes nothing, because unknown keys always fail validation. Hidden from `--help`. {{ added "unreleased" }} |
 
 ## Output
 
@@ -45,12 +45,12 @@ Diagnostics go to stderr. Loaded layers are listed in increasing precedence orde
 Loaded (low to high precedence):
   - /etc/rsigma/config.yaml
   - ./rsigma.yaml
-warning: unknown key 'bogus_key' in ./rsigma.yaml
+error: unknown key 'bogus_key' in ./rsigma.yaml
 warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags
-Config is valid.
+1 unknown key(s) found
 ```
 
-An ignored key is a security-sensitive key set in a project file (`./rsigma.yaml` or `.rsigmarc`), which rsigma drops; see [Project config trust](../../reference/configuration.md#project-config-trust). Ignored keys do not fail validation, even with `--strict`. {{ added "0.27.0" }}
+An ignored key is a security-sensitive key set in a project file (`./rsigma.yaml` or `.rsigmarc`), which rsigma drops; see [Project config trust](../../reference/configuration.md#project-config-trust). Ignored keys do not fail validation. {{ added "0.27.0" }}
 
 ### JSON mode
 
@@ -58,7 +58,7 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
 
 ```json
 {
-  "ok": true,
+  "ok": false,
   "sources": ["/etc/rsigma/config.yaml", "./rsigma.yaml"],
   "unknown_keys": [
     { "file": "./rsigma.yaml", "key": "bogus_key" }
@@ -82,8 +82,8 @@ A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 
 | Code | Meaning |
 |------|---------|
-| `0` | Config loaded successfully. `--strict` exits 0 only when there are no unknown keys. |
-| `3` | A file could not be read or parsed, `--strict` saw unknown keys, or a ruleset spec is invalid. |
+| `0` | Config loaded successfully with no unknown keys and no ruleset errors. |
+| `3` | A file could not be read or parsed, a file has an unknown key, or a ruleset spec is invalid. |
 
 ## Examples
 
@@ -96,7 +96,7 @@ rsigma config validate
 Validate a specific file and fail the build on typos:
 
 ```bash
-rsigma config validate -c rsigma.yaml --strict
+rsigma config validate -c rsigma.yaml
 ```
 
 Use the JSON envelope from a CI step:

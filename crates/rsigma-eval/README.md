@@ -102,7 +102,7 @@ A non-short-circuiting, bloom-free recording evaluator that backs `rsigma engine
 |----------|-------------|
 | `parse_pipeline(yaml: &str)` | Parse a pipeline from a YAML string |
 | `parse_pipeline_file(path: &Path)` | Parse a pipeline from a YAML file |
-| `parse_sources_file(path: &Path)` | Parse a standalone source YAML file (top-level `sources:` list) |
+| `parse_sources_file(path: &Path)` | Parse a standalone source YAML file (top-level `sources:` list). Unknown keys, keys that do not apply to a source's type, and unknown `format`, `on_error`, and `refresh` values are errors |
 | `parse_sources_dir(dir: &Path)` | Parse all `*.yml`/`*.yaml` source files in a directory |
 | `validate_source_refs(pipeline, external_ids)` | Validate that `${source.*}` references resolve against declared and/or external source IDs |
 | `sources::scan_source_templates(text)` | Find every `${source.<id>}` or `${source.<id>.<path>}` template in a string, with its id, path, and byte offset; the one reference grammar used by pipeline parsing and runtime expansion |

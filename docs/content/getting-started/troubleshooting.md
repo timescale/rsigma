@@ -116,7 +116,7 @@ When every field is present but the verdict is still `NO MATCH`, the per-item li
 
 ## Rule changes are not picked up
 
-The daemon's file watcher reloads when a `.yml` or `.yaml` file changes anywhere under the rules path, or when a pipeline file changes. It does not watch enrichers, dynamic sources, or TLS files, and it does not see Kubernetes ConfigMap updates reliably. For those, trigger the reload yourself:
+The daemon's file watcher reloads when a `.yml` or `.yaml` file changes anywhere under the rules path, or in the directory of a pipeline, enrichers, alert-pipeline, or risk file. {{ added "unreleased" }} It does not watch TLS files, and it does not see Kubernetes ConfigMap updates reliably. For those, trigger the reload yourself:
 
 ```bash
 kill -HUP <daemon-pid>          # Unix

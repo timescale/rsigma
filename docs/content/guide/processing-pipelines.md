@@ -390,6 +390,8 @@ detection:
 
 `${source.<id>}` substitution applies to `vars:` entries and to `include:` directives. Transformation field values such as `add_condition.conditions.<field>` are parsed as typed structures and do **not** substitute dynamic sources directly; route lists of values through `vars` plus `value_placeholders` as shown above. Single scalar substitutions inside transformation fields (such as `set_state.val`) follow the same pattern through `vars`.
 
+A source declaration with a key that is unknown or does not apply to its `type:`, or with an unknown `format`, `on_error`, or `refresh` value, fails to load with an error naming the key or value. See [Dynamic Sources](../reference/dynamic-sources.md#schema). {{ added "unreleased" }}
+
 ### Source types
 
 | Type | Fetches | Notes |

@@ -133,7 +133,7 @@ Both `engine daemon` and `engine eval` accept their settings via a YAML config f
 # Scaffold a commented template at ./rsigma.yaml.
 rsigma config init
 
-# Discover files, deserialize, warn on unknown keys and inert sections.
+# Discover files, deserialize, fail on unknown keys, and report inert sections.
 rsigma config validate
 
 # Print the effective config with the source of each leaf.
@@ -490,13 +490,13 @@ curl -X POST http://localhost:9090/v1/logs \
 
 **Hot-reload triggers:**
 
-- File system changes to `.yml`/`.yaml` files in the rules directory (debounced 500ms)
+- File system changes to `.yml`/`.yaml` files in the rules directory, or in the directory of a `-p` pipeline file or of the `--enrichers`, `--alert-pipeline`, or `--risk` file (debounced 500ms)
 - `SIGHUP` signal (Unix only) -- triggers both rule reload and dynamic source re-resolution
 - `POST /api/v1/reload` -- cross-platform; the recommended cert-rotation path on Windows
 - `POST /api/v1/sources/resolve` -- re-resolves dynamic sources without reloading rules
 - NATS control subject `rsigma.control.resolve` (when using NATS sources) -- payload can be empty (resolve all) or `{"source_id": "..."}` (resolve one)
 
-The first three triggers all funnel through one debounced reload task that re-reads rules, pipelines, enrichers, and (when `daemon-tls` is built in) the TLS certificate and key. A failed reload of any component bumps `rsigma_reloads_failed_total`, logs an error, and leaves the previous in-memory state active so a typo on disk cannot black-hole the daemon.
+The first three triggers all funnel through one debounced reload task that re-reads rules, pipelines, enrichers, the alert pipeline, the risk config, and (when `daemon-tls` is built in) the TLS certificate and key. A failed reload of any component bumps `rsigma_reloads_failed_total`, logs an error, and leaves the previous in-memory state active so a typo on disk cannot black-hole the daemon.
 
 **Prometheus metrics:**
 
@@ -1431,6 +1431,8 @@ enrichers:
       levels: [low, medium, high, critical, informational]
     # ... primitive-specific fields below ...
 ```
+
+Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `default: null`) counts as absent. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves.
 
 ### Kind and template namespaces
 

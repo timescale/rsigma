@@ -4,6 +4,29 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Strict config files
+
+Enricher, webhook, risk, and dynamic source configs now reject keys that are unknown or that do not apply to an entry's type, at every level including `scope`, `retry`, `signing`, `stix`, `auth`, and `extract`. Each error names the key and lists the supported ones, so a typo such as `defualt:` or `fromat:` fails at load instead of being ignored. A dynamic source with an unknown `format`, `on_error`, or `refresh` value, an invalid `timeout`, or a `required` that is not a boolean fails instead of falling back to a default. In an enricher entry, a key set to an empty value (`headers: {}`, `default: null`) counts as absent. Duration errors in enricher, webhook, and risk configs now include the bad value.
+
+Unknown `rsigma.yaml` keys are errors. Every command that reads the config prints `error: unknown config key '<key>' in <path>` for each one and exits `3`, and `rsigma config validate` fails on them. `rsigma config show` still prints the effective config.
+
+Bespoke enricher types registered with `register_builtin` now receive their custom keys, as the developer docs described. HTTP sources honor the documented `max_body_size` and command sources honor `max_stdout`, which override the 10 MiB cap for one source.
+
+The daemon now reloads when the enrichers, alert-pipeline, or risk file changes, as the docs described. The watcher follows `.yml` and `.yaml` changes in the directory of each file, and a reload with an invalid file keeps the previous configuration.
+
+`rsigma_runtime::parse_enrichers_config` validates an enrichers config without opening files or touching the network, and a new `fuzz_enrichers_config` target covers it.
+
+Breaking changes:
+
+- A config file with a key that is unknown or does not apply now fails to load. That includes `default` on `http`, `template`, or `command` enrichers, which was ignored. For enrichers, webhooks, risk, and sources files, the daemon refuses to start and a reload keeps the previous configuration. MCP `evaluate_events` rejects the same enricher configs.
+- Unknown `rsigma.yaml` keys stop every command that reads the config with exit `3`. `rsigma config validate` fails on them without `--strict`, which is kept, hidden, for compatibility.
+- A dynamic source with an unknown `format`, `on_error`, or `refresh` value no longer falls back to `json`, `use_cached`, or `once`, and an invalid `timeout` or a non-boolean `required` is an error.
+- Library API: `EnricherConfig` gains the public `extra` field, `output` becomes `Option<OutputFormatLabel>`, and both `EnricherConfig` and `EnrichersConfigError` are `#[non_exhaustive]`. `EnrichersConfigError` gains `UnknownField` and `InapplicableField`. `rsigma_eval::pipeline::sources::SourceType::Http` gains `max_body_size` and `SourceType::Command` gains `max_stdout`.
+
+Migration: remove or fix the key or value the error names. Library code that matches `EnrichersConfigError` exhaustively needs a wildcard arm, and code that builds or exhaustively destructures `SourceType::Http` or `SourceType::Command` needs the new fields or `..`.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#config-schema), [Dynamic Sources](https://rsigma.io/reference/dynamic-sources/#schema), and [`config validate`](https://rsigma.io/cli/config/validate/).
+
 ### Events and event sources on chained correlations (#737)
 
 A chained correlation in `full` or `refs` event mode now carries the contributing `events` or `event_refs`, which it never did before. A parent receives the events its child correlations retained when they fired and fed it, so raw events behind a child that never fired are left out. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, `rsigma.action`, and `rsigma.max_correlation_events` cap decide which events it keeps.

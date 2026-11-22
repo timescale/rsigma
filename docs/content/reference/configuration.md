@@ -29,6 +29,8 @@ All layers that exist are loaded and merged. There is no first-match-wins fallba
 
 Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately).
 
+An unknown key in any loaded file stops the command with exit 3 and prints `error: unknown config key '<key>' in <path>` for each one. [`rsigma config validate`](../cli/config/validate.md) lists them without running anything, and [`rsigma config show`](../cli/config/show.md) still prints the effective config. {{ added "unreleased" }}
+
 The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explicitly rather than `dirs::config_dir()`, so on macOS the path stays under `~/.config/rsigma` instead of `~/Library/Application Support/`. The `rsigma install` workflow uses the same layout.
 
 ## Project config trust
