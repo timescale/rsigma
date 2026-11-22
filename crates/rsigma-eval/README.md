@@ -288,6 +288,9 @@ Stateful processing with sliding time windows, group-by aggregation, and all 8 c
 - **Configurable cap**: `max_correlation_events` bounds memory per window
 - **Zero cost when disabled**: buffers are not allocated unless mode is `Full` or `Refs`
 - **Per-correlation override**: set `rsigma.correlation_event_mode` via `custom_attributes` in YAML
+- **Chained correlations**: a parent in `Full` or `Refs` mode carries the events its child correlations retained when they fired and fed it. Each event appears once, oldest first, capped and windowed by the parent's own settings
+- **Retention down the chain**: a parent's mode and cap make its children buffer events even when their own mode is `None`; the children's own results stay without events
+- **Event sources**: every result with `events` or `event_refs` also carries `event_sources`, one `EventSource` per event naming the referenced `rule` it matched and, for a chained parent, the child correlation it came `via`
 
 ### Memory Management
 

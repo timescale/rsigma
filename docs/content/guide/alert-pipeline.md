@@ -119,7 +119,7 @@ dedup:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `strip_event` | `false` | Retain the event for selector resolution, then drop raw event payloads (detection `event`, correlation `events`/`event_refs`) before sink delivery. |
+| `strip_event` | `false` | Retain the event for selector resolution, then drop raw event payloads (detection `event`, correlation `events`/`event_refs` and their `event_sources`) before sink delivery. {{ added "unreleased" }} |
 | `scope.rules`/`scope.tags`/`scope.levels` | empty | Restrict which results the layer acts on. Out-of-scope results pass through untouched. Same syntax as the enrichers `scope`. |
 | `dedup.fingerprint` | required | Selectors hashed (with the rule identity) into the fingerprint. At least one is required when `dedup` is set. |
 | `dedup.repeat_interval` | `0` | Re-emit cadence for a still-active alert (humantime, e.g. `1h`). `0` means pure suppression. |

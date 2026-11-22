@@ -4,6 +4,20 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Events and event sources on chained correlations
+
+A chained correlation in `full` or `refs` event mode now carries the contributing `events` or `event_refs`, which it never did before. A parent receives the events its child correlations retained when they fired and fed it, so raw events behind a child that never fired are left out. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, `rsigma.action`, and `rsigma.max_correlation_events` cap decide which events it keeps.
+
+Every correlation result that carries `events` or `event_refs` now also carries `event_sources`, one entry per event. `rule` names the reference from the correlation's `rules:` list that the event matched, which tells the two sides of a `temporal` correlation apart, and `via` names the child correlation that delivered the event to a chained parent. OCSF findings carry `event_sources` in `evidences[].data`, and `strip_event` drops it with the events.
+
+A parent's event mode and cap make its child correlations buffer events for it, even when their own mode is `none`. That adds memory bounded by the cap for each active child group, and the children's own results are unchanged. The default event mode is still `none`, which keeps no buffers.
+
+Correlation state snapshots gain `seq`, `rule`, and `via` fields on buffered entries. Snapshots from earlier versions load, with an empty source, `{}`, for their restored events, and earlier versions ignore the new fields.
+
+Breaking changes: code that builds `rsigma_eval::CorrelationBody` with a struct literal needs the new `event_sources` field. Consumers that reject unknown keys in correlation results see `event_sources` whenever an event mode is set.
+
+See [Correlation in eval mode](https://rsigma.io/guide/evaluating-rules/#correlation-in-eval-mode).
+
 ### Hosted GeoIP API recipe (docs) (#735)
 
 The `enrich_ip_geoip` recipe gains a hosted-API variant: an `http` enricher with a response cache, the API key in a header instead of the URL, and a jq `extract` that injects the same `{country, region, city}` shape as the `mmdb` variant, with `{country: "unknown"}` for addresses the provider has no record for. The CLI README lists the three GeoIP variants together again. Docs only.
