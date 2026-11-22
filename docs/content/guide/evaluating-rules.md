@@ -123,7 +123,7 @@ By default, a detection referenced by a correlation contributes to correlation s
 
 The same applies to a correlation referenced by another correlation. In a chain where a detection feeds a child correlation that feeds a parent correlation, only the parent produces a result; the child still updates the parent's state. `generate: true` on the parent also emits the child, and `--emit-detections` emits every detection and correlation match in the chain. {{ added "0.24.0" }}
 
-A chained parent in `full` or `refs` event mode carries the events its child correlations retained when they fired and fed it. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, and `--max-correlation-events` cap decide which events it keeps. A parent's event mode makes its children retain events even when their own mode is `none`; their own results still carry no events. Raw events that went into a child that never fired are not included, because they did not contribute to any firing. {{ added "unreleased" }}
+A chained parent in `full` or `refs` event mode carries the events its child correlations retained when they fired and fed it. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, and event cap (`rsigma.max_correlation_events`, else `--max-correlation-events`) decide which events it keeps. A parent's event mode makes its children retain events even when their own mode is `none`; their own results still carry no events. Raw events that went into a child that never fired are not included, because they did not contribute to any firing. {{ added "unreleased" }}
 
 ```yaml
 title: Repeated brute force bursts
