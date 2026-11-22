@@ -563,3 +563,52 @@ pub fn gen_rules_with_temporal_correlations(n_detect: usize, n_corr: usize) -> S
 
     docs.join("---\n")
 }
+
+/// Generate `n_chains` two-level correlation chains. Each chain has a
+/// detection on login events, an event_count child over it, and an
+/// event_count parent over the child, all grouped by `User`.
+pub fn gen_rules_with_chained_correlations(n_chains: usize) -> String {
+    let mut docs = Vec::new();
+    for c in 0..n_chains {
+        docs.push(format!(
+            "title: Chain Login {c}\n\
+             id: chain-det-{c:06}\n\
+             logsource:\n\
+             \x20   category: test\n\
+             detection:\n\
+             \x20   selection:\n\
+             \x20       EventType: login\n\
+             \x20   condition: selection\n\
+             level: low\n"
+        ));
+        docs.push(format!(
+            "title: Chain Child {c}\n\
+             id: chain-child-{c:06}\n\
+             correlation:\n\
+             \x20   type: event_count\n\
+             \x20   rules:\n\
+             \x20       - chain-det-{c:06}\n\
+             \x20   group-by:\n\
+             \x20       - User\n\
+             \x20   timespan: 600s\n\
+             \x20   condition:\n\
+             \x20       gte: 2\n\
+             level: medium\n"
+        ));
+        docs.push(format!(
+            "title: Chain Parent {c}\n\
+             id: chain-parent-{c:06}\n\
+             correlation:\n\
+             \x20   type: event_count\n\
+             \x20   rules:\n\
+             \x20       - chain-child-{c:06}\n\
+             \x20   group-by:\n\
+             \x20       - User\n\
+             \x20   timespan: 3600s\n\
+             \x20   condition:\n\
+             \x20       gte: 2\n\
+             level: high\n"
+        ));
+    }
+    docs.join("---\n")
+}
