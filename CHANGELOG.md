@@ -22,7 +22,7 @@ See [Correlation in eval mode](https://rsigma.io/guide/evaluating-rules/#correla
 
 The `enrich_ip_geoip` recipe gains a hosted-API variant: an `http` enricher with a response cache, the API key in a header instead of the URL, and a jq `extract` that injects the same `{country, region, city}` shape as the `mmdb` variant, with `{country: "unknown"}` for addresses the provider has no record for. The CLI README lists the three GeoIP variants together again. Docs only.
 
-### Absence and deadman correlations (#TBD)
+### Absence and deadman correlations (#736)
 
 Extended temporal conditions with a negated rule reference now use deferred absence semantics. `a and not b` opens a forward window from the first positive event and fires at its deadline if `b` never arrives; `not heartbeat` treats the heartbeat as a sliding entity timer and fires after `timespan` of silence. The daemon evaluates deadlines on a one-second tick, `engine eval` finishes them at the end of its observation horizon, and pending windows survive `--state-db` restarts. Static Postgres and Fibratus conversion reject absence rules because they cannot honor a wall-clock deadline. This is an rsigma extension; existing `a and not b` rules change from immediate evaluation to deadline evaluation.
 
