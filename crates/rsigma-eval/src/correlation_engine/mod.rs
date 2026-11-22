@@ -62,6 +62,18 @@ const MAX_CHAIN_DEPTH: usize = 10;
 /// rate entries, which `max_state_entries` does not see.
 const LONG_WINDOW_WARN_SECS: u64 = 3600;
 
+/// Event retention a correlation needs for itself and for the chain above it.
+#[derive(Debug, Clone, Default)]
+struct Retention {
+    /// Strongest event mode required by this correlation or any correlation
+    /// that references it, directly or through another correlation.
+    mode: CorrelationEventMode,
+    /// Largest retention cap required by that chain.
+    cap: usize,
+    /// Whether any correlation that references this one retains events.
+    feeds_retaining_parent: bool,
+}
+
 /// Stateful correlation engine.
 ///
 /// Wraps the stateless `Engine` for detection rules and adds time-windowed
@@ -110,6 +122,11 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     /// Sequence number the next processed event gets. Retained buffer entries
     /// carry it so a parent correlation can skip an event it already merged.
     next_event_seq: u64,
+    /// Per-correlation event retention, recomputed when the rule set or the
+    /// engine defaults change.
+    retention: Vec<Retention>,
+    /// Whether `retention` needs recomputing before the next event.
+    retention_dirty: bool,
 }
 
 impl CorrelationEngine {
@@ -144,6 +161,8 @@ impl<L> CorrelationEngine<L> {
             tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
             next_event_seq: 1,
+            retention: Vec::new(),
+            retention_dirty: true,
         }
     }
 
@@ -211,12 +230,14 @@ impl<L> CorrelationEngine<L> {
     /// - `Refs`: lightweight timestamp + ID references
     pub fn set_correlation_event_mode(&mut self, mode: CorrelationEventMode) {
         self.config.correlation_event_mode = mode;
+        self.retention_dirty = true;
     }
 
     /// Set the maximum number of events to store per correlation window group.
     /// Only meaningful when `correlation_event_mode` is not `None`.
     pub fn set_max_correlation_events(&mut self, max: usize) {
         self.config.max_correlation_events = max;
+        self.retention_dirty = true;
     }
 
     /// Add a single detection rule.
@@ -337,6 +358,7 @@ impl<L> CorrelationEngine<L> {
         }
 
         self.correlations.push(compiled);
+        self.retention_dirty = true;
         Ok(())
     }
 
@@ -702,6 +724,10 @@ impl<L> CorrelationEngine<L> {
             self.evict_all(timestamp_secs);
         }
 
+        if self.retention_dirty {
+            self.refresh_retention();
+        }
+
         let event_seq = self.next_event_seq;
         self.next_event_seq = self.next_event_seq.saturating_add(1);
 
@@ -1033,6 +1059,8 @@ impl<L> CorrelationEngine<L> {
             action,
             event_mode,
             max_events,
+            retention_mode,
+            retention_cap,
             max_group_entries,
             rule_ref,
             group_key,
@@ -1051,6 +1079,8 @@ impl<L> CorrelationEngine<L> {
             let max_events = corr
                 .max_events
                 .unwrap_or(self.config.max_correlation_events);
+            let retention_mode = self.retention[corr_idx].mode;
+            let retention_cap = self.retention[corr_idx].cap;
             let max_group_entries = corr.max_group_entries.or(self.config.max_group_entries);
 
             // Determine the rule_ref strings for alias resolution and temporal tracking.
@@ -1084,6 +1114,8 @@ impl<L> CorrelationEngine<L> {
                 action,
                 event_mode,
                 max_events,
+                retention_mode,
+                retention_cap,
                 max_group_entries,
                 rule_ref,
                 group_key,
@@ -1163,15 +1195,17 @@ impl<L> CorrelationEngine<L> {
             state.truncate_oldest(cap, window_mode == WindowMode::Session);
         }
 
-        // Push event into buffer based on event mode. Keep the buffer's retained
-        // events aligned with the window state: sliding evicts by the trailing
-        // cutoff, while tumbling/session clear the buffer when the window reset.
-        match event_mode {
+        // Push event into the buffer its retention requires, which can be
+        // stronger than this correlation's own mode when a parent retains
+        // events. Keep the buffer's retained entries aligned with the window
+        // state: sliding evicts by the trailing cutoff, while tumbling/session
+        // clear the buffer when the window reset.
+        match retention_mode {
             CorrelationEventMode::Full => {
                 let buf = self
                     .event_buffers
                     .entry(state_key.clone())
-                    .or_insert_with(|| EventBuffer::new(max_events));
+                    .or_insert_with(|| EventBuffer::new(retention_cap));
                 if window_mode == rsigma_parser::WindowMode::Sliding {
                     buf.evict(cutoff);
                 } else if reset {
@@ -1184,7 +1218,7 @@ impl<L> CorrelationEngine<L> {
                 let buf = self
                     .event_ref_buffers
                     .entry(state_key.clone())
-                    .or_insert_with(|| EventRefBuffer::new(max_events));
+                    .or_insert_with(|| EventRefBuffer::new(retention_cap));
                 if window_mode == rsigma_parser::WindowMode::Sliding {
                     buf.evict(cutoff);
                 } else if reset {
@@ -1219,22 +1253,26 @@ impl<L> CorrelationEngine<L> {
             };
 
             if !suppressed {
-                // Retrieve stored events / refs based on mode
+                // Retrieve the newest own-cap retained entries for the mode
+                // this correlation reports. A refs mode can read a buffer its
+                // parent made full.
                 let (events, event_refs) = match event_mode {
                     CorrelationEventMode::Full => {
                         let stored = self
                             .event_buffers
                             .get(&alert_key)
-                            .map(|buf| buf.decompress_all())
+                            .map(|buf| buf.newest_events(max_events))
                             .unwrap_or_default();
                         (Some(stored), None)
                     }
                     CorrelationEventMode::Refs => {
-                        let stored = self
-                            .event_ref_buffers
-                            .get(&alert_key)
-                            .map(|buf| buf.refs())
-                            .unwrap_or_default();
+                        let stored = if let Some(buf) = self.event_ref_buffers.get(&alert_key) {
+                            buf.newest_refs(max_events)
+                        } else if let Some(buf) = self.event_buffers.get(&alert_key) {
+                            buf.newest_refs(max_events)
+                        } else {
+                            Vec::new()
+                        };
                         (None, Some(stored))
                     }
                     CorrelationEventMode::None => (None, None),
@@ -1281,6 +1319,93 @@ impl<L> CorrelationEngine<L> {
                 }
             }
         }
+    }
+
+    /// Recompute the event retention each correlation needs from its own mode
+    /// and cap and from every correlation that references it, directly or
+    /// through another correlation.
+    fn refresh_retention(&mut self) {
+        let len = self.correlations.len();
+        let mut retention = vec![Retention::default(); len];
+        let mut done = vec![false; len];
+        let mut visiting = vec![false; len];
+        for idx in 0..len {
+            self.compute_retention(idx, &mut retention, &mut done, &mut visiting, 0);
+        }
+        self.retention = retention;
+        self.retention_dirty = false;
+    }
+
+    /// Resolve one correlation's retention by walking to the correlations that
+    /// reference it. `add_correlation` alone does not reject cycles, so the
+    /// walk stops on a correlation already being resolved and at
+    /// [`MAX_CHAIN_DEPTH`].
+    fn compute_retention(
+        &self,
+        idx: usize,
+        out: &mut [Retention],
+        done: &mut [bool],
+        visiting: &mut [bool],
+        depth: usize,
+    ) -> Retention {
+        if done[idx] {
+            return out[idx].clone();
+        }
+        let own = self.own_retention(idx);
+        if visiting[idx] || depth >= MAX_CHAIN_DEPTH {
+            return own;
+        }
+
+        visiting[idx] = true;
+        let mut result = own;
+        for parent in self.referencing_correlations(idx) {
+            let parent_retention = self.compute_retention(parent, out, done, visiting, depth + 1);
+            result.mode = stronger_mode(result.mode, parent_retention.mode);
+            if parent_retention.mode != CorrelationEventMode::None {
+                result.feeds_retaining_parent = true;
+                result.cap = result.cap.max(parent_retention.cap);
+            }
+        }
+        visiting[idx] = false;
+
+        out[idx] = result.clone();
+        done[idx] = true;
+        result
+    }
+
+    /// Event retention a correlation requests for itself, before propagation.
+    fn own_retention(&self, idx: usize) -> Retention {
+        let corr = &self.correlations[idx];
+        let mode = corr
+            .event_mode
+            .unwrap_or(self.config.correlation_event_mode);
+        let cap = corr
+            .max_events
+            .unwrap_or(self.config.max_correlation_events);
+        Retention {
+            mode,
+            cap: if mode == CorrelationEventMode::None {
+                0
+            } else {
+                cap
+            },
+            feeds_retaining_parent: false,
+        }
+    }
+
+    /// Correlations whose `rule_refs` name `idx`.
+    fn referencing_correlations(&self, idx: usize) -> Vec<usize> {
+        let mut parents = Vec::new();
+        for key in self.chain_lookup_keys(idx) {
+            if let Some(indices) = self.rule_index.get(&key) {
+                for &parent in indices {
+                    if !parents.contains(&parent) {
+                        parents.push(parent);
+                    }
+                }
+            }
+        }
+        parents
     }
 
     /// IDs and names a fired correlation can be referenced by.
@@ -2098,6 +2223,19 @@ impl<L> CorrelationEngine<L> {
 impl Default for CorrelationEngine {
     fn default() -> Self {
         Self::new(CorrelationConfig::default())
+    }
+}
+
+/// Retention strength ordering: `full` over `refs` over `none`.
+fn stronger_mode(a: CorrelationEventMode, b: CorrelationEventMode) -> CorrelationEventMode {
+    match (a, b) {
+        (CorrelationEventMode::Full, _) | (_, CorrelationEventMode::Full) => {
+            CorrelationEventMode::Full
+        }
+        (CorrelationEventMode::Refs, _) | (_, CorrelationEventMode::Refs) => {
+            CorrelationEventMode::Refs
+        }
+        _ => CorrelationEventMode::None,
     }
 }
 

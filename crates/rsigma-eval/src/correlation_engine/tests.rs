@@ -4762,3 +4762,318 @@ fn strip_seq_keys(value: &mut serde_json::Value) {
         _ => {}
     }
 }
+
+// =========================================================================
+// Chain retention
+// =========================================================================
+
+const RETENTION_CHAIN: &str = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+"#;
+
+#[test]
+fn test_child_without_own_mode_buffers_for_full_parent_but_emits_no_events() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    assert!(
+        a.as_correlation().unwrap().events.is_none(),
+        "own mode none emits no events"
+    );
+    assert!(
+        engine.event_buffers.keys().any(|k| k.corr_idx == 0),
+        "the child buffers events for its parent"
+    );
+}
+
+#[test]
+fn test_refs_child_under_full_parent_emits_ids_from_events() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 2
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: refs
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let mut last = None;
+    for i in 0..2 {
+        let v = json!({"action": "click", "User": "alice", "id": format!("e-{i}")});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    let refs = a
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .as_ref()
+        .expect("refs mode emits refs");
+    let ids: Vec<_> = refs.iter().filter_map(|r| r.id.as_deref()).collect();
+    assert_eq!(ids, ["e-0", "e-1"]);
+}
+
+#[test]
+fn test_child_own_cap_bounds_its_output_under_a_larger_parent_cap() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 5
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+    rsigma.max_correlation_events: "3"
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+custom_attributes:
+    rsigma.correlation_event_mode: full
+    rsigma.max_correlation_events: "10"
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let mut last = None;
+    for i in 0..5 {
+        let v = json!({"action": "click", "User": "alice", "idx": i});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let a = r
+        .correlations()
+        .find(|c| c.header.rule_title == "correlation A")
+        .expect("the child fires");
+    let events = a
+        .as_correlation()
+        .unwrap()
+        .events
+        .as_ref()
+        .expect("full mode emits events");
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["idx"], 2);
+    assert_eq!(events[2]["idx"], 4);
+}
+
+#[test]
+fn test_no_event_buffers_without_an_event_mode() {
+    let collection = parse_sigma_yaml(RETENTION_CHAIN).unwrap();
+    // The chain YAML sets full on the parent, so strip it for this case.
+    let mut collection = collection;
+    for corr in &mut collection.correlations {
+        corr.custom_attributes
+            .remove("rsigma.correlation_event_mode");
+    }
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    engine.add_collection(&collection).unwrap();
+
+    let v = json!({"action": "click", "User": "alice"});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    assert_eq!(engine.event_buffer_count(), 0);
+    assert_eq!(engine.event_ref_buffer_count(), 0);
+}
+
+#[test]
+fn test_event_mode_set_after_collection_takes_effect_on_next_event() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: Many Logins
+id: many-logins
+correlation:
+    type: event_count
+    rules:
+        - login-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition:
+        gte: 2
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+    engine.set_correlation_event_mode(CorrelationEventMode::Full);
+
+    let mut last = None;
+    for i in 0..2 {
+        let v = json!({"EventType": "login", "User": "admin"});
+        last = Some(engine.process_event_at(&JsonEvent::borrow(&v), 1000 + i));
+    }
+    let r = last.unwrap();
+    let corr = r.correlations().next().expect("correlation fires");
+    assert!(
+        corr.as_correlation().unwrap().events.is_some(),
+        "the mode set after loading applies to the next event"
+    );
+}
+
+#[test]
+fn test_correlation_cycle_loaded_without_validation_terminates_retention_walk() {
+    let yaml = r#"
+title: click
+id: det-rule
+logsource:
+    product: test
+detection:
+    selection:
+        action: click
+    condition: selection
+---
+title: correlation A
+id: corr-a
+correlation:
+    type: event_count
+    rules:
+        - det-rule
+        - corr-b
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+---
+title: correlation B
+id: corr-b
+correlation:
+    type: event_count
+    rules:
+        - corr-a
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(emit_every_hop());
+    for rule in &collection.rules {
+        engine.add_rule(rule).unwrap();
+    }
+    for corr in &collection.correlations {
+        engine.add_correlation(corr).unwrap();
+    }
+
+    let v = json!({"action": "click", "User": "alice"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    assert!(!r.correlations().next().is_none());
+    assert!(engine.state_count() > 0);
+}
