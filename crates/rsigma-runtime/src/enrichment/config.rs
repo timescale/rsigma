@@ -87,6 +87,7 @@ pub struct EnrichersFile {
 
 /// One enricher's YAML config block.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct EnricherConfig {
     /// Stable identifier for this enricher instance. Required.
     pub id: String,
@@ -206,6 +207,12 @@ pub struct EnricherConfig {
     /// `dns`: maximum number of cached responses. Defaults to 10000.
     #[serde(default)]
     pub cache_max_entries: Option<u64>,
+
+    /// Keys the built-in schema does not recognize, kept as written so
+    /// bespoke factories registered through
+    /// [`register_builtin`](crate::register_builtin) receive them.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// `kind:` discriminator. Lower-case in YAML, parses to
@@ -281,6 +288,7 @@ pub struct ScopeConfig {
 
 /// Errors produced while loading or validating an enrichers config.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EnrichersConfigError {
     /// File could not be read.
     Io(std::io::Error, std::path::PathBuf),
@@ -773,8 +781,9 @@ fn build_one(
                 enricher_id: cfg.id.clone(),
                 type_name: other.to_string(),
             })?;
-            // Re-serialize the entire config block as JSON so the
-            // factory can deserialize whatever schema it needs.
+            // Re-serialize the entire config block, custom keys included,
+            // as JSON so the factory can deserialize whatever schema it
+            // needs.
             let raw =
                 serde_json::to_value(&cfg).map_err(|e| EnrichersConfigError::BespokeFactory {
                     enricher_id: cfg.id.clone(),
@@ -1017,6 +1026,9 @@ impl serde::Serialize for EnricherConfig {
         }
         if let Some(max) = &self.cache_max_entries {
             m.serialize_entry("cache_max_entries", max)?;
+        }
+        for (k, v) in &self.extra {
+            m.serialize_entry(k, v)?;
         }
         m.end()
     }
