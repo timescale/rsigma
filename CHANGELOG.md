@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Hosted GeoIP API recipe (docs) (#735)
+
+The `enrich_ip_geoip` recipe gains a hosted-API variant: an `http` enricher with a response cache, the API key in a header instead of the URL, and a jq `extract` that injects the same `{country, region, city}` shape as the `mmdb` variant, with `{country: "unknown"}` for addresses the provider has no record for. The CLI README lists the three GeoIP variants together again. Docs only.
+
 ### Daemon batch runs over stdin (#714)
 
 `rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.

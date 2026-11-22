@@ -1647,26 +1647,7 @@ enrichers:
     default: { country: "unknown" }
 ```
 
-#### `enrich_ip_rdns`: reverse DNS for an IP
-
-Use `dns` with `record_type: PTR` to resolve an event-supplied IP address to a hostname. `extract: ".[0]"` keeps the first answer, and `default` covers addresses with no PTR record:
-
-```yaml
-# enrichers.yml
-enrichers:
-  - id: enrich_ip_rdns
-    kind: detection
-    type: dns
-    record_type: PTR
-    key: "${detection.fields.SourceIp}"
-    inject_field: src_hostname
-    extract: ".[0]"
-    default: "unknown"
-```
-
-Forward lookups take `record_type: A`, `AAAA`, or `IP` (both), and `key` then holds a hostname such as `${detection.fields.DestinationHostname}`. See [Enrichers: `dns`](https://rsigma.io/guide/enrichers/#dns-dns-lookup) for the record types and cache behavior.
-
-If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead; fall back to `http` for vendor APIs:
+If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead:
 
 ```yaml
 # sources.yml
@@ -1690,6 +1671,49 @@ enrichers:
     extract_type: jq
     default: { country: "unknown" }
 ```
+
+For a hosted GeoIP API, use `http` with a `cache_ttl`. Send the key in a header, because `${ENV_VAR}` values in `url` are inserted verbatim and a failed request logs the full URL. The `extract` injects the same shape as the `mmdb` recipe, including `{country: "unknown"}` for private and reserved addresses that the provider answers with a no-record body:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_geoip
+    kind: detection
+    type: http
+    inject_field: geoip
+    url: "https://geoip.example.com/v1/${detection.fields.SourceIp}"
+    headers:
+      Authorization: "Bearer ${GEOIP_API_KEY}"
+    cache_ttl: 24h
+    extract: >-
+      if .country_code
+      then {country: .country_code, region: .region_code, city: .city}
+      else {country: "unknown"}
+      end
+    extract_type: jq
+    on_error: skip
+```
+
+Adapt `url`, `headers`, and the response paths in `extract` to the provider. See [Enrichers: recipes](https://rsigma.io/guide/enrichers/#composing-enrichers-recipes) for the details.
+
+#### `enrich_ip_rdns`: reverse DNS for an IP
+
+Use `dns` with `record_type: PTR` to resolve an event-supplied IP address to a hostname. `extract: ".[0]"` keeps the first answer, and `default` covers addresses with no PTR record:
+
+```yaml
+# enrichers.yml
+enrichers:
+  - id: enrich_ip_rdns
+    kind: detection
+    type: dns
+    record_type: PTR
+    key: "${detection.fields.SourceIp}"
+    inject_field: src_hostname
+    extract: ".[0]"
+    default: "unknown"
+```
+
+Forward lookups take `record_type: A`, `AAAA`, or `IP` (both), and `key` then holds a hostname such as `${detection.fields.DestinationHostname}`. See [Enrichers: `dns`](https://rsigma.io/guide/enrichers/#dns-dns-lookup) for the record types and cache behavior.
 
 #### `enrich_hash_virustotal`: hash reputation with cache
 
