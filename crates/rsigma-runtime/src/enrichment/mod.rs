@@ -76,12 +76,17 @@ pub use lookup::LookupEnricher;
 pub use mmdb::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
 pub use stix::{StixEnricher, StixEnricherQuery};
+#[cfg(any(feature = "mmdb-enrich", feature = "dns-enrich", test))]
+pub(crate) use template::empty_key_message;
 pub use template::{
     TemplateEnricher, TemplateError, env_references, render_template, render_template_json,
     render_template_url, render_webhook_body, validate_template_namespace,
     validate_url_tenant_position,
 };
-pub(crate) use template::{render_template_json_with_ocsf, validate_webhook_body_template};
+pub(crate) use template::{
+    references_detection_payload, render_enricher_template, render_enricher_template_json,
+    render_enricher_template_url, render_template_json_with_ocsf, validate_webhook_body_template,
+};
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.
 ///
@@ -272,6 +277,7 @@ pub struct EnrichmentPipeline {
     enrichers: Vec<Box<dyn Enricher>>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<dyn MetricsHook>,
+    needs_event: bool,
 }
 
 impl std::fmt::Debug for EnrichmentPipeline {
@@ -279,6 +285,7 @@ impl std::fmt::Debug for EnrichmentPipeline {
         f.debug_struct("EnrichmentPipeline")
             .field("enrichers", &self.enrichers.len())
             .field("permits", &self.semaphore.available_permits())
+            .field("needs_event", &self.needs_event)
             .finish()
     }
 }
@@ -301,7 +308,22 @@ impl EnrichmentPipeline {
             enrichers,
             semaphore: Arc::new(Semaphore::new(permits)),
             metrics: Arc::new(NoopMetrics),
+            needs_event: false,
         }
+    }
+
+    /// Whether any configured enricher reads a detection payload that the
+    /// engine must retain on the result.
+    ///
+    /// True when a rendered template references `${detection.fields.*}`,
+    /// `${detection.event.*}`, or bare `${detection.event}`. Those references
+    /// resolve only when the engine retains the event on the result.
+    pub fn needs_event(&self) -> bool {
+        self.needs_event
+    }
+
+    pub(crate) fn set_needs_event(&mut self, needs_event: bool) {
+        self.needs_event = needs_event;
     }
 
     /// Replace the metrics hook this pipeline reports into. The daemon
@@ -526,6 +548,7 @@ impl Clone for EnrichmentPipeline {
             enrichers: Vec::new(),
             semaphore: Arc::clone(&self.semaphore),
             metrics: Arc::clone(&self.metrics),
+            needs_event: self.needs_event,
         }
     }
 }

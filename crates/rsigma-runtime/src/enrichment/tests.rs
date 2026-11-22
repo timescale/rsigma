@@ -14,9 +14,10 @@ use rsigma_parser::{CorrelationType, Level};
 
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, EnrichmentPipeline, OnError, Scope,
-    TemplateEnricher, TemplateError, register_builtin, render_template, render_webhook_body,
-    validate_template_namespace,
+    TemplateEnricher, TemplateError, empty_key_message, register_builtin, render_enricher_template,
+    render_template, render_webhook_body, validate_template_namespace,
 };
+use crate::{EnricherResources, EnrichersFile, NoopMetrics, SourceCache, build_enrichers_full};
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -145,6 +146,20 @@ async fn template_expands_detection_event_jsonpath() {
 }
 
 #[tokio::test]
+async fn template_reads_an_unmatched_field_from_the_event() {
+    let mut r = detection_result();
+    let e = template_enricher(
+        "user",
+        EnricherKind::Detection,
+        "by",
+        "user=${detection.fields.User}",
+    );
+    e.enrich(&mut r).await.unwrap();
+    let v = r.header.enrichments.unwrap();
+    assert_eq!(v.get("by").unwrap(), &serde_json::json!("user=alice"));
+}
+
+#[tokio::test]
 async fn template_expands_detection_tags_joined() {
     let mut r = detection_result();
     let e = template_enricher(
@@ -229,6 +244,327 @@ async fn template_env_var_expansion() {
     unsafe {
         std::env::remove_var("RSIGMA_TEST_ENRICH_ENV");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment event fallback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn enrichment_fallback_prefers_a_matched_field_over_the_event() {
+    let mut r = detection_result();
+    r.body = ResultBody::Detection(DetectionBody {
+        matched_selections: vec!["selection".to_string()],
+        matched_fields: vec![FieldMatch::new("User", serde_json::json!("bob"))],
+        event: Some(serde_json::json!({"User": "alice"})),
+    });
+    assert_eq!(
+        render_enricher_template("${detection.fields.User}", &r),
+        "bob"
+    );
+}
+
+#[test]
+fn enrichment_fallback_keeps_a_matched_null() {
+    let mut r = detection_result();
+    r.body = ResultBody::Detection(DetectionBody {
+        matched_selections: vec!["selection".to_string()],
+        matched_fields: vec![FieldMatch::new("User", serde_json::Value::Null)],
+        event: Some(serde_json::json!({"User": "alice"})),
+    });
+    assert_eq!(render_enricher_template("${detection.fields.User}", &r), "");
+}
+
+#[test]
+fn enrichment_fallback_reads_an_unmatched_field_from_the_event() {
+    let mut r = detection_result();
+    r.body = ResultBody::Detection(DetectionBody {
+        matched_selections: vec!["selection".to_string()],
+        matched_fields: vec![],
+        event: Some(serde_json::json!({
+            "SourceIp": "203.0.113.7",
+            "a.b": "flat",
+            "nested": {"x": "deep"},
+            "arr": [10, 20],
+        })),
+    });
+    assert_eq!(
+        render_enricher_template("${detection.fields.SourceIp}", &r),
+        "203.0.113.7"
+    );
+    assert_eq!(
+        render_enricher_template("${detection.fields.a.b}", &r),
+        "flat",
+        "a whole-name top-level key wins over dotted navigation"
+    );
+    assert_eq!(
+        render_enricher_template("${detection.fields.nested.x}", &r),
+        "deep"
+    );
+    assert_eq!(
+        render_enricher_template("${detection.fields.arr.1}", &r),
+        "20"
+    );
+}
+
+#[test]
+fn enrichment_fallback_renders_empty_without_an_event() {
+    let mut r = detection_result();
+    r.body = ResultBody::Detection(DetectionBody {
+        matched_selections: vec!["selection".to_string()],
+        matched_fields: vec![],
+        event: None,
+    });
+    assert_eq!(
+        render_enricher_template("${detection.fields.SourceIp}", &r),
+        ""
+    );
+}
+
+#[test]
+fn public_renderers_do_not_fall_back_to_the_event() {
+    let mut r = detection_result();
+    r.body = ResultBody::Detection(DetectionBody {
+        matched_selections: vec!["selection".to_string()],
+        matched_fields: vec![],
+        event: Some(serde_json::json!({"SourceIp": "203.0.113.7"})),
+    });
+    assert_eq!(render_template("${detection.fields.SourceIp}", &r), "");
+    assert_eq!(
+        render_enricher_template("${detection.fields.SourceIp}", &r),
+        "203.0.113.7"
+    );
+}
+
+#[test]
+fn empty_key_hint_names_the_event_fallback_only_for_detection_payloads() {
+    let hint = "key rendered empty; the field is neither a matched field nor present in the event";
+    assert_eq!(empty_key_message("${detection.fields.SourceIp}"), hint);
+    assert_eq!(empty_key_message("${detection.event.SourceIp}"), hint);
+    assert_eq!(empty_key_message("${detection.event}"), hint);
+    assert_eq!(
+        empty_key_message("${detection.rule.id}"),
+        "key rendered empty"
+    );
+    assert_eq!(
+        empty_key_message("${correlation.group_key.SourceIp}"),
+        "key rendered empty"
+    );
+    assert_eq!(empty_key_message("${HOME}"), "key rendered empty");
+}
+
+fn pipeline_needs_event(yaml: &str) -> bool {
+    let file: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let resources = EnricherResources {
+        source_cache: Some(std::sync::Arc::new(SourceCache::new())),
+        #[cfg(feature = "stix-enrich")]
+        stix_store: Some(std::sync::Arc::new(rstix::store::MemoryStore::new())),
+    };
+    build_enrichers_full(file, resources, std::sync::Arc::new(NoopMetrics))
+        .unwrap()
+        .needs_event()
+}
+
+#[test]
+fn needs_event_covers_every_rendered_enrichment_field() {
+    for yaml in [
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${detection.fields.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${detection.event.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${detection.event}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: lookup
+    inject_field: out
+    source: feed
+    extract: '."${detection.fields.SourceIp}"'
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://example.test/${detection.fields.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://example.test/static"
+    body: '{"ip": "${detection.fields.SourceIp}"}'
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://example.test/static"
+    headers:
+      X-Ip: "${detection.fields.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: command
+    inject_field: out
+    command: ["/bin/echo", "${detection.fields.SourceIp}"]
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: command
+    inject_field: out
+    command: ["/bin/echo"]
+    env:
+      IP: "${detection.fields.SourceIp}"
+"#,
+    ] {
+        assert!(pipeline_needs_event(yaml), "{yaml}");
+    }
+}
+
+#[cfg(feature = "stix-enrich")]
+#[test]
+fn needs_event_covers_stix_templates() {
+    for yaml in [
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: stix
+    inject_field: out
+    stix_id: "indicator--aaaaaaaa-aaaa-4aaa-8aaa-${detection.fields.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: stix
+    inject_field: out
+    text_search: "${detection.fields.SourceIp}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: stix
+    inject_field: out
+    text_search: "static"
+    extract: '."${detection.fields.SourceIp}"'
+"#,
+    ] {
+        assert!(pipeline_needs_event(yaml), "{yaml}");
+    }
+}
+
+#[cfg(feature = "mmdb-enrich")]
+#[test]
+fn needs_event_covers_mmdb_keys() {
+    let yaml = format!(
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: mmdb
+    inject_field: out
+    db_path: {}/tests/fixtures/mmdb/city-test.mmdb
+    key: "${{detection.fields.SourceIp}}"
+"#,
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert!(pipeline_needs_event(&yaml));
+}
+
+#[cfg(feature = "dns-enrich")]
+#[test]
+fn needs_event_covers_dns_keys() {
+    let yaml = r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: dns
+    inject_field: out
+    record_type: A
+    key: "${detection.fields.Domain}"
+"#;
+    assert!(pipeline_needs_event(yaml));
+}
+
+#[test]
+fn needs_event_ignores_unrendered_extracts_and_correlation_templates() {
+    for yaml in [
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://example.test/static"
+    extract: '."${detection.fields.SourceIp}"'
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: correlation
+    type: template
+    inject_field: out
+    template: "${correlation.rule.id}"
+"#,
+        r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: template
+    inject_field: out
+    template: "${detection.rule.id} ${detection.tags}"
+"#,
+    ] {
+        assert!(!pipeline_needs_event(yaml), "{yaml}");
+    }
+}
+
+#[cfg(feature = "dns-enrich")]
+#[test]
+fn needs_event_ignores_a_dns_extract() {
+    let yaml = r#"
+enrichers:
+  - id: e
+    kind: detection
+    type: dns
+    inject_field: out
+    record_type: A
+    key: "example.test"
+    extract: '.[0] | "${detection.fields.SourceIp}"'
+"#;
+    assert!(!pipeline_needs_event(yaml));
 }
 
 // ---------------------------------------------------------------------------

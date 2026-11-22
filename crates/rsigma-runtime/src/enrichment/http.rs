@@ -23,8 +23,8 @@ use serde_json::Value;
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope,
     http_cache::{CacheKey, CacheOutcome, HttpResponseCache},
-    inject_enrichment,
-    template::{render_template, render_template_json, render_template_url},
+    inject_enrichment, render_enricher_template, render_enricher_template_json,
+    render_enricher_template_url,
 };
 use crate::egress::{
     EgressDenial, EgressPolicy, default_egress_policy, egress_client_builder, error_chain,
@@ -226,13 +226,21 @@ impl Enricher for HttpEnricher {
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
-        let url = render_template_url(&self.url, result);
-        let body = self.body.as_ref().map(|b| render_template_json(b, result));
+        let url = render_enricher_template_url(&self.url, result);
+        let body = self
+            .body
+            .as_ref()
+            .map(|b| render_enricher_template_json(b, result));
 
         let headers: Vec<(String, String)> = self
             .headers
             .iter()
-            .map(|(name, value_template)| (name.clone(), render_template(value_template, result)))
+            .map(|(name, value_template)| {
+                (
+                    name.clone(),
+                    render_enricher_template(value_template, result),
+                )
+            })
             .collect();
 
         let cache_key = CacheKey::new(&self.method, &url, body.as_deref().map(str::as_bytes))

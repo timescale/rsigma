@@ -19,7 +19,7 @@ use tokio::process::Command;
 
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
-    template::render_template,
+    render_enricher_template,
 };
 
 /// Maximum stdout bytes captured per invocation. Mirrors
@@ -113,7 +113,7 @@ impl Enricher for CommandEnricher {
         let rendered: Vec<String> = self
             .argv
             .iter()
-            .map(|a| render_template(a, result))
+            .map(|a| render_enricher_template(a, result))
             .collect();
 
         let mut cmd = Command::new(&rendered[0]);
@@ -123,7 +123,7 @@ impl Enricher for CommandEnricher {
         // daemon's env (so e.g. `PATH` resolves binary names normally).
         if !self.env.is_empty() {
             for (k, v) in &self.env {
-                cmd.env(k, render_template(v, result));
+                cmd.env(k, render_enricher_template(v, result));
             }
         }
         cmd.stdout(std::process::Stdio::piped());
