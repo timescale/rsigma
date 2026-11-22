@@ -162,7 +162,12 @@ impl std::error::Error for EnrichError {}
 
 /// Categorized enrichment failure.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum EnrichErrorKind {
+    /// The lookup ran and found no data for this key (no MMDB record, no DNS
+    /// records, a source cache miss, an extract that matched nothing, …).
+    /// Returned only when no `default` is configured.
+    Miss(String),
     /// The per-enricher timeout elapsed before [`Enricher::enrich`] returned.
     Timeout,
     /// External fetch failed (HTTP non-2xx, connection refused, command exit
@@ -181,6 +186,7 @@ pub enum EnrichErrorKind {
 impl std::fmt::Display for EnrichErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EnrichErrorKind::Miss(m) => write!(f, "no match: {m}"),
             EnrichErrorKind::Timeout => write!(f, "timeout"),
             EnrichErrorKind::Fetch(m) => write!(f, "fetch failed: {m}"),
             EnrichErrorKind::Parse(m) => write!(f, "parse failed: {m}"),

@@ -553,7 +553,7 @@ impl Enricher for MmdbEnricher {
                         inject_enrichment(result, &self.inject_field, default.clone());
                         Ok(())
                     }
-                    None => Err(self.error(EnrichErrorKind::Fetch(format!("no record for {ip}")))),
+                    None => Err(self.error(EnrichErrorKind::Miss(format!("no record for {ip}")))),
                 }
             }
             LookupOutcome::EmptyProjection => {
@@ -563,7 +563,7 @@ impl Enricher for MmdbEnricher {
                         inject_enrichment(result, &self.inject_field, default.clone());
                         Ok(())
                     }
-                    None => Err(self.error(EnrichErrorKind::Fetch(format!(
+                    None => Err(self.error(EnrichErrorKind::Miss(format!(
                         "no projected fields for {ip}"
                     )))),
                 }
@@ -777,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn miss_without_default_is_a_fetch_error() {
+    async fn miss_without_default_is_a_miss() {
         let e = enricher(
             &fixture("city-test.mmdb"),
             "${detection.fields.SourceIp}",
@@ -787,7 +787,7 @@ mod tests {
         let mut result = detection_result("SourceIp", serde_json::json!("203.0.113.5"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no record for")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no record for")),
             "got {err}"
         );
     }
@@ -821,7 +821,7 @@ mod tests {
         let mut result = detection_result("SourceIp", serde_json::json!("192.0.2.10"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no projected fields")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no projected fields")),
             "got {err}"
         );
     }

@@ -674,7 +674,7 @@ impl Enricher for DnsEnricher {
                 inject_enrichment(result, &self.inject_field, default.clone());
                 Ok(())
             }
-            None => Err(self.error(EnrichErrorKind::Fetch(format!(
+            None => Err(self.error(EnrichErrorKind::Miss(format!(
                 "no {} records for {key}",
                 self.record_type.as_str()
             )))),
@@ -1204,7 +1204,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn miss_without_default_is_a_fetch_error() {
+    async fn miss_without_default_is_a_miss() {
         let backend = Arc::new(FakeBackend::new(responses(vec![])));
         let e = enricher(
             DnsRecordType::parse("A").unwrap(),
@@ -1216,7 +1216,7 @@ mod tests {
         let mut result = detection_result("Host", serde_json::json!("missing.example.com"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no A records for")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no A records for")),
             "got {err}"
         );
     }

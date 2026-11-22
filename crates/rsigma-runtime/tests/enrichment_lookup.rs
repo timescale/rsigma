@@ -15,7 +15,7 @@ use rsigma_eval::{
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::{
-    EnricherKind, EnrichmentPipeline, LookupEnricher, OnError, Scope, SourceCache,
+    EnrichErrorKind, EnricherKind, EnrichmentPipeline, LookupEnricher, OnError, Scope, SourceCache,
 };
 use serde_json::json;
 
@@ -291,6 +291,28 @@ async fn lookup_cache_hit_no_extract_match_drop_removes_result() {
     assert!(results[0].is_correlation());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_no_extract_match_without_default_is_a_miss() {
+    let enricher = lookup_enricher(
+        "enrich_ip_employee_miss",
+        EnricherKind::Detection,
+        "employee",
+        "employee_directory",
+        Some(ExtractExpr::Jq(
+            ".[] | select(.ip == \"${detection.fields.SourceIp}\")".to_string(),
+        )),
+        None,
+        populated_employee_cache(),
+        OnError::Skip,
+    );
+    let mut result = detection_with_field("SourceIp", json!("99.99.99.99"));
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(
+        matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no extract match")),
+        "got {err}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Cache miss
 // ---------------------------------------------------------------------------
@@ -337,6 +359,26 @@ async fn lookup_cache_miss_no_default_applies_on_error() {
     assert_eq!(
         results[0].header.enrichments.as_ref().unwrap()["employee"],
         serde_json::Value::Null
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_cache_miss_without_default_is_a_miss() {
+    let enricher = lookup_enricher(
+        "enrich_missing_miss",
+        EnricherKind::Detection,
+        "employee",
+        "employee_directory",
+        None,
+        None,
+        Arc::new(SourceCache::new()),
+        OnError::Skip,
+    );
+    let mut result = detection_with_field("SourceIp", json!("10.0.0.5"));
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(
+        matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("cache miss for source")),
+        "got {err}"
     );
 }
 

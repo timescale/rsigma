@@ -202,7 +202,7 @@ impl Enricher for StixEnricher {
             }
             return Err(EnrichError {
                 enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Fetch("stix store query returned no objects".into()),
+                kind: EnrichErrorKind::Miss("stix store query returned no objects".into()),
             });
         }
 
@@ -222,7 +222,7 @@ impl Enricher for StixEnricher {
             }
             return Err(EnrichError {
                 enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Fetch("stix extract returned null".into()),
+                kind: EnrichErrorKind::Miss("stix extract returned null".into()),
             });
         }
         inject_enrichment(result, &self.inject_field, extracted);
