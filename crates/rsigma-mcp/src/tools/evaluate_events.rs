@@ -10,8 +10,8 @@ use rsigma_eval::{
     RulesetEngines, RulesetUnit, UnitEngine,
 };
 use rsigma_runtime::{
-    EnricherConfig, EnrichersFile, EnrichmentPipeline, build_enrichers, env_references,
-    load_enrichers_file,
+    EnrichersFile, EnrichmentPipeline, build_enrichers, env_references, load_enrichers_file,
+    strip_auto_retained_event,
 };
 use serde_json::{Value, json};
 
@@ -121,6 +121,7 @@ impl RsigmaMcp {
         let detail = parse_match_detail(input.match_detail.as_deref())?;
         let enrichment =
             self.build_enrichment(input.enrichers.as_deref(), input.enrichers_path.as_deref())?;
+        let retain_event = enrichment.as_ref().is_some_and(|p| p.needs_event());
 
         let mut results: Vec<Value> = Vec::new();
         let mut detection_matches = 0usize;
@@ -149,6 +150,7 @@ impl RsigmaMcp {
                 let engine = if collection.correlations.is_empty() {
                     let mut engine = Engine::new();
                     engine.set_match_detail(detail);
+                    engine.set_include_event(retain_event);
                     for pipeline in &pipelines {
                         engine.add_pipeline(pipeline.clone());
                     }
@@ -168,6 +170,7 @@ impl RsigmaMcp {
                     }
                     let mut engine = CorrelationEngine::new(config);
                     engine.set_match_detail(detail);
+                    engine.set_include_event(retain_event);
                     for pipeline in &pipelines {
                         engine.add_pipeline(pipeline.clone());
                     }
@@ -217,6 +220,7 @@ impl RsigmaMcp {
             if collection.correlations.is_empty() {
                 let mut engine = Engine::new();
                 engine.set_match_detail(detail);
+                engine.set_include_event(retain_event);
                 for p in &pipelines {
                     engine.add_pipeline(p.clone());
                 }
@@ -236,6 +240,7 @@ impl RsigmaMcp {
                 }
                 let mut engine = CorrelationEngine::new(config);
                 engine.set_match_detail(detail);
+                engine.set_include_event(retain_event);
                 for p in &pipelines {
                     engine.add_pipeline(p.clone());
                 }
@@ -253,6 +258,11 @@ impl RsigmaMcp {
         for (idx, mut per_event) in batches.into_iter().enumerate() {
             if let Some(pipeline) = &enrichment {
                 pipeline.run(&mut per_event).await;
+            }
+            if retain_event {
+                for r in &mut per_event {
+                    strip_auto_retained_event(r);
+                }
             }
             for r in &per_event {
                 if r.is_correlation() {
@@ -330,7 +340,8 @@ impl RsigmaMcp {
         // its secrets (API keys, tokens) back to the MCP caller in the result.
         for cfg in file.iter().flat_map(|f| &f.enrichers) {
             let mut seen = std::collections::HashSet::new();
-            let names: Vec<String> = templated_fields(cfg)
+            let names: Vec<String> = cfg
+                .rendered_fields()
                 .flat_map(env_references)
                 .filter(|n| seen.insert(n.clone()))
                 .collect();
@@ -362,24 +373,6 @@ impl RsigmaMcp {
 
 /// How many `${ENV_VAR}` names an error lists before summarizing the rest.
 const MAX_LISTED_ENV_REFS: usize = 5;
-
-/// Every string field of an enricher config that renders `${...}` references.
-fn templated_fields(cfg: &EnricherConfig) -> impl Iterator<Item = &str> {
-    [
-        cfg.template.as_deref(),
-        cfg.url.as_deref(),
-        cfg.body.as_deref(),
-        cfg.extract.as_deref(),
-        cfg.stix_id.as_deref(),
-        cfg.text_search.as_deref(),
-        cfg.key.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .chain(cfg.headers.values().map(String::as_str))
-    .chain(cfg.command.iter().map(String::as_str))
-    .chain(cfg.env.values().map(String::as_str))
-}
 
 #[cfg(test)]
 mod tests {
@@ -491,6 +484,11 @@ enrichers:
     type: template
     inject_field: runbook_url
     template: "https://wiki/${detection.rule.id}"
+  - id: actor
+    kind: detection
+    type: template
+    inject_field: actor
+    template: "${detection.fields.User}"
 "#;
         let v = handler()
             .run_evaluate_events(EvaluateInput {
@@ -498,7 +496,9 @@ enrichers:
                 path: None,
                 ruleset: None,
                 rulesets: None,
-                events: Some(vec![json!({ "CommandLine": "cmd /c whoami" })]),
+                events: Some(vec![
+                    json!({ "CommandLine": "cmd /c whoami", "User": "alice" }),
+                ]),
                 events_path: None,
                 pipelines: vec![],
                 match_detail: None,
@@ -510,10 +510,19 @@ enrichers:
             .await
             .unwrap();
         assert_eq!(v["summary"]["enriched"], true);
-        let enrichments = &v["results"][0]["result"]["enrichments"];
+        let result = &v["results"][0]["result"];
+        let enrichments = &result["enrichments"];
         assert_eq!(
             enrichments["runbook_url"],
             "https://wiki/8b1d8c97-5b3a-4d77-9b48-7c5f7c8b1a2a"
+        );
+        assert_eq!(
+            enrichments["actor"], "alice",
+            "an unmatched field resolves from the event"
+        );
+        assert!(
+            result.get("event").is_none(),
+            "an event retained only for enrichment is not returned: {result}"
         );
     }
 
@@ -622,7 +631,7 @@ enrichers:
     }
 
     #[tokio::test]
-    async fn evaluate_events_checks_every_enricher_and_field() {
+    async fn evaluate_events_checks_every_enricher() {
         let enrichers = r#"
 enrichers:
   - id: clean
@@ -634,9 +643,7 @@ enrichers:
     kind: correlation
     type: template
     inject_field: out
-    template: "${correlation.type}"
-    headers:
-      X-Leak: "${HOME}"
+    template: "${correlation.type}:${HOME}"
 "#;
         let err = handler()
             .run_evaluate_events(eval_with_enrichers(enrichers))
