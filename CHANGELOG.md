@@ -4,6 +4,23 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Enrichers read unmatched fields from the event
+
+`${detection.fields.<name>}` in an enricher template now resolves fields the rule did not match on. A matched field still wins, even when its value is null or empty; otherwise the name is read from the event, as a whole top-level key first and then as a dotted path. Before, the value came only from `matched_fields`, so an `mmdb` or `dns` key such as `${detection.fields.SourceIp}` rendered empty for the usual rule that does not select on the address, and every lookup failed. An `mmdb` or `dns` key that still renders empty now says the field is neither a matched field nor present in the event. Webhook templates keep their behavior.
+
+The daemon retains each detection's event automatically while a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, so these templates no longer need `--include-event`. It strips the event right after enrichment unless `--include-event`, capture, or the rule's `rsigma.include_event: "true"` asks for it, and follows enricher reloads, logging the effective value when it changes. Retention costs about what `--include-event` does: one million detections through three `mmdb` enrichers took 7.1 s keyed on `${detection.fields.SourceIp}` without the flag, against 6.9 s with `--include-event` and `${detection.event.SourceIp}`. MCP `evaluate_events` retains and strips events the same way for the enrichers passed to it.
+
+With capture on, the strip before delivery no longer removes the event of a rule that sets `rsigma.include_event: "true"`, or correlation `events`, `event_refs`, and `event_sources`.
+
+Library API: `EnrichmentPipeline::needs_event`, `EnricherConfig::rendered_fields`, `strip_auto_retained_event`, `RuntimeEngine::set_include_event`, `LogProcessor::set_include_event` and `LogProcessor::include_event`, and in `rsigma-eval`, `set_include_event` on `SchemaRouter`, `RulesetEngines`, and `UnitEngine`.
+
+Behavior changes:
+
+- Enricher templates that rendered empty for unmatched fields now resolve them from the event, so enrichers that used to skip or fall back to their `default` now run.
+- Capture no longer strips events that rules asked for, or correlation event payloads.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#kind-and-template-namespaces) and [`engine daemon`](https://rsigma.io/cli/engine/daemon/).
+
 ### Strict config files (#738)
 
 Enricher, webhook, risk, and dynamic source configs now reject keys that are unknown or that do not apply to an entry's type, at every level including `scope`, `retry`, `signing`, `stix`, `auth`, and `extract`. Each error names the key and lists the supported ones, so a typo such as `defualt:` or `fromat:` fails at load instead of being ignored. A dynamic source with an unknown `format`, `on_error`, or `refresh` value, an invalid `timeout`, or a `required` that is not a boolean fails instead of falling back to a default. In an enricher entry, a key set to an empty value (`headers: {}`, `default: null`) counts as absent. Duration errors in enricher, webhook, and risk configs now include the bad value.

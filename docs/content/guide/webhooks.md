@@ -125,7 +125,7 @@ webhooks:
     body: '{"source": "rsigma", "finding": ${detection.ocsf}}'
 ```
 
-`${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields.
+`${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields. Webhook templates do not share the enricher fallback: `${detection.fields.<name>}` resolves only fields the rule matched on, and an event the daemon retained only for enrichers is stripped before webhooks render, so `--include-event` is still required here. {{ added "unreleased" }}
 
 ## Delivery, retry, and rate limiting
 

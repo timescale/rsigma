@@ -45,6 +45,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 | `RuntimeEngine` | Wraps an `Engine` or `CorrelationEngine` plus the on-disk rule path, pipelines, and the dynamic source resolver. Supports hot-reload via `load_rules`. `with_rulesets` loads several named rulesets with per-ruleset pipelines and state; `rule_source`, `set_ruleset_classifier`, `ruleset_classifier`, `ruleset_stats`, and `take_ruleset_skipped` (which drains the skipped-event counts since the last call) serve that mode. {{ added "unreleased" }} |
 | `RuleSource`, `RulesetBinding`, `PipelineRef`, `load_pipelines`, `watch_paths` | The rule source for path mode or named-ruleset mode, the per-ruleset spec and pipeline references, loading a binding's pipelines, and the hot-reload watch paths. `watch_paths(source, pipeline_paths)` covers rule sources, overlays, ruleset pipelines, and the `-p` pipeline files, and watches a bare file name through the working directory. {{ added "unreleased" }} |
 | `LogProcessor` | An ordered batch processor that parses formatted inputs in parallel before locking its live `RuntimeEngine`. `process_batch_with_format_detailed` returns `BatchProcessOutcome`, including input indices that failed parsing for single-parse DLQ routing. The daemon glues this to its bounded mpsc plumbing. `ruleset_stats` reports per-ruleset rule and skip counts. `process_batch_with_format_detailed_for_tenants` takes a parallel tenant slice and stamps each result. `set_tenant_allowlist` bounds the tenant metric labels. {{ added "unreleased" }} |
+| `RuntimeEngine::set_include_event`, `LogProcessor::set_include_event`, `LogProcessor::include_event` | Turn engine-wide event retention on or off on a running engine, on every engine variant, without a rule reload. Rule reloads keep the value, including one set while rules are loading. `LogProcessor::set_include_event` waits for in-flight batches so each batch sees one value. {{ added "unreleased" }} |
 | `WithTenant` | Wraps an `EventSource` and stamps every event with one tenant. {{ added "unreleased" }} |
 | `RulesetBinding.tenants`, `RulesetUnit.tenants`, `RulesetStats.tenants` | Bind a named ruleset to tenants. Empty means every tenant. {{ added "unreleased" }} |
 | `Scope::with_tenants` | Restrict an enricher, webhook, or alert-pipeline scope to listed tenants. {{ added "unreleased" }} |
@@ -63,7 +64,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-ut
 | `EnricherKind`, `OnError`, `Scope`, `EnrichError`, `EnrichErrorKind` | Configuration types: declared kind, error policy, scope filter, and the typed error returned by `Enricher::enrich`. |
 | `EgressPolicy`, `EgressDenial`, `EgressFilteredResolver`, `set_default_egress_policy`, `default_egress_policy` | Outbound HTTP deny list (link-local, cloud metadata, loopback, private) shared by HTTP sources, HTTP enrichers, and webhooks. `EgressPolicy::permit_ip` checks one address, `EgressPolicy::check_url` checks a URL whose host is an IP literal (which skips DNS), and `EgressFilteredResolver` filters resolved hostnames. Clients from `build_default_http_client` apply all three and re-check every redirect hop; a client wrapped with `HttpEnricherClient::from_reqwest` applies only what its own `reqwest::Client` configures. `check_url` {{ added "0.27.0" }} |
 | `HttpResponseCache` (re-exported from `enrichment::http_cache`) | `(method, url, body_hash, headers_hash)`-keyed in-memory response cache with TTL and lazy eviction. Each `HttpEnricher` instance owns its own. |
-| `enrichment::{render_template, render_template_json, render_template_url}` | Render a `${detection.*}`, `${correlation.*}`, or `${ENV_VAR}` template against an `EvaluationResult`. `render_template` substitutes verbatim, `render_template_json` JSON-string-escapes every value, and `render_template_url` percent-encodes result values as single URL components while leaving `${ENV_VAR}` values verbatim. Use the variant that matches where the rendered text lands. `render_template_url` {{ added "0.25.0" }} |
+| `enrichment::{render_template, render_template_json, render_template_url}` | Render a `${detection.*}`, `${correlation.*}`, or `${ENV_VAR}` template against an `EvaluationResult`. `render_template` substitutes verbatim, `render_template_json` JSON-string-escapes every value, and `render_template_url` percent-encodes result values as single URL components while leaving `${ENV_VAR}` values verbatim. Use the variant that matches where the rendered text lands. `render_template_url` {{ added "0.25.0" }} These resolve `${detection.fields.<name>}` from matched fields only; the built-in enrichers also read unmatched names from the retained event. {{ added "unreleased" }} |
+| `EnrichmentPipeline::needs_event`, `EnricherConfig::rendered_fields`, `strip_auto_retained_event` | `needs_event` reports whether a loaded enricher renders `${detection.fields.*}`, `${detection.event.*}`, or `${detection.event}`, computed at build time from `rendered_fields`, the string fields each enricher type renders. `strip_auto_retained_event` clears a detection's event unless the rule set `rsigma.include_event: "true"`, and never touches correlation payloads. See [Post-evaluation enrichment](#post-evaluation-enrichment). {{ added "unreleased" }} |
 | `env_references(text) -> Vec<String>` | Names of every `${ENV_VAR}` reference in a template, in order of first appearance and without duplicates. Rendering expands these from the process environment, so use it to reject templates that come from an untrusted party; the MCP server does this for `evaluate_events`. {{ added "0.27.0" }} |
 | `register_builtin(name, factory) -> Result<(), String>` | Process-global, append-only registry hook. External crates use it to ship a bespoke Rust-coded enricher type addressable via `type: <name>` in the daemon's enrichers config. Reserved names (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`, `dns`) and duplicate registrations are rejected. |
 | `enrichment::config::{load_enrichers_file, build_enrichers, build_enrichers_full, EnricherResources, EnrichersFile}` | YAML loader for an enrichers config, shared by the daemon and the MCP server. Validates template namespaces, scopes, and bespoke `type:` values. |
@@ -179,6 +181,23 @@ let pipeline = EnrichmentPipeline::new(
 Wire a `MetricsHook` via `EnrichmentPipeline::with_metrics` to surface `rsigma_enrichment_total`, `rsigma_enrichment_duration_seconds`, and `rsigma_enrichment_queue_depth` (and the HTTP cache, MMDB, and DNS counters) into your own metrics backend. The daemon's Prometheus-backed `Metrics` struct implements the hook.
 
 For YAML-driven configuration, use the `enrichment::config` loader: `load_enrichers_file(path)` parses an enrichers config file into an `EnrichersFile`, and `build_enrichers(file)` or `build_enrichers_full(file, EnricherResources, metrics)` turns it into an `EnrichmentPipeline` (validating template namespaces and bespoke types). Pass `EnricherResources { source_cache, stix_store }` when building `lookup` or `stix` enrichers. The daemon and the MCP server's `evaluate_events` tool share this loader.
+
+Enricher templates resolve `${detection.fields.<name>}` from the event when the rule did not match on `<name>`, and `${detection.event.*}` always reads the event, so both need the event retained on the result. When you build your own engine, pass `pipeline.needs_event()` to `RuntimeEngine::set_include_event` (or `LogProcessor::set_include_event`), and call `strip_auto_retained_event` on each result after `pipeline.run` unless you want events delivered: {{ added "unreleased" }}
+
+```rust
+use rsigma_runtime::{EnrichmentPipeline, LogProcessor, strip_auto_retained_event};
+
+fn wire(processor: &LogProcessor, pipeline: &EnrichmentPipeline) {
+    processor.set_include_event(pipeline.needs_event());
+}
+
+async fn enrich(pipeline: &EnrichmentPipeline, results: &mut Vec<rsigma_eval::EvaluationResult>) {
+    pipeline.run(results).await;
+    for result in results.iter_mut() {
+        strip_auto_retained_event(result);
+    }
+}
+```
 
 For the operator-facing schema, the seven primitives, and the recipe catalog, see [Enrichers](../guide/enrichers.md).
 
