@@ -538,11 +538,11 @@ impl Sink {
     pub(crate) fn send_batch_with_context<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
-        _backlog: bool,
+        backlog: bool,
     ) -> delivery::BatchFuture<'a> {
         Box::pin(async move {
             match self {
-                Sink::Stdout(s) => blocking_write(|| s.send_batch(items)),
+                Sink::Stdout(s) => s.send_batch(items, backlog).await,
                 Sink::File(s) => blocking_write(|| s.send_batch(items)),
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send_batch(items).await,
