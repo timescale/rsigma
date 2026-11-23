@@ -1,9 +1,9 @@
 // Generates the synthetic MMDB fixtures used by the rsigma-runtime tests.
 //
 // Run `go run .` from this directory; it writes city-test.mmdb,
-// city-test-updated.mmdb, city-test-v4.mmdb, asn-test.mmdb, and flat-test.mmdb
-// into the parent directory. The data is synthetic: it uses only the RFC 5737 and RFC 3849
-// documentation ranges, so IncludeReservedNetworks is required. Regenerate
+// city-test-updated.mmdb, city-test-v4.mmdb, asn-test.mmdb, flat-test.mmdb, and
+// merged-test.mmdb into the parent directory. The data is synthetic: it uses only the RFC 5737 and RFC 3849
+// documentation ranges and RFC 5398 ASNs, so IncludeReservedNetworks is required. Regenerate
 // only when a test needs a different record shape or network, and re-run the
 // golden tests with RSIGMA_UPDATE_GOLDEN=1 afterwards.
 package main
@@ -32,6 +32,9 @@ func main() {
 		fail(err)
 	}
 	if err := writeCityV4("city-test-v4.mmdb"); err != nil {
+		fail(err)
+	}
+	if err := writeMerged("merged-test.mmdb"); err != nil {
 		fail(err)
 	}
 }
@@ -172,6 +175,138 @@ func writeASN(name string) error {
 	}); err != nil {
 		return err
 	}
+	return write(tree, name)
+}
+
+// mergedLanguages are the locales every names map carries in a merged
+// geo, ASN, and anonymity database.
+var mergedLanguages = []string{"de", "en", "es", "fr", "ja", "pt-BR", "ru", "zh-CN"}
+
+// names builds a names map with one synthetic entry per merged locale.
+func names(base string) mmdbtype.Map {
+	m := mmdbtype.Map{}
+	for _, lang := range mergedLanguages {
+		if lang == "en" {
+			m[mmdbtype.String(lang)] = mmdbtype.String(base)
+		} else {
+			m[mmdbtype.String(lang)] = mmdbtype.String(base + " (" + lang + ")")
+		}
+	}
+	return m
+}
+
+type mergedPlace struct {
+	geonameID                   uint32
+	city                        string
+	continentCode, continent    string
+	countryISO, country         string
+	subdivisionISO, subdivision string
+	postal                      string
+	latitude, longitude         float64
+	accuracyKm                  uint16
+	timeZone                    string
+}
+
+func mergedGeo(p mergedPlace) mmdbtype.Map {
+	country := mmdbtype.Map{
+		"geoname_id": mmdbtype.Uint32(p.geonameID + 1),
+		"iso_code":   mmdbtype.String(p.countryISO),
+		"names":      names(p.country),
+	}
+	return mmdbtype.Map{
+		"city": mmdbtype.Map{
+			"geoname_id": mmdbtype.Uint32(p.geonameID),
+			"names":      names(p.city),
+		},
+		"continent": mmdbtype.Map{
+			"code":       mmdbtype.String(p.continentCode),
+			"geoname_id": mmdbtype.Uint32(p.geonameID + 2),
+			"names":      names(p.continent),
+		},
+		"country":            country,
+		"registered_country": country,
+		"location": mmdbtype.Map{
+			"accuracy_radius": mmdbtype.Uint16(p.accuracyKm),
+			"latitude":        mmdbtype.Float64(p.latitude),
+			"longitude":       mmdbtype.Float64(p.longitude),
+			"time_zone":       mmdbtype.String(p.timeZone),
+		},
+		"postal": mmdbtype.Map{"code": mmdbtype.String(p.postal)},
+		"subdivisions": mmdbtype.Slice{
+			mmdbtype.Map{
+				"geoname_id": mmdbtype.Uint32(p.geonameID + 3),
+				"iso_code":   mmdbtype.String(p.subdivisionISO),
+				"names":      names(p.subdivision),
+			},
+		},
+	}
+}
+
+func mergedASN(number uint32, organization, domain string) mmdbtype.Map {
+	return mmdbtype.Map{
+		"autonomous_system_number":       mmdbtype.Uint32(number),
+		"autonomous_system_organization": mmdbtype.String(organization),
+		"as_domain":                      mmdbtype.String(domain),
+	}
+}
+
+// proxyFlags holds only the flags that are true, as merged databases omit
+// false flags.
+func proxyFlags(flags ...string) mmdbtype.Map {
+	m := mmdbtype.Map{}
+	for _, flag := range flags {
+		m[mmdbtype.String(flag)] = mmdbtype.Bool(true)
+	}
+	return m
+}
+
+func writeMerged(name string) error {
+	tree, err := newWriter("Merged-IP", 1704067200)
+	if err != nil {
+		return err
+	}
+
+	hosting := mergedGeo(mergedPlace{
+		geonameID: 5809844, city: "Seattle",
+		continentCode: "NA", continent: "North America",
+		countryISO: "US", country: "United States",
+		subdivisionISO: "WA", subdivision: "Washington",
+		postal: "98101", latitude: 47.6062, longitude: -122.3321,
+		accuracyKm: 20, timeZone: "America/Los_Angeles",
+	})
+	hosting["asn"] = mergedASN(64496, "Example Hosting", "hosting.example")
+	hosting["proxy"] = proxyFlags("is_hosting", "is_proxy", "is_anonymous")
+	if err := insert(tree, "192.0.2.0/24", hosting); err != nil {
+		return err
+	}
+
+	residential := mergedGeo(mergedPlace{
+		geonameID: 2950159, city: "Berlin",
+		continentCode: "EU", continent: "Europe",
+		countryISO: "DE", country: "Germany",
+		subdivisionISO: "BE", subdivision: "Berlin",
+		postal: "10115", latitude: 52.52, longitude: 13.405,
+		accuracyKm: 50, timeZone: "Europe/Berlin",
+	})
+	residential["asn"] = mergedASN(64500, "Example Broadband", "broadband.example")
+	if err := insert(tree, "198.51.100.0/24", residential); err != nil {
+		return err
+	}
+
+	tor := mergedGeo(mergedPlace{
+		geonameID: 1850147, city: "Tokyo",
+		continentCode: "AS", continent: "Asia",
+		countryISO: "JP", country: "Japan",
+		subdivisionISO: "13", subdivision: "Tokyo",
+		postal: "100-0001", latitude: 35.6762, longitude: 139.6503,
+		accuracyKm: 1000, timeZone: "Asia/Tokyo",
+	})
+	tor["asn"] = mergedASN(64510, "Example Relay Network", "relay.example")
+	tor["proxy"] = proxyFlags("is_tor", "is_anonymous")
+	if err := insert(tree, "2001:db8::/32", tor); err != nil {
+		return err
+	}
+
 	return write(tree, name)
 }
 

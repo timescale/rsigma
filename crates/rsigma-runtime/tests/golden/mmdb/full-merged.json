@@ -1,0 +1,94 @@
+{
+  "geo": {
+    "asn": {
+      "as_domain": "hosting.example",
+      "autonomous_system_number": 64496,
+      "autonomous_system_organization": "Example Hosting"
+    },
+    "city": {
+      "geoname_id": 5809844,
+      "names": {
+        "de": "Seattle (de)",
+        "en": "Seattle",
+        "es": "Seattle (es)",
+        "fr": "Seattle (fr)",
+        "ja": "Seattle (ja)",
+        "pt-BR": "Seattle (pt-BR)",
+        "ru": "Seattle (ru)",
+        "zh-CN": "Seattle (zh-CN)"
+      }
+    },
+    "continent": {
+      "code": "NA",
+      "geoname_id": 5809846,
+      "names": {
+        "de": "North America (de)",
+        "en": "North America",
+        "es": "North America (es)",
+        "fr": "North America (fr)",
+        "ja": "North America (ja)",
+        "pt-BR": "North America (pt-BR)",
+        "ru": "North America (ru)",
+        "zh-CN": "North America (zh-CN)"
+      }
+    },
+    "country": {
+      "geoname_id": 5809845,
+      "iso_code": "US",
+      "names": {
+        "de": "United States (de)",
+        "en": "United States",
+        "es": "United States (es)",
+        "fr": "United States (fr)",
+        "ja": "United States (ja)",
+        "pt-BR": "United States (pt-BR)",
+        "ru": "United States (ru)",
+        "zh-CN": "United States (zh-CN)"
+      }
+    },
+    "location": {
+      "accuracy_radius": 20,
+      "latitude": 47.6062,
+      "longitude": -122.3321,
+      "time_zone": "America/Los_Angeles"
+    },
+    "postal": {
+      "code": "98101"
+    },
+    "proxy": {
+      "is_anonymous": true,
+      "is_hosting": true,
+      "is_proxy": true
+    },
+    "registered_country": {
+      "geoname_id": 5809845,
+      "iso_code": "US",
+      "names": {
+        "de": "United States (de)",
+        "en": "United States",
+        "es": "United States (es)",
+        "fr": "United States (fr)",
+        "ja": "United States (ja)",
+        "pt-BR": "United States (pt-BR)",
+        "ru": "United States (ru)",
+        "zh-CN": "United States (zh-CN)"
+      }
+    },
+    "subdivisions": [
+      {
+        "geoname_id": 5809847,
+        "iso_code": "WA",
+        "names": {
+          "de": "Washington (de)",
+          "en": "Washington",
+          "es": "Washington (es)",
+          "fr": "Washington (fr)",
+          "ja": "Washington (ja)",
+          "pt-BR": "Washington (pt-BR)",
+          "ru": "Washington (ru)",
+          "zh-CN": "Washington (zh-CN)"
+        }
+      }
+    ]
+  }
+}
