@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Memory-mapped mmdb databases
+### Memory-mapped mmdb databases (#741)
 
 An `mmdb` enricher entry can set `mmap: true` to memory-map its database instead of reading it into memory. It needs the new `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include. With a 93 MB database, the daemon's idle resident memory dropped from 113 MB to 21.5 MB (18.5 MB without enrichers), and the mapped pages live in the operating system's page cache, which processes that map the same file share. Once pages are resident, lookups cost the same as with the file in memory. The default stays the eager read.
 
