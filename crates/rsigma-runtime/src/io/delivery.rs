@@ -138,8 +138,8 @@ pub struct DeliveryConfig {
     pub queue_depth: usize,
     /// Maximum results drained into one worker batch.
     pub batch_max: usize,
-    /// Maximum time a partial batch waits before flushing (reserved for
-    /// batch-oriented sinks; the Phase 1 sinks deliver per result).
+    /// How long a partial batch waits for more results before it is
+    /// delivered. Zero delivers whatever is queued at once.
     pub batch_flush: Duration,
     /// Maximum retries after the first attempt before routing to the DLQ.
     pub retry_max: u32,
@@ -154,7 +154,7 @@ impl Default for DeliveryConfig {
         DeliveryConfig {
             queue_depth: 1024,
             batch_max: 64,
-            batch_flush: Duration::from_millis(50),
+            batch_flush: Duration::ZERO,
             retry_max: 3,
             backoff_base: Duration::from_millis(100),
             backoff_max: Duration::from_secs(5),
@@ -504,10 +504,17 @@ async fn worker_loop<S: DeliverySink>(
     while let Some(first) = rx.recv().await {
         let mut batch = Vec::with_capacity(cfg.batch_max.clamp(1, 64));
         batch.push(first);
-        while batch.len() < cfg.batch_max {
-            match rx.try_recv() {
-                Ok(item) => batch.push(item),
-                Err(_) => break,
+        drain_ready(&mut rx, &mut batch, cfg.batch_max);
+        if batch.len() < cfg.batch_max && !cfg.batch_flush.is_zero() {
+            let deadline = tokio::time::Instant::now() + cfg.batch_flush;
+            while batch.len() < cfg.batch_max {
+                match tokio::time::timeout_at(deadline, rx.recv()).await {
+                    Ok(Some(item)) => {
+                        batch.push(item);
+                        drain_ready(&mut rx, &mut batch, cfg.batch_max);
+                    }
+                    Ok(None) | Err(_) => break,
+                }
             }
         }
         metrics.on_sink_queue_depth_change(label, -(batch.len() as i64));
@@ -550,6 +557,20 @@ async fn worker_loop<S: DeliverySink>(
         // Dropping `batch` drops each item's `Arc<AckGuard>` clone, advancing
         // the ack-join.
         drop(batch);
+    }
+}
+
+/// Move the items already queued into `batch`, up to `batch_max`.
+fn drain_ready(
+    rx: &mut mpsc::Receiver<DeliveryItem>,
+    batch: &mut Vec<DeliveryItem>,
+    batch_max: usize,
+) {
+    while batch.len() < batch_max {
+        match rx.try_recv() {
+            Ok(item) => batch.push(item),
+            Err(_) => break,
+        }
     }
 }
 
@@ -1429,6 +1450,119 @@ mod tests {
             4,
             "three first attempts and one retry"
         );
+    }
+
+    /// Wait until the sink has made `count` batched attempts.
+    async fn wait_for_batches(log: &std::sync::Mutex<BatchLog>, count: usize) {
+        let started = std::time::Instant::now();
+        while log.lock().unwrap().batches.len() < count {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the batch never arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_flush_interval_a_lone_item_goes_out_at_once() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let cfg = DeliveryConfig {
+            batch_flush: Duration::ZERO,
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let started = std::time::Instant::now();
+        let seqs = dispatch_results(&dispatcher, 1).await;
+        wait_for_batches(&log, 1).await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(log.lock().unwrap().batches, [seqs]);
+        dispatcher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_flush_interval_gathers_items_that_arrive_close_together() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let cfg = DeliveryConfig {
+            batch_flush: Duration::from_millis(500),
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let mut seqs = dispatch_results(&dispatcher, 1).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        seqs.extend(dispatch_results(&dispatcher, 1).await);
+        wait_for_batches(&log, 1).await;
+        assert_eq!(log.lock().unwrap().batches, [seqs]);
+        dispatcher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_lone_item_waits_at_most_the_flush_interval() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let flush = Duration::from_millis(100);
+        let cfg = DeliveryConfig {
+            batch_flush: flush,
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let started = std::time::Instant::now();
+        dispatch_results(&dispatcher, 1).await;
+        wait_for_batches(&log, 1).await;
+        let waited = started.elapsed();
+        assert!(waited >= flush, "delivered after {waited:?}");
+        assert!(
+            waited < flush + Duration::from_secs(2),
+            "delivered after {waited:?}"
+        );
+        dispatcher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_full_batch_does_not_wait_for_the_flush_interval() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let cfg = DeliveryConfig {
+            batch_max: 2,
+            batch_flush: Duration::from_secs(30),
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let started = std::time::Instant::now();
+        dispatch_results(&dispatcher, 2).await;
+        wait_for_batches(&log, 1).await;
+        assert!(started.elapsed() < Duration::from_secs(5));
+        dispatcher.shutdown().await;
     }
 
     #[test]

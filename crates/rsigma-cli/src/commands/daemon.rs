@@ -225,7 +225,8 @@ pub(crate) struct DaemonArgs {
           value_parser = at_least_one())]
     pub batch_max: usize,
 
-    /// Max time in milliseconds a partial sink batch waits before flushing.
+    /// Time in milliseconds a partial sink batch waits for more results before
+    /// it is delivered. 0 delivers at once.
     #[arg(long = "sink-batch-flush-ms", default_value_t = config::defaults::SINK_BATCH_FLUSH_MS)]
     pub batch_flush_ms: u64,
 

@@ -568,7 +568,8 @@ pub(crate) struct OutputPartial {
     /// Max results drained into one sink delivery batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_max: Option<usize>,
-    /// Max time in milliseconds a partial sink batch waits before flushing.
+    /// Time in milliseconds a partial sink batch waits for more results before
+    /// it is delivered. 0 delivers at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_flush_ms: Option<u64>,
     /// Webhook config files or directories declaring template-driven HTTP

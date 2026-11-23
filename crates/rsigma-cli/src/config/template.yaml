@@ -146,9 +146,10 @@ daemon:
     # Base and ceiling backoff (milliseconds) for delivery retries.
     backoff_base_ms: 100
     backoff_max_ms: 5000
-    # Max results per delivery batch, and max ms a partial batch waits.
+    # Max results per delivery batch, and how many ms a partial batch waits
+    # for more results (0 delivers at once).
     batch_max: 64
-    batch_flush_ms: 50
+    batch_flush_ms: 0
     # Webhook config files or directories (repeatable; maps to --webhook).
     # Each declares template-driven HTTP sinks; see the webhooks guide.
     # webhooks:
