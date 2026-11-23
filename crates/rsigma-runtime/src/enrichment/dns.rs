@@ -454,6 +454,7 @@ pub struct DnsEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     backend: Arc<dyn DnsBackend>,
     cache: DnsCache,
@@ -494,11 +495,19 @@ impl DnsEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             backend,
             cache,
             metrics: Arc::new(NoopMetrics),
         })
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Report this enricher's cache and query counters into `metrics`.
@@ -541,6 +550,7 @@ impl DnsEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             backend,
             cache,
@@ -611,6 +621,9 @@ impl Enricher for DnsEnricher {
     }
     fn on_error(&self) -> OnError {
         self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {

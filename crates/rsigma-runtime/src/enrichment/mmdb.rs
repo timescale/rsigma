@@ -443,6 +443,7 @@ pub struct MmdbEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     db: Arc<MmdbDatabase>,
     metrics: Arc<dyn MetricsHook>,
@@ -471,10 +472,18 @@ impl MmdbEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             db,
             metrics: Arc::new(NoopMetrics),
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Report this enricher's hit and miss counters into `metrics`.
@@ -514,6 +523,9 @@ impl Enricher for MmdbEnricher {
     }
     fn on_error(&self) -> OnError {
         self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {

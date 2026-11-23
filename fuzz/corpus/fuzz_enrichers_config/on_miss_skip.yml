@@ -1,0 +1,9 @@
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: /var/lib/GeoIP/GeoLite2-City.mmdb
+    key: "${detection.fields.SourceIp}"
+    on_error: drop
+    on_miss: skip

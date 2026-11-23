@@ -46,6 +46,7 @@ pub struct StixEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     store: Arc<dyn StixStore>,
 }
@@ -73,9 +74,17 @@ impl StixEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             store,
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     fn render_extract(&self, result: &EvaluationResult) -> Option<ExtractExpr> {
@@ -190,6 +199,9 @@ impl Enricher for StixEnricher {
     }
     fn on_error(&self) -> OnError {
         self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {

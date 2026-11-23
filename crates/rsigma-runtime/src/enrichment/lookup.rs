@@ -50,6 +50,7 @@ pub struct LookupEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     cache: Arc<SourceCache>,
 }
@@ -77,9 +78,17 @@ impl LookupEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             cache,
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Render any `${detection.*}` / `${correlation.*}` references inside
@@ -125,6 +134,9 @@ impl Enricher for LookupEnricher {
     }
     fn on_error(&self) -> OnError {
         self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {

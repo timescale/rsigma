@@ -247,6 +247,12 @@ pub trait Enricher: Send + Sync {
         OnError::Skip
     }
 
+    /// Behavior when this enricher finds no data for a result (it returned
+    /// [`EnrichErrorKind::Miss`]). Defaults to [`Self::on_error`].
+    fn on_miss(&self) -> OnError {
+        self.on_error()
+    }
+
     /// Run the enrichment.
     ///
     /// Implementations write into [`RuleHeader::enrichments`](rsigma_eval::RuleHeader::enrichments)

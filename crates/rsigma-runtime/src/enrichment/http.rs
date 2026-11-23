@@ -62,6 +62,7 @@ pub struct HttpEnricher {
     body: Option<String>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     extract: Option<ExtractExpr>,
     default: Option<Value>,
@@ -178,6 +179,7 @@ impl HttpEnricher {
             body,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             extract,
             default: None,
@@ -188,6 +190,13 @@ impl HttpEnricher {
             metrics: Arc::new(NoopMetrics),
             max_response_bytes: DEFAULT_ENRICHER_MAX_RESPONSE_BYTES,
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Override the maximum response-body size this enricher will read.
@@ -262,6 +271,9 @@ impl Enricher for HttpEnricher {
     }
     fn on_error(&self) -> OnError {
         self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
