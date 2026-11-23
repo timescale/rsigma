@@ -76,7 +76,8 @@ impl StdoutSink {
             .write_result(result, Some(ctx), self.encoding())
     }
 
-    /// Write a batch of deliveries in one write, one outcome per delivery.
+    /// Write a batch of deliveries in one write, one outcome per delivery the
+    /// write reached.
     pub(crate) fn send_batch(
         &self,
         items: &[(&ProcessResult, &DeliveryContext)],

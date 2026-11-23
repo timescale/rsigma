@@ -135,16 +135,19 @@ where
     (batch, starts, outcomes)
 }
 
-/// Turn the outcome of writing an [`encode_batch`] batch into one outcome per
-/// delivery, recording how far the delivery cut off by a failure got.
+/// Turn the outcome of writing an [`encode_batch`] batch into outcomes for the
+/// deliveries it reached, recording how far the delivery cut off by a failure
+/// got.
 ///
 /// `failure` is the number of whole lines written and the error, when the
-/// write stopped early.
+/// write stopped early. The deliveries after the cut-off one were not
+/// attempted, so their outcomes are dropped and the worker delivers each on
+/// its own once the cut-off one has settled.
 pub(crate) fn settle_batch<'c, C>(
     items: &[(&ProcessResult, C)],
     batch: &LineBatch,
     starts: &[usize],
-    outcomes: &mut [Result<(), RuntimeError>],
+    outcomes: &mut Vec<Result<(), RuntimeError>>,
     resume: &mut ResumeMap<usize>,
     failure: Option<(usize, RuntimeError)>,
 ) where
@@ -163,14 +166,16 @@ pub(crate) fn settle_batch<'c, C>(
             continue;
         }
         match &err {
-            Some(err) if index >= done => {
-                if index == done {
-                    resume.record(ctx, starts[index] + torn);
-                }
+            Some(err) if index == done => {
+                resume.record(ctx, starts[index] + torn);
                 *outcome = Err(err.duplicate());
             }
+            Some(_) if index > done => {}
             _ => resume.clear(ctx),
         }
+    }
+    if err.is_some() {
+        outcomes.truncate(done + 1);
     }
 }
 
@@ -209,11 +214,11 @@ impl<W: Write> LineWriter<W> {
     }
 
     /// Write the lines of several deliveries in one write, returning one
-    /// outcome per delivery.
+    /// outcome per delivery the write reached.
     ///
     /// A failure partway through marks the deliveries whose lines all went
     /// out as delivered, remembers how many lines of the cut-off delivery
-    /// went out, and fails it and every later one.
+    /// went out, and fails it. The later deliveries get no outcome.
     pub(crate) fn write_results<'c, C>(
         &mut self,
         items: &[(&ProcessResult, C)],
@@ -538,11 +543,15 @@ mod tests {
         let mut out = LineWriter::new(FlakyWriter::new(budget));
 
         let outcomes = out.write_results(&items, encoding(&ocsf));
+        assert_eq!(
+            outcomes.len(),
+            2,
+            "the write never reached item 3, so it has no outcome"
+        );
         assert!(outcomes[0].is_ok());
         assert!(outcomes[1].is_err());
-        assert!(outcomes[2].is_err());
 
-        // The worker retries the failed items one at a time, in order.
+        // The worker retries the torn item, then delivers the next one.
         out.inner.budget = usize::MAX;
         out.write_result(&deliveries[1], Some(&contexts[1]), encoding(&ocsf))
             .unwrap();

@@ -47,13 +47,17 @@ pub trait DeliverySink: Send + 'static {
         ctx: &'a DeliveryContext,
     ) -> DeliveryFuture<'a>;
     /// Make the first delivery attempt for a batch of results, returning one
-    /// outcome per item, in item order.
+    /// outcome per attempted item, in item order.
     ///
     /// The worker calls this once for each run of results it drains, then
     /// retries every failed item on its own through [`Self::deliver`] with
     /// the same context. A sink that resumes partial deliveries must keep
     /// what each failed item already delivered, so its retry does not repeat
-    /// it. The default delivers the items one at a time.
+    /// it. A sink may stop early and return fewer outcomes: the items past
+    /// the last outcome count as not attempted, and the worker delivers each
+    /// on its own once the failed items before it have settled. The default
+    /// delivers the items one at a time and stops at the first failure, so
+    /// later items wait for its retries and keep their order.
     fn deliver_batch<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
@@ -61,7 +65,12 @@ pub trait DeliverySink: Send + 'static {
         Box::pin(async move {
             let mut outcomes = Vec::with_capacity(items.len());
             for (result, ctx) in items {
-                outcomes.push(self.deliver(result, ctx).await);
+                let outcome = self.deliver(result, ctx).await;
+                let failed = outcome.is_err();
+                outcomes.push(outcome);
+                if failed {
+                    break;
+                }
             }
             outcomes
         })
@@ -575,7 +584,7 @@ fn drain_ready(
 }
 
 /// Deliver a run of result items with one batched first attempt, then retry
-/// each failed item on its own.
+/// each failed item on its own, in order.
 async fn deliver_results<S: DeliverySink>(
     sink: &mut S,
     run: &[DeliveryItem],
@@ -1142,7 +1151,8 @@ mod tests {
 
     /// Records each batched first attempt and each single delivery by
     /// sequence number. The item at `fail_at` fails its batched attempt and
-    /// then `retry_failures` retries before it succeeds.
+    /// then `retry_failures` retries before it succeeds. With `stop_at_failure`
+    /// the batch returns no outcome for the items after it.
     #[derive(Default)]
     struct BatchLog {
         batches: Vec<Vec<u64>>,
@@ -1153,6 +1163,7 @@ mod tests {
     struct BatchSink {
         log: Arc<std::sync::Mutex<BatchLog>>,
         fail_at: Option<usize>,
+        stop_at_failure: bool,
         retry_failures: usize,
         permanent: bool,
         gate: Option<tokio::sync::watch::Receiver<bool>>,
@@ -1163,6 +1174,7 @@ mod tests {
             BatchSink {
                 log: Arc::default(),
                 fail_at: None,
+                stop_at_failure: false,
                 retry_failures: 0,
                 permanent: false,
                 gate: None,
@@ -1210,7 +1222,11 @@ mod tests {
                     .unwrap()
                     .batches
                     .push(items.iter().map(|(_, ctx)| ctx.seq()).collect());
-                (0..items.len())
+                let attempted = match self.fail_at {
+                    Some(at) if self.stop_at_failure => (at + 1).min(items.len()),
+                    _ => items.len(),
+                };
+                (0..attempted)
                     .map(|index| match self.fail_at {
                         Some(at) if at == index => Err(self.failure()),
                         _ => Ok(()),
@@ -1449,6 +1465,100 @@ mod tests {
             attempts.load(Ordering::SeqCst),
             4,
             "three first attempts and one retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn items_a_batch_did_not_reach_get_their_own_attempt_without_a_retry() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let mut sink = BatchSink::new();
+        sink.fail_at = Some(1);
+        sink.stop_at_failure = true;
+        let log = sink.log.clone();
+        let counters = Arc::new(SinkCounters::default());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            None,
+            ack_tx,
+            counters.clone(),
+        );
+
+        let seqs = dispatch_results(&dispatcher, 4).await;
+        dispatcher.shutdown().await;
+
+        let log = log.lock().unwrap();
+        assert_eq!(log.batches, std::slice::from_ref(&seqs));
+        assert_eq!(
+            log.singles,
+            seqs[1..],
+            "the failed item is retried first, then the rest go in order"
+        );
+        assert_eq!(
+            counters.retries.load(Ordering::SeqCst),
+            1,
+            "only the item that failed counts a retry"
+        );
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, 4);
+    }
+
+    /// Delivers through the default `deliver_batch`, recording the order of
+    /// every attempt. The first attempt of the first item fails.
+    struct OrderSink {
+        attempts: Arc<std::sync::Mutex<Vec<u64>>>,
+        failed_once: bool,
+    }
+
+    impl DeliverySink for OrderSink {
+        fn deliver<'a>(
+            &'a mut self,
+            _result: &'a ProcessResult,
+            ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
+            Box::pin(async move {
+                self.attempts.lock().unwrap().push(ctx.seq());
+                if !self.failed_once {
+                    self.failed_once = true;
+                    return Err(RuntimeError::Io(std::io::Error::other("mock transient")));
+                }
+                Ok(())
+            })
+        }
+        fn label(&self) -> &'static str {
+            "order"
+        }
+    }
+
+    #[tokio::test]
+    async fn the_default_batch_retries_a_failure_before_the_items_after_it() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = OrderSink {
+            attempts: attempts.clone(),
+            failed_once: false,
+        };
+        // A flush window long enough that all three land in one batch.
+        let cfg = DeliveryConfig {
+            batch_flush: Duration::from_millis(100),
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let seqs = dispatch_results(&dispatcher, 3).await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            [seqs[0], seqs[0], seqs[1], seqs[2]],
+            "results reach the sink in order"
         );
     }
 

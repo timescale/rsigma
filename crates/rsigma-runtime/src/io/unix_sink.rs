@@ -96,7 +96,8 @@ impl UnixSocketSink {
             .unwrap_or(Ok(()))
     }
 
-    /// Write a batch of deliveries in one write, one outcome per delivery.
+    /// Write a batch of deliveries in one write, one outcome per delivery the
+    /// write reached.
     pub(crate) async fn send_batch(
         &mut self,
         items: &[(&ProcessResult, &DeliveryContext)],
@@ -396,9 +397,9 @@ mod tests {
         let mut sink = UnixSocketSink::connect(&path).await.unwrap();
         let outcomes = sink.send_batch(&items).await;
         first.await.unwrap();
+        assert_eq!(outcomes.len(), 2, "the write never reached the third");
         assert!(outcomes[0].is_ok(), "the first delivery went out whole");
         assert!(outcomes[1].is_err());
-        assert!(outcomes[2].is_err());
 
         let listener = UnixListener::bind(&path).unwrap();
         let second = tokio::spawn(async move {
@@ -410,7 +411,7 @@ mod tests {
             }
             after
         });
-        // The worker retries the failed deliveries one at a time, in order.
+        // The worker retries the cut-off delivery, then delivers the next one.
         sink.send_with_context(&deliveries[1], &contexts[1])
             .await
             .unwrap();

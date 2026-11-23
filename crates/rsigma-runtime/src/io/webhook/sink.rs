@@ -193,7 +193,9 @@ impl WebhookSink {
         Ok(())
     }
 
-    /// Deliver a batch of deliveries one at a time, one outcome per delivery.
+    /// Deliver a batch of deliveries one at a time, one outcome per attempted
+    /// delivery, stopping at the first failure so later deliveries keep their
+    /// order.
     pub(crate) async fn send_batch(
         &mut self,
         items: &[(&ProcessResult, &DeliveryContext)],
@@ -201,7 +203,12 @@ impl WebhookSink {
         self.posted.retain(items.iter().map(|(_, ctx)| *ctx));
         let mut outcomes = Vec::with_capacity(items.len());
         for (result, ctx) in items {
-            outcomes.push(self.send(result, ctx).await);
+            let outcome = self.send(result, ctx).await;
+            let failed = outcome.is_err();
+            outcomes.push(outcome);
+            if failed {
+                break;
+            }
         }
         outcomes
     }

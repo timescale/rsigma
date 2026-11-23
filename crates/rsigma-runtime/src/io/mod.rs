@@ -534,8 +534,7 @@ impl Sink {
     }
 
     /// Make the first delivery attempt for a batch of results, one outcome
-    /// per item. Line sinks write the whole batch at once; the others deliver
-    /// the items one at a time.
+    /// per attempted item (see [`DeliverySink::deliver_batch`]).
     pub(crate) fn send_batch_with_context<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
@@ -554,7 +553,12 @@ impl Sink {
                 _ => {
                     let mut outcomes = Vec::with_capacity(items.len());
                     for (result, ctx) in items {
-                        outcomes.push(self.send_with_context(result, ctx).await);
+                        let outcome = self.send_with_context(result, ctx).await;
+                        let failed = outcome.is_err();
+                        outcomes.push(outcome);
+                        if failed {
+                            break;
+                        }
                     }
                     outcomes
                 }

@@ -180,19 +180,26 @@ impl FileSink {
         }
     }
 
-    /// Append a batch of deliveries, one outcome per delivery. A plain path
-    /// gets the whole batch in one write; a `{tenant}` path writes each
-    /// delivery on its own, since one batch can span many files.
+    /// Append a batch of deliveries, one outcome per attempted delivery. A
+    /// plain path gets the whole batch in one write; a `{tenant}` path writes
+    /// each delivery on its own, since one batch can span many files, and
+    /// stops at the first failure so later deliveries keep their order.
     pub(crate) fn send_batch(
         &mut self,
         items: &[(&ProcessResult, &DeliveryContext)],
     ) -> Vec<Result<(), RuntimeError>> {
         if self.tenant_path.is_some() {
             self.tenant_resume.retain(items.iter().map(|(_, ctx)| *ctx));
-            return items
-                .iter()
-                .map(|(result, ctx)| self.send_inner(result, Some(ctx)))
-                .collect();
+            let mut outcomes = Vec::with_capacity(items.len());
+            for (result, ctx) in items {
+                let outcome = self.send_inner(result, Some(ctx));
+                let failed = outcome.is_err();
+                outcomes.push(outcome);
+                if failed {
+                    break;
+                }
+            }
+            return outcomes;
         }
         let encoding = LineEncoding {
             format: self.format,
@@ -473,7 +480,17 @@ mod tests {
             deliveries.iter().zip(contexts.iter()).collect();
 
         let outcomes = sink.send_batch(&items);
-        assert!(outcomes.iter().all(Result::is_err));
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "the batch stops at the first failure, so the second delivery waits"
+        );
+        assert!(outcomes[0].is_err());
+        // The worker's attempt of the second delivery fails the same way.
+        assert!(
+            sink.send_with_context(&deliveries[1], &contexts[1])
+                .is_err()
+        );
 
         std::fs::remove_file(&blocker).unwrap();
         for (result, ctx) in &items {
