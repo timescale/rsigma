@@ -882,6 +882,33 @@ enrichers:
     assert_eq!(geo_of(&results[0]), Some(&json!({"country": "unknown"})));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn http_on_miss_skip_keeps_miss_status_results_when_on_error_drops() {
+    let server = MockServer::start().await;
+    for (rule_id, status) in [("unknown", 404), ("broken", 500)] {
+        Mock::given(method("GET"))
+            .and(path(format!("/files/{rule_id}")))
+            .respond_with(ResponseTemplate::new(status))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let enricher = http_enricher(
+        format!("{}/files/${{detection.rule.id}}", server.uri()),
+        None,
+        Duration::ZERO,
+        OnError::Drop,
+    )
+    .with_miss_status(vec![404])
+    .with_on_miss(OnError::Skip);
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 4);
+    let mut results = vec![detection("unknown", "ps"), detection("broken", "ps")];
+    pipeline.run(&mut results).await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].header.rule_id.as_deref(), Some("unknown"));
+    assert_eq!(geo_of(&results[0]), None);
+}
+
 // ---------------------------------------------------------------------------
 // CommandEnricher integration tests
 // ---------------------------------------------------------------------------

@@ -956,6 +956,99 @@ fn cloned_pipelines_share_failure_logs() {
     assert_eq!(clone.failure_logs.record("a", now), None);
 }
 
+/// Test-only enricher that misses for results whose rule id is `miss` and
+/// fails for every other result.
+struct MissOrFail {
+    on_error: OnError,
+    on_miss: OnError,
+    scope: Scope,
+}
+
+fn miss_or_fail(on_error: OnError, on_miss: OnError) -> Box<dyn Enricher> {
+    Box::new(MissOrFail {
+        on_error,
+        on_miss,
+        scope: Scope::default(),
+    })
+}
+
+#[async_trait::async_trait]
+impl Enricher for MissOrFail {
+    fn kind(&self) -> EnricherKind {
+        EnricherKind::Detection
+    }
+    fn id(&self) -> &str {
+        "miss_or_fail"
+    }
+    fn inject_field(&self) -> &str {
+        "out"
+    }
+    fn scope(&self) -> &Scope {
+        &self.scope
+    }
+    fn on_error(&self) -> OnError {
+        self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
+    }
+    async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
+        let kind = if result.header.rule_id.as_deref() == Some("miss") {
+            miss_error()
+        } else {
+            fetch_error()
+        };
+        Err(EnrichError {
+            enricher_id: "miss_or_fail".to_string(),
+            kind,
+        })
+    }
+}
+
+fn result_with_rule_id(rule_id: &str) -> EvaluationResult {
+    let mut result = detection_result();
+    result.header.rule_id = Some(rule_id.to_string());
+    result
+}
+
+#[tokio::test]
+async fn on_miss_skip_keeps_missed_results_when_on_error_drops() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Drop, OnError::Skip)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].header.rule_id.as_deref(), Some("miss"));
+    assert!(results[0].header.enrichments.is_none());
+}
+
+#[tokio::test]
+async fn on_miss_null_injects_null_only_for_misses() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Skip, OnError::Null)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
+    assert!(results[1].header.enrichments.is_none());
+}
+
+#[tokio::test]
+async fn on_miss_drop_removes_missed_results_only() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Null, OnError::Drop)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].header.rule_id.as_deref(), Some("fail"));
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Timeout
 // ---------------------------------------------------------------------------
@@ -1237,6 +1330,47 @@ async fn cached_miss_status_counts_as_an_http_cache_hit() {
     for result in &results {
         assert_eq!(result.header.enrichments.as_ref().unwrap()["vt"], "unknown");
     }
+}
+
+async fn statuses_for(enricher: Box<dyn Enricher>, rule_ids: &[&str]) -> Vec<String> {
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 1)
+        .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
+    let mut results: Vec<_> = rule_ids.iter().map(|id| result_with_rule_id(id)).collect();
+    pipeline.run(&mut results).await;
+    let completed = m.completed.lock().unwrap().clone();
+    completed.into_iter().map(|(_, _, status)| status).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metrics_report_misses_as_miss_unless_dropped() {
+    // Without an `on_miss` override, the policy falls back to `on_error`.
+    for (on_error, expected) in [
+        (OnError::Skip, "miss"),
+        (OnError::Null, "miss"),
+        (OnError::Drop, "drop"),
+    ] {
+        assert_eq!(
+            statuses_for(erroring(on_error, miss_error()), &["r"]).await,
+            vec![expected],
+            "on_error {on_error:?}"
+        );
+    }
+    for (on_miss, expected) in [
+        (OnError::Skip, "miss"),
+        (OnError::Null, "miss"),
+        (OnError::Drop, "drop"),
+    ] {
+        assert_eq!(
+            statuses_for(miss_or_fail(OnError::Null, on_miss), &["miss", "fail"]).await,
+            vec![expected, "error"],
+            "on_miss {on_miss:?}"
+        );
+    }
+    assert_eq!(
+        statuses_for(miss_or_fail(OnError::Skip, OnError::Null), &["fail"]).await,
+        vec!["skip"]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

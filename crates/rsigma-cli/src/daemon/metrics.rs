@@ -2033,7 +2033,7 @@ impl MetricsHook for Metrics {
         // even before the enricher has fired. `inc_by(0)` and a
         // bare `with_label_values` both materialise the entry; the
         // former is more explicit about the intent.
-        for status in ["success", "skip", "error", "timeout", "drop"] {
+        for status in ["success", "skip", "error", "timeout", "miss", "drop"] {
             self.enrichment_total
                 .with_label_values(&[enricher_id, kind, status])
                 .inc_by(0);
