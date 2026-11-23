@@ -1345,6 +1345,48 @@ async fn cached_miss_status_counts_as_an_http_cache_hit() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn http_null_result_is_a_success_not_a_miss() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::Value::Null))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let enricher = super::HttpEnricher::new(
+        "vt".to_string(),
+        EnricherKind::Detection,
+        "vt".to_string(),
+        "GET".to_string(),
+        server.uri(),
+        Vec::new(),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        crate::build_default_http_client().unwrap(),
+        crate::HttpResponseCache::new(Duration::ZERO),
+    )
+    .with_on_miss(OnError::Drop);
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 1)
+        .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
+    let mut results = vec![detection_result()];
+    pipeline.run(&mut results).await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["vt"],
+        serde_json::Value::Null
+    );
+    let completed = m.completed.lock().unwrap().clone();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].2, "success");
+}
+
 async fn statuses_for(enricher: Box<dyn Enricher>, rule_ids: &[&str]) -> Vec<String> {
     let m = std::sync::Arc::new(CollectingMetrics::default());
     let pipeline = EnrichmentPipeline::new(vec![enricher], 1)
