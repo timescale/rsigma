@@ -543,6 +543,9 @@ impl Sink {
         Box::pin(async move {
             match self {
                 Sink::Stdout(s) => blocking_write(|| s.send_batch(items)),
+                Sink::File(s) => blocking_write(|| s.send_batch(items)),
+                #[cfg(all(unix, feature = "uds"))]
+                Sink::Unix(s) => s.send_batch(items).await,
                 _ => {
                     let mut outcomes = Vec::with_capacity(items.len());
                     for (result, ctx) in items {

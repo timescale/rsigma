@@ -160,7 +160,6 @@ impl FileSink {
                     self.writer_for(tenant, &path)?.write_line(&json)
                 });
                 if let Err(err) = written {
-                    self.tenant_resume.retain(ctx);
                     self.tenant_resume.record(ctx, done);
                     return Err(err);
                 }
@@ -178,6 +177,32 @@ impl FileSink {
         match self.out.as_mut() {
             Some(out) => out.write_result(result, ctx, encoding),
             None => Ok(()),
+        }
+    }
+
+    /// Append a batch of deliveries, one outcome per delivery. A plain path
+    /// gets the whole batch in one write; a `{tenant}` path writes each
+    /// delivery on its own, since one batch can span many files.
+    pub(crate) fn send_batch(
+        &mut self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        if self.tenant_path.is_some() {
+            self.tenant_resume.retain(items.iter().map(|(_, ctx)| *ctx));
+            return items
+                .iter()
+                .map(|(result, ctx)| self.send_inner(result, Some(ctx)))
+                .collect();
+        }
+        let encoding = LineEncoding {
+            format: self.format,
+            pretty: false,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
+        };
+        match self.out.as_mut() {
+            Some(out) => out.write_results(items, encoding),
+            None => items.iter().map(|_| Ok(())).collect(),
         }
     }
 
@@ -377,6 +402,91 @@ mod tests {
         let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
         assert_eq!(a.lines().count(), 1, "tenant a's line is not repeated");
         assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_batch_appends_every_delivery_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.ndjson");
+        let mut sink = FileSink::open(&path).unwrap();
+        let deliveries = [
+            vec![tenanted("one", "a")],
+            vec![tenanted("two", "a"), tenanted("three", "a")],
+        ];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+
+        assert!(outcomes.iter().all(Result::is_ok));
+        let written = std::fs::read_to_string(&path).unwrap();
+        let titles: Vec<String> = written
+            .lines()
+            .map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                value["rule_title"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(titles, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn a_tenant_path_batch_goes_per_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let deliveries = [vec![tenanted("a", "a")], vec![tenanted("b", "b")]];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+        assert!(outcomes[0].is_ok(), "the other tenant's delivery succeeds");
+        assert!(outcomes[1].is_err());
+
+        std::fs::remove_file(&blocker).unwrap();
+        sink.send_with_context(&deliveries[1], &contexts[1])
+            .unwrap();
+        let a = std::fs::read_to_string(dir.path().join("a/findings.ndjson")).unwrap();
+        let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
+        assert_eq!(a.lines().count(), 1);
+        assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn each_failed_tenant_path_delivery_keeps_its_own_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        // Both deliveries write tenant a's line, then fail on tenant b.
+        let deliveries = [
+            vec![tenanted("first-a", "a"), tenanted("first-b", "b")],
+            vec![tenanted("second-a", "a"), tenanted("second-b", "b")],
+        ];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+        assert!(outcomes.iter().all(Result::is_err));
+
+        std::fs::remove_file(&blocker).unwrap();
+        for (result, ctx) in &items {
+            sink.send_with_context(result, ctx).unwrap();
+        }
+        let a = std::fs::read_to_string(dir.path().join("a/findings.ndjson")).unwrap();
+        let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
+        assert_eq!(
+            a.lines().count(),
+            2,
+            "no tenant a line is written twice: {a}"
+        );
+        assert_eq!(b.lines().count(), 2);
     }
 
     #[test]
