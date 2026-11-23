@@ -4,6 +4,19 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Faster stdout delivery with enrichers
+
+A stdout sink whose worker keeps up with its queue now writes each batch on a dedicated `rsigma-stdout` thread. Before, every batch went through Tokio's `block_in_place`, which moves the runtime worker to another thread for the write. When enrichment is the slow stage, the sink worker drains about two results at a time, so that move happened about every second result, and the enrichment task kept changing threads. Batched delivery (#743) made each write cheaper, so the worker returned to its queue sooner, woke more often, and moved the runtime more often: at the default `--sink-batch-flush-ms 0`, an enriched daemon ran slower than before #743. A worker that falls behind, with results still queued behind the batch it drained, keeps writing in place, so a busy sink pays no round trip to the writer thread. Delivery order, retries, and the lines a retry skips are unchanged.
+
+On an Apple M4 Pro (12 cores), stdin batch mode to stdout piped to `wc -l`, 1,000,000 events, wall and system seconds before #743, before this change, and after, medians of 14 interleaved runs:
+
+- One MMDB enricher on every result: 5.63 s / 4.31 s, 6.46 s / 3.98 s, and 5.28 s / 2.41 s.
+- Three MMDB enrichers with a `default` on every entry: 6.93 s / 6.48 s, 7.50 s / 5.37 s, and 6.92 s / 3.58 s.
+- The same two configs with `--sink-batch-flush-ms 50`, and runs without enrichers: unchanged within noise.
+- One rule matching every event, without enrichers (`scripts/perf/stdin-daemon.sh`, 11 interleaved runs): 0.86 s before and 0.87 s after.
+
+Library API: `DeliverySink::deliver_batch` takes a `backlog` flag, set when more results were already queued behind the batch. The default implementation ignores it.
+
 ### `rsigma --features` lists `ocsf` and `mmdb-mmap` (#745)
 
 `rsigma --features`, the `rsigma --version` features line, and the "Compiled-in features" footer of `rsigma --help` left out `ocsf` and `mmdb-mmap`, so a binary built with either feature did not report it. Both are listed now, and a default build reports `daemon` and the `ocsf` it implies. A unit test compares the list with the `[features]` table of the `rsigma` crate's `Cargo.toml`, so a feature added to the manifest without being listed fails the build's tests.
