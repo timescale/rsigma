@@ -29,7 +29,7 @@ All layers that exist are loaded and merged. There is no first-match-wins fallba
 
 Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately).
 
-An unknown key in any loaded file stops the command with exit 3 and prints `error: unknown config key '<key>' in <path>` for each one. [`rsigma config validate`](../cli/config/validate.md) lists them without running anything, and [`rsigma config show`](../cli/config/show.md) still prints the effective config. {{ added "unreleased" }}
+An unknown key in any loaded file stops the command with exit 3 and prints `error: unknown config key '<key>' in <path>` for each one. [`rsigma config validate`](../cli/config/validate.md) lists them without running anything, and [`rsigma config show`](../cli/config/show.md) still prints the effective config. {{ added "0.28.0" }}
 
 The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explicitly rather than `dirs::config_dir()`, so on macOS the path stays under `~/.config/rsigma` instead of `~/Library/Application Support/`. The `rsigma install` workflow uses the same layout.
 
@@ -56,9 +56,9 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.output.dlq` | Sends failed events to a sink. |
 | `daemon.output.webhooks` | Sends detections to HTTP endpoints. |
 | `daemon.input.source` | Only when it names a NATS server, which the daemon would connect to with the operator's NATS credentials, or a `unix://` path outside the project. `stdin`, `http`, and `unix://` inputs inside the project are kept. |
-| `daemon.tenancy` | Turning tenancy off is the dangerous direction, so a project file may not set it at all. {{ added "unreleased" }} |
-| `daemon.input.tenant` | Binds the single pull source to a tenant. {{ added "unreleased" }} |
-| `daemon.input.nats_tenants` | Declares the tenant of each NATS subscription. {{ added "unreleased" }} |
+| `daemon.tenancy` | Turning tenancy off is the dangerous direction, so a project file may not set it at all. {{ added "0.28.0" }} |
+| `daemon.input.tenant` | Binds the single pull source to a tenant. {{ added "0.28.0" }} |
+| `daemon.input.nats_tenants` | Declares the tenant of each NATS subscription. {{ added "0.28.0" }} |
 | `daemon.nats.consumer_group` | Joins another deployment's durable consumer and pulls its messages. |
 | `daemon.api.addr` | Unless it is a loopback `host:port` (`127.0.0.1`, `::1`, `localhost`) or a `unix://` path inside the project. Client commands such as `engine incidents export` send the API token to this address, and the daemon binds it. |
 | `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. |
@@ -86,7 +86,7 @@ warning: ignoring 'mcp.daemon_url' from project config ./rsigma.yaml; security-s
 
 The same keys work from every other layer: an explicit `--config <PATH>` (which replaces discovery, so the file is trusted as the operator's choice), the user config, the system config, `RSIGMA_*` environment variables, and CLI flags. To keep a protected key in a repository, commit the file under another name and pass it with `--config`. [`rsigma config validate`](../cli/config/validate.md) and [`rsigma config show`](../cli/config/show.md) list the ignored keys.
 
-With `daemon.tenancy.enabled` set, the daemon also refuses to start when any project layer was loaded at all. A project file could replace `daemon.rulesets` and drop a tenant binding, so tenancy deployments run with `engine daemon --config <PATH>`, which replaces discovery. {{ added "unreleased" }}
+With `daemon.tenancy.enabled` set, the daemon also refuses to start when any project layer was loaded at all. A project file could replace `daemon.rulesets` and drop a tenant binding, so tenancy deployments run with `engine daemon --config <PATH>`, which replaces discovery. {{ added "0.28.0" }}
 
 ## Format
 
@@ -295,10 +295,10 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | Section | Used by | Notes |
 |---------|---------|-------|
 | `global` | every subcommand | `global.log_format`, `global.output_format`, and `global.color`. See [Output Formats](output.md) for the format/color semantics. |
-| `rulesets` | `ruleset`, `--ruleset` commands, MCP tools | Named curation of Sigma rules: sources, selectors, dependency policy, overlays, pipelines, and build output. File-only; environment variables are ignored. See [Rulesets](../guide/rulesets.md). {{ added "unreleased" }} |
-| `convert` | `backend build` | Named conversion groups: `ruleset`, `target`, `format`, `pipelines`, `options`, `skip_unsupported`, `without_pipeline`, `output`, and opaque `metadata` copied into the manifest. `defaults` fills unset group fields. Groups are file-only; `RSIGMA_CONVERT__DEFAULTS__*` works, but `convert.groups.*` is ignored. See [`backend build`](../cli/backend/build.md). {{ added "unreleased" }} |
+| `rulesets` | `ruleset`, `--ruleset` commands, MCP tools | Named curation of Sigma rules: sources, selectors, dependency policy, overlays, pipelines, and build output. File-only; environment variables are ignored. See [Rulesets](../guide/rulesets.md). {{ added "0.28.0" }} |
+| `convert` | `backend build` | Named conversion groups: `ruleset`, `target`, `format`, `pipelines`, `options`, `skip_unsupported`, `without_pipeline`, `output`, and opaque `metadata` copied into the manifest. `defaults` fills unset group fields. Groups are file-only; `RSIGMA_CONVERT__DEFAULTS__*` works, but `convert.groups.*` is ignored. See [`backend build`](../cli/backend/build.md). {{ added "0.28.0" }} |
 | `daemon` | `engine daemon` | Mirrors every non-secret daemon flag. |
-| `daemon.rulesets` | `engine daemon` | Several named rulesets evaluated side by side. Each entry is a name or `{name, when: {schemas: [...]}}`. Conflicts with `daemon.rules`. Read once at startup. See [Rulesets](../guide/rulesets.md#several-rulesets-side-by-side). {{ added "unreleased" }} |
+| `daemon.rulesets` | `engine daemon` | Several named rulesets evaluated side by side. Each entry is a name or `{name, when: {schemas: [...]}}`. Conflicts with `daemon.rules`. Read once at startup. See [Rulesets](../guide/rulesets.md#several-rulesets-side-by-side). {{ added "0.28.0" }} |
 | `daemon.api.tls` | `engine daemon` | Inert unless the binary is built with the `daemon-tls` feature; otherwise `config validate` warns. |
 | `daemon.api.auth` | `engine daemon` | Bearer-token authentication with `resource:action` permissions (`anonymous_permissions`, `roles`, `tokens`). Absent = no authentication. Token secrets stay env-only via each token's `token_env`. Mutually exclusive with `--api-token-env`. See [HTTP API: Authentication](http-api.md#authentication). |
 | `daemon.api.audit` | `engine daemon` | Control-plane mutation audit trail (`enabled`, `max_entries`, `max_age`, `max_body_bytes`, `sink`). Requires `--state-db`; auto-enabled when a state database is configured. See [HTTP API: Audit trail](http-api-state.md#audit-trail). |
@@ -308,11 +308,11 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.dispositions` | `engine daemon` | Triage feedback loop (`enabled`, `source`, `window`, `numerator`, `min_sample`). Disabled by default; enable with `enabled: true`, `--enable-dispositions`, or a configured `source`. See the [Triage Feedback Loop](../guide/triage-feedback.md) guide. |
 | `daemon.capture` | `engine daemon` | Verdict-driven evidence capture (`enabled`, `spool_dir`, ring and disk bounds, `ttl`, `spool_queue_capacity`). Disabled by default and startup-only; enable with `enabled: true` or `--enable-capture`. Requires dispositions, `group_by`, and `spool_dir`. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md). {{ added "0.22.0" }} |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
-| `daemon.runtime` | `engine daemon` | Thread pool sizing: `worker_threads`, `detect_threads`, and `detect_inflight` (1 to 8), each at least 1. A flag beats the key, and the key beats `RAYON_NUM_THREADS` and `RSIGMA_DETECT_INFLIGHT`. See [`engine daemon`: Throughput](../cli/engine/daemon.md#throughput). {{ added "unreleased" }} |
+| `daemon.runtime` | `engine daemon` | Thread pool sizing: `worker_threads`, `detect_threads`, and `detect_inflight` (1 to 8), each at least 1. A flag beats the key, and the key beats `RAYON_NUM_THREADS` and `RSIGMA_DETECT_INFLIGHT`. See [`engine daemon`: Throughput](../cli/engine/daemon.md#throughput). {{ added "0.28.0" }} |
 | `daemon.schema` | `engine daemon` | Schema classification and routing (`observe`, `discover`, `routing`, `partition_rules`, `config`, `on_unknown`). All opt-in. See [Schema Routing](../guide/schema-routing.md). |
 | `daemon.logsource_routing` | `engine daemon` | Conflict-based logsource pruning (`enabled`, `field_map`, `event_logsource`). `strict` is accepted and ignored. Opt-in. See [Logsource-Aware Evaluation](../guide/logsource-routing.md). |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |
-| `eval.ruleset`, `eval.rulesets` | `engine eval` | One named ruleset, or several evaluated side by side with optional `when` schema bindings. Set at most one of them, and neither with `eval.rules`. An empty `eval.rulesets` list counts as unset. {{ added "unreleased" }} |
+| `eval.ruleset`, `eval.rulesets` | `engine eval` | One named ruleset, or several evaluated side by side with optional `when` schema bindings. Set at most one of them, and neither with `eval.rules`. An empty `eval.rulesets` list counts as unset. {{ added "0.28.0" }} |
 | `eval.output` | `engine eval` | Write results to this file instead of stdout (`-o, --output`). The CLI flag takes precedence. {{ added "0.25.0" }} |
 | `eval.schema` | `engine eval` | Schema routing for one-shot eval (`routing`, `config`, `on_unknown`). `observe`/`discover` have no effect here. |
 | `eval.logsource_routing` | `engine eval` | Conflict-based logsource pruning for one-shot eval (`enabled`, `field_map`, `event_logsource`). `strict` is accepted and ignored. |

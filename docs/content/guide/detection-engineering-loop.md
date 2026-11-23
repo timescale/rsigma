@@ -43,7 +43,7 @@ Prove the rule before it ships: why an event matched or did not, whether it regr
 Turn a green laptop check into merge policy and a live ruleset.
 
 - [`rule validate`](../cli/rule/validate.md): parse, compile, and resolve dynamic sources before merge.
-- [`ruleset build`](../cli/ruleset/build.md): materialize a curated ruleset with a lockfile, then load the build output into the daemon. {{ added "unreleased" }}
+- [`ruleset build`](../cli/ruleset/build.md): materialize a curated ruleset with a lockfile, then load the build output into the daemon. {{ added "0.28.0" }}
 - [CI/CD](ci-cd.md): lint, `rule validate --resolve-sources`, merge-base fields-drift diff, backtest, and coverage in the pipeline. Use [rsigma-action](https://github.com/timescale/rsigma-action) for a single GitHub Action gate.
 - [Streaming detection](streaming-detection.md): hot-reload rules and pipelines without restart.
 - [Docker](../deployment/docker.md) and [installation](../getting-started/installation.md): signed containers and release binaries.

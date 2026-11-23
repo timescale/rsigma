@@ -18,7 +18,7 @@ rsigma backend convert rules/ -t postgres -p ecs_windows
 
 Builtins are baked at compile time. Updating their content means upgrading rsigma; they are not file-watched, do not appear under `--reload`, and cannot be tweaked at runtime. Copy the YAML out to a local file (sources below) if you need to customize.
 
-The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "0.27.0" }} The same directory also ships [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) (Sigma to Google SecOps UDM nested JSON for eval). {{ added "unreleased" }}
+The builtin registry is the source of truth (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon` via `builtin_names()`). Extra YAML files may live under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) without being builtins; load those by path with `-p path/to/file.yml`. Shipped path-only examples: [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml) (GCP audit `data.` prefix strip), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml) (Sigma to Splunk CIM for the portable five categories), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml) (Sigma to OCSF live JSON for eval; not Detection Finding output), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml) (Sigma to CrowdStrike Falcon sensor JSON on Windows). {{ added "0.27.0" }} The same directory also ships [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) (Sigma to Google SecOps UDM nested JSON for eval). {{ added "0.28.0" }}
 
 ## `ecs_windows`
 
@@ -238,7 +238,7 @@ Falcon macOS/Linux shapes and `NetworkConnectIP6` are outside this file; see [Ca
 
 ## `udm_events` (path-only)
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Maps Sysmon-style Sigma fields to [Google SecOps UDM](https://docs.cloud.google.com/chronicle/docs/unified-data-model/udm-usage) attribute paths on nested JSON (Chronicle exports, Bindplane/BigQuery UDM-shaped rows). Injects `metadata.event_type` gates per category. **Not** a builtin; does not register UDM as RSigma's native schema or wire schema routing.
 

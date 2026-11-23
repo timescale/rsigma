@@ -180,7 +180,7 @@ See [Linting Rules](linting-rules.md) and [Processing Pipelines](processing-pipe
 
 ## Rulesets in CI
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A ruleset is a reproducible gate because it resolves to an explicit document set. Commit the build output and the lockfile, then verify both on every change:
 

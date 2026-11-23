@@ -49,8 +49,8 @@ Hunts run detection rules only. Correlation rules are rejected with an error, be
 | Flag | Description |
 |------|-------------|
 | `-r, --rules <PATH>...` | Sigma rule file(s) or director(ies) to hunt with. Repeatable. Required unless `--ruleset` is set. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | Named ruleset from the configuration to hunt with instead of `--rules`. A ruleset's pipelines are not applied; pass `-p` explicitly. {{ added "unreleased" }} |
-| `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | Named ruleset from the configuration to hunt with instead of `--rules`. A ruleset's pipelines are not applied; pass `-p` explicitly. {{ added "0.28.0" }} |
+| `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }} |
 | `-t, --target <TARGET>` | Hunt target. Only `postgres` (aliases `postgresql`, `pg`) is executable. |
 
 ### Connection

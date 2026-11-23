@@ -42,7 +42,7 @@ pub enum SourceType {
 
 `Http` already includes an optional `body` field (verbatim after `${VAR}` expansion; when set and `method` is unset, the request defaults to `POST`). Preserve that when you touch the enum.
 
-Step 2: parse the YAML. Every existing variant has a `parse_<type>_source` block in [`crates/rsigma-eval/src/pipeline/parsing.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs); copy one as a template. Keep the same field-name conventions (`format`, `extract`, `refresh`, `on_error`, `required`) so operators only learn one mental model. Add the type and its keys to `source_type_keys` and `SOURCE_TYPES` in the same file: the parser rejects any key a type does not list, and names the type a key belongs to when it is set on another one. {{ added "unreleased" }}
+Step 2: parse the YAML. Every existing variant has a `parse_<type>_source` block in [`crates/rsigma-eval/src/pipeline/parsing.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs); copy one as a template. Keep the same field-name conventions (`format`, `extract`, `refresh`, `on_error`, `required`) so operators only learn one mental model. Add the type and its keys to `source_type_keys` and `SOURCE_TYPES` in the same file: the parser rejects any key a type does not list, and names the type a key belongs to when it is set on another one. {{ added "0.28.0" }}
 
 Put the new type in a **standalone** source file (not inside a pipeline):
 

@@ -125,11 +125,11 @@ These knobs only matter for the streaming daemon, not for `engine eval`.
 |------|---------|--------|
 | `--buffer-size N` | `10000` | Bounded mpsc capacity for both source→engine and engine→sink queues. Higher values absorb burstier input; lower values apply back-pressure sooner. Watch `rsigma_back_pressure_events_total` to see whether the queues are filling. |
 | `--batch-size N` | `128` | Maximum events per detection batch, capped at `--buffer-size`. The batch is the unit `Engine::evaluate_batch` fans across rayon. The published SigmaHQ baseline uses 512. |
-| `--detect-inflight N` | `RSIGMA_DETECT_INFLIGHT`, else scales with rayon (1-5) | How many detection-only batches may evaluate at once when the rule set has no correlation rules. A sequence-numbered reducer restores sink/ack order. Correlation engines ignore this and stay at 1. Cap is 8. The flag and `daemon.runtime.detect_inflight` take precedence over the environment variable. {{ added "unreleased" }} |
-| `--detect-threads N` | `RAYON_NUM_THREADS`, else one per core | Size of the rayon pool that parses and evaluates batches. {{ added "unreleased" }} |
-| `--worker-threads N` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. {{ added "unreleased" }} |
+| `--detect-inflight N` | `RSIGMA_DETECT_INFLIGHT`, else scales with rayon (1-5) | How many detection-only batches may evaluate at once when the rule set has no correlation rules. A sequence-numbered reducer restores sink/ack order. Correlation engines ignore this and stay at 1. Cap is 8. The flag and `daemon.runtime.detect_inflight` take precedence over the environment variable. {{ added "0.28.0" }} |
+| `--detect-threads N` | `RAYON_NUM_THREADS`, else one per core | Size of the rayon pool that parses and evaluates batches. {{ added "0.28.0" }} |
+| `--worker-threads N` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. {{ added "0.28.0" }} |
 
-Small batches skip the rayon pool: detection runs on the calling thread until a batch's projected cost reaches 500 µs, and parsing stays there for batches under 32 KiB of input, so cheap rule sets no longer pay for waking every pool thread per batch. See [`engine daemon`: Tuning](../cli/engine/daemon.md#tuning) for measured settings. {{ added "unreleased" }}
+Small batches skip the rayon pool: detection runs on the calling thread until a batch's projected cost reaches 500 µs, and parsing stays there for batches under 32 KiB of input, so cheap rule sets no longer pay for waking every pool thread per batch. See [`engine daemon`: Tuning](../cli/engine/daemon.md#tuning) for measured settings. {{ added "0.28.0" }}
 
 A typical high-throughput configuration:
 
@@ -151,7 +151,7 @@ The daemon does not wait for a batch to fill: it blocks for the first event, the
 
 Formatted input parsing fans across the same rayon pool before engine evaluation. When there are no correlation rules, several batches may be in flight so one batch's serial merge can overlap another's rayon work; set `RSIGMA_DETECT_INFLIGHT=1` to force the older single-batch path. Correlation engines stay one batch at a time. Raising `RAYON_NUM_THREADS` beyond the physical performance-core count should not be expected to scale linearly. Use `rsigma_batch_phase_duration_seconds` (`parse`, `decode_merge`, `observe`, `evaluate`, `result_merge`, `dispatch`) to rank where batch time goes on your workload.
 
-`--include-event` clones the complete input event into every detection result. A loaded enricher that reads `${detection.fields.*}` or `${detection.event.*}` turns on the same copy without delivering the event (see [Enrichers](enrichers.md#kind-and-template-namespaces)). {{ added "unreleased" }} Its cost scales with matches rather than inputs: the raw Windows baseline produces about 3 matches per event without routing and about 0.02 with routing, so measure this option on the actual match volume. The checked-in daemon matrix includes both forms, a match-heavy lane, and a handcrafted lane covering event-count, value-count, value-sum, and ordered-temporal correlations; the pinned SigmaHQ tree itself contains no correlation rules.
+`--include-event` clones the complete input event into every detection result. A loaded enricher that reads `${detection.fields.*}` or `${detection.event.*}` turns on the same copy without delivering the event (see [Enrichers](enrichers.md#kind-and-template-namespaces)). {{ added "0.28.0" }} Its cost scales with matches rather than inputs: the raw Windows baseline produces about 3 matches per event without routing and about 0.02 with routing, so measure this option on the actual match volume. The checked-in daemon matrix includes both forms, a match-heavy lane, and a handcrafted lane covering event-count, value-count, value-sum, and ordered-temporal correlations; the pinned SigmaHQ tree itself contains no correlation rules.
 
 ### Walkthrough: maximize sustained detection throughput
 
@@ -213,7 +213,7 @@ Tune by:
 - Lowering `--max-state-entries` on memory-constrained deployments, or raising it when the eviction warning fires during legitimate high-cardinality traffic.
 - Setting `--max-correlation-events 5` (or via `rsigma.max_correlation_events` per-rule) to cap the per-window event list.
 - Setting `--correlation-event-mode refs` to store lightweight references instead of full event bodies. `refs` mode keeps timestamps and event IDs only; `full` retains the deflate-compressed event JSON. `none` (the default) keeps no events.
-- Accounting for chains. A chained parent with an event mode adds an event buffer per active child group and one per active parent group, each bounded by the largest cap among the correlations that retain through it. Event sources share one string per rule reference, so they add a fixed cost per buffered entry rather than an allocation per event. {{ added "unreleased" }}
+- Accounting for chains. A chained parent with an event mode adds an event buffer per active child group and one per active parent group, each bounded by the largest cap among the correlations that retain through it. Event sources share one string per rule reference, so they add a fixed cost per buffered entry rather than an allocation per event. {{ added "0.28.0" }}
 
 See [Evaluating Rules](evaluating-rules.md#correlation-in-eval-mode) for the matching `engine eval` flags and [Streaming Detection](streaming-detection.md#state-persistence) for the daemon's SQLite snapshot path.
 

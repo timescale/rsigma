@@ -47,7 +47,7 @@ rsigma engine daemon -r rules/ \
 
 ## Tenancy
 
-With `daemon.tenancy.enabled`, a subscriber cannot see the publisher's authenticated user, so bind each tenant in the broker and declare one exact subject per tenant in `daemon.input.nats_tenants`. Sinks can route with `{tenant}` as a whole dot-separated subject token; a result without a tenant on a `{tenant}` subject is a permanent delivery failure and reaches the DLQ. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+With `daemon.tenancy.enabled`, a subscriber cannot see the publisher's authenticated user, so bind each tenant in the broker and declare one exact subject per tenant in `daemon.input.nats_tenants`. Sinks can route with `{tenant}` as a whole dot-separated subject token; a result without a tenant on a `{tenant}` subject is a permanent delivery failure and reaches the DLQ. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## Authentication
 

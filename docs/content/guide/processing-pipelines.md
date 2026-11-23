@@ -67,7 +67,7 @@ rsigma engine eval -r rules/ -p crates/rsigma-eval/pipelines/udm_events.yml -e @
 
 The argument is first checked against [builtin pipelines](#builtin-pipelines). If no match, it is treated as a file path. Multiple pipelines are sorted by `priority` and applied in sequence.
 
-Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml). Pass the file path; those names are not in `builtin_names()`. See [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) and [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "0.27.0" }} The same directory also ships [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) (Google SecOps UDM nested JSON for eval). {{ added "unreleased" }}
+Shipped path-only YAML under [`crates/rsigma-eval/pipelines/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-eval/pipelines) includes [`gcp_audit.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/gcp_audit.yml), [`cim_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/cim_events.yml), [`ocsf_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/ocsf_events.yml), and [`falcon_windows.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/falcon_windows.yml). Pass the file path; those names are not in `builtin_names()`. See [Canonicalizing Pipelines](../reference/canonicalizing-pipelines.md) and [Builtin Pipelines](../reference/builtin-pipelines.md). {{ added "0.27.0" }} The same directory also ships [`udm_events.yml`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/pipelines/udm_events.yml) (Google SecOps UDM nested JSON for eval). {{ added "0.28.0" }}
 
 ## Builtin pipelines
 
@@ -390,7 +390,7 @@ detection:
 
 `${source.<id>}` substitution applies to `vars:` entries and to `include:` directives. Transformation field values such as `add_condition.conditions.<field>` are parsed as typed structures and do **not** substitute dynamic sources directly; route lists of values through `vars` plus `value_placeholders` as shown above. Single scalar substitutions inside transformation fields (such as `set_state.val`) follow the same pattern through `vars`.
 
-A source declaration with a key that is unknown or does not apply to its `type:`, or with an unknown `format`, `on_error`, or `refresh` value, fails to load with an error naming the key or value. See [Dynamic Sources](../reference/dynamic-sources.md#schema). {{ added "unreleased" }}
+A source declaration with a key that is unknown or does not apply to its `type:`, or with an unknown `format`, `on_error`, or `refresh` value, fails to load with an error naming the key or value. See [Dynamic Sources](../reference/dynamic-sources.md#schema). {{ added "0.28.0" }}
 
 ### Source types
 

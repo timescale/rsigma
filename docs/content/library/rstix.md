@@ -125,7 +125,7 @@ Build with `cargo build -p rstix --features pattern`.
 
 Lexer, Level 1-3 parser, SCO schema type-checker (18 built-in + custom types), `Pattern::parse`, `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data`, `Pattern::canonical`, `Pattern::simple_observables`, `IndicatorPattern` STIX AST wiring at deserialize, `IndicatorPattern::evaluate`, `IndicatorBuilder`, `ObservationContext`, full §9 comparison and temporal semantics, manifest-driven SCO field tests (`tests/pattern_eval_sco_fields.rs`, 276 cases), spec §9.8 parse/print round-trip tests, `fuzz_stix_pattern`.
 
-`Pattern::simple_observables` returns the string and integer values of non-negated `=` and `IN` comparisons when the pattern is one observation or observations joined only by `OR`. `WITHIN`, `REPEATS`, `START`/`STOP`, `AND`, `FOLLOWEDBY`, and `NOT` return [`UnsupportedReason`](https://docs.rs/rstix/latest/rstix/enum.UnsupportedReason.html). Known paths such as `ipv4-addr:value` and `file:hashes.'SHA-256'` set [`ObservableKind`](https://docs.rs/rstix/latest/rstix/enum.ObservableKind.html). Other paths stay in the result with no kind. Domain names, the four hash kinds, and MAC addresses are lowercased. {{ added "unreleased" }}
+`Pattern::simple_observables` returns the string and integer values of non-negated `=` and `IN` comparisons when the pattern is one observation or observations joined only by `OR`. `WITHIN`, `REPEATS`, `START`/`STOP`, `AND`, `FOLLOWEDBY`, and `NOT` return [`UnsupportedReason`](https://docs.rs/rstix/latest/rstix/enum.UnsupportedReason.html). Known paths such as `ipv4-addr:value` and `file:hashes.'SHA-256'` set [`ObservableKind`](https://docs.rs/rstix/latest/rstix/enum.ObservableKind.html). Other paths stay in the result with no kind. Domain names, the four hash kinds, and MAC addresses are lowercased. {{ added "0.28.0" }}
 
 Grammar authority: STIX Specification §9. Internal storage uses `PatternAst` after type-check.
 
@@ -152,7 +152,7 @@ Optional `taxii` feature: a TAXII 2.1 HTTP client for all normative endpoint gro
 
 | Feature | Key API | Highlights |
 | ------- | ------- | ---------- |
-| `taxii` | `TaxiiClient`, `TaxiiEnvelope` | TAXII 2.1 HTTP client (rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin/DANE, auth, pagination, SRV + `dns_nameserver()`). `address_filter` drops rejected destination addresses, checks IP literals on every request, and disables redirects and proxies. With no filter, resolution, redirects, and proxies stay at their defaults. Envelope parsing applies `ParseOptions` depth, string, and object-count limits. `PollBudget` is non-exhaustive (`new` or `for_indicators`). `poll_object_pages` delivers each page and returns when the budget is reached, with that page's `X-TAXII-Date-Added-Last` so the caller can resume. `poll_objects` collects those pages and fails at that stop, when the cursor does not advance, or when HTTP 416 recovery would repeat the same filter. {{ added "unreleased" }} Covers Discovery, API Root, Collections, Objects, Manifests, and Status. |
+| `taxii` | `TaxiiClient`, `TaxiiEnvelope` | TAXII 2.1 HTTP client (rustls TLS 1.2+1.3, PEM and PKCS#12 mTLS, SPKI pin/DANE, auth, pagination, SRV + `dns_nameserver()`). `address_filter` drops rejected destination addresses, checks IP literals on every request, and disables redirects and proxies. With no filter, resolution, redirects, and proxies stay at their defaults. Envelope parsing applies `ParseOptions` depth, string, and object-count limits. `PollBudget` is non-exhaustive (`new` or `for_indicators`). `poll_object_pages` delivers each page and returns when the budget is reached, with that page's `X-TAXII-Date-Added-Last` so the caller can resume. `poll_objects` collects those pages and fails at that stop, when the cursor does not advance, or when HTTP 416 recovery would repeat the same filter. {{ added "0.28.0" }} Covers Discovery, API Root, Collections, Objects, Manifests, and Status. |
 
 ```rust
 use rstix::taxii::{BearerAuth, TaxiiClient, TaxiiClientConfig, TaxiiFilter};
@@ -267,7 +267,7 @@ Grouped by Cargo feature (phase name). Rust module paths are an implementation d
 
 | Symbol | Role |
 | ------ | ---- |
-| `StixId`, typed ID wrappers, `StixObjectKind` | ID parse, generate, typed conversions. `StixId::parse` rejects type names outside the STIX 2.1 rules and non-hyphenated UUIDs. {{ added "unreleased" }} |
+| `StixId`, typed ID wrappers, `StixObjectKind` | ID parse, generate, typed conversions. `StixId::parse` rejects type names outside the STIX 2.1 rules and non-hyphenated UUIDs. {{ added "0.28.0" }} |
 | `StixTimestamp`, `TaxiiTimestamp`, `Confidence`, `SpecVersion`, `LanguageTag` | Core wire types |
 | `generate_sco_id`, `select_id_contributing_properties`, `jcs_canonicalize` | Deterministic SCO UUIDv5 |
 | Vocabulary tables (`HASH_ALGORITHM_ENUM`, `REGION_OV`, …) | Closed and open STIX §10 tables |

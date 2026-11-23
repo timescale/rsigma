@@ -110,7 +110,7 @@ The CLI is noun-led: every group is a noun, every leaf is a verb.
 | `rule` | Operate on rule files (parse, lint, draft, backtest, coverage, and more) |
 | `backend` | Generate backend-native queries, or build every configured group with manifests |
 | `pipeline` | Diff pipeline rewrites and resolve dynamic sources |
-| `ruleset` | Curate named rule sets, materialize them with a lockfile, and compare them with the lockfile {{ added "unreleased" }} |
+| `ruleset` | Curate named rule sets, materialize them with a lockfile, and compare them with the lockfile {{ added "0.28.0" }} |
 | `hunt` | Hunt a PostgreSQL/TimescaleDB archive with converted rules (`hunt-postgres` feature for `--emit events`) |
 | `taxii` | Sync TAXII collections and import STIX bundles into a local store (`taxii-sync` feature) |
 | `mcp` | Run the Model Context Protocol server (`mcp` feature) |
@@ -145,7 +145,7 @@ A correlation firing looks like this:
 }
 ```
 
-`events` and `event_refs` appear only when correlation event mode is `Full` or `Refs`. Either one comes with `event_sources`, which names the rule each event matched and, on a chained correlation, the child correlation that delivered it. Chained correlation results carry events the same way. {{ added "unreleased" }} The [HTTP API reference](../reference/http-api.md) and [eval library docs](../library/eval.md) cover the full field set.
+`events` and `event_refs` appear only when correlation event mode is `Full` or `Refs`. Either one comes with `event_sources`, which names the rule each event matched and, on a chained correlation, the child correlation that delivered it. Chained correlation results carry events the same way. {{ added "0.28.0" }} The [HTTP API reference](../reference/http-api.md) and [eval library docs](../library/eval.md) cover the full field set.
 
 ## Where to go next
 

@@ -15,7 +15,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/healthz` | GET | always open | Liveness probe. Always 200 once the listener is up. |
 | `/readyz` | GET | always open | Readiness probe. 200 when rules and pipelines are loaded; 503 during startup or after a failed reload. |
 | `/metrics` | GET | `metrics:read` | Prometheus text format. See [Prometheus metrics](metrics.md). |
-| `/api/v1/status` | GET | `status:read` | Counters, state-entry counts, uptime, per-ruleset rule counts, and (when configured) dynamic-source summary. {{ added "unreleased" }} |
+| `/api/v1/status` | GET | `status:read` | Counters, state-entry counts, uptime, per-ruleset rule counts, and (when configured) dynamic-source summary. {{ added "0.28.0" }} |
 | `/api/v1/correlations` | GET | `correlations:read` | Compiled correlation list with per-group counts. Empty when the engine has no correlation rules. |
 | `/api/v1/correlations/state` | GET | `correlations:read` | Live per-group correlation window snapshot (current aggregate vs threshold, window entries, last alert, seconds to eviction). Filter with `?id=` and `?group=`. |
 | `/api/v1/incidents` | GET | `incidents:read` | Open incidents from the alert-pipeline grouping stage. |
@@ -25,7 +25,7 @@ All bodies are JSON unless otherwise noted. All responses include a `Content-Typ
 | `/api/v1/silences` | GET, POST | `silences:read`, `silences:write` | List silences, or create one (returns its id). |
 | `/api/v1/silences/{id}` | DELETE | `silences:write` | Remove a silence by id. |
 | `/api/v1/dispositions` | GET, POST | `dispositions:read`, `dispositions:write` | Ingest analyst dispositions, or read the per-rule false-positive ratio. Disabled by default; enable with `daemon.dispositions.enabled: true` or `--enable-dispositions`. When capture is enabled, POST also requires `capture:write`. There is no read endpoint for the capture ring or spool. |
-| `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path, or per-ruleset counts in ruleset mode. {{ added "unreleased" }} |
+| `/api/v1/rules` | GET | `rules:read` | Rule counts and rules-directory path, or per-ruleset counts in ruleset mode. {{ added "0.28.0" }} |
 | `/api/v1/reload` | POST | `reload:execute` | Trigger an immediate rules + pipelines reload. |
 | `/api/v1/events` | POST | `events:ingest` | NDJSON event ingest. Only enabled with `--input http`. |
 | `/api/v1/sources` | GET | `sources:read` | Dynamic sources currently registered. |
@@ -88,7 +88,7 @@ Failure semantics: a missing or unrecognized token gets `401 Unauthorized` (with
 
 ## Tenancy scoping
 
-With `daemon.tenancy.enabled`, every route has a tenancy class and the token's binding decides what it can see. {{ added "unreleased" }} `GET /healthz` and `GET /readyz` are open. Ingest routes require a token bound to exactly one tenant; an `all_tenants` token gets `403` because it has no tenant to bind. Operator-only routes (`GET /metrics`, `GET /api/v1/status`, `POST /api/v1/reload`, the field and schema observers, dynamic sources, watchlists, STIX sources) span tenants, so a tenant token gets `403`.
+With `daemon.tenancy.enabled`, every route has a tenancy class and the token's binding decides what it can see. {{ added "0.28.0" }} `GET /healthz` and `GET /readyz` are open. Ingest routes require a token bound to exactly one tenant; an `all_tenants` token gets `403` because it has no tenant to bind. Operator-only routes (`GET /metrics`, `GET /api/v1/status`, `POST /api/v1/reload`, the field and schema observers, dynamic sources, watchlists, STIX sources) span tenants, so a tenant token gets `403`.
 
 Tenant-scoped reads are filtered to the token's tenant: rules, correlations and correlation state, incidents and their bundles, risk entities, silences, dispositions, audit rows, the tap, and the detection stream. `?tenant=` may only narrow. A tenant token naming another tenant is `403`; an `all_tenants` token sees every tenant or one with `?tenant=`. A resource id owned by another tenant is `404`, never `403`, so ids do not leak existence. With tenancy disabled, `?tenant=` is `400`.
 
@@ -246,7 +246,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 ### Watchlist indicators
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `/api/v1/sources/{source_id}/indicators` reads and changes a `type: watchlist` source. The response is returned before rules finish rebuilding. A body over 4 MiB, or more than 10,000 indicators, is `413`. When `--state-db` enables the audit trail, a body over `daemon.api.audit.max_body_bytes` (default 64 KiB) is also `413`, before this handler runs.
 

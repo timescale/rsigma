@@ -4,7 +4,7 @@ description: "Show the documents a ruleset resolves to, including decisions, ori
 
 # `rsigma ruleset show`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Show every document a ruleset resolves to, with the decision that admitted or rejected it and the overlays that touched it.
 

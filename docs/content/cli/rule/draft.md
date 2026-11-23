@@ -44,10 +44,10 @@ For a draft from events, two things stay yours: the metadata (title, description
 | `--logsource-product <P>` | inferred | Logsource product override. |
 | `--logsource-service <S>` | inferred | Logsource service override. |
 | `--title <TITLE>` | derived | Rule title (derived from the dominant marker when omitted). For a STIX draft, this title is used on every emitted rule. |
-| `--date <YYYY-MM-DD>` | today (UTC) | Calendar date written into the draft. Applies to event drafts, correlation drafts, and `--from-stix`. Omit it and the date is today in UTC, so a file you save today will differ tomorrow. Pass it when the YAML must stay byte-stable. A value that is not `YYYY-MM-DD` exits 3. {{ added "unreleased" }} |
-| `--from-stix <PATH>` | unset | STIX 2.1 bundle, or one indicator object. `-` reads stdin. Requires the `stix-draft` feature. Without that feature the flag is absent from `--help` and passing it fails. {{ added "unreleased" }} |
-| `--observable <KIND>` | every mapped kind | Observable kind to draft. Repeatable. Requires `--from-stix`. Without that flag the command exits 2. An unknown key exits 3 and the message lists the valid keys. {{ added "unreleased" }} |
-| `--include-expired` | off | Keep indicators whose `valid_until` has passed and indicators whose `valid_from` is still ahead. Revoked indicators are still skipped. Requires `--from-stix`. Without that flag the command exits 2. {{ added "unreleased" }} |
+| `--date <YYYY-MM-DD>` | today (UTC) | Calendar date written into the draft. Applies to event drafts, correlation drafts, and `--from-stix`. Omit it and the date is today in UTC, so a file you save today will differ tomorrow. Pass it when the YAML must stay byte-stable. A value that is not `YYYY-MM-DD` exits 3. {{ added "0.28.0" }} |
+| `--from-stix <PATH>` | unset | STIX 2.1 bundle, or one indicator object. `-` reads stdin. Requires the `stix-draft` feature. Without that feature the flag is absent from `--help` and passing it fails. {{ added "0.28.0" }} |
+| `--observable <KIND>` | every mapped kind | Observable kind to draft. Repeatable. Requires `--from-stix`. Without that flag the command exits 2. An unknown key exits 3 and the message lists the valid keys. {{ added "0.28.0" }} |
+| `--include-expired` | off | Keep indicators whose `valid_until` has passed and indicators whose `valid_from` is still ahead. Revoked indicators are still skipped. Requires `--from-stix`. Without that flag the command exits 2. {{ added "0.28.0" }} |
 | `--skip-baseline-eval` | off | Keep the baseline for scoring but skip the final baseline evaluation pass. |
 | `--emit <yaml\|report>` | `yaml` | `yaml` prints only the paste-ready rule (field report on stderr unless `--quiet`). For an event draft, `report` prints the full analysis in the global output format with the rule embedded. For `--from-stix`, `report` prints the JSON document below. A non-JSON `--output-format` warns and the JSON is still printed. |
 
@@ -137,7 +137,7 @@ Each group is verified in a fresh correlation engine. Positive groups must fire 
 
 ## Draft from a STIX indicator
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `--from-stix` turns STIX 2.1 indicators into Sigma rules. It reads a bundle, or one indicator object, keeps the indicators that are in force, and prints one rule for each logsource those indicators map to. Each rule is parsed and compiled before it is printed. This path does not profile events and it does not read a baseline.
 

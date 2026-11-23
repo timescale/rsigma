@@ -36,7 +36,7 @@ daemon:
       - /etc/rsigma/webhooks/
 ```
 
-Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. An unknown key at any level, such as `retires:` for `retry:`, is rejected the same way. {{ added "unreleased" }} Hot reload is not supported: webhook changes take effect on restart.
+Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. An unknown key at any level, such as `retires:` for `retry:`, is rejected the same way. {{ added "0.28.0" }} Hot reload is not supported: webhook changes take effect on restart.
 
 ## Config reference
 
@@ -97,7 +97,7 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 
 ## Tenancy
 
-`scope.tenants` restricts a webhook to listed tenants. `detection.tenant` and `correlation.tenant` render the result's tenant (empty when untenanted), and a URL template may use them only in the path, not the scheme or authority. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+`scope.tenants` restricts a webhook to listed tenants. `detection.tenant` and `correlation.tenant` render the result's tenant (empty when untenanted), and a URL template may use them only in the path, not the scheme or authority. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## Templating
 
@@ -105,7 +105,7 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 
 - `${detection.*}` or `${correlation.*}` for result data, matching the webhook's `kind`. Common paths: `${detection.rule.title}`, `${detection.rule.id}`, `${detection.rule.level}`, `${detection.tags}`, `${detection.fields.<Name>}`, `${detection.event.<dotted.path>}`; `${correlation.type}`, `${correlation.aggregated_value}`, `${correlation.group_key.<field>}`.
 - `${ENV_VAR}` (single segment, no dot) for secrets. Resolved from the daemon process environment at render time, so secrets live in the environment, never in the webhook YAML.
-- `${detection.ocsf}` or `${correlation.ocsf}` in `body` only: the result's [OCSF Detection Finding](ocsf-findings.md#webhook-bodies) as raw JSON. {{ added "unreleased" }}
+- `${detection.ocsf}` or `${correlation.ocsf}` in `body` only: the result's [OCSF Detection Finding](ocsf-findings.md#webhook-bodies) as raw JSON. {{ added "0.28.0" }}
 
 The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload. Header values are not escaped (CR and LF are rejected).
 
@@ -125,7 +125,7 @@ webhooks:
     body: '{"source": "rsigma", "finding": ${detection.ocsf}}'
 ```
 
-`${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields. Webhook templates do not share the enricher fallback: `${detection.fields.<name>}` resolves only fields the rule matched on, and an event the daemon retained only for enrichers is stripped before webhooks render, so `--include-event` is still required here. {{ added "unreleased" }}
+`${detection.event.*}` only resolves when the event is retained. Pass `--include-event` (or set `rsigma.include_event` per rule) for recipes that interpolate raw event fields. Webhook templates do not share the enricher fallback: `${detection.fields.<name>}` resolves only fields the rule matched on, and an event the daemon retained only for enrichers is stripped before webhooks render, so `--include-event` is still required here. {{ added "0.28.0" }}
 
 ## Delivery, retry, and rate limiting
 
@@ -133,7 +133,7 @@ Each webhook is driven by one bounded queue and worker. The worker owns the queu
 
 - **Classification.** Connection and timeout errors, HTTP `429` (honoring a numeric `Retry-After`, capped), and `5xx` are retryable. Other `4xx` are permanent: a misrendered payload will not heal on retry, so it routes straight to the DLQ without spending the retry budget.
 - **Backoff.** Retryable failures use capped exponential backoff (`backoff * 2^attempt`, up to `max_backoff`). Retries delay only this webhook's own queue.
-- **No repeats.** One delivery can post several requests, one per matching result. A retry starts at the result whose request failed, so results that already went out are not posted again, and each request keeps its signing id and timestamp across retries. {{ added "unreleased" }}
+- **No repeats.** One delivery can post several requests, one per matching result. A retry starts at the result whose request failed, so results that already went out are not posted again, and each request keeps its signing id and timestamp across retries. {{ added "0.28.0" }}
 - **Rate limiting.** When a per-entry token bucket is configured, the worker waits for a token before each request, so traffic is delayed rather than dropped. A wait increments `rate_limited_wait` and the subsequent POST still records `success` or `permanent_failure`, so those labels are not mutually exclusive on one attempt.
 - **Full queue.** When the bounded queue is full, the result is dropped for this webhook (`rsigma_sink_dropped_total`) and never reaches HTTP or the DLQ.
 - **DLQ.** Permanent failures and retry exhaustion route to the daemon's `--dlq`, reusing the same record shape as parse errors and other sink failures. The underlying error string is prefixed `webhook <id>:`.

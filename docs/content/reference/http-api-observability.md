@@ -228,7 +228,7 @@ Error semantics:
 | Status | When |
 |--------|------|
 | `400 Bad Request` | Malformed params, an invalid `stage`, or a `duration` over `daemon.tap.max_duration`. |
-| `409 Conflict` | The concurrent-session cap (`daemon.tap.max_sessions`, default `2`) is reached, or the caller's tenant holds `daemon.tenancy.quotas.stream_sessions` tap sessions. {{ added "unreleased" }} |
+| `409 Conflict` | The concurrent-session cap (`daemon.tap.max_sessions`, default `2`) is reached, or the caller's tenant holds `daemon.tenancy.quotas.stream_sessions` tap sessions. {{ added "0.28.0" }} |
 | `503 Service Unavailable` | The tap is disabled (the default; not enabled via `daemon.tap.enabled: true` or `--enable-tap`). |
 
 ::: callout warning "The tap exfiltrates raw events"
@@ -268,7 +268,7 @@ Error semantics:
 | Status | When |
 |--------|------|
 | `400 Bad Request` | Malformed params or an invalid `level`. |
-| `409 Conflict` | The concurrent-session cap (`daemon.tail.max_sessions`, default `2`) is reached, or the caller's tenant holds `daemon.tenancy.quotas.stream_sessions` tail sessions. {{ added "unreleased" }} |
+| `409 Conflict` | The concurrent-session cap (`daemon.tail.max_sessions`, default `2`) is reached, or the caller's tenant holds `daemon.tenancy.quotas.stream_sessions` tail sessions. {{ added "0.28.0" }} |
 | `503 Service Unavailable` | The tail is disabled (the default; not enabled via `daemon.tail.enabled: true` or `--enable-tail`). |
 
 Two Prometheus metrics track the tail: `rsigma_tail_active_sessions` and `rsigma_tail_detections_dropped_total`. See [Prometheus metrics](metrics.md).

@@ -20,7 +20,7 @@ The server speaks JSON-RPC over stdio: stdin and stdout are the transport, so al
 
 `mcp serve` starts a stdio MCP server backed by the same crates the CLI uses. An agent connects, calls `tools/list` to discover the tool surface, and calls tools with either inline content (e.g. `yaml` or `query`) or a file `path`. Tool outputs are structured JSON: ASTs, lint findings with spans and fix availability, evaluation matches, backend queries, reverse-converted drafts, and field inventories.
 
-The server reads `rulesets:` from the same layered configuration and exposes a `ruleset` input on `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars`. A ruleset input resolves against `--rules-dir` when one is set, and every source, overlay, and pipeline file must stay inside it. {{ added "unreleased" }}
+The server reads `rulesets:` from the same layered configuration and exposes a `ruleset` input on `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules`, and `test_exemplars`. A ruleset input resolves against `--rules-dir` when one is set, and every source, overlay, and pipeline file must stay inside it. {{ added "0.28.0" }}
 
 For the full tool reference, client setup, and the agentic write-lint-evaluate loop, see the [MCP server guide](../../guide/mcp-server.md).
 

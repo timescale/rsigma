@@ -40,7 +40,7 @@ rsigma engine daemon -r rules/ --alert-pipeline pipeline.yml --config rsigma.yam
 
 `--enable-capture` turns the feature on for one run. Bounds and `spool_dir` stay config-file-only under `daemon.capture`.
 
-When capture is enabled, the engine retains detection event payloads internally even if you did not pass `--include-event`. Those payloads are stripped before sink delivery unless you independently requested `--include-event`. A rule that sets `rsigma.include_event: "true"` keeps its event, and correlation `events`, `event_refs`, and `event_sources` are never stripped. {{ added "unreleased" }}
+When capture is enabled, the engine retains detection event payloads internally even if you did not pass `--include-event`. Those payloads are stripped before sink delivery unless you independently requested `--include-event`. A rule that sets `rsigma.include_event: "true"` keeps its event, and correlation `events`, `event_refs`, and `event_sources` are never stripped. {{ added "0.28.0" }}
 
 ## Bounds
 
@@ -77,7 +77,7 @@ Do not pass `spool_dir` itself to `rule backtest`. Backtest walks every file und
 
 ## Tenancy
 
-With tenancy enabled, the spool path gains a tenant level: `<spool>/<tenant>/<fp|tp>/<bundle_id>`. The bundle identity and the capture fingerprint index include the tenant, so the same rule and fingerprint in two tenants produce two bundles. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+With tenancy enabled, the spool path gains a tenant level: `<spool>/<tenant>/<fp|tp>/<bundle_id>`. The bundle identity and the capture fingerprint index include the tenant, so the same rule and fingerprint in two tenants produce two bundles. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## Commands
 

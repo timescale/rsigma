@@ -5,7 +5,7 @@ description: Isolate detections, correlation state, incidents, and API reads per
 
 # Multi-tenancy
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A single daemon can serve several tenants while keeping their state apart. The tenant of an event comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, request headers, NATS message headers, and OTLP attributes are never identity.
 

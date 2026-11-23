@@ -31,7 +31,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 | Flag | Description |
 |------|-------------|
 | `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | Named ruleset from the configuration to evaluate. Repeatable: several rulesets are evaluated side by side and every result carries its ruleset name. May also be supplied via `eval.ruleset` (one name) or `eval.rulesets` (several names, with optional `when` schema bindings). Conflicts with `--rules`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | Named ruleset from the configuration to evaluate. Repeatable: several rulesets are evaluated side by side and every result carries its ruleset name. May also be supplied via `eval.ruleset` (one name) or `eval.rulesets` (several names, with optional `when` schema bindings). Conflicts with `--rules`. {{ added "0.28.0" }} |
 
 ### Configuration
 
@@ -66,8 +66,8 @@ The global `--output-format`, `--color`, `--quiet`, and `--no-stats` flags apply
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-o, --output <PATH>` | stdout | Write detection and correlation results to a file instead of stdout. The file is created or truncated at start and flushed on exit, including when `--fail-on-detection` exits with code 1. Results use `--output-format` when set and NDJSON otherwise; `--pretty` still applies. The summary and diagnostics stay on stderr. Config key: `eval.output`. {{ added "0.25.0" }} |
-| `--finding-format <FORMAT>` | `native` | `native` or `ocsf`. `ocsf` emits one class-2004 Detection Finding per match and composes with `json` or `ndjson`. `table`, `csv`, and `tsv` are a config error. Config key: `eval.finding_format`. {{ added "unreleased" }} |
-| `--ocsf-version <VERSION>` | `1.1.0` | `1.1.0` or `1.3.0`. Requires `--finding-format ocsf`. Config key: `eval.ocsf_version`. {{ added "unreleased" }} |
+| `--finding-format <FORMAT>` | `native` | `native` or `ocsf`. `ocsf` emits one class-2004 Detection Finding per match and composes with `json` or `ndjson`. `table`, `csv`, and `tsv` are a config error. Config key: `eval.finding_format`. {{ added "0.28.0" }} |
+| `--ocsf-version <VERSION>` | `1.1.0` | `1.1.0` or `1.3.0`. Requires `--finding-format ocsf`. Config key: `eval.ocsf_version`. {{ added "0.28.0" }} |
 | `--pretty` | off | Pretty-print JSON output. Kept for backwards compatibility; equivalent to `--output-format json` with pretty-printing on. |
 | `--emit-detections` | off | Emit output for rules that only feed correlations, including correlations referenced by another correlation. By default, referenced rules are emitted only when a referencing correlation has top-level `generate: true`. {{ added "0.24.0" }} |
 | `--no-detections` | off | Deprecated compatibility flag. Correlation-only detections are suppressed by default. |
@@ -80,12 +80,12 @@ The global `--output-format`, `--color`, `--quiet`, and `--no-stats` flags apply
 |------|---------|-------------|
 | `--suppress <DURATION>` | unset | Suppress duplicate correlation alerts within the window (`5m`, `1h`, `30s`). |
 | `--action <ACTION>` | `alert` | Post-fire action for correlations: `alert` (keep state, re-alert on next match) or `reset` (clear window state). |
-| `--correlation-event-mode <MODE>` | `none` | Whether to embed contributing events in correlation output: `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "unreleased" }} |
-| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window when `--correlation-event-mode` is not `none`. Oldest evicted. A chained parent applies its own cap to the events its children deliver. {{ added "unreleased" }} |
+| `--correlation-event-mode <MODE>` | `none` | Whether to embed contributing events in correlation output: `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "0.28.0" }} |
+| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window when `--correlation-event-mode` is not `none`. Oldest evicted. A chained parent applies its own cap to the events its children deliver. {{ added "0.28.0" }} |
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded. Equivalent to the `rsigma.max_group_entries` custom attribute. |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction priority list. Default list: `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`. Repeatable. |
-| `--dump-correlation-state` | off | After replaying all events, print the final correlation window state (per correlation and group: current aggregate vs threshold, window entries, last alert, seconds to eviction) to stderr as JSON, for offline "why didn't it fire?" diagnosis. Correlation mode only; ignored with `--schema-routing`. In ruleset mode the output is keyed by ruleset name, even with one ruleset, and it is printed with `--schema-routing` too and for rulesets without correlations. {{ added "unreleased" }} |
+| `--dump-correlation-state` | off | After replaying all events, print the final correlation window state (per correlation and group: current aggregate vs threshold, window entries, last alert, seconds to eviction) to stderr as JSON, for offline "why didn't it fire?" diagnosis. Correlation mode only; ignored with `--schema-routing`. In ruleset mode the output is keyed by ruleset name, even with one ruleset, and it is printed with `--schema-routing` too and for rulesets without correlations. {{ added "0.28.0" }} |
 
 ### Performance (advanced)
 
@@ -151,7 +151,7 @@ These flags may also be supplied via the `eval.logsource_routing` block in a [co
 
 ## Several rulesets
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Repeat `--ruleset` to evaluate several named rulesets over the same events. Each ruleset is resolved independently and keeps its own pipelines and correlation state. Every result carries a `ruleset` field, and the table, CSV, and TSV views gain a leading `RULESET` column.
 
@@ -202,7 +202,7 @@ rsigma engine eval -r rules/ -e @events.ndjson --output-format table
 
 A width-aligned `LEVEL | RULE | TYPE | DETAIL` table appears on stdout. Use `--output-format csv` or `--output-format tsv` to pipe into a spreadsheet instead. See [Output Formats](../../reference/output.md).
 
-Use `--finding-format ocsf` when a downstream collector expects OCSF Detection Finding JSON: stdout receives one class-2004 object per match (compact NDJSON), using the same serializer as the daemon's `?format=ocsf` sink. Add `--ocsf-version 1.3.0` to select the other pinned schema. The flag composes with `--output-format json` or `ndjson` and is rejected with `table`, `csv`, or `tsv`. {{ added "unreleased" }}
+Use `--finding-format ocsf` when a downstream collector expects OCSF Detection Finding JSON: stdout receives one class-2004 object per match (compact NDJSON), using the same serializer as the daemon's `?format=ocsf` sink. Add `--ocsf-version 1.3.0` to select the other pinned schema. The flag composes with `--output-format json` or `ndjson` and is rejected with `table`, `csv`, or `tsv`. {{ added "0.28.0" }}
 
 ### EVTX file (Windows Event Log)
 

@@ -4,7 +4,7 @@ description: "Run RSigma correlations in AWS Lambda or a scheduled container job
 
 # Serverless
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Run detection and correlation as one short-lived process per batch instead of a long-running daemon. Each invocation runs `engine daemon --input stdin` as a [batch run](../cli/engine/daemon.md#batch-runs): it restores correlation state from a single SQLite file, evaluates the batch, saves the state, and exits with a code that says whether to keep it. A correlation window that spans batches fires in the invocation that completes it.
 

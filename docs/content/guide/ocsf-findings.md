@@ -36,7 +36,7 @@ rsigma engine daemon -r rules/ \
 | Sink | `?format=` |
 |------|------------|
 | `stdout`, `file://`, `nats://`, `unix://` | `ndjson` (default) or `ocsf` |
-| `otlp://`, `otlps://`, `otlphttp://`, `otlphttps://` | `ndjson` (default) or `ocsf`. With `ocsf`, each log record's body is the finding. See [OTLP log bodies](#otlp-log-bodies). {{ added "unreleased" }} |
+| `otlp://`, `otlps://`, `otlphttp://`, `otlphttps://` | `ndjson` (default) or `ocsf`. With `ocsf`, each log record's body is the finding. See [OTLP log bodies](#otlp-log-bodies). {{ added "0.28.0" }} |
 | Webhooks | No query surface. A body template inserts the finding with `${detection.ocsf}` or `${correlation.ocsf}`. See [Webhook bodies](#webhook-bodies). |
 | `--dlq`, `daemon.api.audit.sink` | Rejected at startup: those channels carry DLQ entries and API audit records, not findings. |
 
@@ -112,12 +112,12 @@ By default all four emitted shapes (detections, correlations, alert-pipeline inc
 | `finding_info.uid` | The incident id for the two incident shapes (re-emissions of one incident share it). Per-result findings use an identifier minted once per dispatch and preserved across sinks and retries. OCSF requires this to identify the finding, and one rule produces many, so rule identity lives in `analytic.uid` instead. |
 | `finding_info.analytic` | `{type_id: 1, type: "Rule", name: <rule title>, uid: <rule id>}` for detections and correlations. Incidents name the `alert pipeline`, risk incidents the `risk accumulator`, with their contributing rules in `related_analytics`. |
 | `finding_info.attacks[]` | Parsed from the rule's tags: `attack.t1059.001` becomes `sub_technique: {uid: "T1059.001"}` and `attack.credential_access` becomes `tactic: {name: "Credential Access", uid: "TA0006"}`. A risk incident's contributing tactics map the same way. A tag cannot say which tactic a technique was used for, so techniques and tactics are separate entries rather than paired by guesswork. Tags in other taxonomies are skipped here and carried under `unmapped.tags`. |
-| `evidences[]` | One entry whose `data` holds what the result carried into the finding: matched field/value pairs when present, plus the retained event when `--include-event` or per-rule `rsigma.include_event` kept it; for correlations, the retained `events` or `event_refs` and their `event_sources`. Omitted only when that map would be empty (no matched fields and no retained event payload). {{ added "unreleased" }} |
+| `evidences[]` | One entry whose `data` holds what the result carried into the finding: matched field/value pairs when present, plus the retained event when `--include-event` or per-rule `rsigma.include_event` kept it; for correlations, the retained `events` or `event_refs` and their `event_sources`. Omitted only when that map would be empty (no matched fields and no retained event payload). {{ added "0.28.0" }} |
 | `resources[]` | The [risk](risk-based-alerting.md) layer's `risk.objects` entries as `{type, name}`, and an incident's `group_by` / `entities` values the same way. |
 | `actor.user.name` | The first `risk.objects` entry of type `user`, or a risk incident whose entity type is `user`. |
 | `risk_score` | The `risk.score` enrichment, or a risk incident's accumulated `score`. |
 | `count` | `result_count` on both incident shapes: OCSF's occurrence count for the group. |
-| `unmapped` | Everything without a faithful OCSF home, under its native key: `matched_selections`, `matched_fields` in full fidelity, `correlation_type`, `group_key`, `aggregated_value`, `timespan_secs`, `tags`, `custom_attributes`, `ruleset` {{ added "unreleased" }} (the named ruleset that produced the match), the remaining enrichments (including the alert pipeline's `incident_id`), and the incident-only `state`, `trigger`, `rule_counts`, `refs`, `results`, `tactic_count`, `tactic_count_threshold`, `score_threshold`, and `source_count`. |
+| `unmapped` | Everything without a faithful OCSF home, under its native key: `matched_selections`, `matched_fields` in full fidelity, `correlation_type`, `group_key`, `aggregated_value`, `timespan_secs`, `tags`, `custom_attributes`, `ruleset` {{ added "0.28.0" }} (the named ruleset that produced the match), the remaining enrichments (including the alert pipeline's `incident_id`), and the incident-only `state`, `trigger`, `rule_counts`, `refs`, `results`, `tactic_count`, `tactic_count_threshold`, `score_threshold`, and `source_count`. |
 
 ### Nothing is dropped
 
@@ -133,7 +133,7 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 
 `engine eval` accepts `--finding-format ocsf` (and `--ocsf-version 1.1.0|1.3.0`). Each rule fire becomes one OCSF Detection Finding (class 2004). The flag composes with `--output-format json` or `ndjson`; `table`, `csv`, and `tsv` are a config error. `--pretty` pretty-prints each finding when stdout is a TTY.
 
-`rule backtest` accepts the same flags plus `--findings <PATH>`, which must not collide with the corpus, `--report`, or `--junit`. The human summary stays on stderr and `--report` continues to write the native JSON report. {{ added "unreleased" }} See [Output Formats](../reference/output.md).
+`rule backtest` accepts the same flags plus `--findings <PATH>`, which must not collide with the corpus, `--report`, or `--junit`. The human summary stays on stderr and `--report` continues to write the native JSON report. {{ added "0.28.0" }} See [Output Formats](../reference/output.md).
 
 ### Dedup and risk-event sidecars
 
@@ -143,11 +143,11 @@ An `EvaluationResult` has no event-timestamp field (the native NDJSON has none e
 | Dedup `resolved` summary | Close | Resolved |
 | Risk event (`risk_event: true`) | Create | New |
 
-On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detections. The native NDJSON wire is unchanged on an NDJSON sink. A dedup finding's `finding_info.uid` is `dedup-<fingerprint>-<first_seen>`. `dedup_fire_count`, `dedup_first_seen`, and `dedup_last_seen` become `count`, `start_time`, and `end_time` (epoch milliseconds); the fingerprint, state, and matched fields stay under `unmapped.enrichments`. A risk event sets `finding_info.types` to `["Risk Event"]` and adds the `host` profile when its actor is a user. {{ added "unreleased" }}
+On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detections. The native NDJSON wire is unchanged on an NDJSON sink. A dedup finding's `finding_info.uid` is `dedup-<fingerprint>-<first_seen>`. `dedup_fire_count`, `dedup_first_seen`, and `dedup_last_seen` become `count`, `start_time`, and `end_time` (epoch milliseconds); the fingerprint, state, and matched fields stay under `unmapped.enrichments`. A risk event sets `finding_info.types` to `["Risk Event"]` and adds the `host` profile when its actor is a user. {{ added "0.28.0" }}
 
 ## Incident Finding (class 2005)
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 OCSF has a dedicated class for a grouped incident: **Incident Finding** (class 2005), which references the findings it groups instead of describing one detection. Select it per sink with `ocsf_incident_class`:
 
@@ -193,7 +193,7 @@ An Incident Finding has no `finding_info` and no `action_id` / `action`: OCSF de
 
 ## OTLP log bodies
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 An OTLP sink with `?format=ocsf` exports each detection and correlation as one log record whose body is the OCSF Detection Finding as a JSON string, the same bytes a line sink would write. The record keeps the severity mapped from the Sigma level and the same attributes a native OTLP record carries, including `rule_title`, `rule_id`, `level`, and `tags`.
 
@@ -206,7 +206,7 @@ rsigma engine daemon -r rules/ --input http \
 
 ## Webhook bodies
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A webhook body can insert the result's OCSF Detection Finding as raw JSON with `${detection.ocsf}` (a `kind: detection` webhook) or `${correlation.ocsf}` (a `kind: correlation` webhook):
 
@@ -231,7 +231,7 @@ The reference must stand where a whole JSON value can: as an object member value
 
 ## Schema versions
 
-RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema per class (2004 and 2005) live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal: adding a version is deliberate and visible in the goldens. {{ added "unreleased" }}
+RSigma pins a **closed set** of OCSF schema versions. Each finding records the version in `metadata.version`. The default is `1.1.0`; line sinks may select another pinned version with `?format=ocsf&ocsf_version=<v>` (see [`engine daemon`](../cli/engine/daemon.md)). Goldens and a committed conformance schema per class (2004 and 2005) live under `tests/fixtures/ocsf/<version>/` in the `rsigma-runtime` crate; CI never fetches schemas from the network. Chasing the newest OCSF minor is not a goal: adding a version is deliberate and visible in the goldens. {{ added "0.28.0" }}
 
 ## An output dialect, not an input vocabulary
 

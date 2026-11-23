@@ -114,7 +114,7 @@ cargo install --locked rsigma --features taxii-sync,stix-enrich,mmdb-enrich,dns-
 cargo install --locked rsigma --features daachorse-index
 ```
 
-The `--locked` flag pins the dependency graph to the published `Cargo.lock`, which is what CI builds and signs. See [Feature Flags](../reference/feature-flags.md) for the complete matrix, including `mmdb-enrich` and `dns-enrich`. {{ added "unreleased" }} The [LSP server](../editors/vscode.md) ships in its own crate:
+The `--locked` flag pins the dependency graph to the published `Cargo.lock`, which is what CI builds and signs. See [Feature Flags](../reference/feature-flags.md) for the complete matrix, including `mmdb-enrich` and `dns-enrich`. {{ added "0.28.0" }} The [LSP server](../editors/vscode.md) ships in its own crate:
 
 ```bash
 cargo install --locked rsigma-lsp

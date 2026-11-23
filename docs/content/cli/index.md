@@ -18,7 +18,7 @@ This reference documents every subcommand with its flag table, verified examples
 | [`rule`](rule/parse.md) | `parse`, `validate`, `lint`, `fmt`, `fields`, `draft`, `tune`, `reverse`, `doc`, `test`, `backtest`, `coverage`, `scorecard`, `visibility`, `hygiene`, `condition`, `stdin`, `migrate-sources` | Inspect, draft, lint, format, tune, reverse-convert, backtest, score, and ATT&CK-map Sigma rule files |
 | [`backend`](backend/convert.md) | `convert`, `build`, `targets`, `formats` | Convert Sigma rules into backend-native queries (PostgreSQL, LynxDB, Fibratus, and delegated sigma-cli targets), and build every configured group into query files and manifests |
 | [`pipeline`](pipeline/diff.md) | `diff`, `resolve` | Diff pipeline rewrites and test dynamic sources |
-| [`ruleset`](ruleset/list.md) | `list`, `show`, `build`, `diff` | Curate named rule sets declared in `rsigma.yaml`, materialize them, and compare them with a lockfile {{ added "unreleased" }} |
+| [`ruleset`](ruleset/list.md) | `list`, `show`, `build`, `diff` | Curate named rule sets declared in `rsigma.yaml`, materialize them, and compare them with a lockfile {{ added "0.28.0" }} |
 | [`hunt`](hunt/run.md) | `run` | Hunt a PostgreSQL/TimescaleDB archive with converted rules, streaming matches back as events |
 | [`mcp`](mcp/serve.md) | `serve` | Run the Model Context Protocol server for agent tooling (`mcp` feature) |
 | [`taxii`](taxii/sync.md) | `sync`, `store` | TAXII collection sync and local bundle import into a STIX store (`taxii-sync` feature) |

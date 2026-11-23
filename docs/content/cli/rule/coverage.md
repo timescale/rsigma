@@ -37,7 +37,7 @@ A rule tagged with a sub-technique (`attack.t1059.001`) counts toward its parent
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-r, --rules <PATH>` | required unless `--ruleset` | Sigma rule file or directory of rules. Repeatable. May also be supplied via `coverage.rules`. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | none | Named ruleset from the configuration to map instead of `--rules`. May also be supplied via `coverage.ruleset`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to map instead of `--rules`. May also be supplied via `coverage.ruleset`. {{ added "0.28.0" }} |
 | `--navigator <FILE>` | unset | Write an ATT&CK Navigator layer (format 4.5) to this file. |
 | `--atomics [<PATH_OR_URL>]` | unset | Cross-reference the Atomic Red Team index. A bare `--atomics` uses the upstream `atomics/Indexes/index.yaml`; pass a local `index.yaml`, an atomic-red-team `atomics/` directory, or a URL. May also be supplied via `coverage.atomics`. |
 | `--baseline [<PATH_OR_URL>]` | unset | Cross-reference a baseline Navigator layer. A bare `--baseline` uses the SigmaHQ coverage heatmap; pass a local path or URL. May also be supplied via `coverage.baseline`. |

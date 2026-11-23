@@ -221,11 +221,11 @@ Mount the containing directory rather than a single file. A bind mount of one fi
 
 The container runs as uid `65534`, so the database files must be readable by that user; a mode of `0644` on the host works. The enricher only reads the file, so `:ro` is correct.
 
-The image also includes `mmdb-mmap`, so an entry can set `mmap: true` to map the database instead of reading it into each container's memory. Containers on one host that map the same file share its page cache. A mapped file must still be replaced by renaming a new file over it; writing to it in place on the host can crash the daemon with `SIGBUS`. {{ added "unreleased" }}
+The image also includes `mmdb-mmap`, so an entry can set `mmap: true` to map the database instead of reading it into each container's memory. Containers on one host that map the same file share its page cache. A mapped file must still be replaced by renaming a new file over it; writing to it in place on the host can crash the daemon with `SIGBUS`. {{ added "0.28.0" }}
 
 ## DNS lookups
 
-{{ added "unreleased" }} The image includes the `dns-enrich` feature, so `type: dns` enrichers work without a custom build. With no `nameservers` configured, the enricher resolves through the `/etc/resolv.conf` that Docker provides for the container, which points at the host's resolver unless you override it. Nothing needs to be mounted.
+{{ added "0.28.0" }} The image includes the `dns-enrich` feature, so `type: dns` enrichers work without a custom build. With no `nameservers` configured, the enricher resolves through the `/etc/resolv.conf` that Docker provides for the container, which points at the host's resolver unless you override it. Nothing needs to be mounted.
 
 To send queries to a specific resolver, list it under `nameservers` in the enricher block, for example `["10.0.0.53"]` or `["[2001:db8::53]:5353"]`. See [Enrichers: `dns`](../guide/enrichers.md#dns-dns-lookup) for the schema and cache behavior.
 

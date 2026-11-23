@@ -19,8 +19,8 @@ CLI flags and library API calls always take precedence over `custom_attributes` 
 | `rsigma.suppress` | Suppression window for repeated correlation alerts. Duration string: `5m`, `1h`, `30s`. | `--suppress` | Engine + per-correlation |
 | `rsigma.action` | Post-fire action: `alert` (keep state, re-alert) or `reset` (clear window). | `--action` | Engine + per-correlation |
 | `rsigma.include_event` | Embed the full event JSON in detection output for this rule. `"true"` or `"false"`. | `--include-event` | Per-rule |
-| `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). On a chained parent, also makes its child correlations retain events for it, while their own output keeps their own mode. {{ added "unreleased" }} | `--correlation-event-mode` | Per-correlation |
-| `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. On a chained parent, also raises its child correlations' retention cap to at least this value. {{ added "unreleased" }} | `--max-correlation-events` | Per-correlation |
+| `rsigma.correlation_event_mode` | Correlation event inclusion: `none`, `full` (deflate-compressed bodies), `refs` (timestamp + ID only). On a chained parent, also makes its child correlations retain events for it, while their own output keeps their own mode. {{ added "0.28.0" }} | `--correlation-event-mode` | Per-correlation |
+| `rsigma.max_correlation_events` | Cap on events stored per correlation window for this rule. Integer. On a chained parent, also raises its child correlations' retention cap to at least this value. {{ added "0.28.0" }} | `--max-correlation-events` | Per-correlation |
 | `rsigma.max_group_entries` | Cap on retained entries within a single group's window state for this rule (timestamps, value pairs, or per-rule hits). Oldest entries are dropped; session windows keep their span anchor. Integer, quoted. | `--max-group-entries` | Per-correlation |
 | `rsigma.exemplars` | Embedded example events that should or should not match this rule. The engine never interprets them at match time; [`rule test`](../cli/rule/test.md) executes them. | `rule test` | Per-rule |
 
@@ -96,11 +96,11 @@ Every exemplar runs with fresh engine state. Detection exemplars evaluate the ta
 
 A structurally valid `expect: match` exemplar satisfies ADS validation presence when `rsigma.ads.validation` prose is absent (`N executable exemplar(s)`). That is metadata presence, not execution proof. Only a passing [`rule test`](../cli/rule/test.md) proves the current rule still matches.
 
-A ruleset overlay can set or append `rsigma.exemplars` without editing the vendor rule file. The resolver validates the resulting exemplars with the rule's kind, so a broken overlay fails resolution before `rule test` runs. See [Rulesets](../guide/rulesets.md#overlays). {{ added "unreleased" }}
+A ruleset overlay can set or append `rsigma.exemplars` without editing the vendor rule file. The resolver validates the resulting exemplars with the rule's kind, so a broken overlay fails resolution before `rule test` runs. See [Rulesets](../guide/rulesets.md#overlays). {{ added "0.28.0" }}
 
 ## ADS detection-strategy attributes (`rsigma.ads.*`)
 
-The `rsigma.ads.*` namespace carries the [Palantir Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) sections that a Sigma rule has no standard home for. These values are pure documentation: the engine never interprets them, so they carry zero runtime cost. A ruleset overlay can set or append these attributes, and the resolver validates every touched `rsigma.ads.*` key except `rsigma.ads.exempt`. {{ added "unreleased" }} Four of the nine ADS sections reuse standard fields (`description` for the goal, `attack.*` `tags` for the categorization, `falsepositives`, and `level` for the priority); the rest live here.
+The `rsigma.ads.*` namespace carries the [Palantir Alerting and Detection Strategy](https://github.com/palantir/alerting-detection-strategy-framework) sections that a Sigma rule has no standard home for. These values are pure documentation: the engine never interprets them, so they carry zero runtime cost. A ruleset overlay can set or append these attributes, and the resolver validates every touched `rsigma.ads.*` key except `rsigma.ads.exempt`. {{ added "0.28.0" }} Four of the nine ADS sections reuse standard fields (`description` for the goal, `attack.*` `tags` for the categorization, `falsepositives`, and `level` for the priority); the rest live here.
 
 | Attribute | ADS section | Value shape |
 |-----------|-------------|-------------|

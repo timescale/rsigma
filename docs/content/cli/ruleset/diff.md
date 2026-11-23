@@ -4,7 +4,7 @@ description: "Compare a resolved ruleset with its lockfile and gate CI on additi
 
 # `rsigma ruleset diff`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Compare a resolved ruleset with a lockfile produced by `ruleset build`.
 

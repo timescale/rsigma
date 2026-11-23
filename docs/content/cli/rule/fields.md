@@ -25,8 +25,8 @@ Useful for two operational tasks: confirming your event schema covers every fiel
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-r, --rules <RULES>` | required unless `--ruleset` | Path to a Sigma rule file or directory of rules. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | none | Named ruleset from the configuration to inspect instead of `--rules`. Conflicts with `--rules`. {{ added "unreleased" }} |
-| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to inspect instead of `--rules`. Conflicts with `--rules`. {{ added "0.28.0" }} |
+| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }} |
 | `-p, --pipeline <PIPELINES>` | unset | Processing pipeline(s) to apply before extracting fields. Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable. When set, fields are reported after the pipeline rewrite (so an `ecs_windows` pipeline against Sysmon rules will show `process.command_line`, not `CommandLine`). |
 | `--no-filters` | off | Exclude fields that only appear in filter rules. |
 | `--json` | off | Deprecated alias for `--output-format json`. |

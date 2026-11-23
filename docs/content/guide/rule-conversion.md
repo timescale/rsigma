@@ -461,7 +461,7 @@ rsigma backend convert rules/windows/ -t fibratus -p fibratus_windows -o ./Rules
 
 ## Convert named rulesets
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `rsigma backend build` turns the `convert:` section of `rsigma.yaml` into repeatable exports. Each group names a ruleset, a target, and an output path; the command writes the queries and a manifest next to them. This is the path for a scheduled-query pipeline that needs several targets, or for CI that regenerates every artifact on each rule change.
 

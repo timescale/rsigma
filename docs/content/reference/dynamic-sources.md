@@ -84,7 +84,7 @@ sources:
 
 The full Rust type lives at [`rsigma_eval::pipeline::sources::DynamicSource`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/sources.rs). The parser is at [`rsigma_eval::pipeline::parsing`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/src/pipeline/parsing.rs).
 
-A declaration fails to load, with an error naming the source and the key, when it sets a key that is unknown or that does not apply to its `type:` (for example `path` on an `http` source, or `refresh` on a `watchlist`), when a `stix:`, `auth:`, or `extract:` mapping has an unknown key, or when `format`, `on_error`, `refresh`, `timeout`, or `required` has a value outside its supported set. A sources file whose top level has any key other than `sources` fails the same way. {{ added "unreleased" }}
+A declaration fails to load, with an error naming the source and the key, when it sets a key that is unknown or that does not apply to its `type:` (for example `path` on an `http` source, or `refresh` on a `watchlist`), when a `stix:`, `auth:`, or `extract:` mapping has an unknown key, or when `format`, `on_error`, `refresh`, `timeout`, or `required` has a value outside its supported set. A sources file whose top level has any key other than `sources` fails the same way. {{ added "0.28.0" }}
 
 A source ID is one or more ASCII letters, digits, `_`, or `-` (for example `ip_blocklist`, `threat-intel`, or `1st_feed`). Pipelines reference it as `${source.<id>}` and `lookup` enrichers use it in their `source:` field. A declaration with any other character, such as a dot or a space, fails to load with an error naming the ID. {{ added "0.25.0" }}
 
@@ -165,7 +165,7 @@ A POST query with a request body:
 | `extract` | string or object | no | Filter applied after parsing. Rejected when `format` is `stix`. |
 | `stix` | object | no | Options for `format: stix`. See [format: stix](#format-stix). |
 | `timeout` | duration | no | Request timeout. Default `30s`. |
-| `max_body_size` | bytes | no | Per-source override for the 10 MiB response body cap. A positive integer. {{ added "unreleased" }} |
+| `max_body_size` | bytes | no | Per-source override for the 10 MiB response body cap. A positive integer. {{ added "0.28.0" }} |
 
 ### `command`
 
@@ -186,7 +186,7 @@ Runs a local executable, captures stdout, parses it according to `format`. Usefu
 | `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
 | `extract` | string or object | no | Filter applied after parsing. |
 | `timeout` | duration | no | Execution wall-clock cap. Default `30s`. |
-| `max_stdout` | bytes | no | Per-source override for the 10 MiB stdout cap. A positive integer. {{ added "unreleased" }} |
+| `max_stdout` | bytes | no | Per-source override for the 10 MiB stdout cap. A positive integer. {{ added "0.28.0" }} |
 
 The runtime additionally caps stderr at 64 KiB regardless of `max_stdout`. Stderr is logged on failure but not parsed.
 
@@ -215,7 +215,7 @@ Subscribes to a NATS subject and updates the source value with each message. Req
 
 ### `watchlist`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Indicators pushed over the HTTP API. The source has nothing to fetch. Resolution returns the unexpired values as a JSON array of strings, sorted by bytes. Outside the daemon, where no registry is attached, it resolves to `[]`.
 
@@ -241,7 +241,7 @@ A pipeline that expands `%c2_ips%` rebuilds when the set changes. An empty watch
 
 ### `taxii`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Polls a TAXII 2.1 collection and turns its indicators into the value described under [`format: stix`](#format-stix). Requires the `stix-source` feature. `url` is the API root. The daemon does not run discovery. `collection` is the collection id, a UUID. `refresh` may be a duration, `once`, or `on_demand`. Omitted means `once`. With `once`, a collection larger than one poll loads only the first poll's objects and the daemon logs a warning, so give a large collection a duration. `watch` and `push` are rejected, and so are `extract` and `format`.
 
@@ -286,11 +286,11 @@ The client follows the daemon egress policy. It does not follow redirects and it
 | `yaml` | `yaml_serde` 0.10 | Multi-document files concatenate into an array. |
 | `lines` | (internal) | One value per non-blank line; the resolved value is a JSON array of strings. |
 | `csv` | `csv` crate | Header row required; each subsequent row becomes an object keyed by the header. |
-| `stix` | `rstix` | A STIX 2.1 bundle. File and HTTP only. Requires `stix-source`. `extract` is rejected. See [format: stix](#format-stix). {{ added "unreleased" }} |
+| `stix` | `rstix` | A STIX 2.1 bundle. File and HTTP only. Requires `stix-source`. `extract` is rejected. See [format: stix](#format-stix). {{ added "0.28.0" }} |
 
 ### `format: stix`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `format: stix` on a file or HTTP source parses the body as a STIX bundle and builds the same value a TAXII source builds. The file or HTTP fetch is otherwise unchanged: a file may use `refresh: watch`, and HTTP keeps the egress policy and the 10 MiB body cap. Each resolve is stateless. There is no cursor.
 

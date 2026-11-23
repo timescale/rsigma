@@ -40,7 +40,7 @@ Use this for air-gapped feeds, local MITRE ATT&CK JSON releases, CI fixtures, an
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--bundle-id <ID>` | bundle file `id` | Synthetic bundle id for [`export_bundle`](../../library/rstix.md#rstix-graph-marking-store). |
-| `--allow-custom` | off | Parse MITRE ATT&CK and other custom SDOs (`x_*` types). Required for enterprise ATT&CK bundle files. Object ids must still follow the STIX 2.1 type-name rules, so a custom id cannot name a path outside the store. {{ added "unreleased" }} |
+| `--allow-custom` | off | Parse MITRE ATT&CK and other custom SDOs (`x_*` types). Required for enterprise ATT&CK bundle files. Object ids must still follow the STIX 2.1 type-name rules, so a custom id cannot name a path outside the store. {{ added "0.28.0" }} |
 | `--strict` | on | Exit `1` when validation rejects one or more objects. |
 | `--allow-invalid` | off | Import objects even when validation fails (diagnostics still recorded; conflicts with `--strict`). |
 

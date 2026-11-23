@@ -62,7 +62,7 @@ correlation_matches        4
 uptime                     5m 12s
 ```
 
-When the daemon runs named rulesets, the table adds `rulesets.<name>.detection_rules`, `rulesets.<name>.correlation_rules`, and, for bound rulesets, `rulesets.<name>.when_schemas`. {{ added "unreleased" }}
+When the daemon runs named rulesets, the table adds `rulesets.<name>.detection_rules`, `rulesets.<name>.correlation_rules`, and, for bound rulesets, `rulesets.<name>.when_schemas`. {{ added "0.28.0" }}
 
 ### A TLS deployment
 

@@ -18,14 +18,14 @@ rsigma config validate [--config <PATH>] [--format <text|json>]
 
 Walks the same [discovery chain](../../reference/configuration.md#discovery) the daemon and eval commands use, deserializes every layer, and reports:
 
-- **Unknown keys** that don't match the schema (typo guard). Each one fails validation with exit 3. {{ added "unreleased" }}
-- **Inactive sections** that are set but inert in this build because the gating Cargo feature is disabled (`daemon` without the `daemon` feature, `daemon.nats` without `daemon-nats`, `daemon.api.tls` without `daemon-tls`, `daemon.stix_store` without `stix-enrich`). Every command that reads the config warns about them, and they never fail a command. `daemon.stix_store` {{ added "unreleased" }}
+- **Unknown keys** that don't match the schema (typo guard). Each one fails validation with exit 3. {{ added "0.28.0" }}
+- **Inactive sections** that are set but inert in this build because the gating Cargo feature is disabled (`daemon` without the `daemon` feature, `daemon.nats` without `daemon-nats`, `daemon.api.tls` without `daemon-tls`, `daemon.stix_store` without `stix-enrich`). Every command that reads the config warns about them, and they never fail a command. `daemon.stix_store` {{ added "0.28.0" }}
 - **Errors** that prevent a file from loading at all.
-- **Ruleset errors** from statically checking every declared ruleset: unknown keys, an empty `sources` list, invalid globs, unknown levels, statuses, kinds, and policies, and malformed overlays. Sources are not read, so a missing source, an unresolved correlation reference, or an overlay that matches nothing surfaces when the ruleset is resolved, for example by [`ruleset show`](../ruleset/show.md) or [`ruleset build`](../ruleset/build.md). {{ added "unreleased" }}
-- **Ruleset list errors** in `eval.ruleset`, `eval.rulesets`, and `daemon.rulesets`: undefined or duplicate names, unknown entry or `when` keys, and a list combined with `rules` (or `eval.ruleset` with `eval.rulesets`). Schema names in `when` are checked when `engine eval` or `engine daemon` loads the classifier, because `--schema-config` can add schemas. {{ added "unreleased" }}
-- **Convert group errors** in `convert.groups`: invalid group names, a missing or undefined ruleset, a missing `target` or `output` after `convert.defaults` is applied, and two groups that write the same output or manifest. {{ added "unreleased" }}
+- **Ruleset errors** from statically checking every declared ruleset: unknown keys, an empty `sources` list, invalid globs, unknown levels, statuses, kinds, and policies, and malformed overlays. Sources are not read, so a missing source, an unresolved correlation reference, or an overlay that matches nothing surfaces when the ruleset is resolved, for example by [`ruleset show`](../ruleset/show.md) or [`ruleset build`](../ruleset/build.md). {{ added "0.28.0" }}
+- **Ruleset list errors** in `eval.ruleset`, `eval.rulesets`, and `daemon.rulesets`: undefined or duplicate names, unknown entry or `when` keys, and a list combined with `rules` (or `eval.ruleset` with `eval.rulesets`). Schema names in `when` are checked when `engine eval` or `engine daemon` loads the classifier, because `--schema-config` can add schemas. {{ added "0.28.0" }}
+- **Convert group errors** in `convert.groups`: invalid group names, a missing or undefined ruleset, a missing `target` or `output` after `convert.defaults` is applied, and two groups that write the same output or manifest. {{ added "0.28.0" }}
 
-Unknown keys and ruleset errors always fail validation with exit 3, so CI can gate on configuration cleanliness without extra flags. Every other command that reads the config stops with the same exit code on an unknown key. {{ added "unreleased" }}
+Unknown keys and ruleset errors always fail validation with exit 3, so CI can gate on configuration cleanliness without extra flags. Every other command that reads the config stops with the same exit code on an unknown key. {{ added "0.28.0" }}
 
 ## Flags
 
@@ -33,7 +33,7 @@ Unknown keys and ruleset errors always fail validation with exit 3, so CI can ga
 |------|---------|-------------|
 | `-c, --config <PATH>` | discovery chain | Load only this file (bypasses discovery). |
 | `--format <text\|json>` | `text` when unset | Human-readable summary on stderr or a machine-readable envelope on stdout. When unset, the global `--output-format` is used (`json`/`ndjson`/`table`/`csv`/`tsv`). Local `--format` wins over the global selector and prints a precedence warning. See [Output Formats](../../reference/output.md). |
-| `--strict` | off | Deprecated. Accepted for compatibility and changes nothing, because unknown keys always fail validation. Hidden from `--help`. {{ added "unreleased" }} |
+| `--strict` | off | Deprecated. Accepted for compatibility and changes nothing, because unknown keys always fail validation. Hidden from `--help`. {{ added "0.28.0" }} |
 
 ## Output
 
@@ -74,7 +74,7 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
 }
 ```
 
-`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `semantic_errors` {{ added "unreleased" }} reports each problem found in a ruleset spec, a ruleset list, or a `convert` group, as `{path, message}`, where `path` is the dotted config path such as `rulesets.linux_edge`, `eval.rulesets`, or `convert.groups.linux_edge_lynxdb`.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `semantic_errors` {{ added "0.28.0" }} reports each problem found in a ruleset spec, a ruleset list, or a `convert` group, as `{path, message}`, where `path` is the dotted config path such as `rulesets.linux_edge`, `eval.rulesets`, or `convert.groups.linux_edge_lynxdb`.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 

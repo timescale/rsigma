@@ -31,7 +31,7 @@ The ADS bar (which statuses are enforced and which sections are required) is rea
 | Flag | Default | Description |
 |------|---------|-------------|
 | `<RULES>...` | required unless `--ruleset` | One or more Sigma rule files or directories of rules. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | none | Named ruleset from the configuration to document instead of rule paths. Conflicts with `--scaffold` and `--in-place`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to document instead of rule paths. Conflicts with `--scaffold` and `--in-place`. {{ added "0.28.0" }} |
 | `--scaffold` | off | Emit a `rsigma.ads.*` template for a single rule instead of a report. |
 | `--in-place` | off | With `--scaffold`, merge the template into the rule file's `custom_attributes:` block instead of printing it. |
 | `--format <FORMAT>` | `auto` | `auto` renders through `--output-format`; `markdown` emits the canonical ADS document per rule. |

@@ -96,7 +96,7 @@ incident:
     max_results_per_incident: 1000
 ```
 
-Point the daemon at it with `--risk /etc/rsigma/risk.yml` or `daemon.risk: /etc/rsigma/risk.yml`. The config hot-reloads on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous config active, and in-flight accumulators survive the swap. Like the alert pipeline config, the file rejects unknown keys at every level, so a misspelled key fails at load with an error naming it. {{ added "unreleased" }}
+Point the daemon at it with `--risk /etc/rsigma/risk.yml` or `daemon.risk: /etc/rsigma/risk.yml`. The config hot-reloads on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a failed reload keeps the previous config active, and in-flight accumulators survive the swap. Like the alert pipeline config, the file rejects unknown keys at every level, so a misspelled key fails at load with an error naming it. {{ added "0.28.0" }}
 
 ## Persistence
 

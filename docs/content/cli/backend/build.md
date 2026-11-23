@@ -4,7 +4,7 @@ description: "Reference for rsigma backend build: convert every configured rules
 
 # `rsigma backend build`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Convert configured ruleset groups into query files and manifests in one run.
 
@@ -87,7 +87,7 @@ convert:
   "format": "default",
   "pipelines": ["sysmon"],
   "output": "build/lynxdb/linux_edge.txt",
-  "generator": "rsigma 0.27.0",
+  "generator": "rsigma 0.28.0",
   "queries": 41,
   "rules": [
     {
