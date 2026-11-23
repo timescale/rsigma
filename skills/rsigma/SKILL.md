@@ -34,7 +34,7 @@ Groups:
 | `config` | Scaffold and inspect `rsigma.yaml`, and ask a running daemon to reload (`reload`) |
 | `taxii` | Fill the local STIX store that `stix` enrichers read (`sync` from a TAXII server, `store` from a bundle file) |
 
-`engine daemon` and `pipeline resolve` need a build with the `daemon` feature, and `mcp serve` needs `mcp`. `hunt run` executes queries only with `hunt-postgres` (`--emit sql` works in every build), `taxii` needs `taxii-sync`, and `stix` and `mmdb` enrichers need `stix-enrich` and `mmdb-enrich`. Release binaries and the Docker image include all of them; a `cargo install rsigma` build has only `daemon`. `rsigma --features` prints what this binary was built with.
+`engine daemon` and `pipeline resolve` need a build with the `daemon` feature, and `mcp serve` needs `mcp`. `hunt run` executes queries only with `hunt-postgres` (`--emit sql` works in every build), `taxii` needs `taxii-sync`, and `stix` and `mmdb` enrichers need `stix-enrich` and `mmdb-enrich`. Release binaries and the Docker image include all of them; a `cargo install rsigma` build has only `daemon` and the `ocsf` it implies. `rsigma --features` prints what this binary was built with.
 
 Full tree: [CLI reference](https://rsigma.io/cli/).
 

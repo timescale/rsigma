@@ -150,7 +150,7 @@ rsigma --version
 rsigma --help
 ```
 
-`rsigma --features` prints only the optional features of the `rsigma` binary (`rsigma-cli` table above), sorted, one name per line. Library-crate features (`rsigma-eval`, `rsigma-runtime`, `rstix`, and the rest) are not listed; they matter at compile time for embedders, not for an installed CLI. Prebuilt release archives and the GHCR Docker image print every `rsigma-cli` feature. A default `cargo install rsigma` prints `daemon` only.
+`rsigma --features` prints the optional features of the `rsigma` binary (every row of the `rsigma-cli` table above), sorted, one name per line. A feature that another feature implies is listed too, so a build with `daemon` also prints `ocsf`, and one with `mmdb-mmap` also prints `mmdb-enrich`. Library-crate features (`rsigma-eval`, `rsigma-runtime`, `rstix`, and the rest) are not listed; they matter at compile time for embedders, not for an installed CLI. Prebuilt release archives and the GHCR Docker image print every `rsigma-cli` feature. A default `cargo install rsigma` prints `daemon` and `ocsf`.
 
 ## See also
 

@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `rsigma --features` lists `ocsf` and `mmdb-mmap`
+
+`rsigma --features`, the `rsigma --version` features line, and the "Compiled-in features" footer of `rsigma --help` left out `ocsf` and `mmdb-mmap`, so a binary built with either feature did not report it. Both are listed now, and a default build reports `daemon` and the `ocsf` it implies. A unit test compares the list with the `[features]` table of the `rsigma` crate's `Cargo.toml`, so a feature added to the manifest without being listed fails the build's tests.
+
+See [Detecting features at runtime](https://rsigma.io/reference/feature-flags/#detecting-features-at-runtime).
+
 ### Batched sink delivery (#743)
 
 Each sink worker now makes the first delivery attempt for everything it drained from its queue at once, up to `--sink-batch-max` results. Stdout, `file://`, and `unix://` sinks write the batch with one write instead of one or two writes per line. The NATS sink publishes every message of the batch and then awaits the JetStream acks together, instead of one publish-and-ack round trip per message. The OTLP sink exports the batch in one request instead of one per result. A result that fails in the batch is retried on its own with the same retry budget, backoff, and DLQ routing as before. Webhooks still post one request per result.
