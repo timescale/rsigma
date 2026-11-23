@@ -6,7 +6,8 @@
 //! truth for `rsigma --features`, `rsigma --version`, and the `--help` footer.
 
 /// Every optional Cargo feature the `rsigma` binary can be built with, in
-/// sorted order. Keep in sync with `[features]` in this crate's `Cargo.toml`.
+/// sorted order. Must equal the `[features]` keys in this crate's `Cargo.toml`
+/// minus `default`; `all_matches_the_manifest_features` enforces it.
 macro_rules! cli_features {
     ($($name:literal),+ $(,)?) => {
         #[cfg(test)]
@@ -34,6 +35,8 @@ cli_features! {
     "logfmt",
     "mcp",
     "mmdb-enrich",
+    "mmdb-mmap",
+    "ocsf",
     "stix-draft",
     "stix-enrich",
     "stix-source",
@@ -101,6 +104,27 @@ mod tests {
         let mut enabled = ENABLED.to_vec();
         enabled.sort_unstable();
         assert_eq!(ENABLED, enabled.as_slice());
+    }
+
+    /// `[features]` keys that are not features of their own.
+    const NOT_FEATURES: &[&str] = &["default"];
+
+    #[test]
+    fn all_matches_the_manifest_features() {
+        let manifest: toml::Table =
+            toml::from_str(include_str!("../Cargo.toml")).expect("Cargo.toml parses");
+        let mut declared: Vec<&str> = manifest["features"]
+            .as_table()
+            .expect("[features] is a table")
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !NOT_FEATURES.contains(name))
+            .collect();
+        declared.sort_unstable();
+        assert_eq!(
+            declared, ALL,
+            "cli_features! must list every [features] key in Cargo.toml except {NOT_FEATURES:?}"
+        );
     }
 
     #[test]
