@@ -1,16 +1,24 @@
-use std::io::Write;
+use parking_lot::Mutex;
 
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::{DeliveryContext, SinkFormat, serialize_result};
+use crate::io::DeliveryContext;
+use crate::io::SinkFormat;
+use crate::io::lines::{LineEncoding, LineWriter};
 
 /// Serializes ProcessResult to one line per result and writes it to stdout.
+///
+/// A delivery's lines, or a whole batch of deliveries, go out in one write.
+/// When a delivery is retried after a failed write, lines that already
+/// reached stdout are not written again, and a line cut off by the failure is
+/// ended before anything else is written.
 pub struct StdoutSink {
     pretty: bool,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
     tenant_filter: Option<TenantId>,
+    out: Mutex<LineWriter<std::io::Stdout>>,
 }
 
 impl StdoutSink {
@@ -20,6 +28,7 @@ impl StdoutSink {
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
             tenant_filter: None,
+            out: Mutex::new(LineWriter::new(std::io::stdout())),
         }
     }
 
@@ -54,7 +63,7 @@ impl StdoutSink {
 
     /// Serialize and write a ProcessResult to stdout.
     pub fn send(&self, result: &ProcessResult) -> Result<(), RuntimeError> {
-        self.send_inner(result, None)
+        self.out.lock().write_result(result, None, self.encoding())
     }
 
     pub(crate) fn send_with_context(
@@ -62,46 +71,31 @@ impl StdoutSink {
         result: &ProcessResult,
         ctx: &DeliveryContext,
     ) -> Result<(), RuntimeError> {
-        self.send_inner(result, Some(ctx))
+        self.out
+            .lock()
+            .write_result(result, Some(ctx), self.encoding())
     }
 
-    fn send_inner(
+    /// Write a batch of deliveries in one write, one outcome per delivery.
+    pub(crate) fn send_batch(
         &self,
-        result: &ProcessResult,
-        ctx: Option<&DeliveryContext>,
-    ) -> Result<(), RuntimeError> {
-        if result.is_empty() {
-            return Ok(());
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        self.out.lock().write_results(items, self.encoding())
+    }
+
+    fn encoding(&self) -> LineEncoding<'_> {
+        LineEncoding {
+            format: self.format,
+            pretty: self.pretty,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
         }
-
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-
-        for (index, m) in result.iter().enumerate() {
-            if let Some(filter) = &self.tenant_filter
-                && m.header.tenant_id.as_ref() != Some(filter)
-            {
-                continue;
-            }
-            let json = serialize_result(
-                m,
-                self.format,
-                self.pretty,
-                ctx.map(|ctx| (ctx, index)),
-                &self.ocsf,
-            )?;
-            writeln!(out, "{json}")?;
-        }
-
-        Ok(())
     }
 
     /// Write a pre-serialized JSON string directly to stdout.
     pub fn send_raw(&self, json: &str) -> Result<(), RuntimeError> {
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-        writeln!(out, "{json}")?;
-        Ok(())
+        self.out.lock().write_line(json)
     }
 
     /// Write a pre-serialized line when it belongs to `tenant`.

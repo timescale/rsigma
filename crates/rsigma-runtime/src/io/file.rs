@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, ResumeMap};
+use crate::io::lines::{LineEncoding, LineWriter, ResumeMap};
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// Appends ProcessResult to a file as one line per result.
@@ -169,14 +169,14 @@ impl FileSink {
             return Ok(());
         }
 
+        let encoding = LineEncoding {
+            format: self.format,
+            pretty: false,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
+        };
         match self.out.as_mut() {
-            Some(out) => out.write_result(
-                result,
-                self.format,
-                ctx,
-                &self.ocsf,
-                self.tenant_filter.as_ref(),
-            ),
+            Some(out) => out.write_result(result, ctx, encoding),
             None => Ok(()),
         }
     }
@@ -272,100 +272,6 @@ impl FileSink {
     }
 }
 
-/// NDJSON writer over a byte stream that keeps lines whole across failures.
-struct LineWriter<W> {
-    inner: W,
-    /// The last write stopped partway through a line.
-    torn: bool,
-    resume: ResumeMap<usize>,
-}
-
-impl<W: Write> LineWriter<W> {
-    fn new(inner: W) -> Self {
-        LineWriter {
-            inner,
-            torn: false,
-            resume: ResumeMap::default(),
-        }
-    }
-
-    fn write_result(
-        &mut self,
-        result: &ProcessResult,
-        format: SinkFormat,
-        ctx: Option<&DeliveryContext>,
-        ocsf: &crate::ocsf::OcsfOptions,
-        tenant_filter: Option<&TenantId>,
-    ) -> Result<(), RuntimeError> {
-        let filtered: Vec<(usize, &rsigma_eval::EvaluationResult)> = result
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| tenant_filter.is_none_or(|t| m.header.tenant_id.as_ref() == Some(t)))
-            .collect();
-        if filtered.is_empty() {
-            return Ok(());
-        }
-        let start = self.resume.start(ctx);
-        let mut batch = LineBatch::default();
-        for (original_index, m) in filtered.iter().skip(start) {
-            batch.push(&serialize_result(
-                m,
-                format,
-                false,
-                ctx.map(|ctx| (ctx, *original_index)),
-                ocsf,
-            )?);
-        }
-        match self.write_batch(&batch) {
-            Ok(()) => {
-                self.resume.clear(ctx);
-                Ok(())
-            }
-            Err((written, err)) => {
-                self.resume.retain(ctx);
-                self.resume
-                    .record(ctx, start + batch.complete_lines(written));
-                Err(err.into())
-            }
-        }
-    }
-
-    fn write_line(&mut self, json: &str) -> Result<(), RuntimeError> {
-        let mut batch = LineBatch::default();
-        batch.push(json);
-        self.write_batch(&batch).map_err(|(_, err)| err.into())
-    }
-
-    /// Write `batch` in full. A failure reports how many of its bytes were
-    /// written.
-    fn write_batch(&mut self, batch: &LineBatch) -> Result<(), (usize, io::Error)> {
-        if self.torn {
-            write_counted(&mut self.inner, b"\n").map_err(|(_, err)| (0, err))?;
-            self.torn = false;
-        }
-        let outcome = write_counted(&mut self.inner, batch.bytes())
-            .and_then(|()| self.inner.flush().map_err(|err| (batch.bytes().len(), err)));
-        if let Err((written, _)) = &outcome {
-            self.torn = batch.ends_mid_line(*written);
-        }
-        outcome
-    }
-}
-
-/// `write_all` that reports how many bytes were written when it fails.
-fn write_counted<W: Write>(writer: &mut W, bytes: &[u8]) -> Result<(), (usize, io::Error)> {
-    let mut written = 0;
-    while written < bytes.len() {
-        match writer.write(&bytes[written..]) {
-            Ok(0) => return Err((written, io::ErrorKind::WriteZero.into())),
-            Ok(n) => written += n,
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-            Err(err) => return Err((written, err)),
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -375,28 +281,6 @@ mod tests {
     use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
 
     use super::*;
-
-    /// Accepts up to `budget` bytes, then fails every write until refilled.
-    struct FlakyWriter {
-        out: Vec<u8>,
-        budget: usize,
-    }
-
-    impl Write for FlakyWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.budget == 0 {
-                return Err(io::Error::other("disk full"));
-            }
-            let n = buf.len().min(self.budget);
-            self.out.extend_from_slice(&buf[..n]);
-            self.budget -= n;
-            Ok(n)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
 
     fn three_results() -> ProcessResult {
         ["first", "second", "third"]
@@ -419,97 +303,6 @@ mod tests {
                 }),
             })
             .collect()
-    }
-
-    #[test]
-    fn retry_resumes_after_a_partial_write() {
-        let result = three_results();
-        let lines: Vec<String> = result
-            .iter()
-            .map(|m| {
-                serialize_result(
-                    m,
-                    SinkFormat::default(),
-                    false,
-                    None,
-                    &crate::ocsf::OcsfOptions::default(),
-                )
-                .unwrap()
-            })
-            .collect();
-        let mut out = LineWriter::new(FlakyWriter {
-            out: Vec::new(),
-            // The first line, then half of the second.
-            budget: lines[0].len() + 1 + lines[1].len() / 2,
-        });
-        let ctx = DeliveryContext::new();
-
-        assert!(
-            out.write_result(
-                &result,
-                SinkFormat::default(),
-                Some(&ctx),
-                &crate::ocsf::OcsfOptions::default(),
-                None,
-            )
-            .is_err()
-        );
-        out.inner.budget = usize::MAX;
-        out.write_result(
-            &result,
-            SinkFormat::default(),
-            Some(&ctx),
-            &crate::ocsf::OcsfOptions::default(),
-            None,
-        )
-        .unwrap();
-        out.write_line("{\"next\":true}").unwrap();
-
-        let written = String::from_utf8(out.inner.out).unwrap();
-        let written: Vec<&str> = written.lines().collect();
-        assert_eq!(
-            written,
-            [
-                lines[0].as_str(),
-                &lines[1][..lines[1].len() / 2],
-                lines[1].as_str(),
-                lines[2].as_str(),
-                "{\"next\":true}",
-            ],
-            "the first line is not repeated and the torn line is ended"
-        );
-    }
-
-    #[test]
-    fn a_new_delivery_starts_from_its_first_line() {
-        let result = three_results();
-        let mut out = LineWriter::new(FlakyWriter {
-            out: Vec::new(),
-            budget: 1,
-        });
-        let failed = DeliveryContext::new();
-        assert!(
-            out.write_result(
-                &result,
-                SinkFormat::default(),
-                Some(&failed),
-                &crate::ocsf::OcsfOptions::default(),
-                None,
-            )
-            .is_err()
-        );
-        out.inner.budget = usize::MAX;
-        let next = DeliveryContext::new();
-        out.write_result(
-            &result,
-            SinkFormat::default(),
-            Some(&next),
-            &crate::ocsf::OcsfOptions::default(),
-            None,
-        )
-        .unwrap();
-        let written = String::from_utf8(out.inner.out).unwrap();
-        assert_eq!(written.lines().count(), 4, "{written}");
     }
 
     fn tenanted(title: &str, tenant: &str) -> EvaluationResult {

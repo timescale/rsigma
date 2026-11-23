@@ -28,7 +28,8 @@ use crate::io::{AckToken, FormattedIncidentEnvelope, IncidentEnvelope, Sink};
 use crate::metrics::MetricsHook;
 
 type DeliveryFuture<'a> = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
-type BatchFuture<'a> = Pin<Box<dyn Future<Output = Vec<Result<(), RuntimeError>>> + Send + 'a>>;
+pub(crate) type BatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Vec<Result<(), RuntimeError>>> + Send + 'a>>;
 
 /// A sink the delivery layer can drive: deliver one result, identify itself.
 ///
@@ -93,6 +94,12 @@ impl DeliverySink for Sink {
         ctx: &'a DeliveryContext,
     ) -> DeliveryFuture<'a> {
         self.send_with_context(result, ctx)
+    }
+    fn deliver_batch<'a>(
+        &'a mut self,
+        items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+    ) -> BatchFuture<'a> {
+        self.send_batch_with_context(items)
     }
     fn deliver_incident<'a>(
         &'a mut self,
