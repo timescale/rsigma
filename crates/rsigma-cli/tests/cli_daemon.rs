@@ -529,7 +529,11 @@ fn daemon_logs_why_correlation_rules_keep_one_batch_in_flight() {
         .lines()
         .find(|line| line.contains("Thread pools sized"))
         .expect("startup sizing line");
-    for field in ["detect_inflight", "detection_threads", "worker_threads"] {
+    for field in [
+        r#""worker_threads":2"#,
+        r#""detection_threads":2"#,
+        r#""detect_inflight":1"#,
+    ] {
         assert!(sized.contains(field), "{sized}");
     }
 }
