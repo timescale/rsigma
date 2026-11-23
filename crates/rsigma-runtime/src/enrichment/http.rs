@@ -11,12 +11,12 @@
 //! keyed on `(method, url, body_hash)` with configurable TTL. Mandatory
 //! in practice for rate-limited APIs (VirusTotal: 4 req/min free tier).
 //!
-//! Miss rule: when the 2xx body, after the optional extract, is `null`,
-//! the configured `default` is injected, or `null` when there is none. A
-//! status listed in `miss_status` is a miss too: the body is not read, and
-//! the `default` is injected, or [`EnrichErrorKind::Miss`] is returned when
-//! there is none. Listed statuses are cached for the same `cache_ttl` as
-//! bodies. An extract evaluation error and every other failure (an unlisted
+//! When the 2xx body, after the optional extract, is `null`, the configured
+//! `default` is injected, or `null` when there is none; this is a success,
+//! not a miss. A status listed in `miss_status` is a miss: the body is not
+//! read, and the `default` is injected, or [`EnrichErrorKind::Miss`] is
+//! returned when there is none. Listed statuses are cached for the same
+//! `cache_ttl` as bodies. An extract evaluation error and every other failure (an unlisted
 //! non-2xx status, timeout, transport error, body over the cap, invalid
 //! JSON) apply `on_error`, even when a `default` is set.
 
