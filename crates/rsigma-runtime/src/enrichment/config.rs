@@ -168,7 +168,8 @@ pub struct EnricherConfig {
     pub source: Option<String>,
     /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: value injected on a miss
     /// (a source cache miss, an extract that matched nothing, no store
-    /// objects, no record, no DNS records, or a `null` HTTP result).
+    /// objects, no record, no DNS records, or an HTTP status listed in
+    /// `miss_status`), and for an `http` result that is `null`.
     /// Overrides `on_error` for misses only. Writing `default: null`
     /// injects `null` on a miss (`Some(Value::Null)`); omitting `default`
     /// (`None`) applies `on_miss`, or `on_error` when `on_miss` is absent.
