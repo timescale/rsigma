@@ -80,6 +80,8 @@ stix-enrich = [
 ]
 # Enrichers `type: mmdb` (`mmdb-enrich` feature).
 mmdb-enrich = ["daemon", "rsigma-runtime/mmdb-enrich"]
+# Memory-mapped MMDB files (`mmap: true` on `type: mmdb` enrichers).
+mmdb-mmap = ["mmdb-enrich", "rsigma-runtime/mmdb-mmap"]
 # TAXII collections and `format: stix` file or HTTP sources.
 stix-source = ["daemon", "rsigma-runtime/stix-source"]
 # `rule draft --from-stix`.
