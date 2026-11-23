@@ -548,6 +548,7 @@ impl Sink {
                 Sink::Nats(s) => s.send_batch(items).await,
                 #[cfg(feature = "otlp")]
                 Sink::Otlp(s) => s.send_batch(items).await,
+                Sink::Webhook(s) => s.send_batch(items).await,
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => s.send_batch(items).await,
                 _ => {
