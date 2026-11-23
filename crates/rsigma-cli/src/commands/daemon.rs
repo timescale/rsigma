@@ -175,13 +175,15 @@ pub(crate) struct DaemonArgs {
 
     /// Bounded channel capacity for source→engine and engine→sink queues.
     /// Higher values absorb bursts; lower values apply back-pressure sooner.
-    #[arg(long = "buffer-size", default_value_t = config::defaults::BUFFER_SIZE)]
+    #[arg(long = "buffer-size", default_value_t = config::defaults::BUFFER_SIZE,
+          value_parser = at_least_one())]
     pub buffer_size: usize,
 
     /// Maximum events to process per engine lock acquisition.
     /// Enables parallel detection and amortizes mutex overhead under load.
     /// Capped at `--buffer-size`.
-    #[arg(long = "batch-size", default_value_t = config::defaults::BATCH_SIZE)]
+    #[arg(long = "batch-size", default_value_t = config::defaults::BATCH_SIZE,
+          value_parser = at_least_one())]
     pub batch_size: usize,
 
     /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
@@ -201,7 +203,8 @@ pub(crate) struct DaemonArgs {
     pub backoff_max_ms: u64,
 
     /// Max results drained into one sink delivery batch.
-    #[arg(long = "sink-batch-max", default_value_t = config::defaults::SINK_BATCH_MAX)]
+    #[arg(long = "sink-batch-max", default_value_t = config::defaults::SINK_BATCH_MAX,
+          value_parser = at_least_one())]
     pub batch_max: usize,
 
     /// Max time in milliseconds a partial sink batch waits before flushing.
@@ -971,6 +974,10 @@ pub(crate) fn cmd_daemon(
         min_version: tls_min_version,
     };
 
+    if let Err(e) = check_queue_sizes(buffer_size, batch_size, batch_max) {
+        eprintln!("{e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
     // A batch cannot contain more events than the source queue can hold.
     let batch_size = effective_batch_size(batch_size, buffer_size);
 
@@ -2451,6 +2458,30 @@ fn build_tls_state(
     }
 }
 
+/// Parser for a count flag that must be at least 1.
+fn at_least_one() -> clap::builder::RangedU64ValueParser<usize> {
+    clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+}
+
+/// Reject a zero queue or batch size that arrived from a config file, which
+/// the flag parser cannot see.
+fn check_queue_sizes(
+    buffer_size: usize,
+    batch_size: usize,
+    batch_max: usize,
+) -> Result<(), String> {
+    for (key, value) in [
+        ("daemon.input.buffer_size", buffer_size),
+        ("daemon.input.batch_size", batch_size),
+        ("daemon.output.batch_max", batch_max),
+    ] {
+        if value == 0 {
+            return Err(format!("Invalid {key} 0: must be at least 1"));
+        }
+    }
+    Ok(())
+}
+
 fn effective_batch_size(batch_size: usize, buffer_size: usize) -> usize {
     batch_size.min(buffer_size)
 }
@@ -2595,6 +2626,49 @@ mod tests {
     fn batch_size_defaults_to_parallel_batch() {
         let (args, _) = parse(&["daemon"]);
         assert_eq!(args.batch_size, 128);
+    }
+
+    #[test]
+    fn zero_size_flags_are_rejected() {
+        for flag in ["--buffer-size", "--batch-size", "--sink-batch-max"] {
+            let cmd = DaemonArgs::augment_args(Command::new("daemon"));
+            let err = cmd
+                .try_get_matches_from(["daemon", flag, "0"])
+                .expect_err(flag);
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{flag}"
+            );
+            assert!(err.to_string().contains("0 is not in 1.."), "{flag}: {err}");
+        }
+    }
+
+    #[test]
+    fn zero_sizes_from_a_config_file_are_rejected() {
+        let cases = [
+            (
+                "daemon:\n  input:\n    buffer_size: 0\n",
+                "daemon.input.buffer_size",
+            ),
+            (
+                "daemon:\n  input:\n    batch_size: 0\n",
+                "daemon.input.batch_size",
+            ),
+            (
+                "daemon:\n  output:\n    batch_max: 0\n",
+                "daemon.output.batch_max",
+            ),
+        ];
+        for (yaml, key) in cases {
+            let (mut args, matches) = parse(&["daemon"]);
+            apply_daemon_config(&mut args, &matches, partial(yaml));
+            let err = check_queue_sizes(args.buffer_size, args.batch_size, args.batch_max)
+                .expect_err(key);
+            assert_eq!(err, format!("Invalid {key} 0: must be at least 1"));
+        }
+        let (args, _) = parse(&["daemon"]);
+        assert!(check_queue_sizes(args.buffer_size, args.batch_size, args.batch_max).is_ok());
     }
 
     #[test]

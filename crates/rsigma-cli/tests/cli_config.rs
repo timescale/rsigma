@@ -143,6 +143,35 @@ fn unknown_key_stops_a_command_that_reads_the_config() {
         ));
 }
 
+#[cfg(feature = "daemon")]
+#[test]
+fn a_zero_buffer_size_in_the_config_stops_the_daemon() {
+    let cfg = temp_file(
+        ".yaml",
+        "version: 1\ndaemon:\n  input:\n    buffer_size: 0\n",
+    );
+    let rule = temp_file(".yml", RULE);
+
+    rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "--config",
+            cfg.path().to_str().unwrap(),
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "Invalid daemon.input.buffer_size 0: must be at least 1",
+        ));
+}
+
 #[test]
 fn show_still_prints_a_config_with_unknown_keys() {
     let cfg = temp_file(".yaml", "version: 1\nbogus_key: true\n");
