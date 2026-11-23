@@ -16,7 +16,7 @@ On an Apple M4 Pro (12 cores), stdin batch mode, one rule matching every event, 
 - 100,000 events to a NATS JetStream sink on a local server: 12.21 s to 0.65 s wall (median of 3), every message stored.
 - 100,000 events to an OTLP/gRPC sink on a local collector: 16.65 s to 0.59 s wall (median of 3).
 
-Retries no longer repeat deliveries:
+Retries no longer repeat deliveries the sink knows went out:
 
 - Stdout skips the lines a failed write already delivered, and ends a line the failure cut off before the next write. Before, a retry could write lines twice.
 - NATS remembers which messages of a failed result JetStream confirmed, and a retry publishes only the others. Before, a retry republished every message of the result.
@@ -26,11 +26,12 @@ The OTLP sink now reads the collector's partial success over both OTLP/gRPC and 
 
 `--sink-batch-flush-ms` (and `daemon.output.batch_flush_ms`) now works: a batch smaller than `--sink-batch-max` waits up to that many milliseconds for more results before it is delivered.
 
-Library API: `DeliverySink` gains `deliver_batch` with a default that delivers one result at a time, `OtlpSink` gains `with_metrics`, and `MetricsHook` gains `on_sink_otlp_rejected_records` with a default no-op body.
+Library API: `DeliverySink` gains `deliver_batch` with a default that delivers one result at a time and stops at the first failure, `OtlpSink` gains `with_metrics`, and `MetricsHook` gains `on_sink_otlp_rejected_records` with a default no-op body.
 
 Behavior changes:
 
 - The `--sink-batch-flush-ms` default changes from 50 to 0, which delivers whatever is queued at once, as the daemon effectively did before because the setting had no effect. `DeliveryConfig::default()` changes the same way.
+- The NATS sink publishes a whole batch before it awaits the acks, so a message retried after a failed ack can land after messages published after it. Before, a failed message was retried before the next one was published.
 
 See [`engine daemon`: Output sinks and DLQ](https://rsigma.io/cli/engine/daemon/#output-sinks-and-dlq).
 
