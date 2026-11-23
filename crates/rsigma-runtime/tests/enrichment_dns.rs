@@ -42,6 +42,22 @@ enrichers:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn detection_key_reads_an_unmatched_field_from_the_event() {
+    let stub = StubDnsServer::start().await;
+    let yaml = dns_yaml(stub.addr(), "A", "${detection.fields.Host}", "");
+    let pipeline = build_pipeline(&yaml);
+    let mut result = detection_result("EventType", json!("dns_query"));
+    result.as_detection_mut().unwrap().event = Some(json!({"Host": "host.example.com"}));
+    let mut results = vec![result];
+    pipeline.run(&mut results).await;
+
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["resolved"],
+        json!(["192.0.2.10", "192.0.2.11"])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn scope_filter_excludes_non_matching_results() {
     let stub = StubDnsServer::start().await;
     let yaml = dns_yaml(

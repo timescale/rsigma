@@ -494,8 +494,13 @@ fn reloading_enrichers_that_read_the_event_turns_retention_on() {
     assert!(before.get("event").is_none(), "{before}");
 
     std::fs::write(&enrichers, geo_enrichers_yaml()).unwrap();
+    // The file watcher may already have queued a reload for this write, in
+    // which case the API answers 429 and the queued reload applies the edit.
     let (status, _) = http_post(&daemon.url("/api/v1/reload"), "");
-    assert!((200..300).contains(&status), "reload returned {status}");
+    assert!(
+        status == 200 || status == 429,
+        "reload POST should return 200 or 429, got {status}"
+    );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let after = loop {

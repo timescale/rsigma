@@ -135,6 +135,33 @@ async fn lookup_cache_hit_extract_jq_returns_employee_record() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn lookup_extract_reads_an_unmatched_field_from_the_event() {
+    let cache = populated_employee_cache();
+    let enricher = lookup_enricher(
+        "enrich_ip_employee",
+        EnricherKind::Detection,
+        "employee",
+        "employee_directory",
+        Some(ExtractExpr::Jq(
+            ".[] | select(.ip == \"${detection.fields.SourceIp}\")".to_string(),
+        )),
+        None,
+        cache,
+        OnError::Skip,
+    );
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut det = detection_with_field("EventType", json!("logon"));
+    det.as_detection_mut().unwrap().event = Some(json!({"SourceIp": "10.0.0.7"}));
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["employee"],
+        json!({"ip": "10.0.0.7", "user": "bob", "team": "IT-Ops"})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn lookup_cache_hit_extract_jsonpath_returns_record() {
     let cache = populated_employee_cache();
     let enricher = lookup_enricher(

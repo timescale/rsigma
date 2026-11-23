@@ -129,7 +129,7 @@ Detection variables (`${detection.*}`):
 
 The daemon retains each detection's event automatically whenever a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, so these templates resolve without `--include-event`. Without `--include-event` or capture, the event is stripped right after enrichment, before the risk layer, the alert pipeline, and the sinks; with capture on, it is stripped after capture admission as before. A rule that sets `rsigma.include_event: "true"` keeps its event either way, and `--include-event` delivers every event. Retention follows enricher reloads: it turns on when a reloaded file starts reading the event and off when it stops. Only the fields each type renders count: the `template` text, `lookup` and `stix` `extract`, `stix_id`, `text_search`, the `http` `url`, `body`, and header values, `command` arguments and `env` values, and the `mmdb` and `dns` `key`. The `http` and `dns` `extract`, which are not templates, do not turn it on. The MCP server's `evaluate_events` tool retains and strips events the same way for the enrichers passed to it. {{ added "unreleased" }}
 
-Retention copies the event into every detection while such an enricher is loaded, the same work `--include-event` does. On one million detections through three `mmdb` enrichers keyed on `${detection.fields.SourceIp}`, the daemon took 7.1 s, against 6.9 s with `--include-event` and `${detection.event.SourceIp}`. {{ added "unreleased" }}
+Retention serializes the event into every detection only while a loaded enricher reads the payload, the same work `--include-event` does. {{ added "unreleased" }}
 
 Correlation variables (`${correlation.*}`):
 

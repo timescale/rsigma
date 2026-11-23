@@ -358,6 +358,9 @@ impl EnrichmentPipeline {
     /// Metrics default to a no-op sink; call [`Self::with_metrics`] to
     /// route counters and latency histograms into a real
     /// [`MetricsHook`] implementation.
+    ///
+    /// A pipeline built here reports [`needs_event`](Self::needs_event) as
+    /// `false`, because the boxed enrichers do not expose their templates.
     pub fn new(enrichers: Vec<Box<dyn Enricher>>, max_concurrent_enrichments: usize) -> Self {
         let permits = if max_concurrent_enrichments == 0 {
             16
@@ -386,6 +389,14 @@ impl EnrichmentPipeline {
     /// and, unless it wants events delivered, removes them after
     /// [`run`](Self::run) with
     /// [`strip_auto_retained_event`](crate::strip_auto_retained_event).
+    ///
+    /// Only [`build_enrichers`](crate::build_enrichers) and
+    /// [`build_enrichers_full`](crate::build_enrichers_full) compute this
+    /// flag, from each entry's
+    /// [`rendered_fields`](crate::EnricherConfig::rendered_fields). A pipeline
+    /// assembled with [`new`](Self::new) always reports `false`, so a caller
+    /// whose hand-built enrichers render those references turns retention on
+    /// itself with `set_include_event(true)`.
     pub fn needs_event(&self) -> bool {
         self.needs_event
     }

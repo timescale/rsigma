@@ -39,6 +39,16 @@ enrichers:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn detection_key_reads_an_unmatched_field_from_the_event() {
+    let pipeline = build_pipeline(&city_yaml(""));
+    let mut result = detection_result("EventType", json!("logon"));
+    result.as_detection_mut().unwrap().event = Some(json!({"SourceIp": "192.0.2.10"}));
+    let mut results = vec![result];
+    pipeline.run(&mut results).await;
+    assert_eq!(geo_enrichment(&results[0])["country"]["iso_code"], "US");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn detection_kind_skips_correlation_results() {
     let pipeline = build_pipeline(&city_yaml(""));
     let mut results = vec![correlation_result("SourceIp", json!("192.0.2.10"))];
