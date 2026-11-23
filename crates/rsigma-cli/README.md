@@ -291,7 +291,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--syslog-strip-bom` | bool | `true` | Strip a leading UTF-8 BOM from RFC 5424 syslog messages. Pass `false` to keep it byte-for-byte |
 | `--jq` | string | none | jq filter to extract event payload (conflicts with `--jsonpath`) |
 | `--jsonpath` | string | none | JSONPath (RFC 9535) query (conflicts with `--jq`) |
-| `--include-event` | flag | `false` | Include full event JSON in each detection match |
+| `--include-event` | flag | `false` | Include full event JSON in each detection match. Enrichers that read `${detection.fields.*}` or `${detection.event.*}` do not need it; the daemon retains events for them and strips them before delivery |
 | `--pretty` | flag | `false` | Pretty-print JSON output |
 | `--api-addr` | string | `0.0.0.0:9090` | Address for health, metrics, and management API server |
 | `--api-token-env` | string | none | Require bearer-token auth on the API; the named environment variable holds the single accepted token (full admin permissions). For per-token roles and granular `resource:action` permissions use the `daemon.api.auth` config block instead (mutually exclusive). `GET /healthz` and `GET /readyz` stay open. |
@@ -1447,8 +1447,10 @@ Detection variables (`${detection.*}`):
 |---|---|
 | `${detection.rule.title}` / `.id` / `.level` | Rule metadata from `RuleHeader` |
 | `${detection.tags}` | Comma-joined `tags` |
-| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields` |
-| `${detection.event.<dotted.path>}` | JSON path into the original event (when `rsigma.include_event: "true"` on the rule) |
+| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields`; when the rule did not match on `<name>`, the value of `<name>` in the event |
+| `${detection.event.<dotted.path>}` | JSON path into the original event |
+
+A matched field wins, even when its value is null or empty. Otherwise `<name>` is read from the event as a whole top-level key first, then as a dotted path, and renders empty when neither exists. The daemon retains each detection's event automatically while a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, and strips it right after enrichment unless `--include-event`, capture, or the rule's `rsigma.include_event: "true"` asks for it. Webhook templates do not fall back and still need `--include-event` for event fields.
 
 Correlation variables (`${correlation.*}`):
 

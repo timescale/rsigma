@@ -7,7 +7,9 @@
 //! object with each primitive's contribution. Also covers:
 //!
 //! - cross-namespace template references rejected at startup,
-//! - the HTTP response cache eliminating the second upstream call.
+//! - the HTTP response cache eliminating the second upstream call,
+//! - enrichers reading fields the rule did not match on, with the event
+//!   retained for them and stripped before delivery.
 
 #![cfg(feature = "daemon")]
 
@@ -342,5 +344,179 @@ fn cross_namespace_enrichers_config_is_rejected_at_startup() {
     assert!(
         stderr_output.contains("wrong namespace") || stderr_output.contains("malformed"),
         "stderr should explain the cross-namespace error; got:\n{stderr_output}"
+    );
+}
+
+// A rule that selects only `EventType`, so `SourceIp` is never a matched
+// field and an enricher keyed on it must read it from the event.
+#[cfg(feature = "mmdb-enrich")]
+const LOGON_RULE: &str = r#"
+title: Logon
+id: 00000000-0000-0000-0000-0000000000bb
+status: test
+logsource:
+    category: test
+    product: test
+detection:
+    selection:
+        EventType: logon
+    condition: selection
+level: high
+"#;
+
+#[cfg(feature = "mmdb-enrich")]
+fn geo_enrichers_yaml() -> String {
+    let db = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../rsigma-runtime/tests/fixtures/mmdb/city-test.mmdb");
+    format!(
+        r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: mmdb
+    inject_field: geo
+    db_path: {}
+    key: "${{detection.fields.SourceIp}}"
+    fields:
+      country: country.iso_code
+"#,
+        db.display()
+    )
+}
+
+#[cfg(feature = "mmdb-enrich")]
+const RULE_ID_ENRICHERS_YAML: &str = r#"
+enrichers:
+  - id: runbook
+    kind: detection
+    type: template
+    inject_field: runbook_url
+    template: "https://wiki/runbooks/${detection.rule.id}"
+"#;
+
+#[cfg(feature = "mmdb-enrich")]
+fn logon_event() -> String {
+    serde_json::json!({"EventType": "logon", "SourceIp": "192.0.2.10"}).to_string()
+}
+
+/// Post one logon event and return the next line the file sink receives.
+#[cfg(feature = "mmdb-enrich")]
+fn post_and_read(daemon: &DaemonProcess, output_path: &str) -> serde_json::Value {
+    let seen = std::fs::read_to_string(output_path)
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), &logon_event());
+    assert_eq!(status, 200, "POST /api/v1/events did not accept the event");
+    let line = poll_until(Duration::from_secs(5), || {
+        let text = std::fs::read_to_string(output_path).ok()?;
+        text.lines()
+            .filter(|l| !l.is_empty())
+            .nth(seen)
+            .map(str::to_string)
+    })
+    .expect("the detection never landed in the file sink within 5s");
+    serde_json::from_str(&line).expect("invalid NDJSON")
+}
+
+#[cfg(feature = "mmdb-enrich")]
+fn spawn_logon_daemon(
+    rule: &tempfile::NamedTempFile,
+    enrichers: &std::path::Path,
+    output_path: &str,
+    extra: &[&str],
+) -> DaemonProcess {
+    let output = format!("file://{output_path}");
+    let mut args = vec![
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "--enrichers",
+        enrichers.to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--output",
+        &output,
+    ];
+    args.extend_from_slice(extra);
+    DaemonProcess::spawn(&args)
+}
+
+#[cfg(feature = "mmdb-enrich")]
+#[test]
+fn enrichers_read_unmatched_fields_without_delivering_the_event() {
+    let rule = temp_file(".yml", LOGON_RULE);
+    let enrichers = temp_file(".yml", &geo_enrichers_yaml());
+    let output = tempfile::NamedTempFile::new().unwrap();
+    let output_path = output.path().to_str().unwrap().to_string();
+    let daemon = spawn_logon_daemon(&rule, enrichers.path(), &output_path, &[]);
+
+    let parsed = post_and_read(&daemon, &output_path);
+    assert_eq!(
+        parsed["enrichments"]["geo"]["country"], "US",
+        "the mmdb key should resolve SourceIp from the event: {parsed}"
+    );
+    assert!(
+        parsed.get("event").is_none(),
+        "an event retained only for enrichment must not be delivered: {parsed}"
+    );
+}
+
+#[cfg(feature = "mmdb-enrich")]
+#[test]
+fn include_event_still_delivers_the_event_with_enrichers() {
+    let rule = temp_file(".yml", LOGON_RULE);
+    let enrichers = temp_file(".yml", &geo_enrichers_yaml());
+    let output = tempfile::NamedTempFile::new().unwrap();
+    let output_path = output.path().to_str().unwrap().to_string();
+    let daemon = spawn_logon_daemon(&rule, enrichers.path(), &output_path, &["--include-event"]);
+
+    let parsed = post_and_read(&daemon, &output_path);
+    assert_eq!(parsed["enrichments"]["geo"]["country"], "US");
+    assert_eq!(parsed["event"]["SourceIp"], "192.0.2.10", "{parsed}");
+}
+
+#[cfg(feature = "mmdb-enrich")]
+#[test]
+fn reloading_enrichers_that_read_the_event_turns_retention_on() {
+    let rule = temp_file(".yml", LOGON_RULE);
+    let dir = tempfile::tempdir().unwrap();
+    let enrichers = dir.path().join("enrichers.yml");
+    std::fs::write(&enrichers, RULE_ID_ENRICHERS_YAML).unwrap();
+    let output = tempfile::NamedTempFile::new().unwrap();
+    let output_path = output.path().to_str().unwrap().to_string();
+    let daemon = spawn_logon_daemon(&rule, &enrichers, &output_path, &[]);
+
+    let before = post_and_read(&daemon, &output_path);
+    assert!(before["enrichments"].get("geo").is_none(), "{before}");
+    assert!(before.get("event").is_none(), "{before}");
+
+    std::fs::write(&enrichers, geo_enrichers_yaml()).unwrap();
+    // The file watcher may already have queued a reload for this write, in
+    // which case the API answers 429 and the queued reload applies the edit.
+    let (status, _) = http_post(&daemon.url("/api/v1/reload"), "");
+    assert!(
+        status == 200 || status == 429,
+        "reload POST should return 200 or 429, got {status}"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let after = loop {
+        let parsed = post_and_read(&daemon, &output_path);
+        if parsed["enrichments"].get("geo").is_some() {
+            break parsed;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the reloaded enrichers never applied: {parsed}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(after["enrichments"]["geo"]["country"], "US", "{after}");
+    assert!(
+        after.get("event").is_none(),
+        "an event retained only for enrichment must not be delivered: {after}"
     );
 }

@@ -168,6 +168,21 @@ impl LogProcessor {
         self.engine.load().read().allows_concurrent_detection()
     }
 
+    /// Whether the current engine attaches the matched event to detections.
+    pub fn include_event(&self) -> bool {
+        self.engine.load().read().include_event()
+    }
+
+    /// Set whether detection results include the matched event.
+    ///
+    /// Waits for in-flight batches on the current engine, so each batch sees
+    /// one value throughout. A rule reload keeps the value set here, even one
+    /// that is already loading rules when this is called.
+    pub fn set_include_event(&self, include: bool) {
+        let _order_guard = self.processing_order.lock();
+        self.engine.load().write().set_include_event(include);
+    }
+
     /// Process a batch of raw input lines through the engine.
     ///
     /// 1. Parses each line as JSON; on error, increments parse error metrics.
@@ -702,7 +717,12 @@ impl LogProcessor {
             );
         }
         let _order_guard = self.processing_order.lock();
-        let live_state = self.engine.load().read().export_state();
+        let (live_state, include_event) = {
+            let live = self.engine.load();
+            let live = live.read();
+            (live.export_state(), live.include_event())
+        };
+        new_engine.set_include_event(include_event);
         if let Some(state) = live_state
             && !new_engine.import_state(&state)
         {
@@ -1546,6 +1566,35 @@ correlation:
             1,
             "the fifth event fires only if all four earlier ones survived the reload"
         );
+    }
+
+    fn alice_carries_event(proc: &LogProcessor) -> bool {
+        let result = alice_event(proc);
+        let detections: Vec<_> = result.iter().filter_map(|r| r.as_detection()).collect();
+        assert!(!detections.is_empty());
+        detections.iter().all(|body| body.event.is_some())
+    }
+
+    #[test]
+    fn set_include_event_survives_rule_reloads() {
+        let proc = make_processor(&counting_rules("Base"));
+        assert!(!proc.include_event());
+        assert!(!alice_carries_event(&proc));
+
+        proc.set_include_event(true);
+        assert!(proc.include_event());
+        assert!(alice_carries_event(&proc));
+        proc.reload_rules().unwrap();
+        assert!(alice_carries_event(&proc));
+
+        let (new_engine, _) = proc.prepare_reload().unwrap();
+        proc.set_include_event(false);
+        proc.commit_reload(new_engine);
+        assert!(
+            !proc.include_event(),
+            "a toggle made while rules load wins over the value the reload started with"
+        );
+        assert!(!alice_carries_event(&proc));
     }
 
     #[test]

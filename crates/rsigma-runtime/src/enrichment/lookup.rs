@@ -34,7 +34,7 @@ use serde_json::Value;
 
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
-    template::render_template,
+    render_enricher_template,
 };
 use crate::sources::SourceCache;
 use crate::sources::extract::apply_extract;
@@ -92,7 +92,7 @@ impl LookupEnricher {
             ExtractExpr::JsonPath(s) => ("jsonpath", s),
             ExtractExpr::Cel(s) => ("cel", s),
         };
-        let rendered = render_template(raw, result);
+        let rendered = render_enricher_template(raw, result);
         Some(match lang {
             "jq" => ExtractExpr::Jq(rendered),
             "jsonpath" => ExtractExpr::JsonPath(rendered),

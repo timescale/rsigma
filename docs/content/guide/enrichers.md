@@ -94,8 +94,14 @@ Detection variables (`${detection.*}`):
 |---|---|
 | `${detection.rule.title}`/`.id`/`.level` | Rule metadata from `RuleHeader` |
 | `${detection.tags}` | Comma-joined `tags` |
-| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields` |
-| `${detection.event.<dotted.path>}` | JSON path into the original event (when `rsigma.include_event: "true"` on the rule) |
+| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields`; when the rule did not match on `<name>`, the value of `<name>` in the event {{ added "unreleased" }} |
+| `${detection.event.<dotted.path>}` | JSON path into the original event |
+
+`${detection.fields.<name>}` reads a matched field first, even when its value is null or empty. When no matched field has that name, it reads `<name>` from the event: the whole name as a top-level key first, then as a dotted path (`process.parent.name`, `addresses.0`). If neither exists, it renders empty. A rule therefore does not have to select on `SourceIp` for an enricher keyed on `${detection.fields.SourceIp}` to see it. {{ added "unreleased" }}
+
+The daemon retains each detection's event automatically whenever a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, so these templates resolve without `--include-event`. Without `--include-event` or capture, the event is stripped right after enrichment, before the risk layer, the alert pipeline, and the sinks; with capture on, it is stripped after capture admission as before. A rule that sets `rsigma.include_event: "true"` keeps its event either way, and `--include-event` delivers every event. Retention follows enricher reloads: it turns on when a reloaded file starts reading the event and off when it stops. Only the fields each type renders count: the `template` text, `lookup` and `stix` `extract`, `stix_id`, `text_search`, the `http` `url`, `body`, and header values, `command` arguments and `env` values, and the `mmdb` and `dns` `key`. The `http` and `dns` `extract`, which are not templates, do not turn it on. The MCP server's `evaluate_events` tool retains and strips events the same way for the enrichers passed to it. {{ added "unreleased" }}
+
+Retention serializes the event into every detection only while a loaded enricher reads the payload, the same work `--include-event` does. {{ added "unreleased" }}
 
 Correlation variables (`${correlation.*}`):
 

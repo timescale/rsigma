@@ -310,6 +310,52 @@ impl EnricherConfig {
         push(self.cache_max_entries.is_some(), "cache_max_entries");
         keys
     }
+
+    /// Every string field this enricher's primitive renders as a template.
+    ///
+    /// Bespoke types expose every templated field, because the runtime cannot
+    /// know which one their factory reads.
+    pub fn rendered_fields(&self) -> impl Iterator<Item = &str> + '_ {
+        let mut fields: Vec<&str> = Vec::new();
+        match self.type_name.as_str() {
+            "template" => fields.extend(self.template.as_deref()),
+            "lookup" => fields.extend(self.extract.as_deref()),
+            "stix" => {
+                fields.extend(self.stix_id.as_deref());
+                fields.extend(self.text_search.as_deref());
+                fields.extend(self.extract.as_deref());
+            }
+            "http" => {
+                fields.extend(self.url.as_deref());
+                fields.extend(self.body.as_deref());
+                fields.extend(self.headers.values().map(String::as_str));
+            }
+            "command" => {
+                fields.extend(self.command.iter().map(String::as_str));
+                fields.extend(self.env.values().map(String::as_str));
+            }
+            "mmdb" | "dns" => fields.extend(self.key.as_deref()),
+            _ => {
+                fields.extend(self.template.as_deref());
+                fields.extend(self.url.as_deref());
+                fields.extend(self.headers.values().map(String::as_str));
+                fields.extend(self.body.as_deref());
+                fields.extend(self.extract.as_deref());
+                fields.extend(self.command.iter().map(String::as_str));
+                fields.extend(self.env.values().map(String::as_str));
+                fields.extend(self.stix_id.as_deref());
+                fields.extend(self.text_search.as_deref());
+                fields.extend(self.key.as_deref());
+            }
+        }
+        fields.into_iter()
+    }
+}
+
+/// Whether an enricher entry reads a detection payload the engine must retain.
+fn config_needs_event(cfg: &EnricherConfig) -> bool {
+    cfg.rendered_fields()
+        .any(super::references_detection_payload)
 }
 
 /// `kind:` discriminator. Lower-case in YAML, parses to
@@ -590,6 +636,7 @@ pub fn build_enrichers_full(
         #[cfg(feature = "mmdb-enrich")]
         mmdb_databases: HashMap::new(),
     };
+    let needs_event = file.enrichers.iter().any(config_needs_event);
     let mut enrichers: Vec<Box<dyn crate::Enricher>> = Vec::with_capacity(file.enrichers.len());
     for cfg in file.enrichers {
         enrichers.push(build_one(cfg, &mut ctx)?);
@@ -597,7 +644,9 @@ pub fn build_enrichers_full(
     let cap = file
         .max_concurrent_enrichments
         .unwrap_or(DEFAULT_MAX_CONCURRENT_ENRICHMENTS);
-    Ok(EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics))
+    let mut pipeline = EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics);
+    pipeline.set_needs_event(needs_event);
+    Ok(pipeline)
 }
 
 /// State shared by every [`build_one`] call in one

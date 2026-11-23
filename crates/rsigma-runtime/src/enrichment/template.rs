@@ -20,7 +20,9 @@
 //! - `rule.title` / `rule.id` / `rule.level`
 //! - `tenant` (empty when the result is untenanted)
 //! - `tags` (joined with `,`)
-//! - `fields.<name>` (the matched value of `<name>` from `matched_fields`)
+//! - `fields.<name>` (the matched value of `<name>` from `matched_fields`;
+//!   the enrichment renderers fall back to the retained event when the rule
+//!   did not match on `<name>`)
 //! - `event.<dotted.path>` (navigate `DetectionBody::event` by JSON segment)
 //!
 //! Correlation paths:
@@ -38,6 +40,13 @@
 //! Anything else (unrecognized prefix, dotted env var, etc.) is rejected at
 //! config load, **not** at runtime, so a deployment with a typo never starts
 //! producing partly-rendered enrichments under load.
+//!
+//! The public [`render_template`], [`render_template_url`], and
+//! [`render_template_json`] functions resolve `fields.<name>` only from
+//! `matched_fields`. The crate-visible `render_enricher_template*` functions
+//! additionally read `<name>` from the retained event when no matched field
+//! has that name. Webhook templates keep the public behavior, so a webhook
+//! reads an unmatched field only through `event.<path>`.
 
 use std::sync::LazyLock;
 
@@ -348,6 +357,33 @@ pub fn env_references(text: &str) -> Vec<String> {
     names
 }
 
+/// Whether `text` references a detection payload that the event fallback can
+/// resolve: `fields.<name>`, `event.<path>`, or bare `event`.
+pub(crate) fn references_detection_payload(text: &str) -> bool {
+    TEMPLATE_RE.captures_iter(text).any(|caps| {
+        matches!(
+            classify_ref(caps.get(1).unwrap().as_str()),
+            VarRef::Detection(path)
+                if path == "event" || path.starts_with("event.") || path.starts_with("fields.")
+        )
+    })
+}
+
+/// Message for an enrichment key that rendered empty.
+///
+/// A template that can read a detection payload gets a hint about the event
+/// fallback. A template that cannot (a correlation template, or one that only
+/// references rule metadata, tags, or the tenant) keeps the plain message.
+#[cfg(any(feature = "mmdb-enrich", feature = "dns-enrich", test))]
+pub(crate) fn empty_key_message(template: &str) -> String {
+    if references_detection_payload(template) {
+        "key rendered empty; the field is neither a matched field nor present in the event"
+            .to_string()
+    } else {
+        "key rendered empty".to_string()
+    }
+}
+
 /// Render `text` against `result`, expanding every `${...}` reference.
 ///
 /// Values for missing fields render as the empty string (matching the
@@ -357,7 +393,7 @@ pub fn env_references(text: &str) -> Vec<String> {
 /// the empty string rather than panicking, since the same render path is
 /// reused by tests.
 pub fn render_template(text: &str, result: &EvaluationResult) -> String {
-    render_with(text, result, |_, s| s)
+    render_with(text, result, false, |_, s| s)
 }
 
 /// Like [`render_template`], but percent-encodes every `${detection.*}` and
@@ -370,7 +406,7 @@ pub fn render_template(text: &str, result: &EvaluationResult) -> String {
 /// a pre-encoded sequence. `${ENV_VAR}` values are inserted verbatim because
 /// operators use them for whole URL parts (a webhook path, a token).
 pub fn render_template_url(text: &str, result: &EvaluationResult) -> String {
-    render_with(text, result, |source, s| match source {
+    render_with(text, result, false, |source, s| match source {
         ValueSource::Env => s,
         ValueSource::Result | ValueSource::Ocsf => url_component_escape(&s),
     })
@@ -387,7 +423,32 @@ pub fn render_template_url(text: &str, result: &EvaluationResult) -> String {
 /// still inserted as raw text. URLs use [`render_template_url`]; headers keep
 /// [`render_template`] because header parsing rejects CR and LF.
 pub fn render_template_json(text: &str, result: &EvaluationResult) -> String {
-    render_with(text, result, |_, s| json_escape_value(s))
+    render_with(text, result, false, |_, s| json_escape_value(s))
+}
+
+/// Like [`render_template`], but `fields.<name>` falls back to the retained
+/// event when the rule did not match on `<name>`.
+///
+/// This is the renderer every enrichment primitive uses. A matched field
+/// always wins, even when its value is null or empty. Otherwise `<name>` is
+/// read from the event as a whole top-level key first, then by dotted path.
+pub(crate) fn render_enricher_template(text: &str, result: &EvaluationResult) -> String {
+    render_with(text, result, true, |_, s| s)
+}
+
+/// Like [`render_enricher_template`], but percent-encodes every
+/// `${detection.*}` and `${correlation.*}` value as one URL component.
+pub(crate) fn render_enricher_template_url(text: &str, result: &EvaluationResult) -> String {
+    render_with(text, result, true, |source, s| match source {
+        ValueSource::Env => s,
+        ValueSource::Result | ValueSource::Ocsf => url_component_escape(&s),
+    })
+}
+
+/// Like [`render_enricher_template`], but JSON-string-escapes every
+/// substituted value.
+pub(crate) fn render_enricher_template_json(text: &str, result: &EvaluationResult) -> String {
+    render_with(text, result, true, |_, s| json_escape_value(s))
 }
 
 /// Like [`render_template_json`], but `${detection.ocsf}` /
@@ -401,7 +462,7 @@ pub(crate) fn render_template_json_with_ocsf(
     result: &EvaluationResult,
     ocsf: impl Fn() -> String,
 ) -> String {
-    render_with(text, result, |source, s| match source {
+    render_with(text, result, false, |source, s| match source {
         ValueSource::Ocsf => ocsf(),
         ValueSource::Env | ValueSource::Result => json_escape_value(s),
     })
@@ -439,6 +500,7 @@ enum ValueSource {
 fn render_with<F: Fn(ValueSource, String) -> String>(
     text: &str,
     result: &EvaluationResult,
+    fallback: bool,
     escape: F,
 ) -> String {
     TEMPLATE_RE
@@ -450,9 +512,10 @@ fn render_with<F: Fn(ValueSource, String) -> String>(
                     ResultBody::Detection(_) if path == OCSF_PATH => {
                         (ValueSource::Ocsf, String::new())
                     }
-                    ResultBody::Detection(_) => {
-                        (ValueSource::Result, render_detection_path(&path, result))
-                    }
+                    ResultBody::Detection(_) => (
+                        ValueSource::Result,
+                        render_detection_path(&path, result, fallback),
+                    ),
                     ResultBody::Correlation(_) => (ValueSource::Result, String::new()),
                 },
                 VarRef::Correlation(path) => match &result.body {
@@ -501,7 +564,7 @@ fn json_escape_value(s: String) -> String {
         .to_string()
 }
 
-fn render_detection_path(path: &str, result: &EvaluationResult) -> String {
+fn render_detection_path(path: &str, result: &EvaluationResult, fallback: bool) -> String {
     let body = match result.as_detection() {
         Some(b) => b,
         None => return String::new(),
@@ -525,6 +588,14 @@ fn render_detection_path(path: &str, result: &EvaluationResult) -> String {
             if fm.field == name {
                 return json_to_string(&fm.value);
             }
+        }
+        if fallback && let Some(event) = &body.event {
+            if let Some(value) = event.as_object().and_then(|map| map.get(name)) {
+                return json_to_string(value);
+            }
+            return navigate_json(event, name)
+                .map(json_to_string)
+                .unwrap_or_default();
         }
         return String::new();
     }
@@ -718,7 +789,7 @@ impl Enricher for TemplateEnricher {
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
-        let rendered = render_template(&self.template, result);
+        let rendered = render_enricher_template(&self.template, result);
         inject_enrichment(
             result,
             &self.inject_field,

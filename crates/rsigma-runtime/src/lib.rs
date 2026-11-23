@@ -72,7 +72,7 @@ pub use alert_pipeline::{
     SNAPSHOT_VERSION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceRejection,
     SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
     build_alert_pipeline, group_fingerprint, load_alert_pipeline_file, parse_alert_pipeline_config,
-    strip_event_payloads,
+    strip_auto_retained_event, strip_event_payloads,
 };
 pub use capture::{
     AdmittedEvent, AdmittedMatch, CaptureConfig, CaptureConfigError, CaptureIncompatibility,

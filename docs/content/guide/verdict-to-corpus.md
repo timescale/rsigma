@@ -40,7 +40,7 @@ rsigma engine daemon -r rules/ --alert-pipeline pipeline.yml --config rsigma.yam
 
 `--enable-capture` turns the feature on for one run. Bounds and `spool_dir` stay config-file-only under `daemon.capture`.
 
-When capture is enabled, the engine retains detection event payloads internally even if you did not pass `--include-event`. Those payloads are stripped before sink delivery unless you independently requested `--include-event`.
+When capture is enabled, the engine retains detection event payloads internally even if you did not pass `--include-event`. Those payloads are stripped before sink delivery unless you independently requested `--include-event`. A rule that sets `rsigma.include_event: "true"` keeps its event, and correlation `events`, `event_refs`, and `event_sources` are never stripped. {{ added "unreleased" }}
 
 ## Bounds
 

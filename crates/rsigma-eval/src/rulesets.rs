@@ -37,6 +37,18 @@ pub enum UnitEngine {
     Routed(Box<SchemaRouter>),
 }
 
+impl UnitEngine {
+    /// Set global `include_event` on the engine. Takes effect for the next
+    /// event evaluated.
+    pub fn set_include_event(&mut self, include: bool) {
+        match self {
+            UnitEngine::Detection(engine) => engine.set_include_event(include),
+            UnitEngine::Correlation(engine) => engine.set_include_event(include),
+            UnitEngine::Routed(router) => router.set_include_event(include),
+        }
+    }
+}
+
 /// One named ruleset unit: its name, schema bindings, engine, and the field
 /// set its rules reference after pipelines.
 pub struct RulesetUnit {
@@ -202,6 +214,14 @@ impl RulesetEngines {
     /// The configured units, in declaration order.
     pub fn units(&self) -> &[RulesetUnit] {
         &self.units
+    }
+
+    /// Set global `include_event` on every unit's engine. Takes effect for
+    /// the next event evaluated.
+    pub fn set_include_event(&mut self, include: bool) {
+        for unit in &mut self.units {
+            unit.engine.set_include_event(include);
+        }
     }
 
     /// Loaded rule counts and schema bindings for every unit.

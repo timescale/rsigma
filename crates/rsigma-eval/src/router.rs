@@ -343,6 +343,17 @@ impl<L> SchemaRouter<L> {
         })
     }
 
+    /// Set global `include_event` on every per-schema engine and the shared
+    /// correlation store. Takes effect for the next event evaluated.
+    pub fn set_include_event(&mut self, include: bool) {
+        for engine in &mut self.engines {
+            engine.set_include_event(include);
+        }
+        if let Some(correlation) = &mut self.correlation {
+            correlation.set_include_event(include);
+        }
+    }
+
     /// The unknown-handling policy this router enforces.
     pub fn on_unknown(&self) -> OnUnknown {
         self.plan.on_unknown()

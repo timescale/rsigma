@@ -76,12 +76,17 @@ pub use lookup::LookupEnricher;
 pub use mmdb::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
 pub use stix::{StixEnricher, StixEnricherQuery};
+#[cfg(any(feature = "mmdb-enrich", feature = "dns-enrich", test))]
+pub(crate) use template::empty_key_message;
 pub use template::{
     TemplateEnricher, TemplateError, env_references, render_template, render_template_json,
     render_template_url, render_webhook_body, validate_template_namespace,
     validate_url_tenant_position,
 };
-pub(crate) use template::{render_template_json_with_ocsf, validate_webhook_body_template};
+pub(crate) use template::{
+    references_detection_payload, render_enricher_template, render_enricher_template_json,
+    render_enricher_template_url, render_template_json_with_ocsf, validate_webhook_body_template,
+};
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.
 ///
@@ -272,6 +277,7 @@ pub struct EnrichmentPipeline {
     enrichers: Vec<Box<dyn Enricher>>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<dyn MetricsHook>,
+    needs_event: bool,
 }
 
 impl std::fmt::Debug for EnrichmentPipeline {
@@ -279,6 +285,7 @@ impl std::fmt::Debug for EnrichmentPipeline {
         f.debug_struct("EnrichmentPipeline")
             .field("enrichers", &self.enrichers.len())
             .field("permits", &self.semaphore.available_permits())
+            .field("needs_event", &self.needs_event)
             .finish()
     }
 }
@@ -291,6 +298,9 @@ impl EnrichmentPipeline {
     /// Metrics default to a no-op sink; call [`Self::with_metrics`] to
     /// route counters and latency histograms into a real
     /// [`MetricsHook`] implementation.
+    ///
+    /// A pipeline built here reports [`needs_event`](Self::needs_event) as
+    /// `false`, because the boxed enrichers do not expose their templates.
     pub fn new(enrichers: Vec<Box<dyn Enricher>>, max_concurrent_enrichments: usize) -> Self {
         let permits = if max_concurrent_enrichments == 0 {
             16
@@ -301,7 +311,37 @@ impl EnrichmentPipeline {
             enrichers,
             semaphore: Arc::new(Semaphore::new(permits)),
             metrics: Arc::new(NoopMetrics),
+            needs_event: false,
         }
+    }
+
+    /// Whether any configured enricher reads a detection payload that the
+    /// engine must retain on the result.
+    ///
+    /// True when a rendered template references `${detection.fields.*}`,
+    /// `${detection.event.*}`, or bare `${detection.event}`. Those references
+    /// resolve only when the engine retains the event on the result.
+    ///
+    /// A caller that builds its own engine passes this to
+    /// [`RuntimeEngine::set_include_event`](crate::RuntimeEngine::set_include_event)
+    /// (or [`LogProcessor::set_include_event`](crate::LogProcessor::set_include_event)),
+    /// and, unless it wants events delivered, removes them after
+    /// [`run`](Self::run) with
+    /// [`strip_auto_retained_event`](crate::strip_auto_retained_event).
+    ///
+    /// Only [`build_enrichers`](crate::build_enrichers) and
+    /// [`build_enrichers_full`](crate::build_enrichers_full) compute this
+    /// flag, from each entry's
+    /// [`rendered_fields`](crate::EnricherConfig::rendered_fields). A pipeline
+    /// assembled with [`new`](Self::new) always reports `false`, so a caller
+    /// whose hand-built enrichers render those references turns retention on
+    /// itself with `set_include_event(true)`.
+    pub fn needs_event(&self) -> bool {
+        self.needs_event
+    }
+
+    pub(crate) fn set_needs_event(&mut self, needs_event: bool) {
+        self.needs_event = needs_event;
     }
 
     /// Replace the metrics hook this pipeline reports into. The daemon
@@ -526,6 +566,7 @@ impl Clone for EnrichmentPipeline {
             enrichers: Vec::new(),
             semaphore: Arc::clone(&self.semaphore),
             metrics: Arc::clone(&self.metrics),
+            needs_event: self.needs_event,
         }
     }
 }

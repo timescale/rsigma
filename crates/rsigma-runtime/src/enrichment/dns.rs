@@ -26,8 +26,8 @@ use serde_json::Value;
 use crate::metrics::{MetricsHook, NoopMetrics};
 
 use super::{
-    EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
-    template::render_template,
+    EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, empty_key_message,
+    inject_enrichment, render_enricher_template,
 };
 
 /// Record types this enricher accepts. Every entry is a data type hickory
@@ -614,10 +614,12 @@ impl Enricher for DnsEnricher {
     }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
-        let rendered = render_template(&self.key_template, result);
+        let rendered = render_enricher_template(&self.key_template, result);
         let key = rendered.trim();
         if key.is_empty() {
-            return Err(self.error(EnrichErrorKind::Fetch("key rendered empty".into())));
+            return Err(self.error(EnrichErrorKind::Fetch(empty_key_message(
+                &self.key_template,
+            ))));
         }
 
         let queries = query_names(self.record_type, key)
