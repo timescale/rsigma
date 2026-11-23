@@ -1,0 +1,8 @@
+enrichers:
+  - id: resolve
+    kind: detection
+    type: dns
+    inject_field: ips
+    key: "${detection.fields.Domain}"
+    record_type: A
+    mmap: true

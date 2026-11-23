@@ -206,6 +206,12 @@ pub struct EnricherConfig {
     /// object. Numeric segments are array indexes.
     #[serde(default)]
     pub fields: BTreeMap<String, String>,
+    /// `mmdb`: memory-map the database instead of reading it into memory.
+    /// Requires the `mmdb-mmap` feature. The file must be replaced by
+    /// renaming a new file over it, never rewritten in place. Entries that
+    /// share a `db_path` must agree on it.
+    #[serde(default)]
+    pub mmap: bool,
 
     /// `dns`: required record type. One of the supported data types or the
     /// `IP` pseudo-type, case-insensitive.
@@ -289,7 +295,7 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "default",
             "on_miss",
         ],
-        "mmdb" => &["db_path", "key", "fields", "default", "on_miss"],
+        "mmdb" => &["db_path", "key", "fields", "default", "on_miss", "mmap"],
         "dns" => &[
             "key",
             "record_type",
@@ -309,7 +315,7 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
 impl EnricherConfig {
     /// Type-specific keys that are set, in field order. A key set to its
     /// empty value (`headers: {}`, `attack_technique: false`,
-    /// `miss_status: []`) counts as absent. `default` counts as present whenever it is written,
+    /// `miss_status: []`, `mmap: false`) counts as absent. `default` counts as present whenever it is written,
     /// `default: null` included.
     fn present_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
@@ -341,6 +347,7 @@ impl EnricherConfig {
         push(self.db_path.is_some(), "db_path");
         push(self.key.is_some(), "key");
         push(!self.fields.is_empty(), "fields");
+        push(self.mmap, "mmap");
         push(self.record_type.is_some(), "record_type");
         push(!self.nameservers.is_empty(), "nameservers");
         push(self.negative_cache_ttl.is_some(), "negative_cache_ttl");
@@ -717,7 +724,15 @@ struct BuildContext<'a> {
     /// Databases opened during this build, keyed by canonical path, so
     /// several enricher entries for one file share a single reader.
     #[cfg(feature = "mmdb-enrich")]
-    mmdb_databases: HashMap<PathBuf, std::sync::Arc<MmdbDatabase>>,
+    mmdb_databases: HashMap<PathBuf, OpenedMmdb>,
+}
+
+/// A database opened during one build, with the entry that opened it.
+#[cfg(feature = "mmdb-enrich")]
+struct OpenedMmdb {
+    db: std::sync::Arc<MmdbDatabase>,
+    enricher_id: String,
+    mmap: bool,
 }
 
 /// Run the checks on one config block that need no I/O: its scope,
@@ -1010,7 +1025,14 @@ fn build_one(
                     }
                 })?)
             };
-            let db = open_mmdb_database(ctx, &cfg.id, &db_path)?;
+            if cfg.mmap && !cfg!(feature = "mmdb-mmap") {
+                return Err(EnrichersConfigError::InvalidValue {
+                    enricher_id: cfg.id.clone(),
+                    field: "mmap",
+                    message: "mmap: true requires the mmdb-mmap feature".to_string(),
+                });
+            }
+            let db = open_mmdb_database(ctx, &cfg.id, &db_path, cfg.mmap)?;
             Ok(Box::new(
                 MmdbEnricher::new(
                     cfg.id,
@@ -1130,19 +1152,33 @@ fn build_one(
     }
 }
 
-/// Open an MMDB database, reusing one already opened in this build.
+/// Open an MMDB database, reusing one already opened in this build. Entries
+/// that share a database must agree on `mmap`.
 #[cfg(feature = "mmdb-enrich")]
 fn open_mmdb_database(
     ctx: &mut BuildContext<'_>,
     enricher_id: &str,
     db_path: &Path,
+    mmap: bool,
 ) -> Result<std::sync::Arc<MmdbDatabase>, EnrichersConfigError> {
     let key = std::fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
-    if let Some(db) = ctx.mmdb_databases.get(&key) {
-        return Ok(std::sync::Arc::clone(db));
+    if let Some(opened) = ctx.mmdb_databases.get(&key) {
+        if opened.mmap != mmap {
+            return Err(EnrichersConfigError::InvalidValue {
+                enricher_id: enricher_id.to_string(),
+                field: "mmap",
+                message: format!(
+                    "enricher '{}' opens '{}' with mmap: {}, and entries that share a database must agree",
+                    opened.enricher_id,
+                    db_path.display(),
+                    opened.mmap
+                ),
+            });
+        }
+        return Ok(std::sync::Arc::clone(&opened.db));
     }
     let db = std::sync::Arc::new(
-        MmdbDatabase::open_with_check_interval(db_path, DEFAULT_MMDB_CHECK_INTERVAL)
+        MmdbDatabase::open_file(db_path, DEFAULT_MMDB_CHECK_INTERVAL, mmap)
             .map_err(|message| EnrichersConfigError::Database {
                 enricher_id: enricher_id.to_string(),
                 path: db_path.to_path_buf(),
@@ -1153,7 +1189,14 @@ fn open_mmdb_database(
                 db_path.display().to_string(),
             ),
     );
-    ctx.mmdb_databases.insert(key, std::sync::Arc::clone(&db));
+    ctx.mmdb_databases.insert(
+        key,
+        OpenedMmdb {
+            db: std::sync::Arc::clone(&db),
+            enricher_id: enricher_id.to_string(),
+            mmap,
+        },
+    );
     Ok(db)
 }
 
@@ -1358,6 +1401,9 @@ impl serde::Serialize for EnricherConfig {
         }
         if !self.fields.is_empty() {
             m.serialize_entry("fields", &self.fields)?;
+        }
+        if self.mmap {
+            m.serialize_entry("mmap", &self.mmap)?;
         }
         if let Some(record_type) = &self.record_type {
             m.serialize_entry("record_type", record_type)?;
@@ -1739,11 +1785,111 @@ enrichers:
             "{}/tests/fixtures/./mmdb/../mmdb/city-test.mmdb",
             env!("CARGO_MANIFEST_DIR")
         ));
-        let a = open_mmdb_database(&mut ctx, "a", &path).unwrap();
-        let b = open_mmdb_database(&mut ctx, "b", &path).unwrap();
-        let c = open_mmdb_database(&mut ctx, "c", &respelled).unwrap();
+        let a = open_mmdb_database(&mut ctx, "a", &path, false).unwrap();
+        let b = open_mmdb_database(&mut ctx, "b", &path, false).unwrap();
+        let c = open_mmdb_database(&mut ctx, "c", &respelled, false).unwrap();
         assert!(std::sync::Arc::ptr_eq(&a, &b));
         assert!(std::sync::Arc::ptr_eq(&a, &c));
+    }
+
+    #[cfg(feature = "mmdb-enrich")]
+    fn two_mmdb_entries(first_mmap: bool, second_mmap: bool) -> String {
+        let path = mmdb_fixture("city-test.mmdb");
+        let mut yaml = String::from("enrichers:\n");
+        for (id, mmap) in [("geo_a", first_mmap), ("geo_b", second_mmap)] {
+            yaml.push_str(&format!(
+                "  - id: {id}\n    kind: detection\n    type: mmdb\n    inject_field: {id}\n    db_path: {path}\n    key: \"${{detection.fields.SourceIp}}\"\n    mmap: {mmap}\n"
+            ));
+        }
+        yaml
+    }
+
+    #[cfg(feature = "mmdb-mmap")]
+    #[test]
+    fn mmdb_entries_on_one_database_must_agree_on_mmap() {
+        for (first, second) in [(false, true), (true, false)] {
+            let err = build_err(&two_mmdb_entries(first, second));
+            match &err {
+                EnrichersConfigError::InvalidValue {
+                    enricher_id, field, ..
+                } => {
+                    assert_eq!(enricher_id, "geo_b");
+                    assert_eq!(*field, "mmap");
+                }
+                other => panic!("expected InvalidValue, got {other}"),
+            }
+            let msg = err.to_string();
+            assert!(
+                msg.contains("enricher 'geo_b'")
+                    && msg.contains("enricher 'geo_a'")
+                    && msg.contains(&format!("mmap: {first}")),
+                "got: {msg}"
+            );
+        }
+        for mmap in [false, true] {
+            let parsed: EnrichersFile =
+                yaml_serde::from_str(&two_mmdb_entries(mmap, mmap)).unwrap();
+            assert_eq!(build_enrichers(parsed).unwrap().len(), 2);
+        }
+    }
+
+    #[cfg(all(feature = "mmdb-enrich", not(feature = "mmdb-mmap")))]
+    #[test]
+    fn mmap_requires_the_mmdb_mmap_feature() {
+        let err = build_err(&two_mmdb_entries(true, true));
+        assert!(
+            matches!(
+                err,
+                EnrichersConfigError::InvalidValue { field: "mmap", .. }
+            ),
+            "got: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "enricher 'geo_a': invalid 'mmap': mmap: true requires the mmdb-mmap feature"
+        );
+        parse_enrichers_config(&two_mmdb_entries(true, true))
+            .expect("the feature is checked when the database is opened");
+    }
+
+    #[cfg(not(feature = "mmdb-mmap"))]
+    #[test]
+    fn key_error_precedes_missing_mmap_feature() {
+        let err = build_err(&entry_yaml(
+            "mmdb",
+            "db_path: x.mmdb\nkey: \"1.2.3.4\"\nmmap: true\nurl: \"https://example.com/\"",
+        ));
+        assert!(
+            matches!(
+                err,
+                EnrichersConfigError::InapplicableField { field: "url", .. }
+            ),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn mmap_applies_only_to_mmdb() {
+        let err = build_err(&entry_yaml("dns", "key: x\nrecord_type: A\nmmap: true"));
+        assert!(
+            matches!(
+                err,
+                EnrichersConfigError::InapplicableField { field: "mmap", .. }
+            ),
+            "got: {err}"
+        );
+        parse_enrichers_config(&entry_yaml("dns", "key: x\nrecord_type: A\nmmap: false"))
+            .expect("mmap: false counts as absent");
+    }
+
+    #[test]
+    fn mmap_is_serialized_for_bespoke_factories() {
+        let cfg = first_entry(&entry_yaml("passive_dns", "mmap: true"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw["mmap"], true);
+        let cfg = first_entry(&entry_yaml("passive_dns", "mmap: false"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("mmap"), None);
     }
 
     #[cfg(not(feature = "mmdb-enrich"))]
@@ -2087,7 +2233,7 @@ enrichers:
             ),
             (
                 "mmdb",
-                "db_path: x.mmdb\nkey: \"1.2.3.4\"\nfields: { country: country.iso_code }\ndefault: {}\non_miss: skip",
+                "db_path: x.mmdb\nkey: \"1.2.3.4\"\nfields: { country: country.iso_code }\ndefault: {}\non_miss: skip\nmmap: true",
             ),
             (
                 "dns",
@@ -2135,7 +2281,7 @@ enrichers:
 
     #[test]
     fn key_tables_match_the_config_fields() {
-        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nmiss_status: [404]\non_miss: skip\nstix_id: x\ntext_search: x\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
+        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nmiss_status: [404]\non_miss: skip\nstix_id: x\ntext_search: x\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nmmap: true\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
         let cfg = first_entry(&entry_yaml("template", all_keys));
         assert!(cfg.extra.is_empty(), "unexpected extra: {:?}", cfg.extra);
 

@@ -118,12 +118,7 @@ async fn full_merged_record() {
     run("full-merged", &yaml, "SourceIp", json!("192.0.2.10")).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn merged_seventeen_field_projection() {
-    let yaml = mmdb_yaml(
-        &mmdb_fixture("merged-test.mmdb"),
-        "${detection.fields.SourceIp}",
-        "    fields:
+const MERGED_SEVENTEEN_FIELDS: &str = "    fields:
       country: country.iso_code
       region: subdivisions.0.iso_code
       city: city.names.en
@@ -141,7 +136,42 @@ async fn merged_seventeen_field_projection() {
       cdn: proxy.is_cdn
       school: proxy.is_school
       anonymous: proxy.is_anonymous
-",
+";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn merged_seventeen_field_projection() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        MERGED_SEVENTEEN_FIELDS,
+    );
+    run(
+        "merged-17-field-projection",
+        &yaml,
+        "SourceIp",
+        json!("198.51.100.7"),
+    )
+    .await;
+}
+
+#[cfg(feature = "mmdb-mmap")]
+#[tokio::test(flavor = "multi_thread")]
+async fn mapped_full_merged_record() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        "    mmap: true\n",
+    );
+    run("full-merged", &yaml, "SourceIp", json!("192.0.2.10")).await;
+}
+
+#[cfg(feature = "mmdb-mmap")]
+#[tokio::test(flavor = "multi_thread")]
+async fn mapped_merged_seventeen_field_projection() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        &format!("    mmap: true\n{MERGED_SEVENTEEN_FIELDS}"),
     );
     run(
         "merged-17-field-projection",

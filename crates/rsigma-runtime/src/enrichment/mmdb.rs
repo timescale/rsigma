@@ -5,7 +5,9 @@
 //! operator points `db_path` at a GeoLite2, GeoIP2, IP2Location, IP2Proxy,
 //! ASN, or any other MMDB file. Records are decoded generically into
 //! `serde_json::Value`, optionally projected through the configured `fields`
-//! map, so no vendor-specific schema is assumed.
+//! map, so no vendor-specific schema is assumed. Databases are read into
+//! memory by default; with the **`mmdb-mmap`** feature, `mmap: true` maps
+//! the file instead.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
@@ -138,13 +140,34 @@ pub struct MmdbDatabase {
     check_interval: Duration,
     next_check: Mutex<Instant>,
     reloading: AtomicBool,
+    mmap: bool,
     metrics: Arc<dyn MetricsHook>,
     database_label: String,
 }
 
+/// The bytes a [`Reader`] reads: an owned copy of the file, or a mapping of
+/// it.
+enum MmdbBytes {
+    Owned(Vec<u8>),
+    #[cfg(feature = "mmdb-mmap")]
+    Mapped(maxminddb::Mmap),
+}
+
+impl AsRef<[u8]> for MmdbBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            MmdbBytes::Owned(bytes) => bytes,
+            #[cfg(feature = "mmdb-mmap")]
+            MmdbBytes::Mapped(map) => map,
+        }
+    }
+}
+
 struct Loaded {
-    reader: Reader<Vec<u8>>,
+    reader: Reader<MmdbBytes>,
     stamp: Option<FileStamp>,
+    #[cfg(all(test, feature = "mmdb-mmap"))]
+    mapped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,22 +190,46 @@ impl FileStamp {
 }
 
 impl Loaded {
-    /// Read `path` and stamp it from the same open handle, so the stamp
-    /// always describes the bytes that were loaded even if the file is
+    /// Read or map `path` and stamp it from the same open handle, so the
+    /// stamp always describes the bytes that were loaded even if the file is
     /// replaced concurrently.
-    fn from_file(path: &Path) -> Result<Self, String> {
-        use std::io::Read;
-
+    fn from_file(path: &Path, mmap: bool) -> Result<Self, String> {
         let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let stamp = FileStamp::from_metadata(&file.metadata().map_err(|e| e.to_string())?);
-        let mut bytes = Vec::with_capacity(usize::try_from(stamp.len).unwrap_or(0));
-        file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        let bytes = if mmap {
+            map_file(&file)?
+        } else {
+            use std::io::Read;
+
+            let mut bytes = Vec::with_capacity(usize::try_from(stamp.len).unwrap_or(0));
+            file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            MmdbBytes::Owned(bytes)
+        };
+        #[cfg(all(test, feature = "mmdb-mmap"))]
+        let mapped = matches!(bytes, MmdbBytes::Mapped(_));
         let reader = Reader::from_source(bytes).map_err(|e| e.to_string())?;
         Ok(Self {
             reader,
             stamp: Some(stamp),
+            #[cfg(all(test, feature = "mmdb-mmap"))]
+            mapped,
         })
     }
+}
+
+#[cfg(feature = "mmdb-mmap")]
+fn map_file(file: &std::fs::File) -> Result<MmdbBytes, String> {
+    // SAFETY: the mapping is only sound while nothing modifies or truncates
+    // the file. Operators that set `mmap: true` must replace the database by
+    // writing a new file and renaming it over the old path, which leaves this
+    // mapping on the old inode; rewriting the file in place can raise SIGBUS.
+    let map = unsafe { maxminddb::Mmap::map(file) }.map_err(|e| e.to_string())?;
+    Ok(MmdbBytes::Mapped(map))
+}
+
+#[cfg(not(feature = "mmdb-mmap"))]
+fn map_file(_file: &std::fs::File) -> Result<MmdbBytes, String> {
+    Err("memory-mapped databases require the mmdb-mmap feature".to_string())
 }
 
 impl MmdbDatabase {
@@ -202,15 +249,25 @@ impl MmdbDatabase {
         path: impl AsRef<Path>,
         check_interval: Duration,
     ) -> Result<Self, String> {
-        let path = path.as_ref().to_path_buf();
-        let loaded = Loaded::from_file(&path)?;
+        Self::open_file(path.as_ref(), check_interval, false)
+    }
+
+    /// Load an MMDB file, memory-mapping it and every reloaded replacement
+    /// when `mmap` is set. Mapping requires the `mmdb-mmap` feature.
+    pub(crate) fn open_file(
+        path: &Path,
+        check_interval: Duration,
+        mmap: bool,
+    ) -> Result<Self, String> {
+        let loaded = Loaded::from_file(path, mmap)?;
         Ok(Self {
             database_label: path.display().to_string(),
-            path: Some(path),
+            path: Some(path.to_path_buf()),
             current: ArcSwap::from_pointee(loaded),
             check_interval,
             next_check: Mutex::new(Instant::now()),
             reloading: AtomicBool::new(false),
+            mmap,
             metrics: Arc::new(NoopMetrics),
         })
     }
@@ -219,16 +276,19 @@ impl MmdbDatabase {
     ///
     /// A database built this way has no file to watch and never reloads.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
-        let reader = Reader::from_source(bytes).map_err(|e| e.to_string())?;
+        let reader = Reader::from_source(MmdbBytes::Owned(bytes)).map_err(|e| e.to_string())?;
         Ok(Self {
             path: None,
             current: ArcSwap::from_pointee(Loaded {
                 reader,
                 stamp: None,
+                #[cfg(all(test, feature = "mmdb-mmap"))]
+                mapped: false,
             }),
             check_interval: DEFAULT_MMDB_CHECK_INTERVAL,
             next_check: Mutex::new(Instant::now()),
             reloading: AtomicBool::new(false),
+            mmap: false,
             metrics: Arc::new(NoopMetrics),
             database_label: "<memory>".to_string(),
         })
@@ -315,7 +375,7 @@ impl MmdbDatabase {
             return;
         }
 
-        match Loaded::from_file(path) {
+        match Loaded::from_file(path, self.mmap) {
             Ok(loaded) => {
                 let build_epoch = loaded.reader.metadata().build_epoch;
                 self.current.store(Arc::new(loaded));
@@ -880,6 +940,91 @@ mod tests {
 
         db.maybe_refresh().expect("a check is due").await.unwrap();
         assert_eq!(lookup_country(&db), "CA");
+    }
+
+    #[cfg(feature = "mmdb-mmap")]
+    #[test]
+    fn mapped_lookups_match_owned_lookups() {
+        let projections = [
+            None,
+            Some(vec![
+                ("country", "country.iso_code"),
+                ("subdivision", "subdivisions.0.iso_code"),
+                ("latitude", "location.latitude"),
+                ("city", "city.names.en"),
+            ]),
+            Some(vec![
+                ("country", "country.iso_code"),
+                ("asn", "asn.autonomous_system_number"),
+                ("as_domain", "asn.as_domain"),
+                ("tor", "proxy.is_tor"),
+                ("hosting", "proxy.is_hosting"),
+                ("usage", "usage_types.1"),
+            ]),
+            Some(vec![("x", "country.0")]),
+        ];
+        for name in [
+            "city-test.mmdb",
+            "city-test-updated.mmdb",
+            "city-test-v4.mmdb",
+            "asn-test.mmdb",
+            "flat-test.mmdb",
+            "merged-test.mmdb",
+        ] {
+            let path = PathBuf::from(fixture(name));
+            let owned = MmdbDatabase::open_file(&path, DEFAULT_MMDB_CHECK_INTERVAL, false).unwrap();
+            let mapped = MmdbDatabase::open_file(&path, DEFAULT_MMDB_CHECK_INTERVAL, true).unwrap();
+            assert!(mapped.current.load().mapped);
+            for ip in ["192.0.2.10", "198.51.100.7", "2001:db8::1", "203.0.113.5"] {
+                let ip: IpAddr = ip.parse().unwrap();
+                for projection in &projections {
+                    let fields = projection.as_ref().map(|paths| {
+                        MmdbFields::parse(
+                            &paths
+                                .iter()
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect(),
+                        )
+                        .unwrap()
+                    });
+                    assert_eq!(
+                        mapped.lookup(ip, fields.as_ref()),
+                        owned.lookup(ip, fields.as_ref()),
+                        "{name} {ip} {projection:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "mmdb-mmap")]
+    #[tokio::test]
+    async fn mapped_database_reloads_a_renamed_replacement() {
+        let (_dir, path) = temp_copy("city-test.mmdb");
+        let db = Arc::new(MmdbDatabase::open_file(&path, Duration::ZERO, true).unwrap());
+        assert_eq!(lookup_country(&db), "US");
+
+        replace_with(
+            &path,
+            "city-test-updated.mmdb",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000),
+        );
+        db.maybe_refresh().expect("a check is due").await.unwrap();
+        assert_eq!(lookup_country(&db), "CA");
+        assert!(db.current.load().mapped);
+    }
+
+    #[cfg(not(feature = "mmdb-mmap"))]
+    #[test]
+    fn mapping_without_the_feature_fails() {
+        let err = MmdbDatabase::open_file(
+            Path::new(&fixture("city-test.mmdb")),
+            DEFAULT_MMDB_CHECK_INTERVAL,
+            true,
+        )
+        .err()
+        .expect("mapping needs the mmdb-mmap feature");
+        assert!(err.contains("mmdb-mmap"), "got: {err}");
     }
 
     #[tokio::test]
