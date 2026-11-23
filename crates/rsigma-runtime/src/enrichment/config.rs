@@ -309,8 +309,8 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
 impl EnricherConfig {
     /// Type-specific keys that are set, in field order. A key set to its
     /// empty value (`headers: {}`, `attack_technique: false`,
-    /// `miss_status: []`) counts as absent. `default` counts as present whenever it is written,
-    /// `default: null` included.
+    /// `miss_status: []`) counts as absent. `default` counts as present
+    /// whenever it is written, `default: null` included.
     fn present_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
         let mut push = |set: bool, key: &'static str| {
