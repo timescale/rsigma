@@ -18,8 +18,8 @@ use rsigma_eval::{
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::{
-    CommandEnricher, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
-    HttpResponseCache, OnError, OutputFormat, Scope, build_default_http_client,
+    CommandEnricher, EnrichErrorKind, Enricher, EnricherKind, EnrichmentPipeline, HttpEnricher,
+    HttpEnricherClient, HttpResponseCache, OnError, OutputFormat, Scope, build_default_http_client,
 };
 use serde_json::json;
 use wiremock::matchers::{body_json, header, method, path};
@@ -745,6 +745,141 @@ enrichers:
     let mut results = vec![detection("rule-x", "ps -ef")];
     pipeline.run(&mut results).await;
     assert_eq!(geo_of(&results[0]), Some(&serde_json::Value::Null));
+}
+
+async fn mount_status(server: &MockServer, status: u16, expect: u64) {
+    Mock::given(method("GET"))
+        .and(path("/geo"))
+        .respond_with(ResponseTemplate::new(status).set_body_string("not json"))
+        .expect(expect)
+        .mount(server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_injects_default() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 1).await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        None,
+        Duration::ZERO,
+        OnError::Null,
+    )
+    .with_default(Some(json!({"country": "unknown"})))
+    .with_miss_status(vec![404]);
+    let results = run_http(enricher, 1).await;
+    assert_eq!(geo_of(&results[0]), Some(&json!({"country": "unknown"})));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_without_default_is_a_miss() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 2).await;
+    let url = format!("{}/geo", server.uri());
+
+    let enricher =
+        http_enricher(url.clone(), None, Duration::ZERO, OnError::Null).with_miss_status(vec![404]);
+    let mut result = detection("rule-x", "ps -ef");
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(
+        matches!(&err.kind, EnrichErrorKind::Miss(m) if m == "HTTP 404"),
+        "got {err}"
+    );
+
+    let enricher =
+        http_enricher(url, None, Duration::ZERO, OnError::Null).with_miss_status(vec![404]);
+    let results = run_http(enricher, 1).await;
+    assert_eq!(geo_of(&results[0]), Some(&serde_json::Value::Null));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_cached() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 1).await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        None,
+        Duration::from_secs(60),
+        OnError::Skip,
+    )
+    .with_default(Some(json!({"country": "unknown"})))
+    .with_miss_status(vec![404]);
+    let results = run_http(enricher, 2).await;
+    for result in &results {
+        assert_eq!(geo_of(result), Some(&json!({"country": "unknown"})));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_without_cache_ttl_asks_every_time() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 2).await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        None,
+        Duration::ZERO,
+        OnError::Skip,
+    )
+    .with_default(Some(json!({"country": "unknown"})))
+    .with_miss_status(vec![404]);
+    run_http(enricher, 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_unlisted_status_still_errors() {
+    let server = MockServer::start().await;
+    mount_status(&server, 500, 1).await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        None,
+        Duration::ZERO,
+        OnError::Null,
+    )
+    .with_default(Some(json!({"country": "unknown"})))
+    .with_miss_status(vec![404]);
+    let results = run_http(enricher, 1).await;
+    assert_eq!(geo_of(&results[0]), Some(&serde_json::Value::Null));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_skips_body() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 1).await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        Some(r#"error("extract must not run")"#),
+        Duration::ZERO,
+        OnError::Skip,
+    )
+    .with_default(Some(json!({"country": "unknown"})))
+    .with_miss_status(vec![404]);
+    let results = run_http(enricher, 1).await;
+    assert_eq!(geo_of(&results[0]), Some(&json!({"country": "unknown"})));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_miss_status_from_yaml() {
+    let server = MockServer::start().await;
+    mount_status(&server, 404, 1).await;
+    let yaml = format!(
+        r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: http
+    inject_field: geo
+    url: "{}/geo"
+    miss_status: [404]
+    default:
+      country: unknown
+"#,
+        server.uri()
+    );
+    let pipeline = rsigma_runtime::build_enrichers(yaml_serde::from_str(&yaml).unwrap()).unwrap();
+    let mut results = vec![detection("rule-x", "ps -ef")];
+    pipeline.run(&mut results).await;
+    assert_eq!(geo_of(&results[0]), Some(&json!({"country": "unknown"})));
 }
 
 // ---------------------------------------------------------------------------

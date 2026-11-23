@@ -12,10 +12,13 @@
 //! in practice for rate-limited APIs (VirusTotal: 4 req/min free tier).
 //!
 //! Miss rule: when the 2xx body, after the optional extract, is `null`,
-//! the configured `default` is injected, or `null` when there is none.
-//! An extract evaluation error and every other failure (non-2xx status,
-//! timeout, transport error, body over the cap, invalid JSON) apply
-//! `on_error`, even when a `default` is set.
+//! the configured `default` is injected, or `null` when there is none. A
+//! status listed in `miss_status` is a miss too: the body is not read, and
+//! the `default` is injected, or [`EnrichErrorKind::Miss`] is returned when
+//! there is none. Listed statuses are cached for the same `cache_ttl` as
+//! bodies. An extract evaluation error and every other failure (an unlisted
+//! non-2xx status, timeout, transport error, body over the cap, invalid
+//! JSON) apply `on_error`, even when a `default` is set.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,8 +65,11 @@ pub struct HttpEnricher {
     scope: Scope,
     extract: Option<ExtractExpr>,
     default: Option<Value>,
+    miss_status: Vec<u16>,
     client: HttpEnricherClient,
     cache: HttpResponseCache,
+    /// Status codes of recent `miss_status` responses, keyed like `cache`.
+    miss_cache: Option<HttpResponseCache>,
     metrics: Arc<dyn MetricsHook>,
     /// Maximum number of bytes to read from the upstream response.
     /// Defaults to [`DEFAULT_ENRICHER_MAX_RESPONSE_BYTES`]. Configurable
@@ -175,8 +181,10 @@ impl HttpEnricher {
             scope,
             extract,
             default: None,
+            miss_status: Vec::new(),
             client,
             cache,
+            miss_cache: None,
             metrics: Arc::new(NoopMetrics),
             max_response_bytes: DEFAULT_ENRICHER_MAX_RESPONSE_BYTES,
         }
@@ -198,6 +206,21 @@ impl HttpEnricher {
     /// as `null`.
     pub fn with_default(mut self, default: Option<Value>) -> Self {
         self.default = default;
+        self
+    }
+
+    /// Treat the listed HTTP statuses as misses: the body is not read, and
+    /// the default is injected, or the enricher returns
+    /// [`EnrichErrorKind::Miss`] when there is none. Miss responses are
+    /// cached for the response cache's TTL. An empty list treats no status
+    /// as a miss.
+    pub fn with_miss_status(mut self, statuses: Vec<u16>) -> Self {
+        self.miss_cache = if statuses.is_empty() {
+            None
+        } else {
+            Some(HttpResponseCache::new(self.cache.ttl()))
+        };
+        self.miss_status = statuses;
         self
     }
 
@@ -261,6 +284,19 @@ impl Enricher for HttpEnricher {
 
         let cache_key = CacheKey::new(&self.method, &url, body.as_deref().map(str::as_bytes))
             .with_headers(&headers);
+        if let Some(miss_cache) = &self.miss_cache {
+            match miss_cache.lookup(&cache_key) {
+                (CacheOutcome::Hit, Some(status)) => {
+                    self.metrics.on_enrichment_http_cache_hit(&self.id);
+                    let status = status.as_u64().and_then(|n| u16::try_from(n).ok());
+                    return self.miss_status_outcome(result, status.unwrap_or_default());
+                }
+                (CacheOutcome::Expired, _) => {
+                    self.metrics.on_enrichment_http_cache_expiration(&self.id);
+                }
+                _ => {}
+            }
+        }
         let (outcome, cached) = self.cache.lookup(&cache_key);
         match outcome {
             CacheOutcome::Hit => self.metrics.on_enrichment_http_cache_hit(&self.id),
@@ -317,6 +353,12 @@ impl Enricher for HttpEnricher {
         })?;
 
         let status = resp.status();
+        if self.miss_status.contains(&status.as_u16()) {
+            if let Some(miss_cache) = &self.miss_cache {
+                miss_cache.insert(cache_key, Value::from(status.as_u16()));
+            }
+            return self.miss_status_outcome(result, status.as_u16());
+        }
         if !status.is_success() {
             return Err(EnrichError {
                 enricher_id: self.id.clone(),
@@ -382,6 +424,24 @@ async fn read_body_capped(
 }
 
 impl HttpEnricher {
+    /// Handle a response whose status is listed in `miss_status`.
+    fn miss_status_outcome(
+        &self,
+        result: &mut EvaluationResult,
+        status: u16,
+    ) -> Result<(), EnrichError> {
+        match &self.default {
+            Some(default) => {
+                inject_enrichment(result, &self.inject_field, default.clone());
+                Ok(())
+            }
+            None => Err(EnrichError {
+                enricher_id: self.id.clone(),
+                kind: EnrichErrorKind::Miss(format!("HTTP {status}")),
+            }),
+        }
+    }
+
     /// Inject `value`, or the configured default when `value` is `null`.
     fn inject_result(&self, result: &mut EvaluationResult, value: Value) {
         let value = match (&self.default, value.is_null()) {

@@ -1,0 +1,7 @@
+enrichers:
+  - id: e
+    kind: detection
+    type: http
+    inject_field: out
+    url: "https://example.com/"
+    miss_status: [65535]
