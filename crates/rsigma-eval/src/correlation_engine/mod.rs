@@ -887,31 +887,12 @@ impl<L> CorrelationEngine<L> {
         let engine = &self.engine;
         let ts_fields = &self.config.timestamp_fields;
 
-        let batch_results: Vec<(Vec<IdentifiedEvaluation>, Option<i64>)> = {
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                events
-                    .par_iter()
-                    .map(|e| {
-                        let detections = engine.evaluate_identified(e);
-                        let ts = extract_event_ts(e, ts_fields);
-                        (detections, ts)
-                    })
-                    .collect()
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                events
-                    .iter()
-                    .map(|e| {
-                        let detections = engine.evaluate_identified(e);
-                        let ts = extract_event_ts(e, ts_fields);
-                        (detections, ts)
-                    })
-                    .collect()
-            }
-        };
+        let batch_results: Vec<(Vec<IdentifiedEvaluation>, Option<i64>)> =
+            crate::parallel::map_ordered(events, |e| {
+                let detections = engine.evaluate_identified(e);
+                let ts = extract_event_ts(e, ts_fields);
+                (detections, ts)
+            });
 
         // Sequential correlation phase
         let mut results = Vec::with_capacity(events.len());

@@ -36,10 +36,10 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_uptime_seconds` | gauge | none | Daemon uptime in seconds. |
 | `rsigma_input_queue_depth` | gauge | none | Events currently buffered in the source→engine channel. Tracked for every input, including the HTTP and OTLP push receivers. |
 | `rsigma_output_queue_depth` | gauge | none | Results currently buffered in the engine→sink channel. |
-| `rsigma_back_pressure_events_total` | counter | none | Times a source was blocked on a full event channel. |
+| `rsigma_back_pressure_events_total` | counter | none | Times a source was blocked on a full event channel, for every input including OTLP. {{ added "unreleased" }} The matching `Input channel full, backpressure applied` warning is logged at most once every 10 seconds with a `suppressed` count. {{ added "unreleased" }} |
 | `rsigma_event_processing_seconds` | histogram | none | Per-event processing latency. |
 | `rsigma_batch_phase_duration_seconds` | histogram | `phase` (`parse`, `decode_merge`, `observe`, `evaluate`, `result_merge`, `dispatch`) | Wall-clock duration of each batch-processing phase. `parse` is the parallel format parse; `decode_merge` is the ordered post-parse merge and optional event filter; `observe` covers field/schema observers and decoded taps; `evaluate` is engine detection/correlation; `result_merge` is per-line result assembly and counters; `dispatch` is the daemon's post-batch ack/sink enqueue loop. Compare `_sum` deltas over the same interval to rank serial share without inferring it from throughput. |
-| `rsigma_pipeline_latency_seconds` | histogram | none | End-to-end latency from event dequeue to sink send. |
+| `rsigma_pipeline_latency_seconds` | histogram | none | Latency from event dequeue to dispatch, before enrichment and sink delivery. {{ added "unreleased" }} |
 | `rsigma_batch_size` | histogram | none | Number of events processed per batch. |
 | `rsigma_dlq_events_total` | counter | none | Events routed to the dead-letter queue, counted whether or not a `--dlq` sink is configured. |
 | `rsigma_dlq_write_failures_total` | counter | none | Dead-letter queue entries the `--dlq` sink failed to write. Each one is a lost event that was already acked. {{ added "0.25.0" }} |
@@ -327,7 +327,7 @@ groups:
 | Metric | Typical p50 | Typical p99 | Notes |
 |--------|-------------|-------------|-------|
 | `rsigma_event_processing_seconds` | 1-30 µs | < 1 ms | Per-event evaluation against the loaded rule set. Spikes correlate with reload events. |
-| `rsigma_pipeline_latency_seconds` | 1-100 µs | < 5 ms | End-to-end from event dequeue to sink send. Dominated by sink latency (file vs NATS). |
+| `rsigma_pipeline_latency_seconds` | 1-100 µs | < 5 ms | From event dequeue to dispatch. Enrichment and sink delivery are not included. |
 | `rsigma_batch_size` | 128 | 128 | Default `--batch-size 128`. Under light load, batches contain only the events already queued and can be smaller. |
 
 `event_processing_seconds` p99 above 5 ms is usually a sign of misuse (regex-heavy rules without `--cross-rule-ac`, or many `|all` modifiers).

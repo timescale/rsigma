@@ -202,6 +202,35 @@ pub(crate) struct DaemonPartial {
     /// Logical multi-tenancy settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenancy: Option<TenancyPartial>,
+    /// Thread pool sizing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimePartial>,
+}
+
+/// Daemon thread pool sizing.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct RuntimePartial {
+    /// Tokio worker threads. Unset uses Tokio's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_threads: Option<usize>,
+    /// Rayon threads for parallel parsing and detection. Unset honors
+    /// `RAYON_NUM_THREADS`, then Rayon's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detect_threads: Option<usize>,
+    /// Detection batches evaluated concurrently (1 to 8). Unset honors
+    /// `RSIGMA_DETECT_INFLIGHT`, then scales with the detection threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detect_inflight: Option<usize>,
+}
+
+impl Merge for RuntimePartial {
+    fn merge(self, over: Self) -> Self {
+        Self {
+            worker_threads: over.worker_threads.or(self.worker_threads),
+            detect_threads: over.detect_threads.or(self.detect_threads),
+            detect_inflight: over.detect_inflight.or(self.detect_inflight),
+        }
+    }
 }
 
 /// Logical multi-tenancy settings.
@@ -290,6 +319,7 @@ impl Merge for DaemonPartial {
             schema: merge_opt(self.schema, over.schema),
             logsource_routing: merge_opt(self.logsource_routing, over.logsource_routing),
             tenancy: merge_opt(self.tenancy, over.tenancy),
+            runtime: merge_opt(self.runtime, over.runtime),
         }
     }
 }

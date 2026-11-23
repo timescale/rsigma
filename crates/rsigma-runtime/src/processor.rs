@@ -16,6 +16,28 @@ use crate::metrics::MetricsHook;
 use crate::ruleset::RuleSource;
 use crate::tap::{TapPayload, TapRegistry, TapStage};
 
+/// Build the global Rayon pool that runs parallel parsing and detection with
+/// `threads` workers. Call it before any batch is processed: the pool can be
+/// built once per process, and an error is returned if it already exists.
+pub fn init_detection_pool(threads: usize) -> Result<(), String> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|index| format!("rsigma-detect-{index}"))
+        .build_global()
+        .map_err(|e| e.to_string())
+}
+
+/// Number of workers in the pool that runs parallel parsing and detection.
+/// Without [`init_detection_pool`], this builds the default pool, which
+/// honors `RAYON_NUM_THREADS`.
+pub fn detection_threads() -> usize {
+    rayon::current_num_threads()
+}
+
+/// Below this many input bytes a batch is parsed on the calling thread, because
+/// waking the Rayon pool for it costs more than the parse.
+const PARALLEL_PARSE_BYTES: usize = 32 * 1024;
+
 /// Closure that extracts multiple payloads from a single JSON value.
 ///
 /// Used by the daemon's event filter (e.g. jq/jsonpath) to explode a JSON
@@ -396,10 +418,15 @@ impl LogProcessor {
         }
 
         let parse_start = Instant::now();
-        let parsed_lines: Vec<Option<EventInputDecoded>> = batch
-            .par_iter()
-            .map(|line| parse_line(line, format))
-            .collect();
+        let parsed_lines: Vec<Option<EventInputDecoded>> =
+            if batch.iter().map(String::len).sum::<usize>() < PARALLEL_PARSE_BYTES {
+                batch.iter().map(|line| parse_line(line, format)).collect()
+            } else {
+                batch
+                    .par_iter()
+                    .map(|line| parse_line(line, format))
+                    .collect()
+            };
         self.metrics
             .observe_batch_phase_duration("parse", parse_start.elapsed().as_secs_f64());
 

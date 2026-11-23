@@ -454,6 +454,90 @@ fn daemon_streaming_custom_buffer_size() {
     );
 }
 
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_backpressure_warning_is_rate_limited() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let events = r#"{"CommandLine":"benign.exe"}"#.to_string() + "\n";
+
+    let output = rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--buffer-size",
+            "1",
+            "--batch-size",
+            "1",
+        ])
+        .write_stdin(events.repeat(5_000))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warnings: Vec<_> = stderr
+        .lines()
+        .filter(|line| line.contains("Input channel full"))
+        .collect();
+    assert!(
+        (1..=2).contains(&warnings.len()),
+        "expected the first warning and at most one final flush, got {}:\n{}",
+        warnings.len(),
+        warnings.join("\n")
+    );
+    assert!(
+        warnings.iter().all(|line| line.contains("suppressed")),
+        "{warnings:?}"
+    );
+}
+
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_logs_why_correlation_rules_keep_one_batch_in_flight() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+    let output = rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--detect-inflight",
+            "4",
+            "--detect-threads",
+            "2",
+            "--worker-threads",
+            "2",
+        ])
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "Detection in-flight depth is 1 because correlation rules evaluate batches in order"
+        ),
+        "{stderr}"
+    );
+    let sized = stderr
+        .lines()
+        .find(|line| line.contains("Thread pools sized"))
+        .expect("startup sizing line");
+    for field in [
+        r#""worker_threads":2"#,
+        r#""detection_threads":2"#,
+        r#""detect_inflight":1"#,
+    ] {
+        assert!(sized.contains(field), "{sized}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Input format tests
 // ---------------------------------------------------------------------------

@@ -294,6 +294,8 @@ pub struct DaemonConfig {
     pub output: Vec<String>,
     pub buffer_size: usize,
     pub batch_size: usize,
+    /// Thread pool sizing from flags or the config file.
+    pub threads: ThreadSizing,
     /// Shared async delivery tuning applied to every sink worker.
     pub delivery_config: DeliveryConfig,
     pub dlq: Option<String>,
@@ -520,6 +522,40 @@ fn refresh_watchlist_caps(registry: &rsigma_runtime::WatchlistRegistry, processo
             "referenced watchlists hold more indicators than placeholder expansion allows"
         );
     }
+}
+
+/// Thread pool sizing from flags or the config file. `None` leaves the
+/// environment variable or built-in default in charge.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ThreadSizing {
+    pub worker_threads: Option<usize>,
+    pub detect_threads: Option<usize>,
+    pub detect_inflight: Option<usize>,
+}
+
+/// The requested in-flight depth: the flag or config value, else a valid
+/// `RSIGMA_DETECT_INFLIGHT`.
+fn requested_detect_inflight(configured: Option<usize>, env: Option<&str>) -> Option<usize> {
+    configured.or_else(|| {
+        env.and_then(|v| v.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
+}
+
+/// Detection batches kept in flight: the requested depth, else a default that
+/// scales with the detection threads, capped at 8. Correlation engines advance
+/// state in batch order, so they always get 1.
+fn resolve_detect_inflight(
+    requested: Option<usize>,
+    detection_threads: usize,
+    concurrent: bool,
+) -> usize {
+    if !concurrent {
+        return 1;
+    }
+    requested
+        .unwrap_or_else(|| default_detect_inflight(detection_threads))
+        .min(8)
 }
 
 fn default_detect_inflight(workers: usize) -> usize {
@@ -2210,34 +2246,26 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
     // Overlap detection-only batches so one batch's serial merge can run while
     // another occupies rayon. Correlation engines stay at 1 (ordered windows).
-    // Override with RSIGMA_DETECT_INFLIGHT; default scales with the worker pool
-    // size (RAYON_NUM_THREADS, else available parallelism).
-    let detect_inflight = if processor.allows_concurrent_detection() {
-        let workers = std::env::var("RAYON_NUM_THREADS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|n| *n >= 1)
-            .unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1)
-            });
-        let default = default_detect_inflight(workers);
-        std::env::var("RSIGMA_DETECT_INFLIGHT")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|n| *n >= 1)
-            .unwrap_or(default)
-            .min(8)
-    } else {
-        1
-    };
-    if detect_inflight > 1 {
+    let concurrent = processor.allows_concurrent_detection();
+    let requested_inflight = requested_detect_inflight(
+        config.threads.detect_inflight,
+        std::env::var("RSIGMA_DETECT_INFLIGHT").ok().as_deref(),
+    );
+    let detection_threads = rsigma_runtime::detection_threads();
+    let detect_inflight =
+        resolve_detect_inflight(requested_inflight, detection_threads, concurrent);
+    if !concurrent && requested_inflight.is_some_and(|n| n > 1) {
         tracing::info!(
-            detect_inflight,
-            "Concurrent detection enabled (no correlation rules)"
+            requested = requested_inflight,
+            "Detection in-flight depth is 1 because correlation rules evaluate batches in order"
         );
     }
+    tracing::info!(
+        worker_threads = tokio::runtime::Handle::current().metrics().num_workers(),
+        detection_threads,
+        detect_inflight,
+        "Thread pools sized"
+    );
 
     // Engine task evaluates batches; a separate dispatch task drains results so
     // sink/ack work can overlap the next evaluate. When the engine has no
@@ -5854,7 +5882,10 @@ async fn otlp_http_logs(
         tracing::debug!(record_count, "OTLP logs ingested");
 
         for event in raw_events {
-            if state.otlp_event_tx.send(event).await.is_err() {
+            if send_counting_back_pressure(&state.otlp_event_tx, event, &state.metrics)
+                .await
+                .is_err()
+            {
                 state
                     .metrics
                     .otlp_errors
@@ -5884,6 +5915,24 @@ async fn otlp_http_logs(
     }
     .instrument(span)
     .await
+}
+
+/// Forward one OTLP event to the engine, counting a full channel as
+/// back-pressure before waiting for room.
+#[cfg(feature = "daemon-otlp")]
+async fn send_counting_back_pressure(
+    tx: &mpsc::Sender<RawEvent>,
+    event: RawEvent,
+    metrics: &Metrics,
+) -> Result<(), mpsc::error::SendError<RawEvent>> {
+    match tx.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(event)) => {
+            metrics.on_back_pressure();
+            tx.send(event).await
+        }
+        Err(mpsc::error::TrySendError::Closed(event)) => Err(mpsc::error::SendError(event)),
+    }
 }
 
 /// Upper bound on a gzip-decoded OTLP/HTTP body. Matches tonic's default
@@ -6026,13 +6075,15 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
             tracing::debug!(record_count, "OTLP logs ingested");
 
             for event in raw_events {
-                self.event_tx.send(event).await.map_err(|_| {
-                    self.metrics
-                        .otlp_errors
-                        .with_label_values(&["grpc", "channel_closed"])
-                        .inc();
-                    tonic::Status::unavailable("event channel closed")
-                })?;
+                send_counting_back_pressure(&self.event_tx, event, &self.metrics)
+                    .await
+                    .map_err(|_| {
+                        self.metrics
+                            .otlp_errors
+                            .with_label_values(&["grpc", "channel_closed"])
+                            .inc();
+                        tonic::Status::unavailable("event channel closed")
+                    })?;
                 self.metrics.on_input_queue_depth_change(1);
             }
 
@@ -6048,6 +6099,30 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_configured_inflight_depth_beats_the_environment() {
+        assert_eq!(requested_detect_inflight(Some(3), Some("6")), Some(3));
+        assert_eq!(requested_detect_inflight(None, Some("6")), Some(6));
+        assert_eq!(requested_detect_inflight(None, Some("0")), None);
+        assert_eq!(requested_detect_inflight(None, Some("many")), None);
+        assert_eq!(requested_detect_inflight(None, None), None);
+    }
+
+    #[test]
+    fn inflight_depth_falls_back_to_the_detection_thread_default() {
+        assert_eq!(resolve_detect_inflight(Some(4), 12, true), 4);
+        assert_eq!(resolve_detect_inflight(Some(20), 12, true), 8);
+        assert_eq!(resolve_detect_inflight(None, 12, true), 5);
+        assert_eq!(resolve_detect_inflight(None, 4, true), 3);
+        assert_eq!(resolve_detect_inflight(None, 1, true), 1);
+    }
+
+    #[test]
+    fn correlation_rules_keep_one_batch_in_flight() {
+        assert_eq!(resolve_detect_inflight(Some(8), 12, false), 1);
+        assert_eq!(resolve_detect_inflight(None, 12, false), 1);
+    }
 
     #[test]
     fn a_bundle_joins_only_its_own_tenants_risk_entities() {
@@ -6300,6 +6375,38 @@ mod tests {
             let (svc, _rx) = service(Some(auth_table()));
             let response = svc.export(request_with_token(Some("ship-secret"))).await;
             assert!(response.is_ok(), "{response:?}");
+        }
+
+        #[tokio::test]
+        async fn grpc_export_into_a_full_channel_counts_back_pressure() {
+            use rsigma_runtime::LogsService;
+            let (event_tx, mut event_rx) = mpsc::channel(1);
+            let metrics = Arc::new(Metrics::new());
+            let svc = OtlpLogsGrpcService {
+                event_tx,
+                metrics: metrics.clone(),
+                auth: None,
+                tenancy: false,
+            };
+            let request: rsigma_runtime::ExportLogsServiceRequest =
+                serde_json::from_value(serde_json::json!({
+                    "resourceLogs": [{"scopeLogs": [{"logRecords": [
+                        {"body": {"stringValue": "a"}},
+                        {"body": {"stringValue": "b"}},
+                        {"body": {"stringValue": "c"}}
+                    ]}]}]
+                }))
+                .unwrap();
+            let export =
+                tokio::spawn(async move { svc.export(tonic::Request::new(request)).await });
+            let mut received = 0;
+            while received < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                event_rx.recv().await.expect("event");
+                received += 1;
+            }
+            assert!(export.await.unwrap().is_ok());
+            assert!(metrics.back_pressure_events.get() >= 1);
         }
 
         #[tokio::test]

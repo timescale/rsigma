@@ -259,7 +259,7 @@ impl Metrics {
         let pipeline_latency = Histogram::with_opts(
             HistogramOpts::new(
                 "rsigma_pipeline_latency_seconds",
-                "End-to-end latency from event dequeue to sink send",
+                "Latency from event dequeue to dispatch, before enrichment and sink delivery",
             )
             .buckets(vec![
                 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5,
@@ -2168,6 +2168,16 @@ const STIX_SKIP_REASONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipeline_latency_help_names_where_it_stops() {
+        let m = Metrics::new();
+        m.observe_pipeline_latency(0.001);
+        assert!(m.encode().contains(
+            "# HELP rsigma_pipeline_latency_seconds Latency from event dequeue to dispatch, \
+             before enrichment and sink delivery\n"
+        ));
+    }
 
     #[test]
     fn detection_matches_by_rule_labels() {

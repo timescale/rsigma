@@ -4,6 +4,30 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Faster daemon intake (#742)
+
+Small detection batches no longer spread across every Rayon thread. Detection runs on the calling thread until a batch's projected cost reaches 500 µs and then forks the rest, and parsing stays on the calling thread for batches under 32 KiB of input. With cheap rules or small events, waking the whole pool per batch used to cost more than the work: idle workers spun and slept between batches, which showed up as system CPU several times the wall time. Results and their order are unchanged.
+
+The stdin reader also forwards lines in chunks of up to 256 instead of one channel send per line, and still forwards a line on a slow pipe before the next read blocks.
+
+On an Apple M4 Pro (12 cores), stdin to stdout, 1,000,000 events, medians of 7 interleaved runs, wall and system seconds before and after:
+
+- One trivial rule matching every event: 1.63 s / 5.66 s to 1.31 s / 0.97 s, and with correlation rules' in-flight depth of 1, 1.90 s / 13.42 s to 1.55 s / 0.98 s.
+- One trivial rule matching nothing: 0.57 s / 2.77 s to 0.37 s / 0.18 s, and at in-flight depth 1, 1.19 s / 8.81 s to 0.89 s / 0.09 s.
+- The 3,132-rule SigmaHQ tree over Windows events: wall time unchanged (4.87 s to 4.89 s, and 4.88 s to 4.78 s at depth 1), with system time up 5 to 9%.
+
+The `Input channel full, backpressure applied` warning is logged at most once every 10 seconds with a `suppressed` count instead of once per occurrence; `rsigma_back_pressure_events_total` still counts every occurrence, and now counts OTLP ingestion too. The input queue gauge no longer overcounts an event whose send failed at shutdown, and the `rsigma_pipeline_latency_seconds` help text now says it stops at dispatch, before enrichment and sink delivery.
+
+New `--worker-threads`, `--detect-threads`, and `--detect-inflight` flags and the matching `daemon.runtime` config keys size the Tokio and detection thread pools. `RAYON_NUM_THREADS` and `RSIGMA_DETECT_INFLIGHT` remain as fallbacks. The daemon logs the effective sizes at startup, and logs why the in-flight depth stays 1 when correlation rules are loaded. The daemon page gains measured tuning guidance.
+
+Library API: `rsigma-runtime` gains `init_detection_pool` and `detection_threads`.
+
+Behavior changes:
+
+- `--buffer-size 0`, `--batch-size 0`, and `--sink-batch-max 0` are rejected. A zero `daemon.input.buffer_size`, `daemon.input.batch_size`, or `daemon.output.batch_max` in a config file stops the daemon with exit code 3. Before, a zero buffer size panicked and the other two were accepted without effect.
+
+See [`engine daemon`: Throughput](https://rsigma.io/cli/engine/daemon/#throughput).
+
 ### Memory-mapped mmdb databases (#741)
 
 An `mmdb` enricher entry can set `mmap: true` to memory-map its database instead of reading it into memory. It needs the new `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include. With a 93 MB database, the daemon's idle resident memory dropped from 113 MB to 21.5 MB (18.5 MB without enrichers), and the mapped pages live in the operating system's page cache, which processes that map the same file share. Once pages are resident, lookups cost the same as with the file in memory. The default stays the eager read.

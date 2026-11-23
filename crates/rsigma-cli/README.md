@@ -312,8 +312,11 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--event-logsource` | string | unset | Static event logsource when the field is absent, as `product=windows,...` (an `-e @file.evtx` input implies `product: windows`) |
 | `--observe-fields` | flag | `false` | Record the field keys of every event evaluated by the engine so `/api/v1/fields*` can report gap and broken-coverage signals. Off by default; when off the engine task does not iterate event fields at all |
 | `--observe-fields-max-keys` | integer | **10000** | Hard ceiling on distinct field names tracked by the observer. Overflow drops are counted via `rsigma_fields_observer_overflow_dropped_total`. No effect without `--observe-fields` |
-| `--buffer-size` | integer | **10000** | Bounded channel capacity for source-to-engine and engine-to-sink queues |
-| `--batch-size` | integer | **1** | Maximum events per engine lock acquisition (reduces mutex overhead under load) |
+| `--buffer-size` | integer | **10000** | Bounded channel capacity for source-to-engine and engine-to-sink queues, in events. At least 1 |
+| `--batch-size` | integer | **128** | Maximum events per detection batch, capped at `--buffer-size`. At least 1 |
+| `--worker-threads` | integer | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery (`daemon.runtime.worker_threads`) |
+| `--detect-threads` | integer | `RAYON_NUM_THREADS`, else one per core | Threads in the pool that parses and evaluates batches (`daemon.runtime.detect_threads`) |
+| `--detect-inflight` | integer | `RSIGMA_DETECT_INFLIGHT`, else scales with the detection threads | Detection batches evaluated concurrently, 1 to 8; always 1 with correlation rules (`daemon.runtime.detect_inflight`) |
 | `--drain-timeout` | integer | **5** | Seconds to wait for in-flight events to drain on shutdown |
 | `--dlq` | string | none | Dead-letter queue: `stdout`, `file://<path>`, or `nats://<host>:<port>/<subject>` |
 | `--state-db` | path | none | Path to SQLite database for persisting correlation state across restarts |

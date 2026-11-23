@@ -129,7 +129,9 @@ pub use io::{
     UnixSocketGuard, UnixSocketSink, UnixSocketSource, bind_unix_listener, parse_unix_scheme,
 };
 pub use metrics::{MetricsHook, NoopMetrics};
-pub use processor::{BatchProcessOutcome, EventFilter, LogProcessor};
+pub use processor::{
+    BatchProcessOutcome, EventFilter, LogProcessor, detection_threads, init_detection_pool,
+};
 pub use risk::{
     IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskEvent,
     RiskFile, RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState,
