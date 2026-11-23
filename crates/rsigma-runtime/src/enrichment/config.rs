@@ -107,6 +107,11 @@ pub struct EnricherConfig {
     /// Behavior when this enricher fails. Defaults to `skip`.
     #[serde(default)]
     pub on_error: OnErrorLabel,
+    /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: behavior when the
+    /// enricher finds no data. Defaults to `on_error`. Cannot be combined
+    /// with `default`, which always handles a miss.
+    #[serde(default, deserialize_with = "present_on_miss")]
+    pub on_miss: Option<OnErrorLabel>,
     /// Optional scope filter.
     #[serde(default)]
     pub scope: Option<ScopeConfig>,
@@ -161,10 +166,19 @@ pub struct EnricherConfig {
     /// `lookup`: source ID of a dynamic source configured on the daemon.
     #[serde(default)]
     pub source: Option<String>,
-    /// `lookup` / `dns`: default value injected on cache miss / no records.
-    /// Overrides `on_error` when configured.
-    #[serde(default)]
+    /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: value injected on a miss
+    /// (a source cache miss, an extract that matched nothing, no store
+    /// objects, no record, no DNS records, or an HTTP status listed in
+    /// `miss_status`), and for an `http` result that is `null`.
+    /// Overrides `on_error` for misses only. Writing `default: null`
+    /// injects `null` on a miss (`Some(Value::Null)`); omitting `default`
+    /// (`None`) applies `on_miss`, or `on_error` when `on_miss` is absent.
+    #[serde(default, deserialize_with = "present_value")]
     pub default: Option<serde_json::Value>,
+    /// `http`: response statuses (each in `300..=599`) that are misses
+    /// rather than failures. Empty treats no status as a miss.
+    #[serde(default)]
+    pub miss_status: Vec<u16>,
 
     /// `stix`: template-expanded STIX id for a direct store lookup.
     #[serde(default)]
@@ -219,6 +233,22 @@ pub struct EnricherConfig {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
+/// Deserialize a key that is present as `Some`, `null` included, so an
+/// explicit `null` differs from an absent key.
+fn present_value<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(d).map(Some)
+}
+
+/// Deserialize `on_miss` as `Some` whenever it is written, so `on_miss: null`
+/// is the `null` policy rather than an absent key.
+fn present_on_miss<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<OnErrorLabel>, D::Error> {
+    OnErrorLabel::deserialize(d).map(Some)
+}
+
 /// Keys every enricher type accepts.
 const COMMON_KEYS: &[&str] = &[
     "id",
@@ -235,7 +265,7 @@ const COMMON_KEYS: &[&str] = &[
 fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
     Some(match type_name {
         "template" => &["template"],
-        "lookup" => &["source", "extract", "extract_type", "default"],
+        "lookup" => &["source", "extract", "extract_type", "default", "on_miss"],
         "http" => &[
             "url",
             "method",
@@ -244,6 +274,9 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "cache_ttl",
             "extract",
             "extract_type",
+            "default",
+            "miss_status",
+            "on_miss",
         ],
         "command" => &["command", "env", "output"],
         "stix" => &[
@@ -255,8 +288,9 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "extract",
             "extract_type",
             "default",
+            "on_miss",
         ],
-        "mmdb" => &["db_path", "key", "fields", "default"],
+        "mmdb" => &["db_path", "key", "fields", "default", "on_miss"],
         "dns" => &[
             "key",
             "record_type",
@@ -267,6 +301,7 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "extract",
             "extract_type",
             "default",
+            "on_miss",
         ],
         _ => return None,
     })
@@ -275,7 +310,8 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
 impl EnricherConfig {
     /// Type-specific keys that are set, in field order. A key set to its
     /// empty value (`headers: {}`, `attack_technique: false`,
-    /// `default: null`) counts as absent.
+    /// `miss_status: []`) counts as absent. `default` counts as present
+    /// whenever it is written, `default: null` included.
     fn present_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
         let mut push = |set: bool, key: &'static str| {
@@ -296,6 +332,8 @@ impl EnricherConfig {
         push(self.output.is_some(), "output");
         push(self.source.is_some(), "source");
         push(self.default.is_some(), "default");
+        push(!self.miss_status.is_empty(), "miss_status");
+        push(self.on_miss.is_some(), "on_miss");
         push(self.stix_id.is_some(), "stix_id");
         push(self.text_search.is_some(), "text_search");
         push(self.attack_technique, "attack_technique");
@@ -376,7 +414,7 @@ impl From<KindLabel> for EnricherKind {
     }
 }
 
-/// `on_error:` discriminator.
+/// `on_error:` and `on_miss:` discriminator.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OnErrorLabel {
@@ -384,6 +422,16 @@ pub enum OnErrorLabel {
     Skip,
     Null,
     Drop,
+}
+
+impl OnErrorLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            OnErrorLabel::Skip => "skip",
+            OnErrorLabel::Null => "null",
+            OnErrorLabel::Drop => "drop",
+        }
+    }
 }
 
 impl From<OnErrorLabel> for OnError {
@@ -484,6 +532,13 @@ pub enum EnrichersConfigError {
         path: PathBuf,
         message: String,
     },
+    /// A key holds a value the enricher cannot use, or a combination of
+    /// keys has no effect.
+    InvalidValue {
+        enricher_id: String,
+        field: &'static str,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for EnrichersConfigError {
@@ -564,6 +619,11 @@ impl std::fmt::Display for EnrichersConfigError {
                 "enricher '{enricher_id}': cannot open database '{}': {message}",
                 path.display()
             ),
+            EnrichersConfigError::InvalidValue {
+                enricher_id,
+                field,
+                message,
+            } => write!(f, "enricher '{enricher_id}': invalid '{field}': {message}"),
         }
     }
 }
@@ -694,7 +754,31 @@ fn validate_entry(cfg: &EnricherConfig) -> Result<(EnricherKind, Scope), Enriche
     // validator once per field that the chosen primitive touches.
     validate_templated_fields(cfg, kind)?;
     validate_keys(cfg)?;
+    validate_values(cfg)?;
     Ok((kind, scope))
+}
+
+/// Reject key values that pass deserialization but cannot be used.
+fn validate_values(cfg: &EnricherConfig) -> Result<(), EnrichersConfigError> {
+    if let Some(status) = cfg
+        .miss_status
+        .iter()
+        .find(|status| !(300..=599).contains(*status))
+    {
+        return Err(EnrichersConfigError::InvalidValue {
+            enricher_id: cfg.id.clone(),
+            field: "miss_status",
+            message: format!("status {status} is outside 300..=599"),
+        });
+    }
+    if cfg.on_miss.is_some() && cfg.default.is_some() {
+        return Err(EnrichersConfigError::InvalidValue {
+            enricher_id: cfg.id.clone(),
+            field: "on_miss",
+            message: "has no effect when 'default' is set".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Reject keys a built-in type does not accept. Runs before type dispatch
@@ -735,6 +819,7 @@ fn build_one(
 ) -> Result<Box<dyn crate::Enricher>, EnrichersConfigError> {
     let (kind, scope) = validate_entry(&cfg)?;
     let on_error: OnError = cfg.on_error.into();
+    let on_miss: OnError = cfg.on_miss.map_or(on_error, Into::into);
     let timeout = cfg.timeout.unwrap_or(DEFAULT_ENRICHER_TIMEOUT);
 
     match cfg.type_name.as_str() {
@@ -772,6 +857,8 @@ fn build_one(
             let extract = build_extract_expr(&cfg)?;
             let cache_ttl = cfg.cache_ttl.unwrap_or_default();
             let cache = HttpResponseCache::new(cache_ttl);
+            let default = cfg.default.clone();
+            let miss_status = cfg.miss_status.clone();
             Ok(Box::new(
                 HttpEnricher::new(
                     cfg.id,
@@ -788,6 +875,9 @@ fn build_one(
                     ctx.http_client.clone(),
                     cache,
                 )
+                .with_default(default)
+                .with_miss_status(miss_status)
+                .with_on_miss(on_miss)
                 .with_metrics(ctx.metrics.clone()),
             ))
         }
@@ -831,18 +921,21 @@ fn build_one(
                             pass --source <file> to the daemon to declare sources>",
                     })?;
             let extract = build_extract_expr(&cfg)?;
-            Ok(Box::new(LookupEnricher::new(
-                cfg.id,
-                kind,
-                cfg.inject_field,
-                source,
-                extract,
-                cfg.default,
-                timeout,
-                on_error,
-                scope,
-                cache,
-            )))
+            Ok(Box::new(
+                LookupEnricher::new(
+                    cfg.id,
+                    kind,
+                    cfg.inject_field,
+                    source,
+                    extract,
+                    cfg.default,
+                    timeout,
+                    on_error,
+                    scope,
+                    cache,
+                )
+                .with_on_miss(on_miss),
+            ))
         }
         #[cfg(feature = "stix-enrich")]
         "stix" => {
@@ -872,18 +965,21 @@ fn build_one(
                 type_filter,
                 max_results: cfg.max_results.unwrap_or(1).max(1),
             };
-            Ok(Box::new(StixEnricher::new(
-                cfg.id,
-                kind,
-                cfg.inject_field,
-                query,
-                extract,
-                cfg.default,
-                timeout,
-                on_error,
-                scope,
-                store,
-            )))
+            Ok(Box::new(
+                StixEnricher::new(
+                    cfg.id,
+                    kind,
+                    cfg.inject_field,
+                    query,
+                    extract,
+                    cfg.default,
+                    timeout,
+                    on_error,
+                    scope,
+                    store,
+                )
+                .with_on_miss(on_miss),
+            ))
         }
         #[cfg(not(feature = "stix-enrich"))]
         "stix" => Err(EnrichersConfigError::BespokeFactory {
@@ -929,6 +1025,7 @@ fn build_one(
                     scope,
                     db,
                 )
+                .with_on_miss(on_miss)
                 .with_metrics(std::sync::Arc::clone(&ctx.metrics)),
             ))
         }
@@ -1003,6 +1100,7 @@ fn build_one(
                 enricher_id: cfg.id.clone(),
                 message,
             })?
+            .with_on_miss(on_miss)
             .with_metrics(std::sync::Arc::clone(&ctx.metrics));
             Ok(Box::new(enricher))
         }
@@ -1180,14 +1278,10 @@ impl serde::Serialize for EnricherConfig {
         if let Some(t) = &self.timeout {
             m.serialize_entry("timeout_ms", &(t.as_millis() as u64))?;
         }
-        m.serialize_entry(
-            "on_error",
-            match self.on_error {
-                OnErrorLabel::Skip => "skip",
-                OnErrorLabel::Null => "null",
-                OnErrorLabel::Drop => "drop",
-            },
-        )?;
+        m.serialize_entry("on_error", self.on_error.as_str())?;
+        if let Some(on_miss) = self.on_miss {
+            m.serialize_entry("on_miss", on_miss.as_str())?;
+        }
         if let Some(s) = &self.scope {
             m.serialize_entry("scope", s)?;
         }
@@ -1238,6 +1332,9 @@ impl serde::Serialize for EnricherConfig {
         }
         if let Some(d) = &self.default {
             m.serialize_entry("default", d)?;
+        }
+        if !self.miss_status.is_empty() {
+            m.serialize_entry("miss_status", &self.miss_status)?;
         }
         if let Some(id) = &self.stix_id {
             m.serialize_entry("stix_id", id)?;
@@ -1869,11 +1966,7 @@ enrichers:
                 "template",
             ),
             ("template", "template: \"x\"\ndefault: 1", "default"),
-            (
-                "http",
-                "url: \"https://example.com/\"\ndefault: {}",
-                "default",
-            ),
+            ("command", "command: [\"true\"]\ndefault: null", "default"),
         ];
         for (type_name, extra, field) in cases {
             let err = build_err(&entry_yaml(type_name, extra));
@@ -1901,7 +1994,6 @@ enrichers:
                 "http",
                 "url: \"https://example.com/\"\nattack_technique: false",
             ),
-            ("command", "command: [\"true\"]\ndefault: null"),
         ];
         for (type_name, extra) in cases {
             let parsed: EnrichersFile =
@@ -1980,11 +2072,11 @@ enrichers:
             ("template", "template: \"x\""),
             (
                 "lookup",
-                "source: users\nextract: \".name\"\nextract_type: jq\ndefault: unknown",
+                "source: users\nextract: \".name\"\nextract_type: jq\ndefault: unknown\non_miss: skip",
             ),
             (
                 "http",
-                "url: \"https://example.com/${detection.rule.id}\"\nmethod: POST\nheaders: { X-Token: abc }\nbody: \"{}\"\ncache_ttl: 1m\nextract: \".a\"\nextract_type: jq",
+                "url: \"https://example.com/${detection.rule.id}\"\nmethod: POST\nheaders: { X-Token: abc }\nbody: \"{}\"\ncache_ttl: 1m\nextract: \".a\"\nextract_type: jq\ndefault: {}\nmiss_status: [404]\non_miss: skip",
             ),
             (
                 "command",
@@ -1992,17 +2084,27 @@ enrichers:
             ),
             (
                 "stix",
-                "stix_id: indicator--1\ntext_search: x\nattack_technique: true\ntype_filter: [indicator]\nmax_results: 2\nextract: \".id\"\nextract_type: jq\ndefault: none",
+                "stix_id: indicator--1\ntext_search: x\nattack_technique: true\ntype_filter: [indicator]\nmax_results: 2\nextract: \".id\"\nextract_type: jq\ndefault: none\non_miss: skip",
             ),
             (
                 "mmdb",
-                "db_path: x.mmdb\nkey: \"1.2.3.4\"\nfields: { country: country.iso_code }\ndefault: {}",
+                "db_path: x.mmdb\nkey: \"1.2.3.4\"\nfields: { country: country.iso_code }\ndefault: {}\non_miss: skip",
             ),
             (
                 "dns",
-                "key: example.com\nrecord_type: A\nnameservers: [\"1.1.1.1\"]\ncache_ttl: 1m\nnegative_cache_ttl: 10s\ncache_max_entries: 10\nextract: \".[0]\"\nextract_type: jq\ndefault: []",
+                "key: example.com\nrecord_type: A\nnameservers: [\"1.1.1.1\"]\ncache_ttl: 1m\nnegative_cache_ttl: 10s\ncache_max_entries: 10\nextract: \".[0]\"\nextract_type: jq\ndefault: []\non_miss: skip",
             ),
         ]
+    }
+
+    /// A complete entry without `on_miss`, which cannot be combined with the
+    /// entry's `default`, so the entry passes every load check.
+    fn loadable(extra: &str) -> String {
+        extra
+            .lines()
+            .filter(|line| !line.starts_with("on_miss:"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -2026,7 +2128,7 @@ enrichers:
         for (type_name, extra) in complete_entries() {
             if matches!(type_name, "template" | "http" | "command") {
                 let parsed: EnrichersFile =
-                    yaml_serde::from_str(&entry_yaml(type_name, extra)).unwrap();
+                    yaml_serde::from_str(&entry_yaml(type_name, &loadable(extra))).unwrap();
                 build_enrichers(parsed).unwrap_or_else(|e| panic!("type {type_name}: {e}"));
             }
         }
@@ -2034,7 +2136,7 @@ enrichers:
 
     #[test]
     fn key_tables_match_the_config_fields() {
-        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nstix_id: x\ntext_search: x\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
+        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nmiss_status: [404]\non_miss: skip\nstix_id: x\ntext_search: x\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
         let cfg = first_entry(&entry_yaml("template", all_keys));
         assert!(cfg.extra.is_empty(), "unexpected extra: {:?}", cfg.extra);
 
@@ -2071,7 +2173,7 @@ enrichers:
             yaml.push_str(&format!(
                 "  - id: e{i}\n    kind: detection\n    type: {type_name}\n    inject_field: out{i}\n"
             ));
-            for line in extra.lines() {
+            for line in loadable(extra).lines() {
                 yaml.push_str(&format!("    {line}\n"));
             }
         }
@@ -2109,6 +2211,229 @@ enrichers:
             )),
             Err(EnrichersConfigError::Yaml(_))
         ));
+    }
+
+    #[test]
+    fn explicit_null_default_differs_from_absent_default() {
+        assert_eq!(
+            first_entry(&entry_yaml("lookup", "source: x")).default,
+            None
+        );
+        for null in ["default: null", "default: ~", "default:"] {
+            assert_eq!(
+                first_entry(&entry_yaml("lookup", &format!("source: x\n{null}"))).default,
+                Some(serde_json::Value::Null),
+                "{null}"
+            );
+        }
+        assert_eq!(
+            first_entry(&entry_yaml("lookup", "source: x\ndefault: {}")).default,
+            Some(serde_json::json!({}))
+        );
+    }
+
+    #[test]
+    fn explicit_null_default_is_serialized_for_bespoke_factories() {
+        let cfg = first_entry(&entry_yaml("passive_dns", "default: null"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("default"), Some(&serde_json::Value::Null));
+        let cfg = first_entry(&entry_yaml("passive_dns", "url: x"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("default"), None);
+    }
+
+    #[test]
+    fn miss_status_outside_the_redirect_and_error_range_is_rejected() {
+        for status in ["200", "99", "600", "65535"] {
+            let yaml = entry_yaml(
+                "http",
+                &format!("url: \"https://example.com/\"\nmiss_status: [404, {status}]"),
+            );
+            let built = build_err(&yaml);
+            match &built {
+                EnrichersConfigError::InvalidValue {
+                    enricher_id, field, ..
+                } => {
+                    assert_eq!(enricher_id, "e");
+                    assert_eq!(*field, "miss_status");
+                }
+                other => panic!("miss_status {status}: expected InvalidValue, got {other}"),
+            }
+            assert_eq!(
+                built.to_string(),
+                format!(
+                    "enricher 'e': invalid 'miss_status': status {status} is outside 300..=599"
+                )
+            );
+            let parsed = parse_enrichers_config(&yaml).unwrap_err();
+            assert_eq!(parsed.to_string(), built.to_string());
+        }
+    }
+
+    #[test]
+    fn miss_status_must_be_a_list_of_integers() {
+        for value in ["[\"x\"]", "[-1]", "[70000]", "404"] {
+            let yaml = entry_yaml(
+                "http",
+                &format!("url: \"https://example.com/\"\nmiss_status: {value}"),
+            );
+            assert!(
+                matches!(
+                    parse_enrichers_config(&yaml),
+                    Err(EnrichersConfigError::Yaml(_))
+                ),
+                "miss_status: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn miss_status_applies_only_to_http() {
+        let err = build_err(&entry_yaml("lookup", "source: users\nmiss_status: [404]"));
+        assert!(
+            matches!(
+                err,
+                EnrichersConfigError::InapplicableField {
+                    field: "miss_status",
+                    ..
+                }
+            ),
+            "got {err}"
+        );
+        let parsed = parse_enrichers_config(&entry_yaml(
+            "dns",
+            "key: x\nrecord_type: A\nmiss_status: []",
+        ));
+        assert!(parsed.is_ok(), "an empty miss_status counts as absent");
+    }
+
+    #[test]
+    fn miss_status_is_serialized_for_bespoke_factories() {
+        let cfg = first_entry(&entry_yaml("passive_dns", "miss_status: [404, 410]"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw["miss_status"], serde_json::json!([404, 410]));
+    }
+
+    fn http_entry(extra: &str) -> String {
+        entry_yaml("http", &format!("url: \"https://example.com/\"\n{extra}"))
+    }
+
+    fn built_policies(yaml: &str) -> (OnError, OnError) {
+        let parsed: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+        let pipeline = build_enrichers(parsed).unwrap();
+        let enricher = pipeline.enrichers().next().unwrap();
+        (enricher.on_error(), enricher.on_miss())
+    }
+
+    #[test]
+    fn absent_on_miss_follows_on_error() {
+        for (label, policy) in [
+            ("skip", OnError::Skip),
+            ("null", OnError::Null),
+            ("drop", OnError::Drop),
+        ] {
+            assert_eq!(
+                built_policies(&http_entry(&format!("on_error: {label}"))),
+                (policy, policy)
+            );
+        }
+    }
+
+    #[test]
+    fn on_miss_values_parse() {
+        for (label, policy) in [
+            ("skip", OnError::Skip),
+            ("null", OnError::Null),
+            ("drop", OnError::Drop),
+        ] {
+            assert_eq!(
+                built_policies(&http_entry(&format!("on_error: drop\non_miss: {label}"))),
+                (OnError::Drop, policy)
+            );
+        }
+        assert!(matches!(
+            parse_enrichers_config(&http_entry("on_miss: ignore")),
+            Err(EnrichersConfigError::Yaml(_))
+        ));
+    }
+
+    #[test]
+    fn on_miss_applies_only_to_lookup_types() {
+        for (type_name, extra) in [
+            ("command", "command: [\"true\"]\non_miss: skip"),
+            ("template", "template: \"x\"\non_miss: skip"),
+        ] {
+            let err = build_err(&entry_yaml(type_name, extra));
+            assert!(
+                matches!(
+                    err,
+                    EnrichersConfigError::InapplicableField {
+                        field: "on_miss",
+                        ..
+                    }
+                ),
+                "type {type_name}: got {err}"
+            );
+        }
+        for (type_name, extra) in [
+            ("lookup", "source: users\non_miss: null"),
+            ("http", "url: \"https://example.com/\"\non_miss: null"),
+            ("stix", "text_search: x\non_miss: null"),
+            ("mmdb", "db_path: x.mmdb\nkey: \"1.2.3.4\"\non_miss: null"),
+            ("dns", "key: x\nrecord_type: A\non_miss: null"),
+        ] {
+            parse_enrichers_config(&entry_yaml(type_name, extra))
+                .unwrap_or_else(|e| panic!("type {type_name}: {e}"));
+        }
+    }
+
+    #[test]
+    fn on_miss_with_default_is_rejected() {
+        for default in ["default: null", "default: unknown", "default: {}"] {
+            let yaml = http_entry(&format!("{default}\non_miss: skip"));
+            let built = build_err(&yaml);
+            assert!(
+                matches!(
+                    built,
+                    EnrichersConfigError::InvalidValue {
+                        field: "on_miss",
+                        ..
+                    }
+                ),
+                "{default}: got {built}"
+            );
+            assert_eq!(
+                built.to_string(),
+                "enricher 'e': invalid 'on_miss': has no effect when 'default' is set"
+            );
+            let parsed = parse_enrichers_config(&yaml).unwrap_err();
+            assert_eq!(parsed.to_string(), built.to_string());
+        }
+    }
+
+    #[test]
+    fn on_miss_is_serialized_for_bespoke_factories() {
+        let cfg = first_entry(&entry_yaml("passive_dns", "on_error: drop\non_miss: null"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw["on_error"], "drop");
+        assert_eq!(raw["on_miss"], "null");
+        let cfg = first_entry(&entry_yaml("passive_dns", "on_error: drop"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("on_miss"), None);
+    }
+
+    #[test]
+    fn bespoke_types_get_the_value_checks() {
+        for (extra, field) in [
+            ("default: null\non_miss: skip", "on_miss"),
+            ("miss_status: [200]", "miss_status"),
+        ] {
+            let err = parse_enrichers_config(&entry_yaml("passive_dns", extra)).unwrap_err();
+            assert!(
+                matches!(&err, EnrichersConfigError::InvalidValue { field: f, .. } if *f == field),
+                "{extra}: got {err}"
+            );
+        }
     }
 
     #[test]

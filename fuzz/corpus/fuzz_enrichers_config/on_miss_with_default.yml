@@ -1,0 +1,8 @@
+enrichers:
+  - id: owner
+    kind: detection
+    type: lookup
+    inject_field: owner
+    source: users
+    default: null
+    on_miss: "null"

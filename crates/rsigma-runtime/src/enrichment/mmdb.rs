@@ -443,6 +443,7 @@ pub struct MmdbEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     db: Arc<MmdbDatabase>,
     metrics: Arc<dyn MetricsHook>,
@@ -471,10 +472,18 @@ impl MmdbEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             db,
             metrics: Arc::new(NoopMetrics),
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Report this enricher's hit and miss counters into `metrics`.
@@ -515,6 +524,9 @@ impl Enricher for MmdbEnricher {
     fn on_error(&self) -> OnError {
         self.on_error
     }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
+    }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let rendered = render_enricher_template(&self.key_template, result);
@@ -553,7 +565,7 @@ impl Enricher for MmdbEnricher {
                         inject_enrichment(result, &self.inject_field, default.clone());
                         Ok(())
                     }
-                    None => Err(self.error(EnrichErrorKind::Fetch(format!("no record for {ip}")))),
+                    None => Err(self.error(EnrichErrorKind::Miss(format!("no record for {ip}")))),
                 }
             }
             LookupOutcome::EmptyProjection => {
@@ -563,7 +575,7 @@ impl Enricher for MmdbEnricher {
                         inject_enrichment(result, &self.inject_field, default.clone());
                         Ok(())
                     }
-                    None => Err(self.error(EnrichErrorKind::Fetch(format!(
+                    None => Err(self.error(EnrichErrorKind::Miss(format!(
                         "no projected fields for {ip}"
                     )))),
                 }
@@ -777,7 +789,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn miss_without_default_is_a_fetch_error() {
+    async fn miss_without_default_is_a_miss() {
         let e = enricher(
             &fixture("city-test.mmdb"),
             "${detection.fields.SourceIp}",
@@ -787,7 +799,7 @@ mod tests {
         let mut result = detection_result("SourceIp", serde_json::json!("203.0.113.5"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no record for")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no record for")),
             "got {err}"
         );
     }
@@ -821,7 +833,7 @@ mod tests {
         let mut result = detection_result("SourceIp", serde_json::json!("192.0.2.10"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no projected fields")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no projected fields")),
             "got {err}"
         );
     }

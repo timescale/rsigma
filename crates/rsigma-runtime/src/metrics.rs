@@ -43,7 +43,9 @@ pub trait MetricsHook: Send + Sync {
 
     /// One enrichment call completed (success, skip, error, timeout, drop).
     /// `kind` is the enricher's declared kind (`detection` / `correlation`).
-    /// `status` is one of `success` / `skip` / `error` / `timeout` / `drop`.
+    /// `status` is one of `success`, `skip`, `error`, `timeout`, `miss`, or
+    /// `drop`. A miss ([`EnrichErrorKind::Miss`](crate::EnrichErrorKind::Miss))
+    /// that is skipped or injected as `null` reports `miss`.
     fn on_enrichment_completed(
         &self,
         _enricher_id: &str,

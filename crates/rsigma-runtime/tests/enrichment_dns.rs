@@ -126,6 +126,25 @@ async fn nxdomain_is_cached_for_the_next_result() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_default_injects_null_on_nxdomain() {
+    let stub = StubDnsServer::start().await;
+    let yaml = dns_yaml(
+        stub.addr(),
+        "A",
+        "${detection.fields.Host}",
+        "    default: null\n    on_error: skip\n",
+    );
+    let pipeline = build_pipeline(&yaml);
+    let mut results = vec![detection_result("Host", json!("missing.example.com"))];
+    pipeline.run(&mut results).await;
+
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["resolved"],
+        json!(null)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn on_error_null_injects_null_for_a_timeout() {
     let stub = StubDnsServer::start().await;
     let yaml = dns_yaml(

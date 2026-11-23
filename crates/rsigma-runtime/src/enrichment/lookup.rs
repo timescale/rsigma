@@ -8,12 +8,13 @@
 //!
 //! 1. Look up `source_id` in the shared `Arc<SourceCache>`.
 //! 2. **Cache miss** → if `default` is configured, inject it and return
-//!    `Ok`; otherwise return `EnrichErrorKind::Fetch("cache miss")` so
+//!    `Ok`; otherwise return `EnrichErrorKind::Miss("cache miss")` so
 //!    the pipeline applies the configured `on_error` policy.
 //! 3. **Cache hit** + no extract → inject the cached value verbatim.
 //! 4. **Cache hit** + extract:
 //!     - `null` extract result → same as "no extract match"; if
-//!       `default` is set, inject it; otherwise apply `on_error`.
+//!       `default` is set, inject it; otherwise return
+//!       `EnrichErrorKind::Miss(...)` and apply `on_error`.
 //!     - extract evaluation failed → return
 //!       `EnrichErrorKind::Extract(...)`; the pipeline applies
 //!       `on_error`.
@@ -49,6 +50,7 @@ pub struct LookupEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     cache: Arc<SourceCache>,
 }
@@ -76,9 +78,17 @@ impl LookupEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             cache,
         }
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Render any `${detection.*}` / `${correlation.*}` references inside
@@ -125,6 +135,9 @@ impl Enricher for LookupEnricher {
     fn on_error(&self) -> OnError {
         self.on_error
     }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
+    }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let cached = self.cache.get(&self.source_id);
@@ -138,7 +151,7 @@ impl Enricher for LookupEnricher {
                 }
                 return Err(EnrichError {
                     enricher_id: self.id.clone(),
-                    kind: EnrichErrorKind::Fetch(format!(
+                    kind: EnrichErrorKind::Miss(format!(
                         "cache miss for source '{}'",
                         self.source_id
                     )),
@@ -161,7 +174,7 @@ impl Enricher for LookupEnricher {
             }
             return Err(EnrichError {
                 enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Fetch(format!(
+                kind: EnrichErrorKind::Miss(format!(
                     "no extract match for source '{}'",
                     self.source_id
                 )),

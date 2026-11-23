@@ -454,6 +454,7 @@ pub struct DnsEnricher {
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
+    on_miss: OnError,
     scope: Scope,
     backend: Arc<dyn DnsBackend>,
     cache: DnsCache,
@@ -494,11 +495,19 @@ impl DnsEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             backend,
             cache,
             metrics: Arc::new(NoopMetrics),
         })
+    }
+
+    /// Set the policy applied when this enricher finds no data
+    /// ([`EnrichErrorKind::Miss`]). Defaults to the `on_error` policy.
+    pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
+        self.on_miss = on_miss;
+        self
     }
 
     /// Report this enricher's cache and query counters into `metrics`.
@@ -541,6 +550,7 @@ impl DnsEnricher {
             default,
             timeout,
             on_error,
+            on_miss: on_error,
             scope,
             backend,
             cache,
@@ -612,6 +622,9 @@ impl Enricher for DnsEnricher {
     fn on_error(&self) -> OnError {
         self.on_error
     }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
+    }
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let rendered = render_enricher_template(&self.key_template, result);
@@ -674,7 +687,7 @@ impl Enricher for DnsEnricher {
                 inject_enrichment(result, &self.inject_field, default.clone());
                 Ok(())
             }
-            None => Err(self.error(EnrichErrorKind::Fetch(format!(
+            None => Err(self.error(EnrichErrorKind::Miss(format!(
                 "no {} records for {key}",
                 self.record_type.as_str()
             )))),
@@ -1204,7 +1217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn miss_without_default_is_a_fetch_error() {
+    async fn miss_without_default_is_a_miss() {
         let backend = Arc::new(FakeBackend::new(responses(vec![])));
         let e = enricher(
             DnsRecordType::parse("A").unwrap(),
@@ -1216,7 +1229,7 @@ mod tests {
         let mut result = detection_result("Host", serde_json::json!("missing.example.com"));
         let err = e.enrich(&mut result).await.unwrap_err();
         assert!(
-            matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("no A records for")),
+            matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no A records for")),
             "got {err}"
         );
     }

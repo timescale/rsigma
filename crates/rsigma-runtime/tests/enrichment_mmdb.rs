@@ -201,3 +201,12 @@ async fn default_is_injected_on_a_miss() {
     pipeline.run(&mut results).await;
     assert_eq!(geo_enrichment(&results[0]), &unknown_default());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_default_injects_null_on_a_miss() {
+    let yaml = city_yaml("    default: null\n    on_error: skip\n");
+    let pipeline = build_pipeline(&yaml);
+    let mut results = vec![detection_result("SourceIp", json!("203.0.113.5"))];
+    pipeline.run(&mut results).await;
+    assert_eq!(geo_enrichment(&results[0]), &json!(null));
+}

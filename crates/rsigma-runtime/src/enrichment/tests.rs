@@ -821,6 +821,26 @@ struct ErroringEnricher {
     inject_field: String,
     on_error: OnError,
     scope: Scope,
+    error: EnrichErrorKind,
+}
+
+fn erroring(on_error: OnError, error: EnrichErrorKind) -> Box<dyn Enricher> {
+    Box::new(ErroringEnricher {
+        id: "boom".to_string(),
+        kind: EnricherKind::Detection,
+        inject_field: "out".to_string(),
+        on_error,
+        scope: Scope::default(),
+        error,
+    })
+}
+
+fn fetch_error() -> EnrichErrorKind {
+    EnrichErrorKind::Fetch("synthetic".to_string())
+}
+
+fn miss_error() -> EnrichErrorKind {
+    EnrichErrorKind::Miss("synthetic".to_string())
 }
 
 #[async_trait::async_trait]
@@ -846,7 +866,7 @@ impl Enricher for ErroringEnricher {
     async fn enrich(&self, _: &mut EvaluationResult) -> Result<(), EnrichError> {
         Err(EnrichError {
             enricher_id: self.id.clone(),
-            kind: EnrichErrorKind::Fetch("synthetic".to_string()),
+            kind: self.error.clone(),
         })
     }
 }
@@ -854,13 +874,7 @@ impl Enricher for ErroringEnricher {
 #[tokio::test]
 async fn on_error_skip_leaves_enrichments_alone() {
     let mut results = vec![detection_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Skip,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Skip, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     assert!(results[0].header.enrichments.is_none());
 }
@@ -868,13 +882,7 @@ async fn on_error_skip_leaves_enrichments_alone() {
 #[tokio::test]
 async fn on_error_null_injects_null() {
     let mut results = vec![detection_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Null,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Null, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     let map = results[0].header.enrichments.as_ref().unwrap();
     assert_eq!(map.get("out").unwrap(), &serde_json::Value::Null);
@@ -883,17 +891,174 @@ async fn on_error_null_injects_null() {
 #[tokio::test]
 async fn on_error_drop_removes_result_from_vec() {
     let mut results = vec![detection_result(), correlation_result()];
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Drop,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Drop, fetch_error());
     EnrichmentPipeline::new(vec![e], 1).run(&mut results).await;
     // Detection got dropped, correlation survived.
     assert_eq!(results.len(), 1);
     assert!(results[0].is_correlation());
+}
+
+#[tokio::test]
+async fn miss_applies_on_error_like_a_failure() {
+    let mut skipped = vec![detection_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Skip, miss_error())], 1)
+        .run(&mut skipped)
+        .await;
+    assert!(skipped[0].header.enrichments.is_none());
+
+    let mut nulled = vec![detection_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Null, miss_error())], 1)
+        .run(&mut nulled)
+        .await;
+    assert_eq!(
+        nulled[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
+
+    let mut dropped = vec![detection_result(), correlation_result()];
+    EnrichmentPipeline::new(vec![erroring(OnError::Drop, miss_error())], 1)
+        .run(&mut dropped)
+        .await;
+    assert_eq!(dropped.len(), 1);
+    assert!(dropped[0].is_correlation());
+}
+
+#[tokio::test]
+async fn throttled_failure_warnings_still_apply_on_error() {
+    let pipeline = EnrichmentPipeline::new(vec![erroring(OnError::Null, fetch_error())], 1);
+    let mut first = vec![detection_result()];
+    pipeline.run(&mut first).await;
+    let mut second = vec![detection_result()];
+    pipeline.run(&mut second).await;
+    for results in [&first, &second] {
+        assert_eq!(
+            results[0].header.enrichments.as_ref().unwrap()["out"],
+            serde_json::Value::Null
+        );
+    }
+
+    let pipeline = EnrichmentPipeline::new(vec![erroring(OnError::Drop, fetch_error())], 1);
+    let mut results = vec![detection_result(), detection_result()];
+    pipeline.run(&mut results).await;
+    assert!(results.is_empty());
+}
+
+#[test]
+fn failure_logs_throttle_per_enricher_id() {
+    let logs = super::FailureLogs::default();
+    let now = std::time::Instant::now();
+    assert_eq!(logs.record("a", now), Some(1));
+    assert_eq!(logs.record("a", now), None);
+    assert_eq!(logs.record("b", now), Some(1));
+    assert_eq!(
+        logs.record(
+            "a",
+            now + crate::log_throttle::WarnThrottle::DEFAULT_INTERVAL
+        ),
+        Some(2)
+    );
+}
+
+#[test]
+fn cloned_pipelines_share_failure_logs() {
+    let pipeline = EnrichmentPipeline::default();
+    let clone = pipeline.clone();
+    let now = std::time::Instant::now();
+    assert_eq!(pipeline.failure_logs.record("a", now), Some(1));
+    assert_eq!(clone.failure_logs.record("a", now), None);
+}
+
+/// Test-only enricher that misses for results whose rule id is `miss` and
+/// fails for every other result.
+struct MissOrFail {
+    on_error: OnError,
+    on_miss: OnError,
+    scope: Scope,
+}
+
+fn miss_or_fail(on_error: OnError, on_miss: OnError) -> Box<dyn Enricher> {
+    Box::new(MissOrFail {
+        on_error,
+        on_miss,
+        scope: Scope::default(),
+    })
+}
+
+#[async_trait::async_trait]
+impl Enricher for MissOrFail {
+    fn kind(&self) -> EnricherKind {
+        EnricherKind::Detection
+    }
+    fn id(&self) -> &str {
+        "miss_or_fail"
+    }
+    fn inject_field(&self) -> &str {
+        "out"
+    }
+    fn scope(&self) -> &Scope {
+        &self.scope
+    }
+    fn on_error(&self) -> OnError {
+        self.on_error
+    }
+    fn on_miss(&self) -> OnError {
+        self.on_miss
+    }
+    async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
+        let kind = if result.header.rule_id.as_deref() == Some("miss") {
+            miss_error()
+        } else {
+            fetch_error()
+        };
+        Err(EnrichError {
+            enricher_id: "miss_or_fail".to_string(),
+            kind,
+        })
+    }
+}
+
+fn result_with_rule_id(rule_id: &str) -> EvaluationResult {
+    let mut result = detection_result();
+    result.header.rule_id = Some(rule_id.to_string());
+    result
+}
+
+#[tokio::test]
+async fn on_miss_skip_keeps_missed_results_when_on_error_drops() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Drop, OnError::Skip)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].header.rule_id.as_deref(), Some("miss"));
+    assert!(results[0].header.enrichments.is_none());
+}
+
+#[tokio::test]
+async fn on_miss_null_injects_null_only_for_misses() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Skip, OnError::Null)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
+    assert!(results[1].header.enrichments.is_none());
+}
+
+#[tokio::test]
+async fn on_miss_drop_removes_missed_results_only() {
+    let mut results = vec![result_with_rule_id("miss"), result_with_rule_id("fail")];
+    EnrichmentPipeline::new(vec![miss_or_fail(OnError::Null, OnError::Drop)], 1)
+        .run(&mut results)
+        .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].header.rule_id.as_deref(), Some("fail"));
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["out"],
+        serde_json::Value::Null
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,13 +1243,7 @@ async fn metrics_records_success_and_queue_depth() {
 #[tokio::test(flavor = "multi_thread")]
 async fn metrics_records_skip_status_on_error() {
     let m = std::sync::Arc::new(CollectingMetrics::default());
-    let e = Box::new(ErroringEnricher {
-        id: "boom".to_string(),
-        kind: EnricherKind::Detection,
-        inject_field: "out".to_string(),
-        on_error: OnError::Skip,
-        scope: Scope::default(),
-    }) as Box<dyn Enricher>;
+    let e = erroring(OnError::Skip, fetch_error());
     let pipeline = EnrichmentPipeline::new(vec![e], 1)
         .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
     let mut results = vec![detection_result()];
@@ -1102,6 +1261,7 @@ async fn metrics_records_drop_status() {
         inject_field: "out".to_string(),
         on_error: OnError::Drop,
         scope: Scope::default(),
+        error: fetch_error(),
     }) as Box<dyn Enricher>;
     let pipeline = EnrichmentPipeline::new(vec![e], 1)
         .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
@@ -1109,6 +1269,163 @@ async fn metrics_records_drop_status() {
     pipeline.run(&mut results).await;
     let completed = m.completed.lock().unwrap().clone();
     assert_eq!(completed[0].2, "drop");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn miss_covered_by_null_default_reports_success() {
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let yaml = r#"
+enrichers:
+  - id: owner
+    kind: detection
+    type: lookup
+    inject_field: owner
+    source: missing_source
+    default: null
+"#;
+    let file: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = build_enrichers_full(
+        file,
+        EnricherResources {
+            source_cache: Some(Arc::new(SourceCache::new())),
+            #[cfg(feature = "stix-enrich")]
+            stix_store: None,
+        },
+        m.clone() as std::sync::Arc<dyn crate::MetricsHook>,
+    )
+    .unwrap();
+    let mut results = vec![detection_result()];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["owner"],
+        serde_json::Value::Null
+    );
+    let completed = m.completed.lock().unwrap().clone();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].2, "success");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cached_miss_status_counts_as_an_http_cache_hit() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let enricher = super::HttpEnricher::new(
+        "vt".to_string(),
+        EnricherKind::Detection,
+        "vt".to_string(),
+        "GET".to_string(),
+        server.uri(),
+        Vec::new(),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        crate::build_default_http_client().unwrap(),
+        crate::HttpResponseCache::new(Duration::from_secs(60)),
+    )
+    .with_default(Some(serde_json::json!("unknown")))
+    .with_miss_status(vec![404])
+    .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 1);
+    let mut results = vec![detection_result(), detection_result()];
+    pipeline.run(&mut results).await;
+    assert_eq!(m.cache_misses.lock().unwrap().len(), 1);
+    assert_eq!(m.cache_hits.lock().unwrap().len(), 1);
+    for result in &results {
+        assert_eq!(result.header.enrichments.as_ref().unwrap()["vt"], "unknown");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_null_result_is_a_success_not_a_miss() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::Value::Null))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let enricher = super::HttpEnricher::new(
+        "vt".to_string(),
+        EnricherKind::Detection,
+        "vt".to_string(),
+        "GET".to_string(),
+        server.uri(),
+        Vec::new(),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        crate::build_default_http_client().unwrap(),
+        crate::HttpResponseCache::new(Duration::ZERO),
+    )
+    .with_on_miss(OnError::Drop);
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 1)
+        .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
+    let mut results = vec![detection_result()];
+    pipeline.run(&mut results).await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["vt"],
+        serde_json::Value::Null
+    );
+    let completed = m.completed.lock().unwrap().clone();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].2, "success");
+}
+
+async fn statuses_for(enricher: Box<dyn Enricher>, rule_ids: &[&str]) -> Vec<String> {
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 1)
+        .with_metrics(m.clone() as std::sync::Arc<dyn crate::MetricsHook>);
+    let mut results: Vec<_> = rule_ids.iter().map(|id| result_with_rule_id(id)).collect();
+    pipeline.run(&mut results).await;
+    let completed = m.completed.lock().unwrap().clone();
+    completed.into_iter().map(|(_, _, status)| status).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metrics_report_misses_as_miss_unless_dropped() {
+    // Without an `on_miss` override, the policy falls back to `on_error`.
+    for (on_error, expected) in [
+        (OnError::Skip, "miss"),
+        (OnError::Null, "miss"),
+        (OnError::Drop, "drop"),
+    ] {
+        assert_eq!(
+            statuses_for(erroring(on_error, miss_error()), &["r"]).await,
+            vec![expected],
+            "on_error {on_error:?}"
+        );
+    }
+    for (on_miss, expected) in [
+        (OnError::Skip, "miss"),
+        (OnError::Null, "miss"),
+        (OnError::Drop, "drop"),
+    ] {
+        assert_eq!(
+            statuses_for(miss_or_fail(OnError::Null, on_miss), &["miss", "fail"]).await,
+            vec![expected, "error"],
+            "on_miss {on_miss:?}"
+        );
+    }
+    assert_eq!(
+        statuses_for(miss_or_fail(OnError::Skip, OnError::Null), &["fail"]).await,
+        vec!["skip"]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -12,8 +12,8 @@ use rsigma_eval::{
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::{
-    Enricher, EnricherKind, EnricherResources, EnrichmentPipeline, NoopMetrics, OnError, Scope,
-    StixEnricher, StixEnricherQuery, build_enrichers_full,
+    EnrichErrorKind, Enricher, EnricherKind, EnricherResources, EnrichmentPipeline, NoopMetrics,
+    OnError, Scope, StixEnricher, StixEnricherQuery, build_enrichers_full,
 };
 use rstix::core::StixObjectKind;
 use rstix::store::{MemoryStore, StixStore};
@@ -276,4 +276,92 @@ async fn stix_enricher_skips_correlation_results_for_detection_kind() {
     }];
     pipeline.run(&mut results).await;
     assert!(results[0].header.enrichments.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stix_query_with_no_objects_is_a_miss() {
+    let enricher = StixEnricher::new(
+        "hash_lookup".into(),
+        EnricherKind::Detection,
+        "stix_indicators".into(),
+        StixEnricherQuery {
+            stix_id: None,
+            text_search: Some("${detection.fields.Hash}".into()),
+            attack_technique: false,
+            type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
+            max_results: 1,
+        },
+        None,
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        populated_store(),
+    );
+    let mut result = detection_with_hash("no-such-hash");
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(
+        matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("returned no objects")),
+        "got {err}"
+    );
+    assert!(result.header.enrichments.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stix_extract_returning_null_is_a_miss() {
+    let enricher = StixEnricher::new(
+        "hash_lookup".into(),
+        EnricherKind::Detection,
+        "stix_indicators".into(),
+        StixEnricherQuery {
+            stix_id: None,
+            text_search: Some("${detection.fields.Hash}".into()),
+            attack_technique: false,
+            type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
+            max_results: 1,
+        },
+        Some(ExtractExpr::Jq(".[0].no_such_property".into())),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        populated_store(),
+    );
+    let mut result = detection_with_hash("644bf17e482f443f763b0b7355b14372");
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(
+        matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("extract returned null")),
+        "got {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_default_injects_null_when_the_store_has_no_objects() {
+    let yaml = r#"
+enrichers:
+  - id: hash_lookup
+    kind: detection
+    type: stix
+    inject_field: stix_indicators
+    text_search: "${detection.fields.Hash}"
+    type_filter: [indicator]
+    default: null
+    on_error: skip
+"#;
+    let file: rsigma_runtime::EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = build_enrichers_full(
+        file,
+        EnricherResources {
+            stix_store: Some(populated_store() as Arc<dyn StixStore>),
+            ..EnricherResources::default()
+        },
+        Arc::new(NoopMetrics),
+    )
+    .expect("build pipeline");
+    let mut results = vec![detection_with_hash("no-such-hash")];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["stix_indicators"],
+        serde_json::Value::Null
+    );
 }
