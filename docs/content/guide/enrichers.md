@@ -33,6 +33,7 @@ enrichers:
     inject_field: <field-name>     # required, key under enrichments.<...>
     timeout: 5s                    # optional, humantime; default 5s
     on_error: skip | null | drop   # optional; default skip
+    on_miss: skip | null | drop    # optional; lookup, http, stix, mmdb, dns; default on_error
     scope:                         # optional; see "Scope filtering"
       rules: [<rule-id-or-glob>, ...]
       tags:  [<tag-or-prefix.*>, ...]
@@ -40,7 +41,34 @@ enrichers:
     # ... primitive-specific fields below ...
 ```
 
-Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `default: null`) counts as absent. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "unreleased" }}
+Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "unreleased" }}
+
+## Misses and errors
+
+{{ added "unreleased" }}
+
+A miss is a lookup that ran and found no data for its key: a `lookup` source cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status` or whose result is `null`. Everything else that stops an enricher (a timeout, a non-2xx status that is not listed, an invalid key, a store or resolver error, an extract evaluation error) is a failure. `template` and `command` have no misses.
+
+Three keys decide what a miss does:
+
+- `default`: the value injected on a miss. Writing `default: null` injects `null`. A miss covered by `default` counts as a success.
+- `on_miss: skip | null | drop`: what to do with a miss when `default` is not set. It applies to `lookup`, `http`, `stix`, `mmdb`, and `dns`. When it is absent, a miss follows `on_error`.
+- `on_error: skip | null | drop`: what to do with a failure, and with a miss when neither `default` nor `on_miss` is set.
+
+`default` always handles a miss, so setting `on_miss` together with `default` (including `default: null`) fails at load. `on_miss` on a `template` or `command` entry also fails at load, because those types have no misses. `default: null` and `on_miss: null` both inject `null` on a miss. The first reports `status="success"` and the second `status="miss"` in `rsigma_enrichment_total`, so pick `on_miss: null` when dashboards should tell misses apart.
+
+To fail closed on errors but keep detections whose lookup found nothing, drop on errors and skip on misses:
+
+```yaml
+- id: geo_src
+  kind: detection
+  type: mmdb
+  inject_field: geo
+  db_path: /var/lib/geoip/GeoLite2-City.mmdb
+  key: "${detection.fields.SourceIp}"
+  on_error: drop                   # an invalid IP or a decode failure drops the detection
+  on_miss: skip                    # an address with no record keeps it, without a geo field
+```
 
 ## Using dynamic sources with `lookup` enrichers
 
@@ -159,15 +187,17 @@ Reads a value from the shared dynamic [source cache](../reference/dynamic-source
   extract: '.assets[] | select(.hostname == "${correlation.group_key.HostName}")'
   extract_type: jq                 # jq | jsonpath | cel; defaults to jq
   default: "unknown"               # injected on cache miss / no extract match
-  on_error: skip                   # applied only when default is not configured
+  on_error: skip                   # applied to errors, and to misses when default is not configured
 ```
 
 The decision matrix:
 
 - **Cache hit + extract matches** → inject the extracted value
-- **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_error`
-- **Cache miss** → if `default` is configured, inject it; otherwise apply `on_error`
+- **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "unreleased" }}
+- **Cache miss** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "unreleased" }}
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
+
+Writing `default: null` injects `null` on a miss; omitting `default` leaves the miss to `on_miss` or `on_error`. See [Misses and errors](#misses-and-errors). {{ added "unreleased" }}
 
 `lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache. Source declarations live only in standalone `--source` files. A pipeline is not required. See [Using dynamic sources with `lookup` enrichers](#using-dynamic-sources-with-lookup-enrichers).
 
@@ -199,7 +229,7 @@ Query modes (at least one required):
 | `text_search` | Template-expanded substring → [`StixQuery::text_search`](../library/rstix.md#rstix-graph-marking-store). |
 | `attack_technique: true` | Uses the first `attack.t*` technique tag on the firing rule (for example `attack.t1059.001` → search `1059.001`). |
 
-Optional `type_filter` restricts to known STIX 2.1 type names (`indicator`, `attack-pattern`, …). Custom `x_*` MITRE types are matched via `text_search` without a filter. `max_results` defaults to `1`. On miss, `default` overrides `on_error` (same contract as `lookup`).
+Optional `type_filter` restricts to known STIX 2.1 type names (`indicator`, `attack-pattern`, …). Custom `x_*` MITRE types are matched via `text_search` without a filter. `max_results` defaults to `1`. On a miss (no objects, or an extract that returns `null`), `default` is injected when configured; otherwise `on_miss` applies, or `on_error` when `on_miss` is absent (same contract as `lookup`). {{ added "unreleased" }}
 
 Operational loop:
 
@@ -247,8 +277,8 @@ Miss and error handling:
 | Situation | Result |
 |---|---|
 | Record found and, with `fields`, at least one path present | Inject the object (hit) |
-| No record for the IP | Inject `default` when configured, otherwise apply `on_error` |
-| `fields` configured but no path present | Inject `default` when configured, otherwise apply `on_error` |
+| No record for the IP | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
+| `fields` configured but no path present | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
 | `key` renders empty | Fetch error, then `on_error` |
 | `key` is not an IP address | Parse error, then `on_error` |
 | Record decode or path type mismatch | Parse error, then `on_error` |
@@ -343,9 +373,9 @@ Miss and error handling:
 | Situation | Result |
 |---|---|
 | At least one answer of the queried type | Inject the array (hit) |
-| NXDOMAIN or NODATA | Inject `default` when configured, otherwise apply `on_error` |
+| NXDOMAIN or NODATA | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
 | `IP` where one of A or AAAA answers | Inject the answers from the side that answered |
-| `IP` where both sides miss | Inject `default` when configured, otherwise apply `on_error` |
+| `IP` where both sides miss | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
 | `key` renders empty | Fetch error, then `on_error` |
 | `key` has the wrong form for the record type | Parse error, then `on_error` |
 | Resolver timeout | Timeout error, then `on_error` |
@@ -372,10 +402,26 @@ Per-result `reqwest` request with template-expanded URL, headers, and optional b
   cache_ttl: 1h                    # mandatory for the 4 req/min free tier
   extract: ".data.attributes.last_analysis_stats"
   extract_type: jq
+  miss_status: [404]               # VirusTotal answers an unknown hash with 404
+  default: "unknown"               # injected for an unknown hash
   on_error: skip
   scope:
     tags: ["attack.execution", "attack.defense_evasion"]
 ```
+
+`default` is the value injected on a miss. `miss_status` lists response statuses, each in `300..=599`, that mean "no data for this key" rather than a failure, for APIs that answer an unknown indicator with a status such as 404. It is empty by default, so every non-2xx status is a failure. A listed status is a miss: the body is not read and `extract` does not run. An entry outside `300..=599` fails at load. {{ added "unreleased" }}
+
+Miss and error handling: {{ added "unreleased" }}
+
+| Situation | Result |
+|---|---|
+| 2xx response whose value, after the optional `extract`, is not `null` | Inject the value (hit) |
+| 2xx response whose value, after the optional `extract`, is `null` | Inject `default` when configured, otherwise inject `null` |
+| Status listed in `miss_status` | Inject `default` when configured, otherwise apply `on_miss` (logged at debug); the body is not read |
+| `extract` evaluation error | Extract error, then `on_error` |
+| Any other non-2xx status, a timeout, a transport error, a body over the cap, or invalid JSON | `on_error`, even when `default` is set |
+
+Both 2xx bodies and `miss_status` responses are cached for `cache_ttl`, and `extract` and `default` are applied again on each cache hit. {{ added "unreleased" }}
 
 Event and correlation values are escaped for where they land. In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so a field value cannot add path segments, start a query, or reach another path on the host; a value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. In `body`, values are JSON-string-escaped, so a value inside a JSON string literal cannot add keys; a placeholder outside a string literal is inserted as raw text. `${ENV_VAR}` values in `url` are inserted verbatim, and header values are not escaped (CR and LF are rejected). {{ added "0.25.0" }}
 
@@ -520,12 +566,9 @@ enrichers:
     headers:
       Authorization: "Bearer ${GEOIP_API_KEY}"
     cache_ttl: 24h
-    extract: >-
-      if .country_code
-      then {country: .country_code, region: .region_code, city: .city}
-      else {country: "unknown"}
-      end
+    extract: 'select(.country_code) | {country: .country_code, region: .region_code, city: .city}'
     extract_type: jq
+    default: { country: "unknown" }
     on_error: skip
 ```
 
@@ -535,7 +578,7 @@ To use it with a provider, adapt three fields:
 - `headers`: how the provider takes its key. Send the key in a header rather than a query parameter, because `${ENV_VAR}` values in `url` are inserted verbatim and a failed request logs the full URL. For a keyless tier, remove `headers`; a provider can reject an empty key instead of treating it as keyless.
 - `extract`: the response paths on the right of each key.
 
-The `extract` injects the same shape as the `mmdb` recipe, including `{country: "unknown"}` on a miss, so moving between a hosted API and a local database does not change what downstream consumers read. Providers commonly answer private and reserved addresses with HTTP 200 and a body that flags the miss, and each flags it differently; testing for the field you need catches all of them. A rejected key or an exhausted quota typically returns a non-2xx status, which goes through `on_error`.
+The `extract` injects the same shape as the `mmdb` recipe, and `default` injects `{country: "unknown"}` on a miss, so moving between a hosted API and a local database does not change what downstream consumers read. Providers commonly answer private and reserved addresses with HTTP 200 and a body that flags the miss, and each flags it differently; `select(.country_code)` yields `null` for every body without the field you need, and `default` covers that `null`. If the provider answers an unknown address with a status such as 404 instead, add it to `miss_status`. A rejected key or an exhausted quota typically returns another non-2xx status, which goes through `on_error`. {{ added "unreleased" }}
 
 Every lookup sends the address to the provider, internal addresses included. Use `mmdb` when addresses must stay inside your network.
 
@@ -579,10 +622,14 @@ enrichers:
     cache_ttl: 1h
     extract: ".data.attributes.last_analysis_stats"
     extract_type: jq
+    miss_status: [404]
+    default: "unknown"
     on_error: skip
     scope:
       tags: ["attack.execution", "attack.defense_evasion"]
 ```
+
+Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `"unknown"` when VirusTotal has no report for the hash (HTTP 404). A 404 is cached for `cache_ttl` like a report. {{ added "unreleased" }}
 
 ### `enrich_cve_kev`: known-exploited-vulnerability flag
 
@@ -667,11 +714,17 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 {"rule_title":"Suspicious PowerShell encoded command","rule_id":"rule-pwsh-enc","level":"high","tags":["attack.t1059.001"],"matched_selections":["selection"],"matched_fields":[{"field":"CommandLine","value":"powershell -enc ..."}],"enrichments":{"asset_info":{"hostname":"dc01","owner":"IT-Ops"},"runbook_url":"https://wiki.internal/runbooks/rule-pwsh-enc"}}
 ```
 
+## Logging
+
+{{ added "unreleased" }}
+
+A miss without `default` logs at debug level (`Enricher found no data`), so routine misses do not flood the log. A miss covered by `default` is a success and is not logged. Every other failure logs a warning (`Enricher failed, skipping`, `... injecting null`, or `... dropping result`) at most once per 10 seconds per enricher id. Every warning carries a `suppressed` field: the number of failures of that enricher since the previous warning that were not logged. When the enrichers are reloaded, failures not yet reported are logged once per enricher id as `Enricher failures suppressed since the last warning`, with the same field.
+
 ## Metrics
 
 | Metric | Labels | Description |
 |---|---|---|
-| `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`drop` |
+| `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`miss`/`drop`. A miss that is skipped or injected as `null` reports `miss` {{ added "unreleased" }} |
 | `rsigma_enrichment_duration_seconds` | `enricher_id`, `kind` | Per-enricher latency histogram |
 | `rsigma_enrichment_queue_depth` | none | Pending enrichment calls (sum across both kinds) |
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |

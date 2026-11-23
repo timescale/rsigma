@@ -89,7 +89,7 @@ Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Ever
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `rsigma_enrichment_total` | counter | `enricher_id`, `kind` (`detection`, `correlation`), `status` (`success`, `skip`, `error`, `timeout`, `drop`) | Per-call outcome counter. `kind` is the enricher's declared kind (the YAML `kind:` field), not a per-result discriminator. |
+| `rsigma_enrichment_total` | counter | `enricher_id`, `kind` (`detection`, `correlation`), `status` (`success`, `skip`, `error`, `timeout`, `miss`, `drop`) | Per-call outcome counter. `kind` is the enricher's declared kind (the YAML `kind:` field), not a per-result discriminator. A miss (the lookup found no data for its key) reports `miss` when it is skipped or injected as `null`, and `drop` when it drops the result; a miss covered by `default` reports `success`. {{ added "unreleased" }} |
 | `rsigma_enrichment_duration_seconds` | histogram | `enricher_id`, `kind` | Per-enricher latency. Buckets target both fast `template` calls and slower `http`/`command` invocations. |
 | `rsigma_enrichment_queue_depth` | gauge | none | Pending enrichment calls (sum across both kinds). Watch this versus `max_concurrent_enrichments`. |
 | `rsigma_enrichment_http_cache_hits_total` | counter | `enricher_id` | HTTP enricher response-cache hits. Mandatory signal for any rate-limited API recipe. |

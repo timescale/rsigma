@@ -4,6 +4,31 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Enricher miss handling
+
+A miss, a lookup that ran and found no data for its key, is now its own outcome. It covers a `lookup` cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and the new `http` miss statuses.
+
+The `http` enricher honors `default`: when the response, after the optional `extract`, is `null`, it injects the default instead of `null`, also on a cache hit. The new `miss_status` list (for example `miss_status: [404]`) turns listed statuses into misses for APIs such as VirusTotal that answer an unknown indicator with 404: the body is not read, `default` is injected when set, and the status is cached for `cache_ttl` like a body. An extract error and every other failure still apply `on_error`, even with `default` set. The VirusTotal and hosted GeoIP recipes now use `miss_status` and `default`.
+
+An explicit `default: null` now injects `null` on a miss for every enricher type, as the recipes that use it described. Before, it behaved like no `default` at all.
+
+The new `on_miss: skip | null | drop` key handles misses separately from `on_error` on `lookup`, `http`, `stix`, `mmdb`, and `dns`, and falls back to `on_error` when absent. So `on_error: drop` with `on_miss: skip` fails closed on errors but keeps detections whose lookup found nothing. Misses report `status="miss"` in `rsigma_enrichment_total` when they are skipped or injected as `null`, and `drop` when they drop the result.
+
+Misses log at debug level instead of one warning per result. Other enrichment failures log at most one warning per enricher every 10 seconds, and each warning carries a `suppressed` count of the failures since the previous one.
+
+Breaking changes:
+
+- An enricher with `default: null` now injects `null` on a miss instead of applying `on_error`. Remove `default` to keep the old behavior.
+- `on_miss` together with `default` (including `default: null`), and a `miss_status` entry outside `300..=599`, fail at load with `enricher '<id>': invalid '<field>': ...`.
+- Library API: `EnrichErrorKind` is `#[non_exhaustive]` with a new `Miss` variant, so exhaustive matches need a wildcard arm. The `lookup`, `stix`, `mmdb`, and `dns` no-data outcomes return `Miss` instead of `Fetch`, displayed with a `no match:` prefix instead of `fetch failed:`. `EnricherConfig` gains `miss_status` and `on_miss`, `EnrichersConfigError` gains `InvalidValue`, and `Enricher` gains an `on_miss` method that defaults to `on_error`. `HttpEnricher` gains `with_default` and `with_miss_status`, and the five lookup types gain `with_on_miss`.
+
+Behavior changes:
+
+- Dashboards that sum `rsigma_enrichment_total` statuses see misses move from `skip` and `error` to `miss`.
+- Enrichment failure warnings that repeated per result are folded into one warning per enricher every 10 seconds.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#misses-and-errors).
+
 ### Enrichers read unmatched fields from the event (#739)
 
 `${detection.fields.<name>}` in an enricher template now resolves fields the rule did not match on. A matched field still wins, even when its value is null or empty; otherwise the name is read from the event, as a whole top-level key first and then as a dotted path. Before, the value came only from `matched_fields`, so an `mmdb` or `dns` key such as `${detection.fields.SourceIp}` rendered empty for the usual rule that does not select on the address, and every lookup failed. An `mmdb` or `dns` key that still renders empty now says the field is neither a matched field nor present in the event. Webhook templates keep their behavior.
@@ -23,7 +48,7 @@ See [Enrichers](https://rsigma.io/guide/enrichers/#kind-and-template-namespaces)
 
 ### Strict config files (#738)
 
-Enricher, webhook, risk, and dynamic source configs now reject keys that are unknown or that do not apply to an entry's type, at every level including `scope`, `retry`, `signing`, `stix`, `auth`, and `extract`. Each error names the key and lists the supported ones, so a typo such as `defualt:` or `fromat:` fails at load instead of being ignored. A dynamic source with an unknown `format`, `on_error`, or `refresh` value, an invalid `timeout`, or a `required` that is not a boolean fails instead of falling back to a default. In an enricher entry, a key set to an empty value (`headers: {}`, `default: null`) counts as absent. Duration errors in enricher, webhook, and risk configs now include the bad value.
+Enricher, webhook, risk, and dynamic source configs now reject keys that are unknown or that do not apply to an entry's type, at every level including `scope`, `retry`, `signing`, `stix`, `auth`, and `extract`. Each error names the key and lists the supported ones, so a typo such as `defualt:` or `fromat:` fails at load instead of being ignored. A dynamic source with an unknown `format`, `on_error`, or `refresh` value, an invalid `timeout`, or a `required` that is not a boolean fails instead of falling back to a default. In an enricher entry, a key set to an empty value (`headers: {}`) counts as absent. Duration errors in enricher, webhook, and risk configs now include the bad value.
 
 Unknown `rsigma.yaml` keys are errors. Every command that reads the config prints `error: unknown config key '<key>' in <path>` for each one and exits `3`, and `rsigma config validate` fails on them. `rsigma config show` still prints the effective config. Keys of a feature this build leaves out, such as `daemon.stix_store` without `stix-enrich`, are known keys that only warn that the section is inert.
 
@@ -35,7 +60,7 @@ The daemon now reloads when the enrichers, alert-pipeline, or risk file changes,
 
 Breaking changes:
 
-- A config file with a key that is unknown or does not apply now fails to load. That includes `default` on `http`, `template`, or `command` enrichers, which was ignored. For enrichers, webhooks, risk, and sources files, the daemon refuses to start and a reload keeps the previous configuration. MCP `evaluate_events` rejects the same enricher configs.
+- A config file with a key that is unknown or does not apply now fails to load. That includes `default` on `template` or `command` enrichers, which was ignored. For enrichers, webhooks, risk, and sources files, the daemon refuses to start and a reload keeps the previous configuration. MCP `evaluate_events` rejects the same enricher configs.
 - Unknown `rsigma.yaml` keys stop every command that reads the config with exit `3`. `rsigma config validate` fails on them without `--strict`, which is kept, hidden, for compatibility.
 - A dynamic source with an unknown `format`, `on_error`, or `refresh` value no longer falls back to `json`, `use_cached`, or `once`, and an invalid `timeout` or a non-boolean `required` is an error.
 - Library API: `EnricherConfig` gains the public `extra` field, `output` becomes `Option<OutputFormatLabel>`, and both `EnricherConfig` and `EnrichersConfigError` are `#[non_exhaustive]`. `EnrichersConfigError` gains `UnknownField` and `InapplicableField`. `rsigma_eval::pipeline::sources::SourceType::Http` gains `max_body_size` and `SourceType::Command` gains `max_stdout`.

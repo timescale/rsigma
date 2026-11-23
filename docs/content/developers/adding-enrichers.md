@@ -162,6 +162,7 @@ A few invariants the runtime guarantees, so you don't have to defend against the
 - `kind()` matches `result.body`'s variant. The pipeline filters before invoking you, so `result.as_detection()` (or `as_correlation()`) is `Some` whenever `enrich` is called.
 - The `Scope` filter has already passed for this result.
 - The call is wrapped in `tokio::time::timeout(self.timeout(), …)`. Timeouts surface as `EnrichErrorKind::Timeout` to the pipeline, then `OnError` decides whether to skip, null, or drop.
+- Return `EnrichErrorKind::Miss` when the lookup ran and found no data for its key (for example, the passive-DNS service has no record for the IP). The pipeline logs a miss at debug level instead of a warning, reports it as `status="miss"`, and applies `Enricher::on_miss`, which defaults to `on_error`. Override `on_miss` to read the entry's `on_miss` key, which the loader passes in the raw config next to `on_error`. Keep `Fetch`, `Parse`, and the other kinds for real failures. {{ added "unreleased" }}
 - `result.header.enrichments` is initialised lazily by `inject_enrichment`, so the `skip_serializing_if = "Option::is_none"` contract is preserved if every enricher errors.
 
 Step 2: wire `register_builtin`. The factory takes the raw YAML config block (after `serde_json::to_value`) and returns a `Box<dyn Enricher>`. Names are checked against seven reserved primitives (`template`, `lookup`, `http`, `command`, `stix`, `mmdb`, `dns`); duplicate registrations of the same name are rejected to keep the global registry append-only.
