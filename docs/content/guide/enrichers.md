@@ -47,7 +47,7 @@ Keys that are unknown, or that do not apply to the entry's `type:`, are rejected
 
 {{ added "unreleased" }}
 
-A miss is a lookup that ran and found no data for its key: a `lookup` source cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status` or whose result is `null`. Everything else that stops an enricher (a timeout, a non-2xx status that is not listed, an invalid key, a store or resolver error, an extract evaluation error) is a failure. `template` and `command` have no misses.
+A miss is a lookup that ran and found no data for its key: a `lookup` source cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status`. An `http` result that is `null` after the optional `extract` is not a miss: it injects `default` when one is configured, and `null` otherwise. Everything else that stops an enricher (a timeout, a non-2xx status that is not listed, an invalid key, a store or resolver error, an extract evaluation error) is a failure. `template` and `command` have no misses.
 
 Three keys decide what a miss does:
 
@@ -403,13 +403,13 @@ Per-result `reqwest` request with template-expanded URL, headers, and optional b
   extract: ".data.attributes.last_analysis_stats"
   extract_type: jq
   miss_status: [404]               # VirusTotal answers an unknown hash with 404
-  default: "unknown"               # injected for an unknown hash
+  default: null                    # injected for an unknown hash
   on_error: skip
   scope:
     tags: ["attack.execution", "attack.defense_evasion"]
 ```
 
-`default` is the value injected on a miss. `miss_status` lists response statuses, each in `300..=599`, that mean "no data for this key" rather than a failure, for APIs that answer an unknown indicator with a status such as 404. It is empty by default, so every non-2xx status is a failure. A listed status is a miss: the body is not read and `extract` does not run. An entry outside `300..=599` fails at load. {{ added "unreleased" }}
+`default` is the value injected for a `null` result and for a listed status. `miss_status` lists response statuses, each in `300..=599`, that mean "no data for this key" rather than a failure, for APIs that answer an unknown indicator with a status such as 404. It is empty by default, so every non-2xx status is a failure. A listed status is a miss: the body is not read and `extract` does not run. An entry outside `300..=599` fails at load. {{ added "unreleased" }}
 
 Miss and error handling: {{ added "unreleased" }}
 
@@ -623,13 +623,13 @@ enrichers:
     extract: ".data.attributes.last_analysis_stats"
     extract_type: jq
     miss_status: [404]
-    default: "unknown"
+    default: null
     on_error: skip
     scope:
       tags: ["attack.execution", "attack.defense_evasion"]
 ```
 
-Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `"unknown"` when VirusTotal has no report for the hash (HTTP 404). A 404 is cached for `cache_ttl` like a report. {{ added "unreleased" }}
+Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `null` when VirusTotal has no report for the hash (HTTP 404). A `null` rather than a placeholder string keeps the field an object wherever it has a value, so a sink with a typed schema does not reject either form. A 404 is cached for `cache_ttl` like a report. {{ added "unreleased" }}
 
 ### `enrich_cve_kev`: known-exploited-vulnerability flag
 
