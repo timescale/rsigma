@@ -80,6 +80,9 @@ fn read_lines<R: Read>(reader: R, tx: &mpsc::Sender<Vec<String>>, status: &Stdin
     let mut reader = BufReader::with_capacity(64 * 1024, reader);
     let mut line = String::new();
     let mut chunk = Vec::with_capacity(CHUNK_LINES);
+    // Bytes after the last newline in the read buffer. They stay the same
+    // until the buffer refills, which only happens once no newline is left.
+    let mut partial_tail: Option<usize> = None;
     loop {
         line.clear();
         match reader.read_line(&mut line) {
@@ -92,7 +95,18 @@ fn read_lines<R: Read>(reader: R, tx: &mpsc::Sender<Vec<String>>, status: &Stdin
                     }
                 }
                 chunk.push(line.clone());
-                if chunk.len() >= CHUNK_LINES || !reader.buffer().contains(&b'\n') {
+                let buffered = reader.buffer();
+                let tail = *partial_tail.get_or_insert_with(|| {
+                    buffered
+                        .iter()
+                        .rposition(|&b| b == b'\n')
+                        .map_or(buffered.len(), |last| buffered.len() - last - 1)
+                });
+                let line_ready = buffered.len() > tail;
+                if !line_ready {
+                    partial_tail = None;
+                }
+                if chunk.len() >= CHUNK_LINES || !line_ready {
                     // `blocking_send` only errors when the receiver is
                     // dropped, i.e. the daemon is shutting down; stop reading
                     // so the thread can exit.
@@ -174,8 +188,8 @@ mod tests {
 
     #[test]
     fn lines_arrive_in_order_in_bounded_chunks() {
-        let input: String = (0..1_000).map(|i| format!("{i}\n")).collect();
-        let (tx, mut rx) = mpsc::channel(64);
+        let input: String = (0..50_000).map(|i| format!("{i}\n")).collect();
+        let (tx, mut rx) = mpsc::channel(256);
         read_lines(
             Cursor::new(input.into_bytes()),
             &tx,
@@ -186,7 +200,7 @@ mod tests {
         assert!(chunks.len() > 1);
         assert_eq!(
             chunks.concat(),
-            (0..1_000).map(|i| i.to_string()).collect::<Vec<_>>()
+            (0..50_000).map(|i| i.to_string()).collect::<Vec<_>>()
         );
     }
 
@@ -254,6 +268,31 @@ mod tests {
         assert_eq!(
             recv_within(&mut rx, Duration::from_secs(5)),
             Some(vec!["third".to_string()])
+        );
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn each_write_forwards_the_lines_it_completes() {
+        let (writer, pipe) = std::sync::mpsc::channel();
+        let (tx, mut rx) = mpsc::channel(8);
+        let reader = std::thread::spawn(move || {
+            read_lines(Pipe(pipe), &tx, &StdinReadStatus::default());
+        });
+        writer.send(b"line-0-he".to_vec()).unwrap();
+        for i in 0..20 {
+            let piece = format!("ad\nline-{i}-body\nline-{}-he", i + 1);
+            writer.send(piece.into_bytes()).unwrap();
+            assert_eq!(
+                recv_within(&mut rx, Duration::from_secs(5)),
+                Some(vec![format!("line-{i}-head"), format!("line-{i}-body")]),
+                "write {i}"
+            );
+        }
+        drop(writer);
+        assert_eq!(
+            recv_within(&mut rx, Duration::from_secs(5)),
+            Some(vec!["line-20-he".to_string()])
         );
         reader.join().unwrap();
     }
