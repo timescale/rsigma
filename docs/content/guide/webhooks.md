@@ -133,6 +133,7 @@ Each webhook is driven by one bounded queue and worker. The worker owns the queu
 
 - **Classification.** Connection and timeout errors, HTTP `429` (honoring a numeric `Retry-After`, capped), and `5xx` are retryable. Other `4xx` are permanent: a misrendered payload will not heal on retry, so it routes straight to the DLQ without spending the retry budget.
 - **Backoff.** Retryable failures use capped exponential backoff (`backoff * 2^attempt`, up to `max_backoff`). Retries delay only this webhook's own queue.
+- **No repeats.** One delivery can post several requests, one per matching result. A retry starts at the result whose request failed, so results that already went out are not posted again, and each request keeps its signing id and timestamp across retries. {{ added "unreleased" }}
 - **Rate limiting.** When a per-entry token bucket is configured, the worker waits for a token before each request, so traffic is delayed rather than dropped. A wait increments `rate_limited_wait` and the subsequent POST still records `success` or `permanent_failure`, so those labels are not mutually exclusive on one attempt.
 - **Full queue.** When the bounded queue is full, the result is dropped for this webhook (`rsigma_sink_dropped_total`) and never reaches HTTP or the DLQ.
 - **DLQ.** Permanent failures and retry exhaustion route to the daemon's `--dlq`, reusing the same record shape as parse errors and other sink failures. The underlying error string is prefixed `webhook <id>:`.

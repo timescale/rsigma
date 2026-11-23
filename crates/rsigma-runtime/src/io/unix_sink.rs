@@ -15,8 +15,8 @@ use tokio::net::UnixStream;
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, ResumePoint};
-use crate::io::{DeliveryContext, SinkFormat, serialize_result};
+use crate::io::lines::{LineBatch, LineEncoding, ResumeMap, encode_batch, settle_batch};
+use crate::io::{DeliveryContext, SinkFormat};
 
 /// Writes one line per result to a Unix domain socket, reconnecting on
 /// transient failures.
@@ -25,7 +25,7 @@ pub struct UnixSocketSink {
     stream: Option<UnixStream>,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
-    resume: ResumePoint,
+    resume: ResumeMap<usize>,
     tenant_filter: Option<TenantId>,
 }
 
@@ -38,7 +38,7 @@ impl UnixSocketSink {
             stream: Some(stream),
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
-            resume: ResumePoint::default(),
+            resume: ResumeMap::default(),
             tenant_filter: None,
         })
     }
@@ -90,39 +90,51 @@ impl UnixSocketSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        let filtered: Vec<(usize, &rsigma_eval::EvaluationResult)> = result
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| {
-                self.tenant_filter
-                    .as_ref()
-                    .is_none_or(|t| m.header.tenant_id.as_ref() == Some(t))
-            })
-            .collect();
-        if filtered.is_empty() {
-            return Ok(());
-        }
-        let start = self.resume.start(ctx);
-        let mut batch = LineBatch::default();
-        for (original_index, m) in filtered.iter().skip(start) {
-            batch.push(&serialize_result(
-                m,
-                self.format,
-                false,
-                ctx.map(|ctx| (ctx, *original_index)),
-                &self.ocsf,
-            )?);
-        }
-        match self.write_batch(&batch).await {
-            Ok(()) => {
-                self.resume.clear();
-                Ok(())
-            }
-            Err((lines, err)) => {
-                self.resume.record(ctx, start + lines);
-                Err(err)
-            }
-        }
+        self.write_results(&[(result, ctx)])
+            .await
+            .pop()
+            .unwrap_or(Ok(()))
+    }
+
+    /// Write a batch of deliveries in one write, one outcome per delivery the
+    /// write reached.
+    pub(crate) async fn send_batch(
+        &mut self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        self.write_results(items).await
+    }
+
+    async fn write_results<'c, C>(
+        &mut self,
+        items: &[(&ProcessResult, C)],
+    ) -> Vec<Result<(), RuntimeError>>
+    where
+        C: Copy + Into<Option<&'c DeliveryContext>>,
+    {
+        self.resume
+            .retain(items.iter().filter_map(|(_, ctx)| (*ctx).into()));
+        let encoding = LineEncoding {
+            format: self.format,
+            pretty: false,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
+        };
+        let (batch, starts, mut outcomes) = encode_batch(items, &self.resume, encoding);
+        let failure = if batch.bytes().is_empty() {
+            None
+        } else {
+            self.write_batch(&batch).await.err()
+        };
+        settle_batch(
+            items,
+            &batch,
+            &starts,
+            &mut outcomes,
+            &mut self.resume,
+            failure,
+        );
+        outcomes
     }
 
     /// Write a pre-serialized JSON line directly to the socket.
@@ -202,6 +214,7 @@ impl UnixSocketSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::serialize_result;
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::net::UnixListener;
 
@@ -238,6 +251,176 @@ mod tests {
         let (before, after) = collector.await.unwrap();
         assert_eq!(before, "{\"n\":0}");
         assert_eq!(after, ["{\"n\":1}", "{\"n\":2}"]);
+    }
+
+    fn titled(titles: &[String]) -> ProcessResult {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use rsigma_eval::EvaluationResult;
+        use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+
+        titles
+            .iter()
+            .map(|title| EvaluationResult {
+                header: RuleHeader {
+                    rule_title: title.clone(),
+                    rule_id: None,
+                    tenant_id: None,
+                    level: None,
+                    tags: vec![],
+                    custom_attributes: Arc::new(HashMap::new()),
+                    enrichments: None,
+                    ruleset: None,
+                },
+                body: ResultBody::Detection(DetectionBody {
+                    matched_selections: vec!["sel".to_string()],
+                    matched_fields: vec![],
+                    event: None,
+                }),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_retried_delivery_resumes_at_the_line_cut_off_mid_write() {
+        use tokio::io::AsyncReadExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        // Lines far larger than any socket buffer, so the write is still
+        // blocked partway through the second line when the collector leaves.
+        let titles: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|c| c.repeat(4 * 1024 * 1024))
+            .collect();
+        let result = titled(&titles);
+        let lines: Vec<String> = result
+            .iter()
+            .map(|m| {
+                serialize_result(
+                    m,
+                    SinkFormat::default(),
+                    false,
+                    None,
+                    &crate::ocsf::OcsfOptions::default(),
+                )
+                .unwrap()
+            })
+            .collect();
+
+        let first_len = lines[0].len() + 1 + 1024;
+        let unlink = path.clone();
+        let first = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut read = vec![0_u8; first_len];
+            stream.read_exact(&mut read).await.unwrap();
+            // No collector to reconnect to: the sink's own retry fails too.
+            drop(listener);
+            std::fs::remove_file(&unlink).unwrap();
+            drop(stream);
+            read
+        });
+
+        let mut sink = UnixSocketSink::connect(&path).await.unwrap();
+        let ctx = DeliveryContext::new();
+        assert!(sink.send_with_context(&result, &ctx).await.is_err());
+        let before = first.await.unwrap();
+        assert!(before.starts_with(format!("{}\n", lines[0]).as_bytes()));
+
+        let listener = UnixListener::bind(&path).unwrap();
+        let second = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut lines = BufReader::new(stream).lines();
+            let mut after = Vec::new();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                after.push(line);
+            }
+            after
+        });
+        sink.send_with_context(&result, &ctx).await.unwrap();
+        drop(sink);
+
+        let after = second.await.unwrap();
+        assert_eq!(
+            after,
+            lines[1..],
+            "the retry starts at the cut-off line and skips the delivered one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_torn_batch_resumes_the_cut_off_delivery_and_the_ones_after_it() {
+        use tokio::io::AsyncReadExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let deliveries: Vec<ProcessResult> = ["a", "b", "c"]
+            .iter()
+            .map(|c| titled(&[c.repeat(4 * 1024 * 1024)]))
+            .collect();
+        let lines: Vec<String> = deliveries
+            .iter()
+            .flatten()
+            .map(|m| {
+                serialize_result(
+                    m,
+                    SinkFormat::default(),
+                    false,
+                    None,
+                    &crate::ocsf::OcsfOptions::default(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let contexts = [
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+        ];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let first_len = lines[0].len() + 1 + 1024;
+        let unlink = path.clone();
+        let first = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut read = vec![0_u8; first_len];
+            stream.read_exact(&mut read).await.unwrap();
+            drop(listener);
+            std::fs::remove_file(&unlink).unwrap();
+            drop(stream);
+        });
+
+        let mut sink = UnixSocketSink::connect(&path).await.unwrap();
+        let outcomes = sink.send_batch(&items).await;
+        first.await.unwrap();
+        assert_eq!(outcomes.len(), 2, "the write never reached the third");
+        assert!(outcomes[0].is_ok(), "the first delivery went out whole");
+        assert!(outcomes[1].is_err());
+
+        let listener = UnixListener::bind(&path).unwrap();
+        let second = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut lines = BufReader::new(stream).lines();
+            let mut after = Vec::new();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                after.push(line);
+            }
+            after
+        });
+        // The worker retries the cut-off delivery, then delivers the next one.
+        sink.send_with_context(&deliveries[1], &contexts[1])
+            .await
+            .unwrap();
+        sink.send_with_context(&deliveries[2], &contexts[2])
+            .await
+            .unwrap();
+        drop(sink);
+
+        assert_eq!(second.await.unwrap(), lines[1..]);
     }
 
     #[tokio::test]

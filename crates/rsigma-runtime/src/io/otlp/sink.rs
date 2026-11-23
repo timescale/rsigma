@@ -2,9 +2,11 @@
 //! over OTLP/HTTP (protobuf) or OTLP/gRPC.
 
 use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsServiceRequest, logs_service_client::LogsServiceClient,
+    ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
+    logs_service_client::LogsServiceClient,
 };
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use prost::Message;
 use tonic::codec::CompressionEncoding;
@@ -15,6 +17,12 @@ use rsigma_eval::ProcessResult;
 use super::convert::{evaluation_results_to_logs_request, ocsf_findings_to_logs_request};
 use crate::error::RuntimeError;
 use crate::io::{DeliveryContext, SinkFormat, ocsf_finding};
+use crate::log_throttle::WarnThrottle;
+use crate::metrics::{MetricsHook, NoopMetrics};
+
+/// Cap on the OTLP/HTTP response bytes read to look for a partial success.
+/// A longer body is drained no further and treated as a full success.
+const RESPONSE_CAP: usize = 64 * 1024;
 
 /// OTLP transport, selected by the sink URL scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,12 +84,27 @@ const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 /// attempt is bounded by a deadline ([`DEFAULT_OTLP_TIMEOUT`] unless set with
 /// [`OtlpSink::with_timeout`]), so a collector that accepts the connection but
 /// never replies fails the attempt instead of stalling delivery.
+///
+/// A drained batch of results goes out in one export request. Log records a
+/// collector rejects in a partial success are counted and logged, not
+/// retried, as the OTLP specification asks.
 pub struct OtlpSink {
     transport: Transport,
     timeout: Duration,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
     tenant_filter: Option<rsigma_eval::TenantId>,
+    metrics: Arc<dyn MetricsHook>,
+    rejected_log: WarnThrottle,
+}
+
+impl Drop for OtlpSink {
+    fn drop(&mut self) {
+        let suppressed = self.rejected_log.take_pending();
+        if suppressed > 0 {
+            tracing::warn!(suppressed, "OTLP collector rejected log records");
+        }
+    }
 }
 
 impl OtlpSink {
@@ -130,7 +153,16 @@ impl OtlpSink {
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
             tenant_filter: None,
+            metrics: Arc::new(NoopMetrics),
+            rejected_log: WarnThrottle::new(WarnThrottle::DEFAULT_INTERVAL),
         })
+    }
+
+    /// Report log records the collector rejects to `metrics`.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<dyn MetricsHook>) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// Select the log-record body: the rule title ([`SinkFormat::Ndjson`], the
@@ -204,6 +236,36 @@ impl OtlpSink {
         }
     }
 
+    /// Export a batch of deliveries in one request, one outcome per delivery.
+    ///
+    /// When the request fails, every delivery with records in it fails, and
+    /// the worker retries each on its own.
+    pub(crate) async fn send_batch(
+        &mut self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        let items: Vec<(&ProcessResult, Option<&DeliveryContext>)> = items
+            .iter()
+            .map(|(result, ctx)| (*result, Some(*ctx)))
+            .collect();
+        let Some((request, records)) = self.build_batch_request(&items) else {
+            return items.iter().map(|_| Ok(())).collect();
+        };
+        match self.export(request).await {
+            Ok(()) => items.iter().map(|_| Ok(())).collect(),
+            Err(err) => records
+                .into_iter()
+                .map(|count| {
+                    if count == 0 {
+                        Ok(())
+                    } else {
+                        Err(err.duplicate())
+                    }
+                })
+                .collect(),
+        }
+    }
+
     /// The export request for the results this sink delivers, or `None` when
     /// the tenant filter leaves nothing.
     fn build_request(
@@ -211,29 +273,50 @@ impl OtlpSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Option<ExportLogsServiceRequest> {
-        // Original batch positions, so a finding uid matches every other sink.
-        let (positions, filtered): (Vec<usize>, ProcessResult) = result
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| {
-                self.tenant_filter
+        self.build_batch_request(&[(result, ctx)])
+            .map(|(request, _)| request)
+    }
+
+    /// One export request for every result of every delivery this sink
+    /// delivers, with each delivery's record count, or `None` when the
+    /// tenant filter leaves nothing.
+    fn build_batch_request(
+        &self,
+        items: &[(&ProcessResult, Option<&DeliveryContext>)],
+    ) -> Option<(ExportLogsServiceRequest, Vec<usize>)> {
+        // Each record keeps its delivery and original position, so a finding
+        // uid matches every other sink.
+        let mut identities = Vec::new();
+        let mut filtered: ProcessResult = Vec::new();
+        let mut records = Vec::with_capacity(items.len());
+        for (result, ctx) in items {
+            let before = filtered.len();
+            for (index, r) in result.iter().enumerate() {
+                if self
+                    .tenant_filter
                     .as_ref()
                     .is_none_or(|tenant| r.header.tenant_id.as_ref() == Some(tenant))
-            })
-            .map(|(index, r)| (index, r.clone()))
-            .unzip();
+                {
+                    identities.push((*ctx, index));
+                    filtered.push(r.clone());
+                }
+            }
+            records.push(filtered.len() - before);
+        }
         if filtered.is_empty() {
             return None;
         }
-        Some(match self.format {
+        let request = match self.format {
             SinkFormat::Ndjson => evaluation_results_to_logs_request(&filtered),
             SinkFormat::Ocsf => {
                 let ocsf = &self.ocsf;
                 ocsf_findings_to_logs_request(&filtered, |index, r| {
-                    ocsf_finding(r, ctx.map(|c| (c, positions[index])), ocsf)
+                    let (ctx, position) = identities[index];
+                    ocsf_finding(r, ctx.map(|c| (c, position)), ocsf)
                 })
             }
-        })
+        };
+        Some((request, records))
     }
 
     /// Export a pre-serialized line as a single OTLP log-record body. Used when
@@ -262,7 +345,7 @@ impl OtlpSink {
 
     async fn export(&mut self, request: ExportLogsServiceRequest) -> Result<(), RuntimeError> {
         let timeout = self.timeout;
-        tokio::time::timeout(timeout, self.export_unbounded(request))
+        let partial = tokio::time::timeout(timeout, self.export_unbounded(request))
             .await
             .unwrap_or_else(|_| {
                 Err(RuntimeError::Io(std::io::Error::new(
@@ -272,13 +355,38 @@ impl OtlpSink {
                         humantime::format_duration(timeout)
                     ),
                 )))
-            })
+            })?;
+        if let Some(partial) = partial {
+            self.report_partial_success(partial);
+        }
+        Ok(())
     }
 
+    /// Count and log the records a collector rejected. They are not retried.
+    fn report_partial_success(&mut self, partial: ExportLogsPartialSuccess) {
+        let Ok(rejected) = u64::try_from(partial.rejected_log_records) else {
+            return;
+        };
+        if rejected == 0 {
+            return;
+        }
+        self.metrics.on_sink_otlp_rejected_records("otlp", rejected);
+        if let Some(n) = self.rejected_log.record(Instant::now()) {
+            tracing::warn!(
+                rejected,
+                error = %partial.error_message,
+                suppressed = n - 1,
+                "OTLP collector rejected log records"
+            );
+        }
+    }
+
+    /// Send one export request, returning the collector's partial success
+    /// when its response carries one.
     async fn export_unbounded(
         &mut self,
         request: ExportLogsServiceRequest,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Option<ExportLogsPartialSuccess>, RuntimeError> {
         match &mut self.transport {
             Transport::Http { client, url, gzip } => {
                 let mut builder = client
@@ -301,17 +409,32 @@ impl OtlpSink {
                         response.status()
                     ))));
                 }
-                Ok(())
+                Ok(http_partial_success(response).await)
             }
             Transport::Grpc { client } => {
-                client
+                let response = client
                     .export(request)
                     .await
                     .map_err(|e| RuntimeError::Io(std::io::Error::other(e)))?;
-                Ok(())
+                Ok(response.into_inner().partial_success)
             }
         }
     }
+}
+
+/// The partial success in a protobuf OTLP/HTTP response body, if any. A body
+/// that is empty, too long, or not protobuf counts as a full success.
+async fn http_partial_success(mut response: reqwest::Response) -> Option<ExportLogsPartialSuccess> {
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = response.chunk().await {
+        if body.len() + chunk.len() > RESPONSE_CAP {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    ExportLogsServiceResponse::decode(body.as_slice())
+        .ok()?
+        .partial_success
 }
 
 /// Pin the process-default rustls `CryptoProvider` to aws-lc-rs.
@@ -663,6 +786,214 @@ mod tests {
         };
         let finding: serde_json::Value = serde_json::from_str(raw).unwrap();
         assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(1));
+    }
+
+    #[tokio::test]
+    async fn a_batch_goes_out_in_one_request_with_each_delivery_identity() {
+        use opentelemetry_proto::tonic::common::v1::any_value;
+
+        let addr = free_port();
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let service = Recording {
+            received: received.clone(),
+        };
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(LogsServiceServer::new(service))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+        wait_reachable(addr).await;
+
+        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, None)
+            .unwrap()
+            .with_format(SinkFormat::Ocsf);
+        let deliveries = [one_detection(), one_detection(), one_detection()];
+        let contexts = [
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+        ];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+        let outcomes = sink.send_batch(&items).await;
+        assert!(outcomes.iter().all(Result::is_ok));
+
+        let got = received.lock().await;
+        assert_eq!(got.len(), 1, "one export request for the batch");
+        let records = &got[0].resource_logs[0].scope_logs[0].log_records;
+        assert_eq!(records.len(), 3);
+        for (record, ctx) in records.iter().zip(&contexts) {
+            let Some(any_value::Value::StringValue(raw)) =
+                record.body.as_ref().and_then(|b| b.value.as_ref())
+            else {
+                panic!("finding body");
+            };
+            let finding: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(0));
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_request_is_retried_one_delivery_at_a_time() {
+        use crate::io::{Dispatcher, OnFull, Sink};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let sink = OtlpSink::new(
+            OtlpProtocol::Http,
+            &server.address().to_string(),
+            false,
+            None,
+        )
+        .unwrap();
+        let (ack_tx, _ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let cfg = crate::io::DeliveryConfig {
+            backoff_base: Duration::from_millis(1),
+            backoff_max: Duration::from_millis(5),
+            ..Default::default()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(Sink::Otlp(Box::new(sink)), OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            Arc::new(NoopMetrics),
+        );
+        for _ in 0..3 {
+            dispatcher.dispatch(one_detection(), Vec::new()).await;
+        }
+        dispatcher.shutdown().await;
+
+        let requests = server.received_requests().await.unwrap();
+        let records: Vec<usize> = requests
+            .iter()
+            .map(|request| {
+                ExportLogsServiceRequest::decode(request.body.as_slice())
+                    .unwrap()
+                    .resource_logs[0]
+                    .scope_logs[0]
+                    .log_records
+                    .len()
+            })
+            .collect();
+        assert_eq!(
+            records,
+            [3, 1, 1, 1],
+            "one batch request, then one retry each"
+        );
+    }
+
+    #[derive(Default)]
+    struct RejectedCounter(std::sync::atomic::AtomicU64);
+
+    impl MetricsHook for RejectedCounter {
+        fn on_sink_otlp_rejected_records(&self, sink: &str, count: u64) {
+            assert_eq!(sink, "otlp");
+            self.0.fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+    }
+
+    #[tokio::test]
+    async fn a_partial_success_counts_the_rejected_records_without_retrying() {
+        let server = MockServer::start().await;
+        let response = ExportLogsServiceResponse {
+            partial_success: Some(ExportLogsPartialSuccess {
+                rejected_log_records: 2,
+                error_message: "records too large".to_string(),
+            }),
+        };
+        Mock::given(method("POST"))
+            .and(path("/v1/logs"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/x-protobuf")
+                    .set_body_bytes(response.encode_to_vec()),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let counter = Arc::new(RejectedCounter::default());
+        let mut sink = OtlpSink::new(
+            OtlpProtocol::Http,
+            &server.address().to_string(),
+            false,
+            None,
+        )
+        .unwrap()
+        .with_metrics(counter.clone());
+        sink.send(&one_detection()).await.unwrap();
+        sink.send(&one_detection()).await.unwrap();
+
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert_eq!(
+            sink.rejected_log.take_pending(),
+            1,
+            "the first rejection is logged and the second waits for the next warning"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_grpc_partial_success_is_reported() {
+        #[derive(Clone)]
+        struct Rejecting;
+
+        #[tonic::async_trait]
+        impl LogsService for Rejecting {
+            async fn export(
+                &self,
+                _request: tonic::Request<ExportLogsServiceRequest>,
+            ) -> Result<tonic::Response<ExportLogsServiceResponse>, tonic::Status> {
+                Ok(tonic::Response::new(ExportLogsServiceResponse {
+                    partial_success: Some(ExportLogsPartialSuccess {
+                        rejected_log_records: 1,
+                        error_message: String::new(),
+                    }),
+                }))
+            }
+        }
+
+        let addr = free_port();
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(LogsServiceServer::new(Rejecting))
+                .serve(addr)
+                .await
+                .unwrap();
+        });
+        wait_reachable(addr).await;
+
+        let counter = Arc::new(RejectedCounter::default());
+        let mut sink = OtlpSink::new(OtlpProtocol::Grpc, &addr.to_string(), false, None)
+            .unwrap()
+            .with_metrics(counter.clone());
+        sink.send(&one_detection()).await.unwrap();
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        server.abort();
     }
 
     /// A CA, a server leaf (SAN `127.0.0.1` + `localhost`), and a client leaf,

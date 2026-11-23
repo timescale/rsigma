@@ -32,6 +32,7 @@ pub struct Metrics {
     pub sink_retries_total: IntCounterVec,
     pub sink_dropped_total: IntCounterVec,
     pub sink_delivery_failures_total: IntCounterVec,
+    pub sink_otlp_rejected_records_total: IntCounterVec,
     pub webhook_requests_total: IntCounterVec,
     pub webhook_request_duration_seconds: prometheus::HistogramVec,
     pub detection_matches_by_rule: IntCounterVec,
@@ -315,6 +316,14 @@ impl Metrics {
             &["sink"],
         )
         .unwrap();
+        let sink_otlp_rejected_records_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_sink_otlp_rejected_records_total",
+                "Log records an OTLP collector rejected in a partial success; not retried",
+            ),
+            &["sink"],
+        )
+        .unwrap();
         let webhook_requests_total = IntCounterVec::new(
             Opts::new(
                 "rsigma_webhook_requests_total",
@@ -417,6 +426,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(sink_delivery_failures_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(sink_otlp_rejected_records_total.clone()))
             .unwrap();
         registry
             .register(Box::new(webhook_requests_total.clone()))
@@ -1459,6 +1471,7 @@ impl Metrics {
             sink_retries_total,
             sink_dropped_total,
             sink_delivery_failures_total,
+            sink_otlp_rejected_records_total,
             webhook_requests_total,
             webhook_request_duration_seconds,
             detection_matches_by_rule,
@@ -2066,6 +2079,11 @@ impl MetricsHook for Metrics {
         self.sink_delivery_failures_total
             .with_label_values(&[sink])
             .inc_by(0);
+        if sink == "otlp" {
+            self.sink_otlp_rejected_records_total
+                .with_label_values(&[sink])
+                .inc_by(0);
+        }
     }
 
     fn on_sink_queue_depth_change(&self, sink: &str, delta: i64) {
@@ -2089,6 +2107,12 @@ impl MetricsHook for Metrics {
         self.sink_delivery_failures_total
             .with_label_values(&[sink])
             .inc();
+    }
+
+    fn on_sink_otlp_rejected_records(&self, sink: &str, count: u64) {
+        self.sink_otlp_rejected_records_total
+            .with_label_values(&[sink])
+            .inc_by(count);
     }
 
     fn register_webhook(&self, webhook_id: &str) {

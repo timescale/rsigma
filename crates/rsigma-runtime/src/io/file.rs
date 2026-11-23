@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, ResumePoint};
+use crate::io::lines::{LineEncoding, LineWriter, ResumeMap};
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// Appends ProcessResult to a file as one line per result.
@@ -23,7 +23,7 @@ pub struct FileSink {
     tenant_path: Option<TenantPath>,
     tenant_handles: HashMap<TenantId, TenantHandle>,
     /// Lines of a `{tenant}` delivery already written, across tenant files.
-    tenant_resume: ResumePoint,
+    tenant_resume: ResumeMap<usize>,
 }
 
 /// A `{tenant}` path template and the handle LRU bound.
@@ -50,7 +50,7 @@ impl FileSink {
             tenant_filter: None,
             tenant_path: None,
             tenant_handles: HashMap::new(),
-            tenant_resume: ResumePoint::default(),
+            tenant_resume: ResumeMap::default(),
         })
     }
 
@@ -73,7 +73,7 @@ impl FileSink {
                 tick: 0,
             }),
             tenant_handles: HashMap::new(),
-            tenant_resume: ResumePoint::default(),
+            tenant_resume: ResumeMap::default(),
         })
     }
 
@@ -164,19 +164,52 @@ impl FileSink {
                     return Err(err);
                 }
             }
-            self.tenant_resume.clear();
+            self.tenant_resume.clear(ctx);
             return Ok(());
         }
 
+        let encoding = LineEncoding {
+            format: self.format,
+            pretty: false,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
+        };
         match self.out.as_mut() {
-            Some(out) => out.write_result(
-                result,
-                self.format,
-                ctx,
-                &self.ocsf,
-                self.tenant_filter.as_ref(),
-            ),
+            Some(out) => out.write_result(result, ctx, encoding),
             None => Ok(()),
+        }
+    }
+
+    /// Append a batch of deliveries, one outcome per attempted delivery. A
+    /// plain path gets the whole batch in one write; a `{tenant}` path writes
+    /// each delivery on its own, since one batch can span many files, and
+    /// stops at the first failure so later deliveries keep their order.
+    pub(crate) fn send_batch(
+        &mut self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        if self.tenant_path.is_some() {
+            self.tenant_resume.retain(items.iter().map(|(_, ctx)| *ctx));
+            let mut outcomes = Vec::with_capacity(items.len());
+            for (result, ctx) in items {
+                let outcome = self.send_inner(result, Some(ctx));
+                let failed = outcome.is_err();
+                outcomes.push(outcome);
+                if failed {
+                    break;
+                }
+            }
+            return outcomes;
+        }
+        let encoding = LineEncoding {
+            format: self.format,
+            pretty: false,
+            ocsf: &self.ocsf,
+            tenant_filter: self.tenant_filter.as_ref(),
+        };
+        match self.out.as_mut() {
+            Some(out) => out.write_results(items, encoding),
+            None => items.iter().map(|_| Ok(())).collect(),
         }
     }
 
@@ -271,99 +304,6 @@ impl FileSink {
     }
 }
 
-/// NDJSON writer over a byte stream that keeps lines whole across failures.
-struct LineWriter<W> {
-    inner: W,
-    /// The last write stopped partway through a line.
-    torn: bool,
-    resume: ResumePoint,
-}
-
-impl<W: Write> LineWriter<W> {
-    fn new(inner: W) -> Self {
-        LineWriter {
-            inner,
-            torn: false,
-            resume: ResumePoint::default(),
-        }
-    }
-
-    fn write_result(
-        &mut self,
-        result: &ProcessResult,
-        format: SinkFormat,
-        ctx: Option<&DeliveryContext>,
-        ocsf: &crate::ocsf::OcsfOptions,
-        tenant_filter: Option<&TenantId>,
-    ) -> Result<(), RuntimeError> {
-        let filtered: Vec<(usize, &rsigma_eval::EvaluationResult)> = result
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| tenant_filter.is_none_or(|t| m.header.tenant_id.as_ref() == Some(t)))
-            .collect();
-        if filtered.is_empty() {
-            return Ok(());
-        }
-        let start = self.resume.start(ctx);
-        let mut batch = LineBatch::default();
-        for (original_index, m) in filtered.iter().skip(start) {
-            batch.push(&serialize_result(
-                m,
-                format,
-                false,
-                ctx.map(|ctx| (ctx, *original_index)),
-                ocsf,
-            )?);
-        }
-        match self.write_batch(&batch) {
-            Ok(()) => {
-                self.resume.clear();
-                Ok(())
-            }
-            Err((written, err)) => {
-                self.resume
-                    .record(ctx, start + batch.complete_lines(written));
-                Err(err.into())
-            }
-        }
-    }
-
-    fn write_line(&mut self, json: &str) -> Result<(), RuntimeError> {
-        let mut batch = LineBatch::default();
-        batch.push(json);
-        self.write_batch(&batch).map_err(|(_, err)| err.into())
-    }
-
-    /// Write `batch` in full. A failure reports how many of its bytes were
-    /// written.
-    fn write_batch(&mut self, batch: &LineBatch) -> Result<(), (usize, io::Error)> {
-        if self.torn {
-            write_counted(&mut self.inner, b"\n").map_err(|(_, err)| (0, err))?;
-            self.torn = false;
-        }
-        let outcome = write_counted(&mut self.inner, batch.bytes())
-            .and_then(|()| self.inner.flush().map_err(|err| (batch.bytes().len(), err)));
-        if let Err((written, _)) = &outcome {
-            self.torn = batch.ends_mid_line(*written);
-        }
-        outcome
-    }
-}
-
-/// `write_all` that reports how many bytes were written when it fails.
-fn write_counted<W: Write>(writer: &mut W, bytes: &[u8]) -> Result<(), (usize, io::Error)> {
-    let mut written = 0;
-    while written < bytes.len() {
-        match writer.write(&bytes[written..]) {
-            Ok(0) => return Err((written, io::ErrorKind::WriteZero.into())),
-            Ok(n) => written += n,
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-            Err(err) => return Err((written, err)),
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -373,28 +313,6 @@ mod tests {
     use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
 
     use super::*;
-
-    /// Accepts up to `budget` bytes, then fails every write until refilled.
-    struct FlakyWriter {
-        out: Vec<u8>,
-        budget: usize,
-    }
-
-    impl Write for FlakyWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.budget == 0 {
-                return Err(io::Error::other("disk full"));
-            }
-            let n = buf.len().min(self.budget);
-            self.out.extend_from_slice(&buf[..n]);
-            self.budget -= n;
-            Ok(n)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
 
     fn three_results() -> ProcessResult {
         ["first", "second", "third"]
@@ -417,97 +335,6 @@ mod tests {
                 }),
             })
             .collect()
-    }
-
-    #[test]
-    fn retry_resumes_after_a_partial_write() {
-        let result = three_results();
-        let lines: Vec<String> = result
-            .iter()
-            .map(|m| {
-                serialize_result(
-                    m,
-                    SinkFormat::default(),
-                    false,
-                    None,
-                    &crate::ocsf::OcsfOptions::default(),
-                )
-                .unwrap()
-            })
-            .collect();
-        let mut out = LineWriter::new(FlakyWriter {
-            out: Vec::new(),
-            // The first line, then half of the second.
-            budget: lines[0].len() + 1 + lines[1].len() / 2,
-        });
-        let ctx = DeliveryContext::new();
-
-        assert!(
-            out.write_result(
-                &result,
-                SinkFormat::default(),
-                Some(&ctx),
-                &crate::ocsf::OcsfOptions::default(),
-                None,
-            )
-            .is_err()
-        );
-        out.inner.budget = usize::MAX;
-        out.write_result(
-            &result,
-            SinkFormat::default(),
-            Some(&ctx),
-            &crate::ocsf::OcsfOptions::default(),
-            None,
-        )
-        .unwrap();
-        out.write_line("{\"next\":true}").unwrap();
-
-        let written = String::from_utf8(out.inner.out).unwrap();
-        let written: Vec<&str> = written.lines().collect();
-        assert_eq!(
-            written,
-            [
-                lines[0].as_str(),
-                &lines[1][..lines[1].len() / 2],
-                lines[1].as_str(),
-                lines[2].as_str(),
-                "{\"next\":true}",
-            ],
-            "the first line is not repeated and the torn line is ended"
-        );
-    }
-
-    #[test]
-    fn a_new_delivery_starts_from_its_first_line() {
-        let result = three_results();
-        let mut out = LineWriter::new(FlakyWriter {
-            out: Vec::new(),
-            budget: 1,
-        });
-        let failed = DeliveryContext::new();
-        assert!(
-            out.write_result(
-                &result,
-                SinkFormat::default(),
-                Some(&failed),
-                &crate::ocsf::OcsfOptions::default(),
-                None,
-            )
-            .is_err()
-        );
-        out.inner.budget = usize::MAX;
-        let next = DeliveryContext::new();
-        out.write_result(
-            &result,
-            SinkFormat::default(),
-            Some(&next),
-            &crate::ocsf::OcsfOptions::default(),
-            None,
-        )
-        .unwrap();
-        let written = String::from_utf8(out.inner.out).unwrap();
-        assert_eq!(written.lines().count(), 4, "{written}");
     }
 
     fn tenanted(title: &str, tenant: &str) -> EvaluationResult {
@@ -582,6 +409,101 @@ mod tests {
         let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
         assert_eq!(a.lines().count(), 1, "tenant a's line is not repeated");
         assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_batch_appends_every_delivery_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.ndjson");
+        let mut sink = FileSink::open(&path).unwrap();
+        let deliveries = [
+            vec![tenanted("one", "a")],
+            vec![tenanted("two", "a"), tenanted("three", "a")],
+        ];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+
+        assert!(outcomes.iter().all(Result::is_ok));
+        let written = std::fs::read_to_string(&path).unwrap();
+        let titles: Vec<String> = written
+            .lines()
+            .map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                value["rule_title"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(titles, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn a_tenant_path_batch_goes_per_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let deliveries = [vec![tenanted("a", "a")], vec![tenanted("b", "b")]];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+        assert!(outcomes[0].is_ok(), "the other tenant's delivery succeeds");
+        assert!(outcomes[1].is_err());
+
+        std::fs::remove_file(&blocker).unwrap();
+        sink.send_with_context(&deliveries[1], &contexts[1])
+            .unwrap();
+        let a = std::fs::read_to_string(dir.path().join("a/findings.ndjson")).unwrap();
+        let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
+        assert_eq!(a.lines().count(), 1);
+        assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn each_failed_tenant_path_delivery_keeps_its_own_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4).unwrap();
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        // Both deliveries write tenant a's line, then fail on tenant b.
+        let deliveries = [
+            vec![tenanted("first-a", "a"), tenanted("first-b", "b")],
+            vec![tenanted("second-a", "a"), tenanted("second-b", "b")],
+        ];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items);
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "the batch stops at the first failure, so the second delivery waits"
+        );
+        assert!(outcomes[0].is_err());
+        // The worker's attempt of the second delivery fails the same way.
+        assert!(
+            sink.send_with_context(&deliveries[1], &contexts[1])
+                .is_err()
+        );
+
+        std::fs::remove_file(&blocker).unwrap();
+        for (result, ctx) in &items {
+            sink.send_with_context(result, ctx).unwrap();
+        }
+        let a = std::fs::read_to_string(dir.path().join("a/findings.ndjson")).unwrap();
+        let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
+        assert_eq!(
+            a.lines().count(),
+            2,
+            "no tenant a line is written twice: {a}"
+        );
+        assert_eq!(b.lines().count(), 2);
     }
 
     #[test]

@@ -14,3 +14,20 @@ pub enum RuntimeError {
     #[error("permanent delivery failure: {0}")]
     Permanent(String),
 }
+
+impl RuntimeError {
+    /// An equivalent error for another delivery that failed for the same
+    /// reason: same variant (a serialization error becomes I/O), kind, and
+    /// message.
+    pub(crate) fn duplicate(&self) -> RuntimeError {
+        match self {
+            RuntimeError::Io(err) => {
+                RuntimeError::Io(std::io::Error::new(err.kind(), err.to_string()))
+            }
+            RuntimeError::Serialization(err) => {
+                RuntimeError::Io(std::io::Error::other(err.to_string()))
+            }
+            RuntimeError::Permanent(message) => RuntimeError::Permanent(message.clone()),
+        }
+    }
+}

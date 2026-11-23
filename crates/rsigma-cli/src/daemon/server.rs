@@ -2643,6 +2643,13 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     for spec in &output_specs {
         let (sink, on_full) = build_sink(spec, pretty, SinkRole::Findings, &config).await;
         for leaf in sink.into_leaves() {
+            let leaf = match leaf {
+                #[cfg(feature = "daemon-otlp")]
+                Sink::Otlp(otlp) => Sink::Otlp(Box::new(
+                    (*otlp).with_metrics(metrics.clone() as Arc<dyn MetricsHook>),
+                )),
+                leaf => leaf,
+            };
             leaves.push((leaf, on_full, config.delivery_config));
         }
     }

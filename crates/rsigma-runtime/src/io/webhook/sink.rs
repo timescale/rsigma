@@ -14,6 +14,7 @@ use crate::enrichment::{
 };
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
+use crate::io::lines::ResumeMap;
 use crate::metrics::MetricsHook;
 
 use super::config::WebhookKind;
@@ -105,6 +106,9 @@ pub struct WebhookSink {
     /// signature headers over the rendered body bytes.
     signer: Option<WebhookSigner>,
     ocsf: crate::ocsf::OcsfOptions,
+    /// Index of the result a failed delivery stopped at; every result before
+    /// it was posted.
+    posted: ResumeMap<usize>,
 }
 
 impl WebhookSink {
@@ -139,6 +143,7 @@ impl WebhookSink {
             metrics,
             signer,
             ocsf: crate::ocsf::OcsfOptions::default(),
+            posted: ResumeMap::default(),
         }
     }
 
@@ -166,19 +171,46 @@ impl WebhookSink {
     /// (a no-op success). On the first delivery error the call short-circuits
     /// with that error so the shared worker can apply retry/backoff (for a
     /// retryable error) or route to the DLQ (for a [`RuntimeError::Permanent`]
-    /// or after the retry budget is spent).
+    /// or after the retry budget is spent). A retry with the same `ctx` starts
+    /// at the result that failed, so results already posted are not posted
+    /// again.
     pub async fn send(
         &mut self,
         result: &ProcessResult,
         ctx: &DeliveryContext,
     ) -> Result<(), RuntimeError> {
-        for (idx, eval) in result.iter().enumerate() {
+        let start = self.posted.start(Some(ctx));
+        for (idx, eval) in result.iter().enumerate().skip(start) {
             if !self.kind.matches(&eval.body) || !self.scope.matches(eval) {
                 continue;
             }
-            self.deliver_one(eval, ctx, idx).await?;
+            if let Err(err) = self.deliver_one(eval, ctx, idx).await {
+                self.posted.record(Some(ctx), idx);
+                return Err(err);
+            }
         }
+        self.posted.clear(Some(ctx));
         Ok(())
+    }
+
+    /// Deliver a batch of deliveries one at a time, one outcome per attempted
+    /// delivery, stopping at the first failure so later deliveries keep their
+    /// order.
+    pub(crate) async fn send_batch(
+        &mut self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        self.posted.retain(items.iter().map(|(_, ctx)| *ctx));
+        let mut outcomes = Vec::with_capacity(items.len());
+        for (result, ctx) in items {
+            let outcome = self.send(result, ctx).await;
+            let failed = outcome.is_err();
+            outcomes.push(outcome);
+            if failed {
+                break;
+            }
+        }
+        outcomes
     }
 
     async fn deliver_one(
@@ -696,6 +728,88 @@ mod tests {
                 "{name} must be identical across retries"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_retry_posts_only_the_results_that_did_not_go_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let signer =
+            WebhookSigner::new(SigningScheme::Standard, vec![Zeroizing::new(b"k".to_vec())]);
+        let mut sink = signed_sink_to(format!("{}/hook", server.uri()), signer);
+        let result: ProcessResult =
+            vec![detection("first"), detection("second"), detection("third")];
+        let context = ctx();
+
+        assert!(sink.send(&result, &context).await.is_err());
+        sink.send(&result, &context).await.unwrap();
+
+        let reqs = server.received_requests().await.unwrap();
+        let posted: Vec<(String, String)> = reqs
+            .iter()
+            .map(|req| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let id = req
+                    .headers
+                    .get("webhook-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                (body["text"].as_str().unwrap().to_string(), id)
+            })
+            .collect();
+        let id = |idx: usize| format!("{}-{idx}", context.id_base());
+        assert_eq!(
+            posted,
+            [
+                ("first".to_string(), id(0)),
+                ("second".to_string(), id(1)),
+                ("second".to_string(), id(1)),
+                ("third".to_string(), id(2)),
+            ],
+            "the retry starts at the failed result and keeps its signing id"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_delivery_posts_every_result() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let mut sink = sink_to(format!("{}/hook", server.uri()));
+        let result: ProcessResult = vec![detection("first"), detection("second")];
+
+        let failed = ctx();
+        assert!(sink.send(&result, &failed).await.is_err());
+        let next = ctx();
+        sink.send_batch(&[(&result, &next)])
+            .await
+            .pop()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
     }
 
     #[tokio::test]

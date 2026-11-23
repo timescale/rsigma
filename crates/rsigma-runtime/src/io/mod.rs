@@ -533,6 +533,39 @@ impl Sink {
         })
     }
 
+    /// Make the first delivery attempt for a batch of results, one outcome
+    /// per attempted item (see [`DeliverySink::deliver_batch`]).
+    pub(crate) fn send_batch_with_context<'a>(
+        &'a mut self,
+        items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+    ) -> delivery::BatchFuture<'a> {
+        Box::pin(async move {
+            match self {
+                Sink::Stdout(s) => blocking_write(|| s.send_batch(items)),
+                Sink::File(s) => blocking_write(|| s.send_batch(items)),
+                #[cfg(feature = "nats")]
+                Sink::Nats(s) => s.send_batch(items).await,
+                #[cfg(feature = "otlp")]
+                Sink::Otlp(s) => s.send_batch(items).await,
+                Sink::Webhook(s) => s.send_batch(items).await,
+                #[cfg(all(unix, feature = "uds"))]
+                Sink::Unix(s) => s.send_batch(items).await,
+                _ => {
+                    let mut outcomes = Vec::with_capacity(items.len());
+                    for (result, ctx) in items {
+                        let outcome = self.send_with_context(result, ctx).await;
+                        let failed = outcome.is_err();
+                        outcomes.push(outcome);
+                        if failed {
+                            break;
+                        }
+                    }
+                    outcomes
+                }
+            }
+        })
+    }
+
     /// Write a pre-serialized JSON string directly to this sink.
     pub fn send_raw<'a>(
         &'a mut self,

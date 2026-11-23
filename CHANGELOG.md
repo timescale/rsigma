@@ -4,6 +4,37 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Batched sink delivery (#743)
+
+Each sink worker now makes the first delivery attempt for everything it drained from its queue at once, up to `--sink-batch-max` results. Stdout, `file://`, and `unix://` sinks write the batch with one write instead of one or two writes per line. The NATS sink publishes every message of the batch and then awaits the JetStream acks together, instead of one publish-and-ack round trip per message. The OTLP sink exports the batch in one request instead of one per result. A result that fails in the batch is retried on its own with the same retry budget, backoff, and DLQ routing as before. Webhooks still post one request per result.
+
+On an Apple M4 Pro (12 cores), stdin batch mode, one rule matching every event, wall and system seconds before and after, medians of 7 interleaved runs unless noted:
+
+- 1,000,000 events to stdout piped to `wc -l`: 1.36 s / 1.06 s to 0.93 s / 0.65 s.
+- 1,000,000 events to a file sink: 3.53 s / 3.52 s to 0.94 s / 0.70 s.
+- 1,000,000 events to stdout redirected to `/dev/null`, which was slower than a pipe: 2.42 s to 0.91 s wall (median of 3).
+- 100,000 events to a NATS JetStream sink on a local server: 12.21 s to 0.65 s wall (median of 3), every message stored.
+- 100,000 events to an OTLP/gRPC sink on a local collector: 16.65 s to 0.59 s wall (median of 3).
+
+Retries no longer repeat deliveries the sink knows went out:
+
+- Stdout skips the lines a failed write already delivered, and ends a line the failure cut off before the next write. Before, a retry could write lines twice.
+- NATS remembers which messages of a failed result JetStream confirmed, and a retry publishes only the others. Before, a retry republished every message of the result.
+- A webhook retry starts at the result whose request failed, keeping each request's signing id and timestamp. Before, a retry re-posted results of the same delivery that had already gone out.
+
+The OTLP sink now reads the collector's partial success over both OTLP/gRPC and OTLP/HTTP. Rejected log records are counted on the new `rsigma_sink_otlp_rejected_records_total{sink}` counter and logged in a warning at most once every 10 seconds. They are not retried, as the OTLP specification asks.
+
+`--sink-batch-flush-ms` (and `daemon.output.batch_flush_ms`) now works: a batch smaller than `--sink-batch-max` waits up to that many milliseconds for more results before it is delivered.
+
+Library API: `DeliverySink` gains `deliver_batch` with a default that delivers one result at a time and stops at the first failure, `OtlpSink` gains `with_metrics`, and `MetricsHook` gains `on_sink_otlp_rejected_records` with a default no-op body.
+
+Behavior changes:
+
+- The `--sink-batch-flush-ms` default changes from 50 to 0, which delivers whatever is queued at once, as the daemon effectively did before because the setting had no effect. `DeliveryConfig::default()` changes the same way.
+- The NATS sink publishes a whole batch before it awaits the acks, so a message retried after a failed ack can land after messages published after it. Before, a failed message was retried before the next one was published.
+
+See [`engine daemon`: Output sinks and DLQ](https://rsigma.io/cli/engine/daemon/#output-sinks-and-dlq).
+
 ### Faster daemon intake (#742)
 
 Small detection batches no longer spread across every Rayon thread. Detection runs on the calling thread until a batch's projected cost reaches 500 µs and then forks the rest, and parsing stays on the calling thread for batches under 32 KiB of input. With cheap rules or small events, waking the whole pool per batch used to cost more than the work: idle workers spun and slept between batches, which showed up as system CPU several times the wall time. Results and their order are unchanged.

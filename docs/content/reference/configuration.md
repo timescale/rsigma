@@ -153,6 +153,8 @@ daemon:
     sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
                            # query params: ?on_full=drop, ?format=ndjson|ocsf (line and OTLP sinks), ?ocsf_version=<v>, ?ocsf_incident_class=2004|2005, and ?ocsf_assignee_group=<name> (with format=ocsf; defaults 1.1.0 and 2004; assignee group is required for class 2005), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
     drain_timeout: 5
+    batch_max: 64          # at least 1; results per sink delivery batch
+    batch_flush_ms: 0      # ms a partial batch waits for more results; 0 delivers at once
     # webhooks: [/etc/rsigma/webhooks/]   # template-driven HTTP sinks
   correlation:
     action: alert

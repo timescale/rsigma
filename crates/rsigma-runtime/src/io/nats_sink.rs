@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use async_nats::jetstream;
 use async_nats::subject::Subject;
+use futures::future::join_all;
 use parking_lot::Mutex;
 
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
+use crate::io::lines::ResumeMap;
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 use super::nats_config::NatsConnectConfig;
@@ -84,6 +86,20 @@ pub struct NatsSink {
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
     tenant_filter: Option<TenantId>,
+    /// Result indexes of a failed delivery that JetStream already confirmed.
+    acked: Mutex<ResumeMap<Vec<usize>>>,
+}
+
+/// Publishes awaited together before their acks; well under the JetStream
+/// context's default limit of 5,000 publishes waiting for an ack.
+const ACK_WINDOW: usize = 1024;
+
+/// One message of a batch, with the delivery and result index it belongs to.
+struct PendingMessage {
+    item: usize,
+    index: usize,
+    subject: String,
+    json: String,
 }
 
 impl NatsSink {
@@ -116,6 +132,7 @@ impl NatsSink {
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
             tenant_filter: None,
+            acked: Mutex::new(ResumeMap::default()),
         })
     }
 
@@ -169,8 +186,107 @@ impl NatsSink {
         result: &ProcessResult,
         ctx: Option<&DeliveryContext>,
     ) -> Result<(), RuntimeError> {
-        // Render every subject before publishing, so an untenanted result
-        // fails the delivery without a partial publish.
+        self.publish_results(&[(result, ctx)])
+            .await
+            .pop()
+            .unwrap_or(Ok(()))
+    }
+
+    /// Publish a batch of deliveries, one outcome per delivery.
+    pub(crate) async fn send_batch(
+        &self,
+        items: &[(&ProcessResult, &DeliveryContext)],
+    ) -> Vec<Result<(), RuntimeError>> {
+        // The worker has finished with every earlier delivery. Its retries of
+        // this batch's failures go through `send_with_context`, which must
+        // keep the other failures' progress.
+        self.acked.lock().retain(items.iter().map(|(_, ctx)| *ctx));
+        self.publish_results(items).await
+    }
+
+    /// Publish every message of every delivery, then await their acks
+    /// together, so one slow ack does not hold up the rest. A delivery
+    /// succeeds when all its messages are confirmed; the confirmed messages
+    /// of a failed one are remembered, so its retry publishes only the rest.
+    async fn publish_results<'c, C>(
+        &self,
+        items: &[(&ProcessResult, C)],
+    ) -> Vec<Result<(), RuntimeError>>
+    where
+        C: Copy + Into<Option<&'c DeliveryContext>>,
+    {
+        let mut outcomes = Vec::with_capacity(items.len());
+        let mut acked: Vec<Vec<usize>> = Vec::with_capacity(items.len());
+        let mut messages = Vec::new();
+        {
+            let progress = self.acked.lock();
+            for (item, (result, ctx)) in items.iter().enumerate() {
+                let ctx = (*ctx).into();
+                let done = progress.get(ctx).cloned().unwrap_or_default();
+                match self.messages(result, ctx, &done) {
+                    Ok(pending) => {
+                        messages.extend(pending.into_iter().map(|(index, subject, json)| {
+                            PendingMessage {
+                                item,
+                                index,
+                                subject,
+                                json,
+                            }
+                        }));
+                        outcomes.push(Ok(()));
+                    }
+                    Err(err) => outcomes.push(Err(err)),
+                }
+                acked.push(done);
+            }
+        }
+
+        if !messages.is_empty() {
+            let confirmed = match self.ensure_stream(&self.subject).await {
+                Ok(()) => self.publish_all(&messages).await,
+                Err(err) => messages.iter().map(|_| Err(err.duplicate())).collect(),
+            };
+            let mut published = 0_usize;
+            for (message, outcome) in messages.iter().zip(confirmed) {
+                match outcome {
+                    Ok(()) => {
+                        acked[message.item].push(message.index);
+                        published += 1;
+                    }
+                    Err(err) => {
+                        if outcomes[message.item].is_ok() {
+                            outcomes[message.item] = Err(err);
+                        }
+                    }
+                }
+            }
+            if published > 0 {
+                tracing::debug!(messages = published, "NATS messages published");
+            }
+        }
+
+        let mut progress = self.acked.lock();
+        for ((_, ctx), (outcome, done)) in items.iter().zip(outcomes.iter().zip(acked)) {
+            let ctx = (*ctx).into();
+            if outcome.is_ok() {
+                progress.clear(ctx);
+            } else if !done.is_empty() {
+                progress.record(ctx, done);
+            }
+        }
+        outcomes
+    }
+
+    /// The `(index, subject, json)` of each message of `result` this sink
+    /// publishes, leaving out the confirmed indexes in `done`. Every subject
+    /// is rendered first, so an untenanted result fails the delivery without
+    /// a partial publish.
+    fn messages(
+        &self,
+        result: &ProcessResult,
+        ctx: Option<&DeliveryContext>,
+        done: &[usize],
+    ) -> Result<Vec<(usize, String, String)>, RuntimeError> {
         let mut targets = Vec::new();
         for (index, m) in result.iter().enumerate() {
             if let Some(filter) = &self.tenant_filter
@@ -186,24 +302,60 @@ impl NatsSink {
             };
             targets.push((index, m, subject));
         }
-        let mut published = 0_usize;
-        for (index, m, subject) in targets {
-            let json = serialize_result(
-                m,
-                self.format,
-                false,
-                ctx.map(|ctx| (ctx, index)),
-                &self.ocsf,
-            )?;
-            self.ensure_stream(&self.subject).await?;
-            self.publish_one(&subject, &json).await?;
-            published += 1;
-        }
+        targets
+            .into_iter()
+            .filter(|(index, _, _)| !done.contains(index))
+            .map(|(index, m, subject)| {
+                serialize_result(
+                    m,
+                    self.format,
+                    false,
+                    ctx.map(|ctx| (ctx, index)),
+                    &self.ocsf,
+                )
+                .map(|json| (index, subject, json))
+            })
+            .collect()
+    }
 
-        if published > 0 {
-            tracing::debug!(messages = published, "NATS messages published");
+    /// Publish `messages` and await every ack, keeping each outcome. Acks
+    /// are awaited every [`ACK_WINDOW`] messages, since the JetStream context
+    /// lets only a bounded number of publishes wait for their ack.
+    async fn publish_all(&self, messages: &[PendingMessage]) -> Vec<Result<(), RuntimeError>> {
+        let mut outcomes = Vec::with_capacity(messages.len());
+        let mut failed = 0_usize;
+        let mut first_error = None;
+        for window in messages.chunks(ACK_WINDOW) {
+            let mut acks = Vec::with_capacity(window.len());
+            for message in window {
+                acks.push(
+                    self.jetstream
+                        .publish(
+                            Subject::from(message.subject.clone()),
+                            message.json.clone().into(),
+                        )
+                        .await,
+                );
+            }
+            let confirmed = join_all(acks.into_iter().map(|ack| async move {
+                match ack {
+                    Ok(ack) => ack.await.map(|_| ()).map_err(|e| e.to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }))
+            .await;
+            for (message, outcome) in window.iter().zip(confirmed) {
+                outcomes.push(outcome.map_err(|e| {
+                    failed += 1;
+                    first_error.get_or_insert_with(|| (message.subject.clone(), e.clone()));
+                    RuntimeError::Io(std::io::Error::other(e))
+                }));
+            }
         }
-        Ok(())
+        if let Some((subject, error)) = first_error {
+            tracing::warn!(subject, failed, error, "NATS publish failed");
+        }
+        outcomes
     }
 
     fn subject_label(&self) -> String {
@@ -340,6 +492,139 @@ mod tests {
         assert!(SubjectTemplate::parse("rsigma.{tenant}x.det").is_err());
         assert!(SubjectTemplate::parse("{tenant}.det.{tenant}").is_err());
         assert!(SubjectTemplate::parse("rsigma.{tenant}").is_ok());
+    }
+
+    fn titled(titles: &[&str]) -> ProcessResult {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use rsigma_eval::EvaluationResult;
+        use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+
+        titles
+            .iter()
+            .map(|title| EvaluationResult {
+                header: RuleHeader {
+                    rule_title: title.to_string(),
+                    rule_id: None,
+                    tenant_id: None,
+                    level: None,
+                    tags: vec![],
+                    custom_attributes: Arc::new(HashMap::new()),
+                    enrichments: None,
+                    ruleset: None,
+                },
+                body: ResultBody::Detection(DetectionBody {
+                    matched_selections: vec!["sel".to_string()],
+                    matched_fields: vec![],
+                    event: None,
+                }),
+            })
+            .collect()
+    }
+
+    fn can_run_linux_containers() -> bool {
+        std::process::Command::new("docker")
+            .args(["info", "--format", "{{.OSType}}"])
+            .output()
+            .is_ok_and(|o| {
+                o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "linux"
+            })
+    }
+
+    #[tokio::test]
+    async fn a_retry_publishes_only_the_messages_jetstream_did_not_confirm() {
+        use testcontainers::ImageExt;
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers_modules::nats::{Nats, NatsServerCmd};
+
+        if !can_run_linux_containers() {
+            eprintln!("Skipping: Docker with Linux container support is not available");
+            return;
+        }
+        let cmd = NatsServerCmd::default().with_jetstream();
+        let container = Nats::default().with_cmd(&cmd).start().await.unwrap();
+        let port = container.get_host_port_ipv4(4222).await.unwrap();
+        let cfg = NatsConnectConfig::new(format!("nats://127.0.0.1:{port}"));
+        let subject = "rsigma.batch";
+
+        // A stream that refuses its third message, so the third publish of
+        // the batch gets a failed ack.
+        let js = jetstream::new(cfg.connect().await.unwrap());
+        let (name, stream_subject) = SubjectTemplate::parse(subject).unwrap().stream();
+        let mut config = jetstream::stream::Config {
+            name: name.clone(),
+            subjects: vec![stream_subject],
+            max_messages: 2,
+            discard: jetstream::stream::DiscardPolicy::New,
+            ..Default::default()
+        };
+        js.create_stream(config.clone()).await.unwrap();
+
+        let sink = NatsSink::connect(&cfg, subject).await.unwrap();
+        let deliveries = [titled(&["a0", "a1", "a2"]), titled(&["b0"])];
+        let contexts = [DeliveryContext::new(), DeliveryContext::new()];
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+
+        let outcomes = sink.send_batch(&items).await;
+        assert!(outcomes[0].is_err(), "a2 was not confirmed");
+        assert!(outcomes[1].is_err(), "b0 was not confirmed");
+
+        config.max_messages = -1;
+        js.update_stream(config).await.unwrap();
+        for (result, ctx) in &items {
+            sink.send_with_context(result, ctx).await.unwrap();
+        }
+
+        let mut stream = js.get_stream(&name).await.unwrap();
+        assert_eq!(stream.info().await.unwrap().state.messages, 4);
+        let mut titles = Vec::new();
+        for sequence in 1..=4 {
+            let message = stream.get_raw_message(sequence).await.unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
+            titles.push(value["rule_title"].as_str().unwrap().to_string());
+        }
+        assert_eq!(
+            titles,
+            ["a0", "a1", "a2", "b0"],
+            "confirmed messages are not published again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_batch_past_the_pending_ack_limit_is_published() {
+        use testcontainers::ImageExt;
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers_modules::nats::{Nats, NatsServerCmd};
+
+        if !can_run_linux_containers() {
+            eprintln!("Skipping: Docker with Linux container support is not available");
+            return;
+        }
+        let cmd = NatsServerCmd::default().with_jetstream();
+        let container = Nats::default().with_cmd(&cmd).start().await.unwrap();
+        let port = container.get_host_port_ipv4(4222).await.unwrap();
+        let cfg = NatsConnectConfig::new(format!("nats://127.0.0.1:{port}"));
+        let subject = "rsigma.large";
+
+        let sink = NatsSink::connect(&cfg, subject).await.unwrap();
+        // More messages than the JetStream context lets wait for an ack.
+        let titles: Vec<String> = (0..6_000).map(|i| format!("m{i}")).collect();
+        let result = titled(&titles.iter().map(String::as_str).collect::<Vec<_>>());
+        let ctx = DeliveryContext::new();
+        let outcomes = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            sink.send_batch(&[(&result, &ctx)]),
+        )
+        .await
+        .expect("the batch never finished publishing");
+        assert!(outcomes[0].is_ok(), "{outcomes:?}");
+
+        let js = jetstream::new(cfg.connect().await.unwrap());
+        let (name, _) = SubjectTemplate::parse(subject).unwrap().stream();
+        let mut stream = js.get_stream(&name).await.unwrap();
+        assert_eq!(stream.info().await.unwrap().state.messages, 6_000);
     }
 
     #[test]
