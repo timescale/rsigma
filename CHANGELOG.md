@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Enricher miss handling
+### Enricher miss handling (#740)
 
 A miss, a lookup that ran and found no data for its key, is now its own outcome. It covers a `lookup` cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and the new `http` miss statuses.
 
