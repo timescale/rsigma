@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Batched sink delivery
+### Batched sink delivery (#743)
 
 Each sink worker now makes the first delivery attempt for everything it drained from its queue at once, up to `--sink-batch-max` results. Stdout, `file://`, and `unix://` sinks write the batch with one write instead of one or two writes per line. The NATS sink publishes every message of the batch and then awaits the JetStream acks together, instead of one publish-and-ack round trip per message. The OTLP sink exports the batch in one request instead of one per result. A result that fails in the batch is retried on its own with the same retry budget, backoff, and DLQ routing as before. Webhooks still post one request per result.
 
