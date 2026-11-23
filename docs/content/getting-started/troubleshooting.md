@@ -17,7 +17,7 @@ Several command groups are behind [build features](../reference/feature-flags.md
 ```bash
 rsigma --version
 # rsigma {{ rsigma.version }}
-# features: cef, daachorse-index, daemon, daemon-nats, daemon-otlp, daemon-tls, evtx, hunt-postgres, ...
+# features: cef, daachorse-index, daemon, daemon-nats, daemon-otlp, daemon-tls, dns-enrich, evtx, ...
 ```
 
 Some commands exist in every build and explain themselves when their feature is missing, for example `hunt run`:
