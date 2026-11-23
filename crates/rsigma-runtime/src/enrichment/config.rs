@@ -2422,6 +2422,20 @@ enrichers:
     }
 
     #[test]
+    fn bespoke_types_get_the_value_checks() {
+        for (extra, field) in [
+            ("default: null\non_miss: skip", "on_miss"),
+            ("miss_status: [200]", "miss_status"),
+        ] {
+            let err = parse_enrichers_config(&entry_yaml("passive_dns", extra)).unwrap_err();
+            assert!(
+                matches!(&err, EnrichersConfigError::InvalidValue { field: f, .. } if *f == field),
+                "{extra}: got {err}"
+            );
+        }
+    }
+
+    #[test]
     fn bespoke_type_keeps_unknown_keys() {
         let cfg = first_entry(&entry_yaml("passive_dns", "api_key_env: KEY\nurl: x"));
         validate_keys(&cfg).unwrap();
