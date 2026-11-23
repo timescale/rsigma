@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Faster stdout delivery with enrichers
+### Faster stdout delivery with enrichers (#747)
 
 A stdout sink whose worker keeps up with its queue now writes each batch on a dedicated `rsigma-stdout` thread. Before, every batch went through Tokio's `block_in_place`, which moves the runtime worker to another thread for the write. When enrichment is the slow stage, the sink worker drains about two results at a time, so that move happened about every second result, and the enrichment task kept changing threads. Batched delivery (#743) made each write cheaper, so the worker returned to its queue sooner, woke more often, and moved the runtime more often: at the default `--sink-batch-flush-ms 0`, an enriched daemon ran slower than before #743. A worker that falls behind, with results still queued behind the batch it drained, keeps writing in place, so a busy sink pays no round trip to the writer thread. Delivery order, retries, and the lines a retry skips are unchanged.
 
