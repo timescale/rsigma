@@ -147,8 +147,8 @@ daemon:
   input:
     source: stdin          # stdin | http | nats://... | unix:///run/rsigma/ingest.sock (Unix)
     format: auto
-    buffer_size: 10000
-    batch_size: 128        # capped at buffer_size
+    buffer_size: 10000     # at least 1
+    batch_size: 128        # at least 1, capped at buffer_size
   output:
     sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
                            # query params: ?on_full=drop, ?format=ndjson|ocsf (line and OTLP sinks), ?ocsf_version=<v>, ?ocsf_incident_class=2004|2005, and ?ocsf_assignee_group=<name> (with format=ocsf; defaults 1.1.0 and 2004; assignee group is required for class 2005), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=
@@ -163,6 +163,10 @@ daemon:
     emit_detections: false      # include detection and correlation matches that only feed correlations
   state:
     save_interval: 30
+  runtime:                  # thread pools; unset keys keep the environment variable or default
+    # worker_threads: 4     # Tokio workers (--worker-threads)
+    # detect_threads: 8     # parsing and detection pool (--detect-threads, else RAYON_NUM_THREADS)
+    # detect_inflight: 5    # 1-8 detection batches in flight (--detect-inflight, else RSIGMA_DETECT_INFLIGHT); 1 with correlation rules
   engine:
     strict_rules: false     # refuse a rule set in which any rule fails to parse (or --strict-rules)
     bloom_prefilter: false
@@ -302,6 +306,7 @@ Run [`rsigma config init`](../cli/config/init.md) to scaffold a full, commented 
 | `daemon.dispositions` | `engine daemon` | Triage feedback loop (`enabled`, `source`, `window`, `numerator`, `min_sample`). Disabled by default; enable with `enabled: true`, `--enable-dispositions`, or a configured `source`. See the [Triage Feedback Loop](../guide/triage-feedback.md) guide. |
 | `daemon.capture` | `engine daemon` | Verdict-driven evidence capture (`enabled`, `spool_dir`, ring and disk bounds, `ttl`, `spool_queue_capacity`). Disabled by default and startup-only; enable with `enabled: true` or `--enable-capture`. Requires dispositions, `group_by`, and `spool_dir`. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md). {{ added "0.22.0" }} |
 | `daemon.engine.cross_rule_ac` | `engine daemon` | Inert unless built with `daachorse-index`. |
+| `daemon.runtime` | `engine daemon` | Thread pool sizing: `worker_threads`, `detect_threads`, and `detect_inflight` (1 to 8), each at least 1. A flag beats the key, and the key beats `RAYON_NUM_THREADS` and `RSIGMA_DETECT_INFLIGHT`. See [`engine daemon`: Throughput](../cli/engine/daemon.md#throughput). {{ added "unreleased" }} |
 | `daemon.schema` | `engine daemon` | Schema classification and routing (`observe`, `discover`, `routing`, `partition_rules`, `config`, `on_unknown`). All opt-in. See [Schema Routing](../guide/schema-routing.md). |
 | `daemon.logsource_routing` | `engine daemon` | Conflict-based logsource pruning (`enabled`, `field_map`, `event_logsource`). `strict` is accepted and ignored. Opt-in. See [Logsource-Aware Evaluation](../guide/logsource-routing.md). |
 | `eval` | `engine eval` | Mirrors the eval flag surface. |

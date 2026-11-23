@@ -95,7 +95,7 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 | `--sink-retry-max <N>` | `3` | Max delivery retries per sink before routing the result to the DLQ. |
 | `--sink-backoff-base-ms <MS>` | `100` | Base backoff for the first sink delivery retry. |
 | `--sink-backoff-max-ms <MS>` | `5000` | Backoff ceiling for sink delivery retries. |
-| `--sink-batch-max <N>` | `64` | Max results drained into one sink delivery batch. |
+| `--sink-batch-max <N>` | `64` | Max results drained into one sink delivery batch. Must be at least 1. {{ added "unreleased" }} |
 | `--sink-batch-flush-ms <MS>` | `50` | Max time a partial sink batch waits before flushing. |
 
 Each sink serializes in its own wire format. The default is RSigma's native NDJSON; `?format=ocsf` emits [OCSF Detection Finding](../../guide/ocsf-findings.md) (class 2004) JSON instead, one finding per line. The parameter is accepted on `stdout`, `file://`, `nats://`, and `unix://` sinks only, and `format=` on an OTLP spec, the `--dlq`, or the `daemon.api.audit.sink` fails startup, as does an unknown value.
@@ -237,9 +237,45 @@ Each `daemon.tenancy.quotas` value must be at least 1, and setting any quota (or
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--buffer-size <N>` | `10000` | Bounded mpsc capacity for source→engine and engine→sink queues. |
-| `--batch-size <N>` | `128` | Maximum events per detection batch, capped at `--buffer-size`. Batches enable parallel detection across events. When the rule set has no correlation rules, the daemon may keep several batches in flight (see `RSIGMA_DETECT_INFLIGHT` in [Environment Variables](../../reference/environment-variables.md)); correlation engines stay one batch at a time. |
+| `--buffer-size <N>` | `10000` | Bounded mpsc capacity for source→engine and engine→sink queues, counted in events. Must be at least 1. {{ added "unreleased" }} |
+| `--batch-size <N>` | `128` | Maximum events per detection batch, capped at `--buffer-size`. Batches enable parallel detection across events. When the rule set has no correlation rules, the daemon may keep several batches in flight (see `--detect-inflight`); correlation engines stay one batch at a time. Must be at least 1. {{ added "unreleased" }} |
+| `--worker-threads <N>` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. Unset keeps Tokio's default (`TOKIO_WORKER_THREADS`, else one per CPU core). Also `daemon.runtime.worker_threads`. {{ added "unreleased" }} |
+| `--detect-threads <N>` | `RAYON_NUM_THREADS`, else one per CPU core | Threads in the pool that parses and evaluates batches. Also `daemon.runtime.detect_threads`. {{ added "unreleased" }} |
+| `--detect-inflight <N>` | `RSIGMA_DETECT_INFLIGHT`, else scales with the detection threads (1 on one thread, up to 5 on eight or more) | Detection batches evaluated concurrently, 1 to 8, when the rule set has no correlation rules. Sink and ack order stay sequential. With correlation rules the depth is always 1, and the daemon logs why when a larger depth was requested. Also `daemon.runtime.detect_inflight`. {{ added "unreleased" }} |
 | `--drain-timeout <SECONDS>` | `5` | Seconds to wait for in-flight events to drain on shutdown. |
+
+A zero `--buffer-size`, `--batch-size`, or `--sink-batch-max` is rejected, and so is a zero `daemon.input.buffer_size`, `daemon.input.batch_size`, or `daemon.output.batch_max` in a config file, which stops the daemon with exit code `3`. {{ added "unreleased" }}
+
+The flag beats the `daemon.runtime` config key, which beats the environment variable. One startup line, `Thread pools sized`, reports the effective `worker_threads`, `detection_threads`, and `detect_inflight`. {{ added "unreleased" }}
+
+When a source finds the event channel full, the daemon logs `Input channel full, backpressure applied` at most once every 10 seconds with a `suppressed` count of the occurrences since the previous warning, and once more when the source ends if any are pending. `rsigma_back_pressure_events_total` still counts every occurrence, for stdin, NATS, Unix socket, HTTP, and OTLP input. {{ added "unreleased" }}
+
+Batches that cost less than waking the detection pool are parsed and evaluated on the calling thread: detection forks across the pool once the time a batch has taken so far projects it to cost at least 500 µs, and parsing stays on the calling thread for batches under 32 KiB of input. Results and their order are the same either way. {{ added "unreleased" }}
+
+#### Tuning
+
+{{ added "unreleased" }}
+
+Measured with `scripts/perf/stdin-daemon.sh` on an Apple M4 Pro (12 cores), stdin to stdout, medians of five runs, wall and system seconds. The all-match lane is one trivial rule that matches each of 1,000,000 events; the no-match lane is the same events and a rule that matches none; the SigmaHQ lane is the pinned 3,132-rule SigmaHQ tree over 1,000,000 Windows events (3,023,700 matches).
+
+| Setting | all-match | no-match | SigmaHQ |
+|---------|-----------|----------|---------|
+| defaults | 1.32 / 1.03 | 0.36 / 0.18 | 4.93 / 7.08 |
+| `--batch-size 512` | 1.40 / 2.52 | 0.33 / 0.93 | 5.02 / 3.56 |
+| `--batch-size 1024` | 1.34 / 1.78 | 0.29 / 0.60 | 4.96 / 2.79 |
+| `--worker-threads 2` | 1.32 / 0.96 | 0.33 / 0.13 | 4.95 / 6.95 |
+| `--worker-threads 4` | 1.33 / 0.98 | 0.33 / 0.18 | 4.97 / 7.04 |
+| `--detect-threads 4` | 1.29 / 0.81 | 0.53 / 0.16 | 6.22 / 2.94 |
+| `--detect-threads 8` | 1.32 / 0.99 | 0.37 / 0.18 | 4.93 / 5.58 |
+| `--detect-inflight 1` | 1.57 / 0.96 | 0.89 / 0.09 | 4.79 / 16.35 |
+| `--detect-inflight 8` | 1.37 / 1.50 | 0.24 / 0.18 | 4.79 / 6.05 |
+
+On that machine and these lanes:
+
+- A larger `--batch-size` cut system time on the heavy SigmaHQ lane (7.08 s to 2.79 s at 1024) without changing wall time, and made the no-match lane faster (0.36 s to 0.29 s), while it raised system time on the trivial lanes. Measure it on your own rules before changing it.
+- `--worker-threads` made no measurable difference with stdin input.
+- `--detect-threads 4` slowed the SigmaHQ lane by about a quarter; 8 threads matched the default of 12 on wall time with less system time.
+- `--detect-inflight 1`, the depth correlation rules force, was slower than the default on the trivial lanes and roughly level on the SigmaHQ lane at more than twice the system time. Depth 8 helped only the no-match lane.
 
 ### NATS (requires the `daemon-nats` build feature)
 

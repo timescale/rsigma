@@ -125,7 +125,11 @@ These knobs only matter for the streaming daemon, not for `engine eval`.
 |------|---------|--------|
 | `--buffer-size N` | `10000` | Bounded mpsc capacity for both source→engine and engine→sink queues. Higher values absorb burstier input; lower values apply back-pressure sooner. Watch `rsigma_back_pressure_events_total` to see whether the queues are filling. |
 | `--batch-size N` | `128` | Maximum events per detection batch, capped at `--buffer-size`. The batch is the unit `Engine::evaluate_batch` fans across rayon. The published SigmaHQ baseline uses 512. |
-| `RSIGMA_DETECT_INFLIGHT` | scales with rayon (1-5) | How many detection-only batches may evaluate at once when the rule set has no correlation rules. A sequence-numbered reducer restores sink/ack order. Correlation engines ignore this and stay at 1. Cap is 8. |
+| `--detect-inflight N` | `RSIGMA_DETECT_INFLIGHT`, else scales with rayon (1-5) | How many detection-only batches may evaluate at once when the rule set has no correlation rules. A sequence-numbered reducer restores sink/ack order. Correlation engines ignore this and stay at 1. Cap is 8. The flag and `daemon.runtime.detect_inflight` take precedence over the environment variable. {{ added "unreleased" }} |
+| `--detect-threads N` | `RAYON_NUM_THREADS`, else one per core | Size of the rayon pool that parses and evaluates batches. {{ added "unreleased" }} |
+| `--worker-threads N` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. {{ added "unreleased" }} |
+
+Small batches skip the rayon pool: detection runs on the calling thread until a batch's projected cost reaches 500 µs, and parsing stays there for batches under 32 KiB of input, so cheap rule sets no longer pay for waking every pool thread per batch. See [`engine daemon`: Tuning](../cli/engine/daemon.md#tuning) for measured settings. {{ added "unreleased" }}
 
 A typical high-throughput configuration:
 
