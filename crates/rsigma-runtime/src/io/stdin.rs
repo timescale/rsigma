@@ -73,8 +73,9 @@ impl StdinSource {
 }
 
 /// Read lines and forward them in chunks of at most [`CHUNK_LINES`]. A chunk
-/// is also sent whenever the read buffer is drained, so a line on a slow pipe
-/// is forwarded before the next read blocks.
+/// is also sent whenever the read buffer holds no further complete line, so a
+/// line on a slow pipe is forwarded before the next read can block, even when
+/// the buffer ends in part of the following line.
 fn read_lines<R: Read>(reader: R, tx: &mpsc::Sender<Vec<String>>, status: &StdinReadStatus) {
     let mut reader = BufReader::with_capacity(64 * 1024, reader);
     let mut line = String::new();
@@ -91,7 +92,7 @@ fn read_lines<R: Read>(reader: R, tx: &mpsc::Sender<Vec<String>>, status: &Stdin
                     }
                 }
                 chunk.push(line.clone());
-                if chunk.len() >= CHUNK_LINES || reader.buffer().is_empty() {
+                if chunk.len() >= CHUNK_LINES || !reader.buffer().contains(&b'\n') {
                     // `blocking_send` only errors when the receiver is
                     // dropped, i.e. the daemon is shutting down; stop reading
                     // so the thread can exit.
@@ -232,6 +233,27 @@ mod tests {
         assert_eq!(
             recv_within(&mut rx, Duration::from_secs(5)),
             Some(vec!["second".to_string()])
+        );
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn complete_lines_are_forwarded_before_a_partial_line_completes() {
+        let (writer, pipe) = std::sync::mpsc::channel();
+        let (tx, mut rx) = mpsc::channel(8);
+        let reader = std::thread::spawn(move || {
+            read_lines(Pipe(pipe), &tx, &StdinReadStatus::default());
+        });
+        writer.send(b"first\nsecond\nthi".to_vec()).unwrap();
+        assert_eq!(
+            recv_within(&mut rx, Duration::from_secs(5)),
+            Some(vec!["first".to_string(), "second".to_string()])
+        );
+        writer.send(b"rd\n".to_vec()).unwrap();
+        drop(writer);
+        assert_eq!(
+            recv_within(&mut rx, Duration::from_secs(5)),
+            Some(vec!["third".to_string()])
         );
         reader.join().unwrap();
     }
