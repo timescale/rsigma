@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `rsigma --features` lists `ocsf` and `mmdb-mmap`
+### `rsigma --features` lists `ocsf` and `mmdb-mmap` (#745)
 
 `rsigma --features`, the `rsigma --version` features line, and the "Compiled-in features" footer of `rsigma --help` left out `ocsf` and `mmdb-mmap`, so a binary built with either feature did not report it. Both are listed now, and a default build reports `daemon` and the `ocsf` it implies. A unit test compares the list with the `[features]` table of the `rsigma` crate's `Cargo.toml`, so a feature added to the manifest without being listed fails the build's tests.
 
