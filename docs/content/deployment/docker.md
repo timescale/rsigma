@@ -16,7 +16,7 @@ description: "Run RSigma with Docker: the signed multi-arch ghcr.io/timescale/rs
 | Base image | `FROM scratch` (no shell, no package manager) |
 | User | `65534:65534` (`nobody:nogroup`) |
 | Entrypoint | `/rsigma` |
-| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), including `daemon`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `mmdb-enrich`, `dns-enrich`, `stix-source`, `stix-draft`, and `daachorse-index` |
+| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), including `daemon`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `mmdb-enrich`, `mmdb-mmap`, `dns-enrich`, `stix-source`, `stix-draft`, and `daachorse-index` |
 
 ## Pull and run
 
@@ -220,6 +220,8 @@ docker run --rm \
 Mount the containing directory rather than a single file. A bind mount of one file pins that inode, so when `geoipupdate` replaces the database by writing a new file and renaming it over the old path, the container keeps seeing the old inode and the enricher never observes the change. Mounting the directory means the renamed file appears at the same path inside the container, and the enricher reloads it on its next check (about once a minute). See [Enrichers: `mmdb`](../guide/enrichers.md#mmdb-local-mmdb-lookup) for the enricher schema and reload behavior.
 
 The container runs as uid `65534`, so the database files must be readable by that user; a mode of `0644` on the host works. The enricher only reads the file, so `:ro` is correct.
+
+The image also includes `mmdb-mmap`, so an entry can set `mmap: true` to map the database instead of reading it into each container's memory. Containers on one host that map the same file share its page cache. A mapped file must still be replaced by renaming a new file over it; writing to it in place on the host can crash the daemon with `SIGBUS`. {{ added "unreleased" }}
 
 ## DNS lookups
 

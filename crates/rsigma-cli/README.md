@@ -1686,6 +1686,8 @@ enrichers:
     default: { country: "unknown" }
 ```
 
+The database is read into memory once per file, however many entries name it. With the `mmdb-mmap` feature (included in the prebuilt binaries and the Docker image), `mmap: true` memory-maps the file instead, which drops a 93 MB database's idle cost from about 95 MB of resident memory to about 3 MB and shares its pages with other processes; the file must then be replaced by renaming a new file over it, because writing to it in place can crash the daemon with `SIGBUS`. Entries that name one file must agree on `mmap`. Each entry repeats the key render and tree lookup, so one entry with several fields is cheaper than several entries on the same file.
+
 If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead:
 
 ```yaml

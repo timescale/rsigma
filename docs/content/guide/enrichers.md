@@ -41,7 +41,7 @@ enrichers:
     # ... primitive-specific fields below ...
 ```
 
-Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "unreleased" }}
+Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`, `mmap: false`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "unreleased" }}
 
 ## Misses and errors
 
@@ -286,6 +286,18 @@ Miss and error handling:
 
 The database is checked for replacement about once a minute. A changed file is reopened and swapped in off the hot path, and the previous reader stays active if the reopen fails. An unchanged file is not reloaded. Replace databases atomically: write the new file next to the old one, then `mv` it over the old path. `geoipupdate` already does this. A single-file bind mount pins the original inode, so mount the containing directory instead.
 
+Set `mmap: true` to memory-map the database instead of reading it into memory (see the sizing notes below). It needs the `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include; without the feature, `mmap: true` fails at load. Entries that share a `db_path` must agree on `mmap`. A mapped file must be replaced, never rewritten: writing to it in place or truncating it while the daemon has it mapped can crash the daemon with `SIGBUS`. The atomic replacement above is safe, because the daemon keeps reading the old file until it maps the new one on the next check. {{ added "unreleased" }}
+
+```yaml
+- id: geo_src
+  kind: detection
+  type: mmdb
+  inject_field: geo
+  db_path: /var/lib/geoip/GeoLite2-City.mmdb
+  key: "${detection.fields.SourceIp}"
+  mmap: true                       # requires the mmdb-mmap feature
+```
+
 GeoLite2-City example with a field projection:
 
 ```yaml
@@ -336,6 +348,8 @@ Operational metrics for this primitive:
 
 - Alert on staleness with `(time() - rsigma_enrichment_mmdb_build_epoch_seconds{database="/var/lib/geoip/GeoLite2-City.mmdb"}) > 86400 * 7`.
 - Catch a wrong `key` field with the misses-to-hits ratio: `sum(rate(rsigma_enrichment_mmdb_misses_total[5m])) / clamp_min(sum(rate(rsigma_enrichment_mmdb_hits_total[5m])), 1) > 0.5`.
+
+Sizing: by default each database is read fully into memory once, however many entries name its `db_path`. With `mmap: true` the file is memory-mapped instead: its pages live in the operating system's page cache, which every process that maps or reads the file shares and the kernel can evict under memory pressure, and each page is read from disk by the first lookup that touches it. With a 93 MB database that merges geo, ASN, and anonymity data, the daemon's idle resident memory was 113 MB with the file read into memory and 21.5 MB with it mapped (18.5 MB without enrichers), and 174 MB and 141 MB after 100,000 lookups of random IPv4 addresses. Once its pages are resident, a mapped lookup costs the same as an owned one. A lookup costs a few microseconds per enricher per result. Each path in `fields` is decoded separately, so a projection of a few paths costs far less than the full record, while a projection of many paths can cost more than the full record. Each entry repeats the key render and the tree lookup, so one entry with several fields is cheaper than several entries on the same file: in the crate's benchmarks, one entry with 17 paths cost about 13% less than three entries with the same paths. {{ added "unreleased" }}
 
 ### `dns`: DNS lookup
 
