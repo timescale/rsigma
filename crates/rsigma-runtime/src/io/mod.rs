@@ -538,6 +538,7 @@ impl Sink {
     pub(crate) fn send_batch_with_context<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+        _backlog: bool,
     ) -> delivery::BatchFuture<'a> {
         Box::pin(async move {
             match self {
