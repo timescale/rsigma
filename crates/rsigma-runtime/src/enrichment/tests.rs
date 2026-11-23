@@ -1167,6 +1167,39 @@ async fn metrics_records_drop_status() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn miss_covered_by_null_default_reports_success() {
+    let m = std::sync::Arc::new(CollectingMetrics::default());
+    let yaml = r#"
+enrichers:
+  - id: owner
+    kind: detection
+    type: lookup
+    inject_field: owner
+    source: missing_source
+    default: null
+"#;
+    let file: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = build_enrichers_full(
+        file,
+        EnricherResources {
+            source_cache: Some(Arc::new(SourceCache::new())),
+            ..EnricherResources::default()
+        },
+        m.clone() as std::sync::Arc<dyn crate::MetricsHook>,
+    )
+    .unwrap();
+    let mut results = vec![detection_result()];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["owner"],
+        serde_json::Value::Null
+    );
+    let completed = m.completed.lock().unwrap().clone();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].2, "success");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn metrics_records_timeout_status() {
     let m = std::sync::Arc::new(CollectingMetrics::default());
     let e = Box::new(SleepingEnricher {

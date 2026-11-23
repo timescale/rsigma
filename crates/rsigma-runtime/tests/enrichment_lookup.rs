@@ -15,7 +15,8 @@ use rsigma_eval::{
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::{
-    EnrichErrorKind, EnricherKind, EnrichmentPipeline, LookupEnricher, OnError, Scope, SourceCache,
+    EnrichErrorKind, EnricherKind, EnricherResources, EnrichersFile, EnrichmentPipeline,
+    LookupEnricher, NoopMetrics, OnError, Scope, SourceCache, build_enrichers_full,
 };
 use serde_json::json;
 
@@ -310,6 +311,37 @@ async fn lookup_no_extract_match_without_default_is_a_miss() {
     assert!(
         matches!(&err.kind, EnrichErrorKind::Miss(m) if m.contains("no extract match")),
         "got {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_explicit_null_default_injects_null_on_no_extract_match() {
+    let yaml = r#"
+enrichers:
+  - id: enrich_ip_employee
+    kind: detection
+    type: lookup
+    inject_field: employee
+    source: employee_directory
+    extract: '.[] | select(.ip == "${detection.fields.SourceIp}")'
+    default: null
+    on_error: skip
+"#;
+    let file: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = build_enrichers_full(
+        file,
+        EnricherResources {
+            source_cache: Some(populated_employee_cache()),
+            ..EnricherResources::default()
+        },
+        Arc::new(NoopMetrics),
+    )
+    .unwrap();
+    let mut results = vec![detection_with_field("SourceIp", json!("99.99.99.99"))];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["employee"],
+        serde_json::Value::Null
     );
 }
 

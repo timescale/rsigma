@@ -723,6 +723,30 @@ enrichers:
     assert_eq!(geo_of(&results[0]), Some(&json!({"country": "unknown"})));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn http_explicit_null_default_injects_null() {
+    let server = MockServer::start().await;
+    mount_no_record(&server, 1).await;
+    let yaml = format!(
+        r#"
+enrichers:
+  - id: geo
+    kind: detection
+    type: http
+    inject_field: geo
+    url: "{}/geo"
+    extract: '{COUNTRY_EXTRACT}'
+    default: null
+    on_error: skip
+"#,
+        server.uri()
+    );
+    let pipeline = rsigma_runtime::build_enrichers(yaml_serde::from_str(&yaml).unwrap()).unwrap();
+    let mut results = vec![detection("rule-x", "ps -ef")];
+    pipeline.run(&mut results).await;
+    assert_eq!(geo_of(&results[0]), Some(&serde_json::Value::Null));
+}
+
 // ---------------------------------------------------------------------------
 // CommandEnricher integration tests
 // ---------------------------------------------------------------------------

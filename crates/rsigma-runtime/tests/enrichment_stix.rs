@@ -269,3 +269,34 @@ async fn stix_extract_returning_null_is_a_miss() {
         "got {err}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_null_default_injects_null_when_the_store_has_no_objects() {
+    let yaml = r#"
+enrichers:
+  - id: hash_lookup
+    kind: detection
+    type: stix
+    inject_field: stix_indicators
+    text_search: "${detection.fields.Hash}"
+    type_filter: [indicator]
+    default: null
+    on_error: skip
+"#;
+    let file: rsigma_runtime::EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = build_enrichers_full(
+        file,
+        EnricherResources {
+            stix_store: Some(populated_store() as Arc<dyn StixStore>),
+            ..EnricherResources::default()
+        },
+        Arc::new(NoopMetrics),
+    )
+    .expect("build pipeline");
+    let mut results = vec![detection_with_hash("no-such-hash")];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["stix_indicators"],
+        serde_json::Value::Null
+    );
+}

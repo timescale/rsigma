@@ -164,8 +164,10 @@ pub struct EnricherConfig {
     /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: value injected on a miss
     /// (a source cache miss, an extract that matched nothing, no store
     /// objects, no record, no DNS records, or a `null` HTTP result).
-    /// Overrides `on_error` for misses only.
-    #[serde(default)]
+    /// Overrides `on_error` for misses only. Writing `default: null`
+    /// injects `null` on a miss (`Some(Value::Null)`); omitting `default`
+    /// (`None`) applies `on_error`.
+    #[serde(default, deserialize_with = "present_value")]
     pub default: Option<serde_json::Value>,
 
     /// `stix`: template-expanded STIX id for a direct store lookup.
@@ -219,6 +221,14 @@ pub struct EnricherConfig {
     /// [`EnrichersConfigError::UnknownField`].
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// Deserialize a key that is present as `Some`, `null` included, so an
+/// explicit `null` differs from an absent key.
+fn present_value<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(d).map(Some)
 }
 
 /// Keys every enricher type accepts.
@@ -277,8 +287,9 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
 
 impl EnricherConfig {
     /// Type-specific keys that are set, in field order. A key set to its
-    /// empty value (`headers: {}`, `attack_technique: false`,
-    /// `default: null`) counts as absent.
+    /// empty value (`headers: {}`, `attack_technique: false`) counts as
+    /// absent. `default` counts as present whenever it is written,
+    /// `default: null` included.
     fn present_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
         let mut push = |set: bool, key: &'static str| {
@@ -1874,6 +1885,7 @@ enrichers:
                 "template",
             ),
             ("template", "template: \"x\"\ndefault: 1", "default"),
+            ("command", "command: [\"true\"]\ndefault: null", "default"),
         ];
         for (type_name, extra, field) in cases {
             let err = build_err(&entry_yaml(type_name, extra));
@@ -1901,7 +1913,6 @@ enrichers:
                 "http",
                 "url: \"https://example.com/\"\nattack_technique: false",
             ),
-            ("command", "command: [\"true\"]\ndefault: null"),
         ];
         for (type_name, extra) in cases {
             let parsed: EnrichersFile =
@@ -2109,6 +2120,35 @@ enrichers:
             )),
             Err(EnrichersConfigError::Yaml(_))
         ));
+    }
+
+    #[test]
+    fn explicit_null_default_differs_from_absent_default() {
+        assert_eq!(
+            first_entry(&entry_yaml("lookup", "source: x")).default,
+            None
+        );
+        for null in ["default: null", "default: ~", "default:"] {
+            assert_eq!(
+                first_entry(&entry_yaml("lookup", &format!("source: x\n{null}"))).default,
+                Some(serde_json::Value::Null),
+                "{null}"
+            );
+        }
+        assert_eq!(
+            first_entry(&entry_yaml("lookup", "source: x\ndefault: {}")).default,
+            Some(serde_json::json!({}))
+        );
+    }
+
+    #[test]
+    fn explicit_null_default_is_serialized_for_bespoke_factories() {
+        let cfg = first_entry(&entry_yaml("passive_dns", "default: null"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("default"), Some(&serde_json::Value::Null));
+        let cfg = first_entry(&entry_yaml("passive_dns", "url: x"));
+        let raw = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(raw.get("default"), None);
     }
 
     #[test]
