@@ -15,7 +15,7 @@ use tokio::net::UnixStream;
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, ResumePoint};
+use crate::io::lines::{LineBatch, ResumeMap};
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// Writes one line per result to a Unix domain socket, reconnecting on
@@ -25,7 +25,7 @@ pub struct UnixSocketSink {
     stream: Option<UnixStream>,
     format: SinkFormat,
     ocsf: crate::ocsf::OcsfOptions,
-    resume: ResumePoint,
+    resume: ResumeMap<usize>,
     tenant_filter: Option<TenantId>,
 }
 
@@ -38,7 +38,7 @@ impl UnixSocketSink {
             stream: Some(stream),
             format: SinkFormat::default(),
             ocsf: crate::ocsf::OcsfOptions::default(),
-            resume: ResumePoint::default(),
+            resume: ResumeMap::default(),
             tenant_filter: None,
         })
     }
@@ -115,10 +115,11 @@ impl UnixSocketSink {
         }
         match self.write_batch(&batch).await {
             Ok(()) => {
-                self.resume.clear();
+                self.resume.clear(ctx);
                 Ok(())
             }
             Err((lines, err)) => {
+                self.resume.retain(ctx);
                 self.resume.record(ctx, start + lines);
                 Err(err)
             }
@@ -238,6 +239,103 @@ mod tests {
         let (before, after) = collector.await.unwrap();
         assert_eq!(before, "{\"n\":0}");
         assert_eq!(after, ["{\"n\":1}", "{\"n\":2}"]);
+    }
+
+    fn titled(titles: &[String]) -> ProcessResult {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use rsigma_eval::EvaluationResult;
+        use rsigma_eval::result::{DetectionBody, ResultBody, RuleHeader};
+
+        titles
+            .iter()
+            .map(|title| EvaluationResult {
+                header: RuleHeader {
+                    rule_title: title.clone(),
+                    rule_id: None,
+                    tenant_id: None,
+                    level: None,
+                    tags: vec![],
+                    custom_attributes: Arc::new(HashMap::new()),
+                    enrichments: None,
+                    ruleset: None,
+                },
+                body: ResultBody::Detection(DetectionBody {
+                    matched_selections: vec!["sel".to_string()],
+                    matched_fields: vec![],
+                    event: None,
+                }),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_retried_delivery_resumes_at_the_line_cut_off_mid_write() {
+        use tokio::io::AsyncReadExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        // Lines far larger than any socket buffer, so the write is still
+        // blocked partway through the second line when the collector leaves.
+        let titles: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|c| c.repeat(4 * 1024 * 1024))
+            .collect();
+        let result = titled(&titles);
+        let lines: Vec<String> = result
+            .iter()
+            .map(|m| {
+                serialize_result(
+                    m,
+                    SinkFormat::default(),
+                    false,
+                    None,
+                    &crate::ocsf::OcsfOptions::default(),
+                )
+                .unwrap()
+            })
+            .collect();
+
+        let first_len = lines[0].len() + 1 + 1024;
+        let unlink = path.clone();
+        let first = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut read = vec![0_u8; first_len];
+            stream.read_exact(&mut read).await.unwrap();
+            // No collector to reconnect to: the sink's own retry fails too.
+            drop(listener);
+            std::fs::remove_file(&unlink).unwrap();
+            drop(stream);
+            read
+        });
+
+        let mut sink = UnixSocketSink::connect(&path).await.unwrap();
+        let ctx = DeliveryContext::new();
+        assert!(sink.send_with_context(&result, &ctx).await.is_err());
+        let before = first.await.unwrap();
+        assert!(before.starts_with(format!("{}\n", lines[0]).as_bytes()));
+
+        let listener = UnixListener::bind(&path).unwrap();
+        let second = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut lines = BufReader::new(stream).lines();
+            let mut after = Vec::new();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                after.push(line);
+            }
+            after
+        });
+        sink.send_with_context(&result, &ctx).await.unwrap();
+        drop(sink);
+
+        let after = second.await.unwrap();
+        assert_eq!(
+            after,
+            lines[1..],
+            "the retry starts at the cut-off line and skips the delivered one"
+        );
     }
 
     #[tokio::test]

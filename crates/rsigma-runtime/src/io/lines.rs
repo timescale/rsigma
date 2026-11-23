@@ -40,34 +40,76 @@ impl LineBatch {
     }
 }
 
-/// How many lines of a delivery a sink has already written, kept across the
-/// worker's retries of that delivery so a retry does not repeat them.
+/// Per-delivery progress a sink keeps across the worker's retries, so a retry
+/// does not repeat what already went out.
 ///
 /// The delivery context is shared by every sink a result fans out to, so
-/// each sink keeps its own resume point, keyed by the context's sequence
-/// number.
-#[derive(Default)]
-pub(crate) struct ResumePoint {
-    at: Option<(u64, usize)>,
+/// each sink keeps its own map, keyed by the context's sequence number. An
+/// entry is removed when its delivery succeeds; [`Self::retain`] drops the
+/// entries of deliveries the worker has finished with.
+pub(crate) struct ResumeMap<T> {
+    entries: Vec<(u64, T)>,
 }
 
-impl ResumePoint {
-    /// Lines to skip for this delivery. Always 0 without a context, and for a
-    /// delivery other than the one last recorded.
-    pub(crate) fn start(&self, ctx: Option<&DeliveryContext>) -> usize {
-        match (ctx, self.at) {
-            (Some(ctx), Some((seq, lines))) if ctx.seq() == seq => lines,
-            _ => 0,
+impl<T> Default for ResumeMap<T> {
+    fn default() -> Self {
+        ResumeMap {
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<T> ResumeMap<T> {
+    /// The progress recorded for this delivery. Always `None` without a
+    /// context.
+    pub(crate) fn get(&self, ctx: Option<&DeliveryContext>) -> Option<&T> {
+        let seq = ctx?.seq();
+        self.entries
+            .iter()
+            .find(|(entry, _)| *entry == seq)
+            .map(|(_, progress)| progress)
+    }
+
+    /// Remember the progress of this delivery. A no-op without a context.
+    pub(crate) fn record(&mut self, ctx: Option<&DeliveryContext>, progress: T) {
+        let Some(ctx) = ctx else {
+            return;
+        };
+        let seq = ctx.seq();
+        match self.entries.iter_mut().find(|(entry, _)| *entry == seq) {
+            Some((_, slot)) => *slot = progress,
+            None => self.entries.push((seq, progress)),
         }
     }
 
-    /// Remember that the first `lines` lines of this delivery are written.
-    pub(crate) fn record(&mut self, ctx: Option<&DeliveryContext>, lines: usize) {
-        self.at = ctx.map(|ctx| (ctx.seq(), lines));
+    /// Forget this delivery.
+    pub(crate) fn clear(&mut self, ctx: Option<&DeliveryContext>) {
+        if let Some(ctx) = ctx {
+            let seq = ctx.seq();
+            self.entries.retain(|(entry, _)| *entry != seq);
+        }
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.at = None;
+    /// Keep only the deliveries in `ctxs`.
+    pub(crate) fn retain<'a>(&mut self, ctxs: impl IntoIterator<Item = &'a DeliveryContext>) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let keep: Vec<u64> = ctxs.into_iter().map(DeliveryContext::seq).collect();
+        self.entries.retain(|(entry, _)| keep.contains(entry));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+impl ResumeMap<usize> {
+    /// Lines to skip for this delivery: 0 without a context and for a
+    /// delivery with nothing recorded.
+    pub(crate) fn start(&self, ctx: Option<&DeliveryContext>) -> usize {
+        self.get(ctx).copied().unwrap_or(0)
     }
 }
 
@@ -97,15 +139,40 @@ mod tests {
     }
 
     #[test]
-    fn resume_point_is_per_delivery() {
+    fn resume_map_tracks_each_delivery() {
         let first = DeliveryContext::new();
         let second = DeliveryContext::new();
-        let mut resume = ResumePoint::default();
+        let third = DeliveryContext::new();
+        let mut resume = ResumeMap::default();
         resume.record(Some(&first), 2);
+        resume.record(Some(&second), 1);
         assert_eq!(resume.start(Some(&first)), 2);
-        assert_eq!(resume.start(Some(&second)), 0);
+        assert_eq!(resume.start(Some(&second)), 1);
+        assert_eq!(resume.start(Some(&third)), 0);
         assert_eq!(resume.start(None), 0);
-        resume.clear();
+
+        resume.record(Some(&first), 3);
+        assert_eq!(resume.start(Some(&first)), 3);
+        assert_eq!(resume.len(), 2);
+
+        resume.clear(Some(&first));
         assert_eq!(resume.start(Some(&first)), 0);
+        assert_eq!(resume.start(Some(&second)), 1);
+
+        resume.record(None, 5);
+        assert_eq!(resume.len(), 1, "no context records nothing");
+    }
+
+    #[test]
+    fn retain_drops_finished_deliveries() {
+        let kept = DeliveryContext::new();
+        let finished = DeliveryContext::new();
+        let mut resume = ResumeMap::default();
+        resume.record(Some(&kept), 1);
+        resume.record(Some(&finished), 1);
+        resume.retain([&kept]);
+        assert_eq!(resume.start(Some(&kept)), 1);
+        assert_eq!(resume.start(Some(&finished)), 0);
+        assert_eq!(resume.len(), 1);
     }
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, ResumePoint};
+use crate::io::lines::{LineBatch, ResumeMap};
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// Appends ProcessResult to a file as one line per result.
@@ -23,7 +23,7 @@ pub struct FileSink {
     tenant_path: Option<TenantPath>,
     tenant_handles: HashMap<TenantId, TenantHandle>,
     /// Lines of a `{tenant}` delivery already written, across tenant files.
-    tenant_resume: ResumePoint,
+    tenant_resume: ResumeMap<usize>,
 }
 
 /// A `{tenant}` path template and the handle LRU bound.
@@ -50,7 +50,7 @@ impl FileSink {
             tenant_filter: None,
             tenant_path: None,
             tenant_handles: HashMap::new(),
-            tenant_resume: ResumePoint::default(),
+            tenant_resume: ResumeMap::default(),
         })
     }
 
@@ -73,7 +73,7 @@ impl FileSink {
                 tick: 0,
             }),
             tenant_handles: HashMap::new(),
-            tenant_resume: ResumePoint::default(),
+            tenant_resume: ResumeMap::default(),
         })
     }
 
@@ -160,11 +160,12 @@ impl FileSink {
                     self.writer_for(tenant, &path)?.write_line(&json)
                 });
                 if let Err(err) = written {
+                    self.tenant_resume.retain(ctx);
                     self.tenant_resume.record(ctx, done);
                     return Err(err);
                 }
             }
-            self.tenant_resume.clear();
+            self.tenant_resume.clear(ctx);
             return Ok(());
         }
 
@@ -276,7 +277,7 @@ struct LineWriter<W> {
     inner: W,
     /// The last write stopped partway through a line.
     torn: bool,
-    resume: ResumePoint,
+    resume: ResumeMap<usize>,
 }
 
 impl<W: Write> LineWriter<W> {
@@ -284,7 +285,7 @@ impl<W: Write> LineWriter<W> {
         LineWriter {
             inner,
             torn: false,
-            resume: ResumePoint::default(),
+            resume: ResumeMap::default(),
         }
     }
 
@@ -317,10 +318,11 @@ impl<W: Write> LineWriter<W> {
         }
         match self.write_batch(&batch) {
             Ok(()) => {
-                self.resume.clear();
+                self.resume.clear(ctx);
                 Ok(())
             }
             Err((written, err)) => {
+                self.resume.retain(ctx);
                 self.resume
                     .record(ctx, start + batch.complete_lines(written));
                 Err(err.into())
