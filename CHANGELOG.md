@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Faster daemon intake
+### Faster daemon intake (#742)
 
 Small detection batches no longer spread across every Rayon thread. Detection runs on the calling thread until a batch's projected cost reaches 500 µs and then forks the rest, and parsing stays on the calling thread for batches under 32 KiB of input. With cheap rules or small events, waking the whole pool per batch used to cost more than the work: idle workers spun and slept between batches, which showed up as system CPU several times the wall time. Results and their order are unchanged.
 
