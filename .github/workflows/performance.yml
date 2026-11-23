@@ -17,10 +17,14 @@ on:
       - "crates/rsigma-eval/src/**"
       - "crates/rsigma-runtime/Cargo.toml"
       - "crates/rsigma-runtime/src/input/**"
+      - "crates/rsigma-runtime/src/io/**"
       - "crates/rsigma-runtime/src/lib.rs"
+      - "crates/rsigma-runtime/src/processor.rs"
       - "crates/rsigma-cli/Cargo.toml"
       - "crates/rsigma-cli/src/main.rs"
       - "crates/rsigma-cli/src/config/**"
+      - "crates/rsigma-cli/src/daemon/**"
+      - "crates/rsigma-cli/src/commands/daemon.rs"
       - "crates/rsigma-cli/src/logsource_opts.rs"
       - "crates/rsigma-cli/src/output/**"
       - "crates/rsigma-cli/src/commands/eval.rs"
@@ -86,6 +90,23 @@ jobs:
           scripts/perf/check-regression.py \
             "${RUNNER_TEMP}/performance/base.tsv" \
             "${RUNNER_TEMP}/performance/head.tsv" \
+            --minimum-ratio 0.5
+      - name: Measure stdin daemon base and PR
+        env:
+          EVENTS: "200000"
+          RUNS: "3"
+        run: |
+          RSIGMA="${RUNNER_TEMP}/base-target/release/rsigma" \
+          SUMMARY_FILE="${RUNNER_TEMP}/performance/stdin-base.tsv" \
+            scripts/perf/stdin-daemon.sh \
+            > "${RUNNER_TEMP}/performance/stdin-base-samples.tsv"
+          RSIGMA="${GITHUB_WORKSPACE}/target/release/rsigma" \
+          SUMMARY_FILE="${RUNNER_TEMP}/performance/stdin-head.tsv" \
+            scripts/perf/stdin-daemon.sh \
+            > "${RUNNER_TEMP}/performance/stdin-head-samples.tsv"
+          scripts/perf/check-regression.py \
+            "${RUNNER_TEMP}/performance/stdin-base.tsv" \
+            "${RUNNER_TEMP}/performance/stdin-head.tsv" \
             --minimum-ratio 0.5
       - name: Measure candidate-index rate
         env:
