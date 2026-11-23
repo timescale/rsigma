@@ -63,7 +63,7 @@ impl StdoutSink {
 
     /// Serialize and write a ProcessResult to stdout.
     pub fn send(&self, result: &ProcessResult) -> Result<(), RuntimeError> {
-        self.out.lock().write_result(result, None, self.encoding())
+        self.with_writer(|out| out.write_result(result, None, self.encoding()))
     }
 
     pub(crate) fn send_with_context(
@@ -71,9 +71,7 @@ impl StdoutSink {
         result: &ProcessResult,
         ctx: &DeliveryContext,
     ) -> Result<(), RuntimeError> {
-        self.out
-            .lock()
-            .write_result(result, Some(ctx), self.encoding())
+        self.with_writer(|out| out.write_result(result, Some(ctx), self.encoding()))
     }
 
     /// Write a batch of deliveries in one write, one outcome per delivery the
@@ -82,7 +80,15 @@ impl StdoutSink {
         &self,
         items: &[(&ProcessResult, &DeliveryContext)],
     ) -> Vec<Result<(), RuntimeError>> {
-        self.out.lock().write_results(items, self.encoding())
+        self.with_writer(|out| out.write_results(items, self.encoding()))
+    }
+
+    /// Run `write` holding the process's stdout lock as well as this sink's
+    /// writer, so a write that takes several `write` calls is not interleaved
+    /// with another stdout writer's output.
+    fn with_writer<R>(&self, write: impl FnOnce(&mut LineWriter<std::io::Stdout>) -> R) -> R {
+        let _stdout = std::io::stdout().lock();
+        write(&mut self.out.lock())
     }
 
     fn encoding(&self) -> LineEncoding<'_> {
@@ -96,7 +102,7 @@ impl StdoutSink {
 
     /// Write a pre-serialized JSON string directly to stdout.
     pub fn send_raw(&self, json: &str) -> Result<(), RuntimeError> {
-        self.out.lock().write_line(json)
+        self.with_writer(|out| out.write_line(json))
     }
 
     /// Write a pre-serialized line when it belongs to `tenant`.
