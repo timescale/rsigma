@@ -495,6 +495,45 @@ fn daemon_backpressure_warning_is_rate_limited() {
     );
 }
 
+#[cfg(feature = "daemon")]
+#[test]
+fn daemon_logs_why_correlation_rules_keep_one_batch_in_flight() {
+    let rules = temp_file(".yml", DAEMON_CORRELATION_RULES);
+    let output = rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--detect-inflight",
+            "4",
+            "--detect-threads",
+            "2",
+            "--worker-threads",
+            "2",
+        ])
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "Detection in-flight depth is 1 because correlation rules evaluate batches in order"
+        ),
+        "{stderr}"
+    );
+    let sized = stderr
+        .lines()
+        .find(|line| line.contains("Thread pools sized"))
+        .expect("startup sizing line");
+    for field in ["detect_inflight", "detection_threads", "worker_threads"] {
+        assert!(sized.contains(field), "{sized}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Input format tests
 // ---------------------------------------------------------------------------

@@ -143,6 +143,19 @@ fn unknown_key_stops_a_command_that_reads_the_config() {
         ));
 }
 
+#[test]
+fn config_validate_accepts_daemon_thread_sizing() {
+    let cfg = temp_file(
+        ".yaml",
+        "version: 1\ndaemon:\n  runtime:\n    worker_threads: 2\n    detect_threads: 4\n    detect_inflight: 2\n",
+    );
+    rsigma()
+        .args(["config", "validate", "-c", cfg.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Config is valid."));
+}
+
 #[cfg(feature = "daemon")]
 #[test]
 fn a_zero_buffer_size_in_the_config_stops_the_daemon() {

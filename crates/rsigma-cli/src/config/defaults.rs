@@ -250,6 +250,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 strict: Some(LOGSOURCE_STRICT),
             }),
             tenancy: None,
+            runtime: None,
         }),
         eval: Some(EvalPartial {
             rules: None,

@@ -186,6 +186,24 @@ pub(crate) struct DaemonArgs {
           value_parser = at_least_one())]
     pub batch_size: usize,
 
+    /// Tokio worker threads for ingestion, the API, and sink delivery.
+    /// Defaults to Tokio's default (`TOKIO_WORKER_THREADS`, else one per
+    /// CPU core).
+    #[arg(long = "worker-threads", value_parser = at_least_one())]
+    pub worker_threads: Option<usize>,
+
+    /// Threads in the pool that runs parallel parsing and detection.
+    /// Defaults to `RAYON_NUM_THREADS`, else one per CPU core.
+    #[arg(long = "detect-threads", value_parser = at_least_one())]
+    pub detect_threads: Option<usize>,
+
+    /// Detection batches evaluated concurrently, 1 to 8. Defaults to
+    /// `RSIGMA_DETECT_INFLIGHT`, else a depth that scales with the detection
+    /// threads. Always 1 when correlation rules are loaded.
+    #[arg(long = "detect-inflight",
+          value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=8))]
+    pub detect_inflight: Option<usize>,
+
     /// Seconds to wait for in-flight events to drain on shutdown (default: 5).
     #[arg(long = "drain-timeout", default_value_t = config::defaults::DRAIN_TIMEOUT)]
     pub drain_timeout: u64,
@@ -816,6 +834,9 @@ pub(crate) fn cmd_daemon(
         output,
         buffer_size,
         batch_size,
+        worker_threads,
+        detect_threads,
+        detect_inflight,
         drain_timeout,
         retry_max,
         backoff_base_ms,
@@ -978,6 +999,15 @@ pub(crate) fn cmd_daemon(
         eprintln!("{e}");
         process::exit(exit_code::CONFIG_ERROR);
     }
+    let threads = daemon::server::ThreadSizing {
+        worker_threads,
+        detect_threads,
+        detect_inflight,
+    };
+    if let Err(e) = check_thread_sizing(&threads) {
+        eprintln!("{e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
     // A batch cannot contain more events than the source queue can hold.
     let batch_size = effective_batch_size(batch_size, buffer_size);
 
@@ -1021,6 +1051,7 @@ pub(crate) fn cmd_daemon(
         output,
         buffer_size,
         batch_size,
+        threads,
         drain_timeout,
         delivery_config,
         dlq,
@@ -1680,6 +1711,23 @@ fn apply_daemon_config(
         }
     }
 
+    if let Some(runtime) = daemon.runtime {
+        if !explicit("worker_threads")
+            && let Some(v) = runtime.worker_threads
+        {
+            args.worker_threads = Some(v);
+        }
+        if !explicit("detect_threads")
+            && let Some(v) = runtime.detect_threads
+        {
+            args.detect_threads = Some(v);
+        }
+        if !explicit("detect_inflight")
+            && let Some(v) = runtime.detect_inflight
+        {
+            args.detect_inflight = Some(v);
+        }
+    }
     if let Some(state) = daemon.state {
         if !explicit("state_db")
             && let Some(v) = state.db
@@ -2037,6 +2085,7 @@ fn run_daemon(
     output: Vec<String>,
     buffer_size: usize,
     batch_size: usize,
+    threads: daemon::server::ThreadSizing,
     drain_timeout: u64,
     delivery_config: rsigma_runtime::DeliveryConfig,
     dlq: Option<String>,
@@ -2247,6 +2296,7 @@ fn run_daemon(
         output,
         buffer_size,
         batch_size,
+        threads,
         drain_timeout,
         delivery_config,
         dlq,
@@ -2294,13 +2344,20 @@ fn run_daemon(
         tls_state,
     };
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to create Tokio runtime: {e}");
-            process::exit(exit_code::CONFIG_ERROR);
-        });
+    if let Some(n) = threads.detect_threads
+        && let Err(e) = rsigma_runtime::init_detection_pool(n)
+    {
+        eprintln!("Failed to build the detection thread pool: {e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if let Some(n) = threads.worker_threads {
+        builder.worker_threads(n);
+    }
+    let rt = builder.enable_all().build().unwrap_or_else(|e| {
+        eprintln!("Failed to create Tokio runtime: {e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
 
     let code = rt.block_on(daemon::run_daemon(config));
     // Dropping the runtime closes the state database, which folds its
@@ -2461,6 +2518,25 @@ fn build_tls_state(
 /// Parser for a count flag that must be at least 1.
 fn at_least_one() -> clap::builder::RangedU64ValueParser<usize> {
     clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+}
+
+/// Reject thread sizes from a config file that the flag parsers would refuse.
+fn check_thread_sizing(threads: &daemon::server::ThreadSizing) -> Result<(), String> {
+    for (key, value) in [
+        ("daemon.runtime.worker_threads", threads.worker_threads),
+        ("daemon.runtime.detect_threads", threads.detect_threads),
+        ("daemon.runtime.detect_inflight", threads.detect_inflight),
+    ] {
+        if value == Some(0) {
+            return Err(format!("Invalid {key} 0: must be at least 1"));
+        }
+    }
+    if let Some(depth) = threads.detect_inflight.filter(|depth| *depth > 8) {
+        return Err(format!(
+            "Invalid daemon.runtime.detect_inflight {depth}: must be between 1 and 8"
+        ));
+    }
+    Ok(())
 }
 
 /// Reject a zero queue or batch size that arrived from a config file, which
@@ -2626,6 +2702,82 @@ mod tests {
     fn batch_size_defaults_to_parallel_batch() {
         let (args, _) = parse(&["daemon"]);
         assert_eq!(args.batch_size, 128);
+    }
+
+    #[test]
+    fn thread_sizing_flags_beat_the_config_file() {
+        let yaml = "daemon:\n  runtime:\n    worker_threads: 3\n    detect_threads: 5\n    detect_inflight: 2\n";
+        let (mut args, matches) = parse(&["daemon"]);
+        apply_daemon_config(&mut args, &matches, partial(yaml));
+        assert_eq!(
+            (
+                args.worker_threads,
+                args.detect_threads,
+                args.detect_inflight
+            ),
+            (Some(3), Some(5), Some(2))
+        );
+
+        let (mut args, matches) = parse(&[
+            "daemon",
+            "--worker-threads",
+            "1",
+            "--detect-threads",
+            "2",
+            "--detect-inflight",
+            "4",
+        ]);
+        apply_daemon_config(&mut args, &matches, partial(yaml));
+        assert_eq!(
+            (
+                args.worker_threads,
+                args.detect_threads,
+                args.detect_inflight
+            ),
+            (Some(1), Some(2), Some(4))
+        );
+
+        let (args, _) = parse(&["daemon"]);
+        assert_eq!(
+            (
+                args.worker_threads,
+                args.detect_threads,
+                args.detect_inflight
+            ),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn out_of_range_thread_sizing_is_rejected() {
+        for argv in [
+            ["daemon", "--detect-inflight", "9"],
+            ["daemon", "--detect-inflight", "0"],
+            ["daemon", "--worker-threads", "0"],
+            ["daemon", "--detect-threads", "0"],
+        ] {
+            let cmd = DaemonArgs::augment_args(Command::new("daemon"));
+            let err = cmd.try_get_matches_from(argv).expect_err(argv[1]);
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+        let sizing = |worker, detect, inflight| daemon::server::ThreadSizing {
+            worker_threads: worker,
+            detect_threads: detect,
+            detect_inflight: inflight,
+        };
+        assert_eq!(
+            check_thread_sizing(&sizing(None, None, Some(9))).unwrap_err(),
+            "Invalid daemon.runtime.detect_inflight 9: must be between 1 and 8"
+        );
+        assert_eq!(
+            check_thread_sizing(&sizing(Some(0), None, None)).unwrap_err(),
+            "Invalid daemon.runtime.worker_threads 0: must be at least 1"
+        );
+        assert_eq!(
+            check_thread_sizing(&sizing(None, Some(0), None)).unwrap_err(),
+            "Invalid daemon.runtime.detect_threads 0: must be at least 1"
+        );
+        assert!(check_thread_sizing(&sizing(Some(2), Some(4), Some(8))).is_ok());
     }
 
     #[test]
