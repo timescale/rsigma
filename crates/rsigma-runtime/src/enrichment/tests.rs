@@ -567,6 +567,18 @@ enrichers:
     assert!(!pipeline_needs_event(yaml));
 }
 
+#[test]
+fn needs_event_is_false_for_a_pipeline_built_by_hand() {
+    let enricher = template_enricher(
+        "e",
+        EnricherKind::Detection,
+        "out",
+        "${detection.fields.SourceIp}",
+    );
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 1);
+    assert!(!pipeline.needs_event());
+}
+
 // ---------------------------------------------------------------------------
 // Config-load-time namespace validation
 // ---------------------------------------------------------------------------
