@@ -6,9 +6,10 @@
 //! instead. The `city` group runs over the synthetic City fixture. The
 //! `merged` group runs over a fixture with a merged geo, ASN, and anonymity
 //! layout, and covers several enrichers on one database, a wide projection,
-//! and the full record. Databases are loaded once and shared by the pipeline,
-//! so the measurement covers lookup, projection, and injection rather than
-//! file I/O.
+//! and the full record. With the `mmdb-mmap` feature, the `mmap_` cases
+//! repeat a case with the database memory-mapped. Databases are loaded once
+//! and shared by the pipeline, so the measurement covers lookup, projection,
+//! and injection rather than file I/O.
 
 use std::collections::HashMap;
 use std::hint::black_box;
@@ -189,44 +190,56 @@ fn bench_mmdb(c: &mut Criterion) {
         .unwrap();
     let hits = || (0..BATCH).map(hit_ip).collect::<Vec<_>>();
 
-    run_group(
-        c,
-        &rt,
-        "city",
-        vec![
-            ("full_record", city_yaml("", false), hits()),
-            (
-                "four_field_projection",
-                city_yaml(FOUR_FIELDS, false),
-                hits(),
-            ),
-            (
-                "all_miss_default",
-                city_yaml("", true),
-                (0..BATCH).map(miss_ip).collect(),
-            ),
-        ],
-    );
+    #[allow(unused_mut)]
+    let mut city = vec![
+        ("full_record", city_yaml("", false), hits()),
+        (
+            "four_field_projection",
+            city_yaml(FOUR_FIELDS, false),
+            hits(),
+        ),
+        (
+            "all_miss_default",
+            city_yaml("", true),
+            (0..BATCH).map(miss_ip).collect(),
+        ),
+    ];
+    #[cfg(feature = "mmdb-mmap")]
+    city.push((
+        "mmap_four_field_projection",
+        mapped(city_yaml(FOUR_FIELDS, false)),
+        hits(),
+    ));
+    run_group(c, &rt, "city", city);
 
-    run_group(
-        c,
-        &rt,
-        "merged",
-        vec![
-            ("three_enrichers", merged_three_enrichers_yaml(), hits()),
-            ("single_17_fields", merged_single_17_fields_yaml(), hits()),
-            (
-                "full_record",
-                pipeline_yaml(&[entry("geo", "merged-test.mmdb", "")]),
-                hits(),
-            ),
-            (
-                "four_field_projection",
-                pipeline_yaml(&[entry("geo", "merged-test.mmdb", FOUR_FIELDS)]),
-                hits(),
-            ),
-        ],
-    );
+    #[allow(unused_mut)]
+    let mut merged = vec![
+        ("three_enrichers", merged_three_enrichers_yaml(), hits()),
+        ("single_17_fields", merged_single_17_fields_yaml(), hits()),
+        (
+            "full_record",
+            pipeline_yaml(&[entry("geo", "merged-test.mmdb", "")]),
+            hits(),
+        ),
+        (
+            "four_field_projection",
+            pipeline_yaml(&[entry("geo", "merged-test.mmdb", FOUR_FIELDS)]),
+            hits(),
+        ),
+    ];
+    #[cfg(feature = "mmdb-mmap")]
+    merged.push((
+        "mmap_three_enrichers",
+        mapped(merged_three_enrichers_yaml()),
+        hits(),
+    ));
+    run_group(c, &rt, "merged", merged);
+}
+
+/// The same pipeline with every entry memory-mapping its database.
+#[cfg(feature = "mmdb-mmap")]
+fn mapped(yaml: String) -> String {
+    yaml.replace("    type: mmdb\n", "    type: mmdb\n    mmap: true\n")
 }
 
 criterion_group!(benches, bench_mmdb);
