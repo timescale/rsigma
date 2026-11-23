@@ -40,11 +40,12 @@ pub use unix_source::UnixSocketSource;
 
 use std::cell::Cell;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 
 use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
+use crate::log_throttle::WarnThrottle;
 use crate::metrics::MetricsHook;
 
 /// Check that a NATS subject uses `{tenant}` at most once, as a whole
@@ -745,13 +746,16 @@ impl Sink {
 /// The source reads events in a loop via `recv()` and forwards `RawEvent`s to
 /// `event_tx`. When the source is exhausted or the channel is closed,
 /// the task completes. Tracks input queue depth and back-pressure metrics
-/// via the provided `MetricsHook`.
+/// via the provided `MetricsHook`. The back-pressure warning is logged at
+/// most once every 10 seconds with the number of occurrences it folds in;
+/// the metric counts every occurrence.
 pub fn spawn_source<S: EventSource>(
     mut source: S,
     event_tx: tokio::sync::mpsc::Sender<RawEvent>,
     metrics: Option<Arc<dyn MetricsHook>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut backpressure_log = WarnThrottle::default();
         while let Some(raw_event) = source.recv().await {
             if let Some(ref m) = metrics {
                 match event_tx.try_send(raw_event) {
@@ -761,7 +765,12 @@ pub fn spawn_source<S: EventSource>(
                     Err(tokio::sync::mpsc::error::TrySendError::Full(raw_event)) => {
                         m.on_back_pressure();
                         m.on_input_queue_depth_change(1);
-                        tracing::warn!("Input channel full, backpressure applied");
+                        if let Some(n) = backpressure_log.record(Instant::now()) {
+                            tracing::warn!(
+                                suppressed = n - 1,
+                                "Input channel full, backpressure applied"
+                            );
+                        }
                         if event_tx.send(raw_event).await.is_err() {
                             tracing::debug!("Event channel closed, source shutting down");
                             break;
@@ -776,6 +785,10 @@ pub fn spawn_source<S: EventSource>(
                 tracing::debug!("Event channel closed, source shutting down");
                 break;
             }
+        }
+        let suppressed = backpressure_log.take_pending();
+        if suppressed > 0 {
+            tracing::warn!(suppressed, "Input channel full, backpressure applied");
         }
     })
 }
@@ -958,6 +971,70 @@ mod tests {
         async fn recv(&mut self) -> Option<RawEvent> {
             self.events.pop()
         }
+    }
+
+    fn raw(payload: impl Into<String>) -> RawEvent {
+        RawEvent {
+            payload: payload.into(),
+            ack_token: AckToken::Noop,
+            tenant: None,
+        }
+    }
+
+    struct Queued(std::collections::VecDeque<RawEvent>);
+
+    impl EventSource for Queued {
+        async fn recv(&mut self) -> Option<RawEvent> {
+            self.0.pop_front()
+        }
+    }
+
+    #[derive(Default)]
+    struct QueueMetrics {
+        back_pressure: std::sync::atomic::AtomicU64,
+        input_depth: std::sync::atomic::AtomicI64,
+    }
+
+    impl MetricsHook for QueueMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _count: u64) {}
+        fn on_detection_matches(&self, _count: u64) {}
+        fn on_correlation_matches(&self, _count: u64) {}
+        fn observe_processing_latency(&self, _seconds: f64) {}
+        fn on_input_queue_depth_change(&self, delta: i64) {
+            self.input_depth
+                .fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn on_back_pressure(&self) {
+            self.back_pressure
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn observe_batch_size(&self, _size: u64) {}
+        fn on_output_queue_depth_change(&self, _delta: i64) {}
+        fn observe_pipeline_latency(&self, _seconds: f64) {}
+        fn set_correlation_state_entries(&self, _count: u64) {}
+    }
+
+    #[tokio::test]
+    async fn back_pressure_counts_every_full_send() {
+        let metrics = Arc::new(QueueMetrics::default());
+        let source = Queued((0..50).map(|i| raw(i.to_string())).collect());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let handle = spawn_source(source, tx, Some(metrics.clone() as Arc<dyn MetricsHook>));
+        let mut received = Vec::new();
+        while let Some(event) = rx.recv().await {
+            received.push(event.payload);
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        handle.await.unwrap();
+        assert_eq!(received, (0..50).map(|i| i.to_string()).collect::<Vec<_>>());
+        let blocked = metrics
+            .back_pressure
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            blocked >= 10,
+            "a slow consumer must count each blocked send, counted {blocked}"
+        );
     }
 
     #[tokio::test]
