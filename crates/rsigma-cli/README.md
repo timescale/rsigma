@@ -1900,17 +1900,30 @@ The `kind` label is carried even though `enricher_id` typically already encodes 
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `daemon` | **on** | Enables the `engine daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) |
+| `daemon` | **on** | Enables the `engine daemon` subcommand (tokio, axum, prometheus, notify, rusqlite) (implies `ocsf`) |
+| `ocsf` | **on** (via `daemon`) | Enables `--finding-format ocsf` on `engine eval` and `rule backtest` |
+| `mcp` | off | Enables `mcp serve`, the Model Context Protocol server |
 | `daemon-nats` | off | Enables NATS JetStream input/output, authentication, replay, and consumer groups (implies `daemon`) |
-| `daemon-otlp` | off | Enables OTLP log ingestion via HTTP (protobuf/JSON) and gRPC on `/v1/logs` (implies `daemon`) |
+| `daemon-otlp` | off | Enables OTLP log ingestion via HTTP (protobuf/JSON) and gRPC on `/v1/logs`, and the OTLP output sink (implies `daemon`) |
+| `daemon-tls` | off | Enables TLS termination and optional mTLS on the daemon API listener (implies `daemon`) |
 | `logfmt` | off | Enables `logfmt` input format in `daemon` and `eval` |
 | `cef` | off | Enables CEF (ArcSight) input format in `daemon` and `eval` |
 | `evtx` | off | Enables EVTX (Windows Event Log) input format |
 | `daachorse-index` | off | Enables the `--cross-rule-ac` flag and links in [daachorse](https://crates.io/crates/daachorse) for cross-rule Aho-Corasick pre-filtering of large substring-heavy rule sets |
+| `hunt-postgres` | off | Enables `hunt run --emit events` against PostgreSQL (`--emit sql` works without it) |
+| `taxii-sync` | off | Enables `taxii sync` and `taxii store` |
+| `stix-draft` | off | Enables `rule draft --from-stix` |
+| `stix-enrich` | off | Enables `engine daemon --stix-store` and `type: stix` enrichers (implies `daemon`) |
+| `stix-source` | off | Enables `type: taxii` sources and `format: stix` on file and HTTP sources (implies `daemon`) |
+| `mmdb-enrich` | off | Enables `type: mmdb` enrichers (implies `daemon`) |
+| `mmdb-mmap` | off | Enables `mmap: true` on `type: mmdb` enrichers (implies `mmdb-enrich`) |
+| `dns-enrich` | off | Enables `type: dns` enrichers (implies `daemon`) |
+
+`rsigma --features` prints the features a binary was built with. See the [feature flags reference](https://rsigma.io/reference/feature-flags/) for what each one pulls in.
 
 ```bash
 # Build with all features
-cargo build --release --features daemon-nats,daemon-otlp,logfmt,cef,evtx,daachorse-index
+cargo build --release --all-features
 
 # Build without daemon (parser, eval, convert, lint only)
 cargo build --release --no-default-features

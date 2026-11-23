@@ -16,7 +16,7 @@ description: "Run RSigma with Docker: the signed multi-arch ghcr.io/timescale/rs
 | Base image | `FROM scratch` (no shell, no package manager) |
 | User | `65534:65534` (`nobody:nogroup`) |
 | Entrypoint | `/rsigma` |
-| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), including `daemon`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `mmdb-enrich`, `mmdb-mmap`, `dns-enrich`, `stix-source`, `stix-draft`, and `daachorse-index` |
+| Features | built with `--all-features` (see [Feature Flags](../reference/feature-flags.md)), so `rsigma --features` lists every one: `daemon`, `ocsf`, `mcp`, `daemon-nats`, `daemon-otlp`, `daemon-tls`, `logfmt`, `cef`, `evtx`, `daachorse-index`, `hunt-postgres`, `taxii-sync`, `stix-draft`, `stix-enrich`, `stix-source`, `mmdb-enrich`, `mmdb-mmap`, and `dns-enrich` |
 
 ## Pull and run
 
