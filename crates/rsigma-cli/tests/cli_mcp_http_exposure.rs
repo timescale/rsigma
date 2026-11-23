@@ -6,7 +6,6 @@
 
 mod common;
 
-use std::net::TcpStream;
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
@@ -26,6 +25,19 @@ struct McpHttp {
 
 impl McpHttp {
     fn spawn(extra: &[&str]) -> Self {
+        for _ in 0..5 {
+            if let Some(server) = Self::try_spawn(extra) {
+                return server;
+            }
+        }
+        panic!("MCP HTTP server did not start on any of 5 ports");
+    }
+
+    /// Start a server on a free port and wait for its own listening line, which
+    /// it prints after binding. A TCP connect alone can reach another test's
+    /// server that took the same port. Returns `None` when the server exits
+    /// first, for example because the port was taken before it could bind.
+    fn try_spawn(extra: &[&str]) -> Option<Self> {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -44,18 +56,28 @@ impl McpHttp {
             .stderr(stderr.reopen().unwrap())
             .spawn()
             .expect("spawn rsigma mcp serve");
-        let server = McpHttp {
+        let mut server = McpHttp {
             child,
             port,
             stderr,
             _rules: rules,
         };
+        let ready = format!("listening on http://0.0.0.0:{port}/mcp");
         let deadline = Instant::now() + Duration::from_secs(10);
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(Instant::now() < deadline, "MCP HTTP server did not start");
+        loop {
+            if server.stderr().contains(&ready) {
+                return Some(server);
+            }
+            if server.child.try_wait().unwrap().is_some() {
+                return None;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "MCP HTTP server did not start: {}",
+                server.stderr()
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
-        server
     }
 
     fn stderr(&self) -> String {
