@@ -592,6 +592,41 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_batch_past_the_pending_ack_limit_is_published() {
+        use testcontainers::ImageExt;
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers_modules::nats::{Nats, NatsServerCmd};
+
+        if !can_run_linux_containers() {
+            eprintln!("Skipping: Docker with Linux container support is not available");
+            return;
+        }
+        let cmd = NatsServerCmd::default().with_jetstream();
+        let container = Nats::default().with_cmd(&cmd).start().await.unwrap();
+        let port = container.get_host_port_ipv4(4222).await.unwrap();
+        let cfg = NatsConnectConfig::new(format!("nats://127.0.0.1:{port}"));
+        let subject = "rsigma.large";
+
+        let sink = NatsSink::connect(&cfg, subject).await.unwrap();
+        // More messages than the JetStream context lets wait for an ack.
+        let titles: Vec<String> = (0..6_000).map(|i| format!("m{i}")).collect();
+        let result = titled(&titles.iter().map(String::as_str).collect::<Vec<_>>());
+        let ctx = DeliveryContext::new();
+        let outcomes = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            sink.send_batch(&[(&result, &ctx)]),
+        )
+        .await
+        .expect("the batch never finished publishing");
+        assert!(outcomes[0].is_ok(), "{outcomes:?}");
+
+        let js = jetstream::new(cfg.connect().await.unwrap());
+        let (name, _) = SubjectTemplate::parse(subject).unwrap().stream();
+        let mut stream = js.get_stream(&name).await.unwrap();
+        assert_eq!(stream.info().await.unwrap().state.messages, 6_000);
+    }
+
     #[test]
     fn a_per_tenant_subject_uses_one_wildcard_stream() {
         let template = SubjectTemplate::parse("tenants.{tenant}.detections").unwrap();
