@@ -764,7 +764,6 @@ pub fn spawn_source<S: EventSource>(
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Full(raw_event)) => {
                         m.on_back_pressure();
-                        m.on_input_queue_depth_change(1);
                         if let Some(n) = backpressure_log.record(Instant::now()) {
                             tracing::warn!(
                                 suppressed = n - 1,
@@ -775,6 +774,7 @@ pub fn spawn_source<S: EventSource>(
                             tracing::debug!("Event channel closed, source shutting down");
                             break;
                         }
+                        m.on_input_queue_depth_change(1);
                     }
                     Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                         tracing::debug!("Event channel closed, source shutting down");
@@ -1034,6 +1034,30 @@ mod tests {
         assert!(
             blocked >= 10,
             "a slow consumer must count each blocked send, counted {blocked}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_send_that_never_lands_is_not_counted_in_the_input_queue() {
+        let metrics = Arc::new(QueueMetrics::default());
+        let source = Queued((0..3).map(|i| raw(i.to_string())).collect());
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let handle = spawn_source(source, tx, Some(metrics.clone() as Arc<dyn MetricsHook>));
+        while metrics
+            .back_pressure
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
+            tokio::task::yield_now().await;
+        }
+        drop(rx);
+        handle.await.unwrap();
+        assert_eq!(
+            metrics
+                .input_depth
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "only the event that entered the channel counts toward its depth"
         );
     }
 

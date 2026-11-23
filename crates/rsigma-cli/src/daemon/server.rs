@@ -5854,7 +5854,10 @@ async fn otlp_http_logs(
         tracing::debug!(record_count, "OTLP logs ingested");
 
         for event in raw_events {
-            if state.otlp_event_tx.send(event).await.is_err() {
+            if send_counting_back_pressure(&state.otlp_event_tx, event, &state.metrics)
+                .await
+                .is_err()
+            {
                 state
                     .metrics
                     .otlp_errors
@@ -5884,6 +5887,24 @@ async fn otlp_http_logs(
     }
     .instrument(span)
     .await
+}
+
+/// Forward one OTLP event to the engine, counting a full channel as
+/// back-pressure before waiting for room.
+#[cfg(feature = "daemon-otlp")]
+async fn send_counting_back_pressure(
+    tx: &mpsc::Sender<RawEvent>,
+    event: RawEvent,
+    metrics: &Metrics,
+) -> Result<(), mpsc::error::SendError<RawEvent>> {
+    match tx.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(event)) => {
+            metrics.on_back_pressure();
+            tx.send(event).await
+        }
+        Err(mpsc::error::TrySendError::Closed(event)) => Err(mpsc::error::SendError(event)),
+    }
 }
 
 /// Upper bound on a gzip-decoded OTLP/HTTP body. Matches tonic's default
@@ -6026,13 +6047,15 @@ impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
             tracing::debug!(record_count, "OTLP logs ingested");
 
             for event in raw_events {
-                self.event_tx.send(event).await.map_err(|_| {
-                    self.metrics
-                        .otlp_errors
-                        .with_label_values(&["grpc", "channel_closed"])
-                        .inc();
-                    tonic::Status::unavailable("event channel closed")
-                })?;
+                send_counting_back_pressure(&self.event_tx, event, &self.metrics)
+                    .await
+                    .map_err(|_| {
+                        self.metrics
+                            .otlp_errors
+                            .with_label_values(&["grpc", "channel_closed"])
+                            .inc();
+                        tonic::Status::unavailable("event channel closed")
+                    })?;
                 self.metrics.on_input_queue_depth_change(1);
             }
 
@@ -6300,6 +6323,38 @@ mod tests {
             let (svc, _rx) = service(Some(auth_table()));
             let response = svc.export(request_with_token(Some("ship-secret"))).await;
             assert!(response.is_ok(), "{response:?}");
+        }
+
+        #[tokio::test]
+        async fn grpc_export_into_a_full_channel_counts_back_pressure() {
+            use rsigma_runtime::LogsService;
+            let (event_tx, mut event_rx) = mpsc::channel(1);
+            let metrics = Arc::new(Metrics::new());
+            let svc = OtlpLogsGrpcService {
+                event_tx,
+                metrics: metrics.clone(),
+                auth: None,
+                tenancy: false,
+            };
+            let request: rsigma_runtime::ExportLogsServiceRequest =
+                serde_json::from_value(serde_json::json!({
+                    "resourceLogs": [{"scopeLogs": [{"logRecords": [
+                        {"body": {"stringValue": "a"}},
+                        {"body": {"stringValue": "b"}},
+                        {"body": {"stringValue": "c"}}
+                    ]}]}]
+                }))
+                .unwrap();
+            let export =
+                tokio::spawn(async move { svc.export(tonic::Request::new(request)).await });
+            let mut received = 0;
+            while received < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                event_rx.recv().await.expect("event");
+                received += 1;
+            }
+            assert!(export.await.unwrap().is_ok());
+            assert!(metrics.back_pressure_events.get() >= 1);
         }
 
         #[tokio::test]
