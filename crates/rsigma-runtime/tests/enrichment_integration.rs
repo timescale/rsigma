@@ -284,6 +284,52 @@ async fn http_template_escapes_event_values_in_url_and_body() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn http_templates_read_unmatched_fields_from_the_event() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/asset/dc01"))
+        .and(header("X-User", "alice"))
+        .and(body_json(json!({"user": "alice"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+
+    let url_template = format!("{}/asset/${{detection.fields.HostName}}", server.uri());
+    let mut det = detection("rule-x", "ps -ef");
+    det.as_detection_mut().unwrap().event = Some(json!({"HostName": "dc01", "User": "alice"}));
+
+    let enricher = Box::new(HttpEnricher::new(
+        "event_lookup".to_string(),
+        EnricherKind::Detection,
+        "lookup".to_string(),
+        "POST".to_string(),
+        url_template,
+        vec![("X-User".to_string(), "${detection.fields.User}".to_string())],
+        Some(r#"{"user":"${detection.fields.User}"}"#.to_string()),
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        http_client_for_test(),
+        HttpResponseCache::new(Duration::from_secs(0)),
+    )) as Box<dyn rsigma_runtime::Enricher>;
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+
+    assert_eq!(
+        results[0]
+            .header
+            .enrichments
+            .as_ref()
+            .and_then(|m| m.get("lookup")),
+        Some(&json!({"ok": true})),
+        "the URL, header, and body should render HostName and User from the event"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn http_500_triggers_on_error_policy() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -659,6 +705,43 @@ async fn command_nonzero_exit_triggers_on_error_policy() {
             .get("out")
             .unwrap(),
         &serde_json::Value::Null
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_templates_read_unmatched_fields_from_the_event() {
+    #[cfg(unix)]
+    let body = "echo ${detection.fields.HostName} $EVENT_USER";
+    #[cfg(windows)]
+    let body = "echo ${detection.fields.HostName} %EVENT_USER%";
+    let enricher = Box::new(CommandEnricher::new(
+        "event_cmd".to_string(),
+        EnricherKind::Detection,
+        "out".to_string(),
+        shell_argv(body),
+        HashMap::from([(
+            "EVENT_USER".to_string(),
+            "${detection.fields.User}".to_string(),
+        )]),
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        OutputFormat::Raw,
+    )) as Box<dyn rsigma_runtime::Enricher>;
+
+    let mut det = detection("rule-x", "ps -ef");
+    det.as_detection_mut().unwrap().event = Some(json!({"HostName": "dc01", "User": "alice"}));
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0]
+            .header
+            .enrichments
+            .as_ref()
+            .and_then(|m| m.get("out")),
+        Some(&json!("dc01 alice")),
+        "argv and env should render HostName and User from the event"
     );
 }
 

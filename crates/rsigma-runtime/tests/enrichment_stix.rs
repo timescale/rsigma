@@ -89,6 +89,71 @@ async fn stix_text_search_injects_indicator_objects() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn stix_templates_read_unmatched_fields_from_the_event() {
+    let store = populated_store();
+    let by_text = StixEnricher::new(
+        "hash_lookup".into(),
+        EnricherKind::Detection,
+        "by_text".into(),
+        StixEnricherQuery {
+            stix_id: None,
+            text_search: Some("${detection.fields.Hash}".into()),
+            attack_technique: false,
+            type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
+            max_results: 5,
+        },
+        Some(ExtractExpr::Jq(
+            "[.[] | select(.id == \"${detection.fields.IndicatorId}\") | .id]".into(),
+        )),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        store.clone(),
+    );
+    let by_id = StixEnricher::new(
+        "id_lookup".into(),
+        EnricherKind::Detection,
+        "by_id".into(),
+        StixEnricherQuery {
+            stix_id: Some("${detection.fields.IndicatorId}".into()),
+            text_search: None,
+            attack_technique: false,
+            type_filter: vec![],
+            max_results: 1,
+        },
+        Some(ExtractExpr::Jq(".[0].id".into())),
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        store,
+    );
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(by_text), Box::new(by_id)], 4);
+    let mut det = detection_with_hash("unused");
+    let body = det.as_detection_mut().unwrap();
+    body.matched_fields = vec![FieldMatch::new("EventType", json!("file_create"))];
+    body.event = Some(json!({
+        "Hash": "744bf17e482f443f763b0b7355b14373",
+        "IndicatorId": "indicator--bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    }));
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+
+    let enrichments = results[0].header.enrichments.as_ref().expect("enrichments");
+    assert_eq!(
+        enrichments.get("by_text"),
+        Some(&json!(["indicator--bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"])),
+        "text_search and extract should render Hash and IndicatorId from the event"
+    );
+    assert_eq!(
+        enrichments.get("by_id"),
+        Some(&json!("indicator--bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
+        "stix_id should render IndicatorId from the event"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn stix_attack_technique_finds_attack_pattern_by_external_id() {
     let bundle = rstix::parse_bundle(include_str!(
         "../../rstix/tests/fixtures/store/attack-pattern-powershell-t1059.json"
