@@ -44,7 +44,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_dlq_events_total` | counter | none | Events routed to the dead-letter queue, counted whether or not a `--dlq` sink is configured. |
 | `rsigma_dlq_write_failures_total` | counter | none | Dead-letter queue entries the `--dlq` sink failed to write. Each one is a lost event that was already acked. {{ added "0.25.0" }} |
 | `rsigma_sink_queue_depth` | gauge | `sink` | Results buffered in each sink's delivery queue. |
-| `rsigma_sink_retries_total` | counter | `sink` | Sink delivery retries after a retryable failure. |
+| `rsigma_sink_retries_total` | counter | `sink` | Sink delivery retries after a retryable failure. Retries are counted per result: when a whole NATS or OTLP batch fails, each result in it is retried separately, with its own backoff, and counts its own retry. {{ added "unreleased" }} |
 | `rsigma_sink_dropped_total` | counter | `sink` | Results dropped because a lossy sink's queue was full (`?on_full=drop`). |
 | `rsigma_sink_delivery_failures_total` | counter | `sink` | Sink deliveries that exhausted retries and were routed to the DLQ. |
 | `rsigma_sink_otlp_rejected_records_total` | counter | `sink` (`otlp`) | Log records an OTLP collector accepted the request for but rejected in a partial success. They are not retried. {{ added "unreleased" }} |
