@@ -359,7 +359,8 @@ enrichers:
         file,
         EnricherResources {
             source_cache: Some(populated_employee_cache()),
-            ..EnricherResources::default()
+            #[cfg(feature = "stix-enrich")]
+            stix_store: None,
         },
         Arc::new(NoopMetrics),
     )

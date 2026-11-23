@@ -1288,7 +1288,8 @@ enrichers:
         file,
         EnricherResources {
             source_cache: Some(Arc::new(SourceCache::new())),
-            ..EnricherResources::default()
+            #[cfg(feature = "stix-enrich")]
+            stix_store: None,
         },
         m.clone() as std::sync::Arc<dyn crate::MetricsHook>,
     )
