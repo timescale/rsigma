@@ -168,7 +168,8 @@ pub struct EnricherConfig {
     pub source: Option<String>,
     /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: value injected on a miss
     /// (a source cache miss, an extract that matched nothing, no store
-    /// objects, no record, no DNS records, or a `null` HTTP result).
+    /// objects, no record, no DNS records, or an HTTP status listed in
+    /// `miss_status`), and for an `http` result that is `null`.
     /// Overrides `on_error` for misses only. Writing `default: null`
     /// injects `null` on a miss (`Some(Value::Null)`); omitting `default`
     /// (`None`) applies `on_miss`, or `on_error` when `on_miss` is absent.
@@ -315,8 +316,8 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
 impl EnricherConfig {
     /// Type-specific keys that are set, in field order. A key set to its
     /// empty value (`headers: {}`, `attack_technique: false`,
-    /// `miss_status: []`, `mmap: false`) counts as absent. `default` counts as present whenever it is written,
-    /// `default: null` included.
+    /// `miss_status: []`, `mmap: false`) counts as absent. `default` counts
+    /// as present whenever it is written, `default: null` included.
     fn present_keys(&self) -> Vec<&'static str> {
         let mut keys = Vec::new();
         let mut push = |set: bool, key: &'static str| {
@@ -2565,6 +2566,20 @@ enrichers:
         let cfg = first_entry(&entry_yaml("passive_dns", "on_error: drop"));
         let raw = serde_json::to_value(&cfg).unwrap();
         assert_eq!(raw.get("on_miss"), None);
+    }
+
+    #[test]
+    fn bespoke_types_get_the_value_checks() {
+        for (extra, field) in [
+            ("default: null\non_miss: skip", "on_miss"),
+            ("miss_status: [200]", "miss_status"),
+        ] {
+            let err = parse_enrichers_config(&entry_yaml("passive_dns", extra)).unwrap_err();
+            assert!(
+                matches!(&err, EnrichersConfigError::InvalidValue { field: f, .. } if *f == field),
+                "{extra}: got {err}"
+            );
+        }
     }
 
     #[test]

@@ -1437,7 +1437,7 @@ Keys that are unknown, or that do not apply to the entry's `type:`, are rejected
 
 ### Misses and errors
 
-A miss is a lookup that ran and found no data for its key: a `lookup` cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status` or whose result is `null`. Everything else that stops an enricher is a failure. `template` and `command` have no misses.
+A miss is a lookup that ran and found no data for its key: a `lookup` cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status`. An `http` result that is `null` after the optional `extract` is not a miss: it injects `default` when one is configured, and `null` otherwise. Everything else that stops an enricher is a failure. `template` and `command` have no misses.
 
 - `default` is injected on a miss, and a miss it covers counts as a success. Writing `default: null` injects `null`.
 - `on_miss: skip | null | drop` handles a miss when `default` is not set. It applies to `lookup`, `http`, `stix`, `mmdb`, and `dns`, and falls back to `on_error` when absent.
@@ -1553,7 +1553,7 @@ Per-result `reqwest` request with template-expanded URL, headers, and optional b
   extract: ".data.attributes.last_analysis_stats"
   extract_type: jq
   miss_status: [404]               # VirusTotal answers an unknown hash with 404
-  default: "unknown"               # injected for an unknown hash
+  default: null                    # injected for an unknown hash
   on_error: skip
   scope:
     tags: ["attack.execution", "attack.defense_evasion"]
@@ -1769,13 +1769,13 @@ Forward lookups take `record_type: A`, `AAAA`, or `IP` (both), and `key` then ho
   extract: ".data.attributes.last_analysis_stats"
   extract_type: jq
   miss_status: [404]
-  default: "unknown"
+  default: null
   on_error: skip
   scope:
     tags: ["attack.execution"]
 ```
 
-Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `"unknown"` when VirusTotal has no report for the hash (HTTP 404, cached for `cache_ttl`).
+Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `null` when VirusTotal has no report for the hash (HTTP 404, cached for `cache_ttl`). A `null` rather than a placeholder string keeps the field an object wherever it has a value, so a sink with a typed schema does not reject either form.
 
 #### `enrich_cve_kev`: known-exploited-vulnerability flag
 

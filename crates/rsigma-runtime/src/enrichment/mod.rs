@@ -42,9 +42,9 @@
 //! ([`Enricher::on_miss`]), which falls back to `on_error`, and reports
 //! `status="miss"` unless it drops the result.
 //!
-//! A miss logs at debug level. Every other
-//! failure logs a warning at most once per 10 seconds per enricher id; the
-//! next warning carries a `suppressed` count of the failures in between.
+//! A miss logs at debug level. Every other failure logs a warning at most
+//! once per 10 seconds per enricher id; the next warning carries a
+//! `suppressed` count of the failures in between.
 
 use std::collections::HashMap;
 use std::sync::Arc;
