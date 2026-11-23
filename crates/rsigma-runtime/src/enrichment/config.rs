@@ -161,8 +161,10 @@ pub struct EnricherConfig {
     /// `lookup`: source ID of a dynamic source configured on the daemon.
     #[serde(default)]
     pub source: Option<String>,
-    /// `lookup` / `dns`: default value injected on cache miss / no records.
-    /// Overrides `on_error` when configured.
+    /// `lookup`, `http`, `stix`, `mmdb`, and `dns`: value injected on a miss
+    /// (a source cache miss, an extract that matched nothing, no store
+    /// objects, no record, no DNS records, or a `null` HTTP result).
+    /// Overrides `on_error` for misses only.
     #[serde(default)]
     pub default: Option<serde_json::Value>,
 
@@ -244,6 +246,7 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "cache_ttl",
             "extract",
             "extract_type",
+            "default",
         ],
         "command" => &["command", "env", "output"],
         "stix" => &[
@@ -772,6 +775,7 @@ fn build_one(
             let extract = build_extract_expr(&cfg)?;
             let cache_ttl = cfg.cache_ttl.unwrap_or_default();
             let cache = HttpResponseCache::new(cache_ttl);
+            let default = cfg.default.clone();
             Ok(Box::new(
                 HttpEnricher::new(
                     cfg.id,
@@ -788,6 +792,7 @@ fn build_one(
                     ctx.http_client.clone(),
                     cache,
                 )
+                .with_default(default)
                 .with_metrics(ctx.metrics.clone()),
             ))
         }
@@ -1869,11 +1874,6 @@ enrichers:
                 "template",
             ),
             ("template", "template: \"x\"\ndefault: 1", "default"),
-            (
-                "http",
-                "url: \"https://example.com/\"\ndefault: {}",
-                "default",
-            ),
         ];
         for (type_name, extra, field) in cases {
             let err = build_err(&entry_yaml(type_name, extra));
@@ -1984,7 +1984,7 @@ enrichers:
             ),
             (
                 "http",
-                "url: \"https://example.com/${detection.rule.id}\"\nmethod: POST\nheaders: { X-Token: abc }\nbody: \"{}\"\ncache_ttl: 1m\nextract: \".a\"\nextract_type: jq",
+                "url: \"https://example.com/${detection.rule.id}\"\nmethod: POST\nheaders: { X-Token: abc }\nbody: \"{}\"\ncache_ttl: 1m\nextract: \".a\"\nextract_type: jq\ndefault: {}",
             ),
             (
                 "command",

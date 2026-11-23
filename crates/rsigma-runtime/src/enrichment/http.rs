@@ -10,6 +10,12 @@
 //! Optional in-memory response cache via [`super::http_cache::HttpResponseCache`]
 //! keyed on `(method, url, body_hash)` with configurable TTL. Mandatory
 //! in practice for rate-limited APIs (VirusTotal: 4 req/min free tier).
+//!
+//! Miss rule: when the 2xx body, after the optional extract, is `null`,
+//! the configured `default` is injected, or `null` when there is none.
+//! An extract evaluation error and every other failure (non-2xx status,
+//! timeout, transport error, body over the cap, invalid JSON) apply
+//! `on_error`, even when a `default` is set.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +61,7 @@ pub struct HttpEnricher {
     on_error: OnError,
     scope: Scope,
     extract: Option<ExtractExpr>,
+    default: Option<Value>,
     client: HttpEnricherClient,
     cache: HttpResponseCache,
     metrics: Arc<dyn MetricsHook>,
@@ -167,6 +174,7 @@ impl HttpEnricher {
             on_error,
             scope,
             extract,
+            default: None,
             client,
             cache,
             metrics: Arc::new(NoopMetrics),
@@ -182,6 +190,14 @@ impl HttpEnricher {
     /// worth the rejection risk on the occasional larger response.
     pub fn with_max_response_bytes(mut self, max_bytes: usize) -> Self {
         self.max_response_bytes = max_bytes;
+        self
+    }
+
+    /// Set the value injected when the response, after the optional
+    /// `extract`, is `null`. Without a default, a `null` result is injected
+    /// as `null`.
+    pub fn with_default(mut self, default: Option<Value>) -> Self {
+        self.default = default;
         self
     }
 
@@ -256,7 +272,7 @@ impl Enricher for HttpEnricher {
         }
         if let Some(cached_value) = cached {
             let extracted = self.maybe_extract(&cached_value)?;
-            inject_enrichment(result, &self.inject_field, extracted);
+            self.inject_result(result, extracted);
             return Ok(());
         }
 
@@ -334,7 +350,7 @@ impl Enricher for HttpEnricher {
         self.cache.insert(cache_key, parsed.clone());
 
         let extracted = self.maybe_extract(&parsed)?;
-        inject_enrichment(result, &self.inject_field, extracted);
+        self.inject_result(result, extracted);
         Ok(())
     }
 }
@@ -366,6 +382,15 @@ async fn read_body_capped(
 }
 
 impl HttpEnricher {
+    /// Inject `value`, or the configured default when `value` is `null`.
+    fn inject_result(&self, result: &mut EvaluationResult, value: Value) {
+        let value = match (&self.default, value.is_null()) {
+            (Some(default), true) => default.clone(),
+            _ => value,
+        };
+        inject_enrichment(result, &self.inject_field, value);
+    }
+
     /// Apply the configured `extract` expression to `value`. Returns the
     /// raw value untouched when no extract is configured.
     fn maybe_extract(&self, value: &Value) -> Result<Value, EnrichError> {
