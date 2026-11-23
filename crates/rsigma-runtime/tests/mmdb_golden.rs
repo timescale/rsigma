@@ -109,6 +109,80 @@ async fn full_flat_record() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn full_merged_record() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        "",
+    );
+    run("full-merged", &yaml, "SourceIp", json!("192.0.2.10")).await;
+}
+
+const MERGED_SEVENTEEN_FIELDS: &str = "    fields:
+      country: country.iso_code
+      region: subdivisions.0.iso_code
+      city: city.names.en
+      latitude: location.latitude
+      longitude: location.longitude
+      accuracy_km: location.accuracy_radius
+      time_zone: location.time_zone
+      asn: asn.autonomous_system_number
+      as_org: asn.autonomous_system_organization
+      as_domain: asn.as_domain
+      tor: proxy.is_tor
+      vpn: proxy.is_vpn
+      proxy: proxy.is_proxy
+      hosting: proxy.is_hosting
+      cdn: proxy.is_cdn
+      school: proxy.is_school
+      anonymous: proxy.is_anonymous
+";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn merged_seventeen_field_projection() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        MERGED_SEVENTEEN_FIELDS,
+    );
+    run(
+        "merged-17-field-projection",
+        &yaml,
+        "SourceIp",
+        json!("198.51.100.7"),
+    )
+    .await;
+}
+
+#[cfg(feature = "mmdb-mmap")]
+#[tokio::test(flavor = "multi_thread")]
+async fn mapped_full_merged_record() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        "    mmap: true\n",
+    );
+    run("full-merged", &yaml, "SourceIp", json!("192.0.2.10")).await;
+}
+
+#[cfg(feature = "mmdb-mmap")]
+#[tokio::test(flavor = "multi_thread")]
+async fn mapped_merged_seventeen_field_projection() {
+    let yaml = mmdb_yaml(
+        &mmdb_fixture("merged-test.mmdb"),
+        "${detection.fields.SourceIp}",
+        &format!("    mmap: true\n{MERGED_SEVENTEEN_FIELDS}"),
+    );
+    run(
+        "merged-17-field-projection",
+        &yaml,
+        "SourceIp",
+        json!("198.51.100.7"),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn miss_with_default() {
     let yaml = mmdb_yaml(
         &mmdb_fixture("city-test.mmdb"),

@@ -1,11 +1,15 @@
 //! MMDB enricher throughput benchmarks.
 //!
 //! Measures the cost of looking up and injecting records for a 1,000-result
-//! batch whose `SourceIp` cycles through IPv4 and IPv6 hit networks in the
-//! synthetic City fixture, plus a batch where every lookup misses and the
-//! configured `default` is injected instead. The database is loaded once and
-//! shared by the pipeline, so the measurement covers lookup, projection, and
-//! injection rather than file I/O.
+//! batch whose `SourceIp` cycles through IPv4 and IPv6 hit networks, plus a
+//! batch where every lookup misses and the configured `default` is injected
+//! instead. The `city` group runs over the synthetic City fixture. The
+//! `merged` group runs over a fixture with a merged geo, ASN, and anonymity
+//! layout, and covers several enrichers on one database, a wide projection,
+//! and the full record. With the `mmdb-mmap` feature, the `mmap_` cases
+//! repeat a case with the database memory-mapped. Databases are loaded once
+//! and shared by the pipeline, so the measurement covers lookup, projection,
+//! and injection rather than file I/O.
 
 use std::collections::HashMap;
 use std::hint::black_box;
@@ -18,6 +22,36 @@ use rsigma_parser::Level;
 use rsigma_runtime::{EnrichersFile, build_enrichers};
 
 const BATCH: usize = 1_000;
+
+const FOUR_FIELDS: &str = "    fields:\n      country: country.iso_code\n      subdivision: subdivisions.0.iso_code\n      latitude: location.latitude\n      city: city.names.en\n";
+
+const GEO_FIELDS: &str = "      country: country.iso_code
+      region: subdivisions.0.iso_code
+      city: city.names.en
+      latitude: location.latitude
+      longitude: location.longitude
+      accuracy_km: location.accuracy_radius
+      time_zone: location.time_zone
+";
+
+const ASN_FIELDS: &str = "      number: asn.autonomous_system_number
+      organization: asn.autonomous_system_organization
+      domain: asn.as_domain
+";
+
+const SINGLE_ASN_FIELDS: &str = "      asn: asn.autonomous_system_number
+      as_org: asn.autonomous_system_organization
+      as_domain: asn.as_domain
+";
+
+const ANONYMITY_FIELDS: &str = "      tor: proxy.is_tor
+      vpn: proxy.is_vpn
+      proxy: proxy.is_proxy
+      hosting: proxy.is_hosting
+      cdn: proxy.is_cdn
+      school: proxy.is_school
+      anonymous: proxy.is_anonymous
+";
 
 fn detection(ip: String) -> EvaluationResult {
     EvaluationResult {
@@ -52,62 +86,83 @@ fn miss_ip(i: usize) -> String {
     format!("203.0.113.{}", i % 256)
 }
 
-fn fixture_path() -> String {
-    format!(
-        "{}/tests/fixtures/mmdb/city-test.mmdb",
-        env!("CARGO_MANIFEST_DIR")
-    )
+fn fixture_path(name: &str) -> String {
+    format!("{}/tests/fixtures/mmdb/{name}", env!("CARGO_MANIFEST_DIR"))
 }
 
-fn pipeline_yaml(fields: &str, default: bool) -> String {
+/// One `mmdb` entry. `extra` holds the indented `fields` and `default`
+/// lines.
+fn entry(id: &str, db: &str, extra: &str) -> String {
     format!(
-        r#"
-enrichers:
-  - id: geo
+        r#"  - id: {id}
     kind: detection
     type: mmdb
-    inject_field: geo
+    inject_field: {id}
     db_path: {}
     key: "${{detection.fields.SourceIp}}"
-{fields}{default}"#,
-        fixture_path(),
-        fields = fields,
-        default = if default {
-            "    default:\n      country_code: unknown\n"
-        } else {
-            ""
-        }
+{extra}"#,
+        fixture_path(db)
     )
 }
 
-fn bench_mmdb(c: &mut Criterion) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+fn pipeline_yaml(entries: &[String]) -> String {
+    format!("enrichers:\n{}", entries.concat())
+}
 
-    let cases = [
-        (
-            "full_record",
-            pipeline_yaml("", false),
-            (0..BATCH).map(hit_ip).collect::<Vec<_>>(),
-        ),
-        (
-            "four_field_projection",
-            pipeline_yaml(
-                "    fields:\n      country: country.iso_code\n      subdivision: subdivisions.0.iso_code\n      latitude: location.latitude\n      city: city.names.en\n",
-                false,
+fn city_yaml(fields: &str, default: bool) -> String {
+    let default = if default {
+        "    default:\n      country_code: unknown\n"
+    } else {
+        ""
+    };
+    pipeline_yaml(&[entry(
+        "geo",
+        "city-test.mmdb",
+        &format!("{fields}{default}"),
+    )])
+}
+
+fn merged_three_enrichers_yaml() -> String {
+    pipeline_yaml(&[
+        entry(
+            "geo",
+            "merged-test.mmdb",
+            &format!(
+                "    fields:\n{GEO_FIELDS}    default: {{ country: \"unknown\" }}\n    on_error: \"null\"\n"
             ),
-            (0..BATCH).map(hit_ip).collect(),
         ),
-        (
-            "all_miss_default",
-            pipeline_yaml("", true),
-            (0..BATCH).map(miss_ip).collect(),
+        entry(
+            "asn",
+            "merged-test.mmdb",
+            &format!("    fields:\n{ASN_FIELDS}    default: {{ number: null }}\n"),
         ),
-    ];
+        entry(
+            "anonymity",
+            "merged-test.mmdb",
+            &format!(
+                "    fields:\n{ANONYMITY_FIELDS}    default: {{ tor: false, vpn: false, proxy: false, hosting: false }}\n"
+            ),
+        ),
+    ])
+}
 
-    let mut group = c.benchmark_group("mmdb_enrichment");
+fn merged_single_17_fields_yaml() -> String {
+    pipeline_yaml(&[entry(
+        "ip",
+        "merged-test.mmdb",
+        &format!(
+            "    fields:\n{GEO_FIELDS}{SINGLE_ASN_FIELDS}{ANONYMITY_FIELDS}    default: {{ country: \"unknown\" }}\n    on_error: \"null\"\n"
+        ),
+    )])
+}
+
+fn run_group(
+    c: &mut Criterion,
+    rt: &tokio::runtime::Runtime,
+    group_name: &str,
+    cases: Vec<(&str, String, Vec<String>)>,
+) {
+    let mut group = c.benchmark_group(group_name);
     for (name, yaml, ips) in cases {
         let file: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
         let pipeline = build_enrichers(file).unwrap();
@@ -126,6 +181,65 @@ fn bench_mmdb(c: &mut Criterion) {
         );
     }
     group.finish();
+}
+
+fn bench_mmdb(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hits = || (0..BATCH).map(hit_ip).collect::<Vec<_>>();
+
+    #[allow(unused_mut)]
+    let mut city = vec![
+        ("full_record", city_yaml("", false), hits()),
+        (
+            "four_field_projection",
+            city_yaml(FOUR_FIELDS, false),
+            hits(),
+        ),
+        (
+            "all_miss_default",
+            city_yaml("", true),
+            (0..BATCH).map(miss_ip).collect(),
+        ),
+    ];
+    #[cfg(feature = "mmdb-mmap")]
+    city.push((
+        "mmap_four_field_projection",
+        mapped(city_yaml(FOUR_FIELDS, false)),
+        hits(),
+    ));
+    run_group(c, &rt, "city", city);
+
+    #[allow(unused_mut)]
+    let mut merged = vec![
+        ("three_enrichers", merged_three_enrichers_yaml(), hits()),
+        ("single_17_fields", merged_single_17_fields_yaml(), hits()),
+        (
+            "full_record",
+            pipeline_yaml(&[entry("geo", "merged-test.mmdb", "")]),
+            hits(),
+        ),
+        (
+            "four_field_projection",
+            pipeline_yaml(&[entry("geo", "merged-test.mmdb", FOUR_FIELDS)]),
+            hits(),
+        ),
+    ];
+    #[cfg(feature = "mmdb-mmap")]
+    merged.push((
+        "mmap_three_enrichers",
+        mapped(merged_three_enrichers_yaml()),
+        hits(),
+    ));
+    run_group(c, &rt, "merged", merged);
+}
+
+/// The same pipeline with every entry memory-mapping its database.
+#[cfg(feature = "mmdb-mmap")]
+fn mapped(yaml: String) -> String {
+    yaml.replace("    type: mmdb\n", "    type: mmdb\n    mmap: true\n")
 }
 
 criterion_group!(benches, bench_mmdb);

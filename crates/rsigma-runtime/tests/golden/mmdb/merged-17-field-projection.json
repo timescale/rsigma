@@ -1,0 +1,14 @@
+{
+  "geo": {
+    "accuracy_km": 50,
+    "as_domain": "broadband.example",
+    "as_org": "Example Broadband",
+    "asn": 64500,
+    "city": "Berlin",
+    "country": "DE",
+    "latitude": 52.52,
+    "longitude": 13.405,
+    "region": "BE",
+    "time_zone": "Europe/Berlin"
+  }
+}

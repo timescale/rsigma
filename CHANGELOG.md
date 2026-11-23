@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Memory-mapped mmdb databases (#741)
+
+An `mmdb` enricher entry can set `mmap: true` to memory-map its database instead of reading it into memory. It needs the new `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include. With a 93 MB database, the daemon's idle resident memory dropped from 113 MB to 21.5 MB (18.5 MB without enrichers), and the mapped pages live in the operating system's page cache, which processes that map the same file share. Once pages are resident, lookups cost the same as with the file in memory. The default stays the eager read.
+
+A mapped file must be replaced by renaming a new file over it, as `geoipupdate` does: writing to it in place can crash the daemon with `SIGBUS`. `mmap: true` without the feature, `mmap: true` on another enricher type, and entries on one database that disagree on `mmap` fail at load.
+
+The enrichers guide gains sizing notes for `mmdb`: memory per database, lookup cost, and why one entry with several fields is cheaper than several entries on the same file.
+
+Library API: `EnricherConfig` gains `mmap`, and `rsigma-runtime` gains the `mmdb-mmap` feature.
+
+See [Enrichers](https://rsigma.io/guide/enrichers/#mmdb-local-mmdb-lookup).
+
 ### Enricher miss handling (#740)
 
 A miss, a lookup that ran and found no data for its key, is now its own outcome. It covers a `lookup` cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and the new `http` miss statuses.

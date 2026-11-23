@@ -1433,7 +1433,7 @@ enrichers:
     # ... primitive-specific fields below ...
 ```
 
-Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves.
+Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`, `mmap: false`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves.
 
 ### Misses and errors
 
@@ -1685,6 +1685,8 @@ enrichers:
       city: city.names.en
     default: { country: "unknown" }
 ```
+
+The database is read into memory once per file, however many entries name it. With the `mmdb-mmap` feature (included in the prebuilt binaries and the Docker image), `mmap: true` memory-maps the file instead, which drops a 93 MB database's idle cost from about 95 MB of resident memory to about 3 MB and shares its pages with other processes; the file must then be replaced by renaming a new file over it, because writing to it in place can crash the daemon with `SIGBUS`. Entries that name one file must agree on `mmap`. Each entry repeats the key render and tree lookup, so one entry with several fields is cheaper than several entries on the same file.
 
 If the GeoIP data is already exported as JSON, use `lookup` against a dynamic source instead:
 
