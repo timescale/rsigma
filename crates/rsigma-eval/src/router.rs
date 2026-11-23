@@ -537,23 +537,9 @@ impl<L> SchemaRouter<L> {
         let plan = &self.plan;
         let engines = &self.engines;
         let extractor = self.logsource_extractor.as_ref();
-        let phase1: Vec<Routed1> = {
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                events
-                    .par_iter()
-                    .map(|e| detect_one(classifier, plan, engines, extractor, *e))
-                    .collect()
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                events
-                    .iter()
-                    .map(|e| detect_one(classifier, plan, engines, extractor, *e))
-                    .collect()
-            }
-        };
+        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
+            detect_one(classifier, plan, engines, extractor, *e)
+        });
         phase1
             .into_iter()
             .map(|routed| match routed {
@@ -617,23 +603,9 @@ impl<L> SchemaRouter<L> {
         let plan = &self.plan;
         let engines = &self.engines;
         let extractor = self.logsource_extractor.as_ref();
-        let phase1: Vec<Routed1> = {
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                events
-                    .par_iter()
-                    .map(|e| detect_one(classifier, plan, engines, extractor, *e))
-                    .collect()
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                events
-                    .iter()
-                    .map(|e| detect_one(classifier, plan, engines, extractor, *e))
-                    .collect()
-            }
-        };
+        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
+            detect_one(classifier, plan, engines, extractor, *e)
+        });
 
         // Stateful phase: feed detections into the shared correlation store in
         // event order. Disjoint field borrows let the field maps and the

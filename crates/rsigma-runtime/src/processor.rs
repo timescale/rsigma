@@ -16,6 +16,10 @@ use crate::metrics::MetricsHook;
 use crate::ruleset::RuleSource;
 use crate::tap::{TapPayload, TapRegistry, TapStage};
 
+/// Below this many input bytes a batch is parsed on the calling thread, because
+/// waking the Rayon pool for it costs more than the parse.
+const PARALLEL_PARSE_BYTES: usize = 32 * 1024;
+
 /// Closure that extracts multiple payloads from a single JSON value.
 ///
 /// Used by the daemon's event filter (e.g. jq/jsonpath) to explode a JSON
@@ -396,10 +400,15 @@ impl LogProcessor {
         }
 
         let parse_start = Instant::now();
-        let parsed_lines: Vec<Option<EventInputDecoded>> = batch
-            .par_iter()
-            .map(|line| parse_line(line, format))
-            .collect();
+        let parsed_lines: Vec<Option<EventInputDecoded>> =
+            if batch.iter().map(String::len).sum::<usize>() < PARALLEL_PARSE_BYTES {
+                batch.iter().map(|line| parse_line(line, format)).collect()
+            } else {
+                batch
+                    .par_iter()
+                    .map(|line| parse_line(line, format))
+                    .collect()
+            };
         self.metrics
             .observe_batch_phase_duration("parse", parse_start.elapsed().as_secs_f64());
 

@@ -104,6 +104,7 @@ pub mod fields;
 mod key_shape;
 pub mod logsource;
 pub mod matcher;
+mod parallel;
 pub mod pipeline;
 pub mod result;
 pub mod router;

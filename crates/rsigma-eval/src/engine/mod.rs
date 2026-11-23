@@ -1062,15 +1062,7 @@ impl<L> Engine<L> {
     where
         L: ExtractLogSource<E> + Sync,
     {
-        #[cfg(feature = "parallel")]
-        {
-            use rayon::prelude::*;
-            events.par_iter().map(|e| self.evaluate(e)).collect()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            events.iter().map(|e| self.evaluate(e)).collect()
-        }
+        crate::parallel::map_ordered(events, |e| self.evaluate(e))
     }
 
     /// Number of rules loaded in the engine.
