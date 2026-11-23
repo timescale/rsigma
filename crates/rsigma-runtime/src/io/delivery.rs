@@ -28,6 +28,7 @@ use crate::io::{AckToken, FormattedIncidentEnvelope, IncidentEnvelope, Sink};
 use crate::metrics::MetricsHook;
 
 type DeliveryFuture<'a> = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
+type BatchFuture<'a> = Pin<Box<dyn Future<Output = Vec<Result<(), RuntimeError>>> + Send + 'a>>;
 
 /// A sink the delivery layer can drive: deliver one result, identify itself.
 ///
@@ -44,6 +45,26 @@ pub trait DeliverySink: Send + 'static {
         result: &'a ProcessResult,
         ctx: &'a DeliveryContext,
     ) -> DeliveryFuture<'a>;
+    /// Make the first delivery attempt for a batch of results, returning one
+    /// outcome per item, in item order.
+    ///
+    /// The worker calls this once for each run of results it drains, then
+    /// retries every failed item on its own through [`Self::deliver`] with
+    /// the same context. A sink that resumes partial deliveries must keep
+    /// what each failed item already delivered, so its retry does not repeat
+    /// it. The default delivers the items one at a time.
+    fn deliver_batch<'a>(
+        &'a mut self,
+        items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+    ) -> BatchFuture<'a> {
+        Box::pin(async move {
+            let mut outcomes = Vec::with_capacity(items.len());
+            for (result, ctx) in items {
+                outcomes.push(self.deliver(result, ctx).await);
+            }
+            outcomes
+        })
+    }
     /// Deliver a single incident line. Defaults to a no-op so mock sinks and
     /// any sink that does not carry incidents need no implementation.
     fn deliver_incident<'a>(
@@ -483,26 +504,84 @@ async fn worker_loop<S: DeliverySink>(
             }
         }
         metrics.on_sink_queue_depth_change(label, -(batch.len() as i64));
-        for item in &batch {
-            let target = match &item.payload {
-                DeliveryPayload::Result(r) => DeliverTarget::Result(r),
+        let mut start = 0;
+        while start < batch.len() {
+            let target = match &batch[start].payload {
+                DeliveryPayload::Result(_) => {
+                    let end = batch[start..]
+                        .iter()
+                        .position(|item| !matches!(item.payload, DeliveryPayload::Result(_)))
+                        .map_or(batch.len(), |len| start + len);
+                    deliver_results(
+                        &mut sink,
+                        &batch[start..end],
+                        &cfg,
+                        dlq_tx.as_ref(),
+                        &metrics,
+                        label,
+                    )
+                    .await;
+                    start = end;
+                    continue;
+                }
                 DeliveryPayload::Incident(e) => DeliverTarget::Incident(e),
                 DeliveryPayload::FormattedIncident(e) => DeliverTarget::FormattedIncident(e),
             };
             deliver_one(
                 &mut sink,
                 target,
-                &item.context,
+                &batch[start].context,
                 &cfg,
                 dlq_tx.as_ref(),
                 &metrics,
                 label,
+                None,
             )
             .await;
+            start += 1;
         }
         // Dropping `batch` drops each item's `Arc<AckGuard>` clone, advancing
         // the ack-join.
         drop(batch);
+    }
+}
+
+/// Deliver a run of result items with one batched first attempt, then retry
+/// each failed item on its own.
+async fn deliver_results<S: DeliverySink>(
+    sink: &mut S,
+    run: &[DeliveryItem],
+    cfg: &DeliveryConfig,
+    dlq_tx: Option<&mpsc::Sender<DeliveryFailure>>,
+    metrics: &Arc<dyn MetricsHook>,
+    label: &'static str,
+) {
+    let items: Vec<(&ProcessResult, &DeliveryContext)> = run
+        .iter()
+        .filter_map(|item| match &item.payload {
+            DeliveryPayload::Result(result) => Some((result.as_ref(), item.context.as_ref())),
+            _ => None,
+        })
+        .collect();
+    let mut outcomes = sink.deliver_batch(&items).await.into_iter();
+    for (result, ctx) in items {
+        // An item without an outcome gets a full attempt of its own.
+        let first_failure = match outcomes.next() {
+            Some(Ok(())) => continue,
+            Some(Err(err)) => Some(err),
+            None => None,
+        };
+        deliver_one(
+            sink,
+            DeliverTarget::Result(result),
+            ctx,
+            cfg,
+            dlq_tx,
+            metrics,
+            label,
+            first_failure,
+        )
+        .await;
     }
 }
 
@@ -513,6 +592,10 @@ enum DeliverTarget<'a> {
     FormattedIncident(&'a FormattedIncidentEnvelope),
 }
 
+/// Deliver one item with retries. `first_failure` is the error of a first
+/// attempt already made (in a batch); the loop then starts at the retry
+/// decision for that error.
+#[allow(clippy::too_many_arguments)]
 async fn deliver_one<S: DeliverySink>(
     sink: &mut S,
     target: DeliverTarget<'_>,
@@ -521,13 +604,19 @@ async fn deliver_one<S: DeliverySink>(
     dlq_tx: Option<&mpsc::Sender<DeliveryFailure>>,
     metrics: &Arc<dyn MetricsHook>,
     label: &'static str,
+    mut first_failure: Option<RuntimeError>,
 ) {
     let mut attempt: u32 = 0;
     loop {
-        let outcome = match target {
-            DeliverTarget::Result(r) => sink.deliver(r, ctx).await,
-            DeliverTarget::Incident(e) => sink.deliver_incident(e, ctx).await,
-            DeliverTarget::FormattedIncident(e) => sink.deliver_formatted_incident(e, ctx).await,
+        let outcome = match first_failure.take() {
+            Some(err) => Err(err),
+            None => match target {
+                DeliverTarget::Result(r) => sink.deliver(r, ctx).await,
+                DeliverTarget::Incident(e) => sink.deliver_incident(e, ctx).await,
+                DeliverTarget::FormattedIncident(e) => {
+                    sink.deliver_formatted_incident(e, ctx).await
+                }
+            },
         };
         match outcome {
             Ok(()) => return,
@@ -1021,6 +1110,318 @@ mod tests {
             acks += 1;
         }
         assert_eq!(acks, 50, "lossy sink still acks every event (best-effort)");
+    }
+
+    /// Records each batched first attempt and each single delivery by
+    /// sequence number. The item at `fail_at` fails its batched attempt and
+    /// then `retry_failures` retries before it succeeds.
+    #[derive(Default)]
+    struct BatchLog {
+        batches: Vec<Vec<u64>>,
+        singles: Vec<u64>,
+        incidents: usize,
+    }
+
+    struct BatchSink {
+        log: Arc<std::sync::Mutex<BatchLog>>,
+        fail_at: Option<usize>,
+        retry_failures: usize,
+        permanent: bool,
+        gate: Option<tokio::sync::watch::Receiver<bool>>,
+    }
+
+    impl BatchSink {
+        fn new() -> Self {
+            BatchSink {
+                log: Arc::default(),
+                fail_at: None,
+                retry_failures: 0,
+                permanent: false,
+                gate: None,
+            }
+        }
+
+        fn failure(&self) -> RuntimeError {
+            if self.permanent {
+                RuntimeError::Permanent("mock permanent".to_string())
+            } else {
+                RuntimeError::Io(std::io::Error::other("mock transient"))
+            }
+        }
+    }
+
+    impl DeliverySink for BatchSink {
+        fn deliver<'a>(
+            &'a mut self,
+            _result: &'a ProcessResult,
+            ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
+            Box::pin(async move {
+                if let Some(mut rx) = self.gate.clone() {
+                    while !*rx.borrow() {
+                        if rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                self.log.lock().unwrap().singles.push(ctx.seq());
+                if self.retry_failures > 0 {
+                    self.retry_failures -= 1;
+                    return Err(self.failure());
+                }
+                Ok(())
+            })
+        }
+        fn deliver_batch<'a>(
+            &'a mut self,
+            items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+        ) -> BatchFuture<'a> {
+            Box::pin(async move {
+                self.log
+                    .lock()
+                    .unwrap()
+                    .batches
+                    .push(items.iter().map(|(_, ctx)| ctx.seq()).collect());
+                (0..items.len())
+                    .map(|index| match self.fail_at {
+                        Some(at) if at == index => Err(self.failure()),
+                        _ => Ok(()),
+                    })
+                    .collect()
+            })
+        }
+        fn deliver_incident<'a>(
+            &'a mut self,
+            _incident: &'a IncidentEnvelope,
+            _ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
+            self.log.lock().unwrap().incidents += 1;
+            Box::pin(async { Ok(()) })
+        }
+        fn label(&self) -> &'static str {
+            "batch"
+        }
+    }
+
+    #[derive(Default)]
+    struct SinkCounters {
+        retries: AtomicUsize,
+        failures: AtomicUsize,
+    }
+
+    impl MetricsHook for SinkCounters {
+        fn on_sink_retry(&self, _sink: &str) {
+            self.retries.fetch_add(1, Ordering::SeqCst);
+        }
+        fn on_sink_delivery_failed(&self, _sink: &str) {
+            self.failures.fetch_add(1, Ordering::SeqCst);
+        }
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+    }
+
+    /// Dispatch `count` results with contexts the test can identify.
+    async fn dispatch_results(dispatcher: &Dispatcher, count: usize) -> Vec<u64> {
+        let mut seqs = Vec::new();
+        for _ in 0..count {
+            let ctx = DeliveryContext::new();
+            seqs.push(ctx.seq());
+            dispatcher
+                .dispatch_with_context(result(), vec![AckToken::Noop], ctx)
+                .await;
+        }
+        seqs
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_item_is_retried_alone() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let mut sink = BatchSink::new();
+        sink.fail_at = Some(1);
+        sink.retry_failures = 1;
+        let log = sink.log.clone();
+        let counters = Arc::new(SinkCounters::default());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            Some(dlq_tx),
+            ack_tx,
+            counters.clone(),
+        );
+
+        let seqs = dispatch_results(&dispatcher, 3).await;
+        dispatcher.shutdown().await;
+
+        let log = log.lock().unwrap();
+        assert_eq!(
+            log.batches,
+            std::slice::from_ref(&seqs),
+            "one batched first attempt"
+        );
+        assert_eq!(
+            log.singles,
+            [seqs[1], seqs[1]],
+            "only the failed item is retried, until it succeeds"
+        );
+        assert_eq!(counters.retries.load(Ordering::SeqCst), 2);
+        assert_eq!(counters.failures.load(Ordering::SeqCst), 0);
+        assert!(dlq_rx.try_recv().is_err());
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, 3);
+    }
+
+    #[tokio::test]
+    async fn a_batch_item_that_keeps_failing_goes_to_the_dlq_like_a_single_item() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let mut sink = BatchSink::new();
+        sink.fail_at = Some(1);
+        sink.retry_failures = usize::MAX;
+        let log = sink.log.clone();
+        let counters = Arc::new(SinkCounters::default());
+        let cfg = fast_cfg();
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            Some(dlq_tx),
+            ack_tx,
+            counters.clone(),
+        );
+
+        let seqs = dispatch_results(&dispatcher, 3).await;
+        dispatcher.shutdown().await;
+
+        // The batched attempt counts as the first attempt, so the item gets
+        // exactly `retry_max` retries, as it would on its own.
+        let log = log.lock().unwrap();
+        assert_eq!(log.singles, vec![seqs[1]; cfg.retry_max as usize]);
+        assert_eq!(
+            counters.retries.load(Ordering::SeqCst),
+            cfg.retry_max as usize
+        );
+        assert_eq!(counters.failures.load(Ordering::SeqCst), 1);
+        assert!(dlq_rx.try_recv().is_ok());
+        assert!(dlq_rx.try_recv().is_err(), "only the failed item is parked");
+    }
+
+    #[tokio::test]
+    async fn a_permanent_batch_failure_skips_retries() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let mut sink = BatchSink::new();
+        sink.fail_at = Some(0);
+        sink.permanent = true;
+        let log = sink.log.clone();
+        let counters = Arc::new(SinkCounters::default());
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            Some(dlq_tx),
+            ack_tx,
+            counters.clone(),
+        );
+
+        dispatch_results(&dispatcher, 2).await;
+        dispatcher.shutdown().await;
+
+        assert!(log.lock().unwrap().singles.is_empty());
+        assert_eq!(counters.retries.load(Ordering::SeqCst), 0);
+        assert_eq!(counters.failures.load(Ordering::SeqCst), 1);
+        let failure = dlq_rx.try_recv().expect("permanent failure routed to DLQ");
+        assert!(failure.error.contains("permanent delivery failure"));
+    }
+
+    #[tokio::test]
+    async fn batch_acks_wait_for_every_item_to_settle() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
+        let mut sink = BatchSink::new();
+        sink.fail_at = Some(1);
+        sink.gate = Some(gate_rx);
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        dispatch_results(&dispatcher, 3).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            ack_rx.try_recv().is_err(),
+            "no item of the batch is acked while one is still retrying"
+        );
+
+        gate_tx.send(true).unwrap();
+        dispatcher.shutdown().await;
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, 3);
+    }
+
+    #[tokio::test]
+    async fn incidents_split_result_runs_and_go_one_at_a_time() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        let before = dispatch_results(&dispatcher, 2).await;
+        dispatcher
+            .dispatch_incident(IncidentEnvelope::new("{}".to_string(), None))
+            .await;
+        dispatcher
+            .dispatch_incident(IncidentEnvelope::new("{}".to_string(), None))
+            .await;
+        let after = dispatch_results(&dispatcher, 1).await;
+        dispatcher.shutdown().await;
+
+        let log = log.lock().unwrap();
+        assert_eq!(log.batches, [before, after]);
+        assert_eq!(log.incidents, 2);
+        assert!(log.singles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_default_batch_delivers_each_item() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = MockSink::new("mock");
+        sink.fail_first.store(1, Ordering::SeqCst);
+        let delivered = sink.delivered.clone();
+        let attempts = sink.attempts.clone();
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, fast_cfg())],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        dispatch_results(&dispatcher, 3).await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(delivered.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            4,
+            "three first attempts and one retry"
+        );
     }
 
     #[test]
