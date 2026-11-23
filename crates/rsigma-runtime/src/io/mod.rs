@@ -546,6 +546,8 @@ impl Sink {
                 Sink::File(s) => blocking_write(|| s.send_batch(items)),
                 #[cfg(feature = "nats")]
                 Sink::Nats(s) => s.send_batch(items).await,
+                #[cfg(feature = "otlp")]
+                Sink::Otlp(s) => s.send_batch(items).await,
                 #[cfg(all(unix, feature = "uds"))]
                 Sink::Unix(s) => s.send_batch(items).await,
                 _ => {
