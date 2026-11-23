@@ -26,13 +26,11 @@ where
         use rayon::prelude::*;
 
         let mut out = Vec::with_capacity(items.len());
-        let threshold = PARALLEL_THRESHOLD.as_nanos();
-        let len = items.len() as u128;
         let start = Instant::now();
         for (index, item) in items.iter().enumerate() {
             out.push(f(item));
             let done = index + 1;
-            if done < items.len() && start.elapsed().as_nanos() * len >= threshold * done as u128 {
+            if forks_after(start.elapsed(), done, items.len()) {
                 out.par_extend(items[done..].par_iter().map(&f));
                 break;
             }
@@ -43,6 +41,13 @@ where
     {
         items.iter().map(f).collect()
     }
+}
+
+/// Whether the items left after `done` of `len` should go to Rayon, given
+/// that the first `done` took `elapsed`.
+#[cfg(feature = "parallel")]
+fn forks_after(elapsed: Duration, done: usize, len: usize) -> bool {
+    done < len && elapsed.as_nanos() * len as u128 >= PARALLEL_THRESHOLD.as_nanos() * done as u128
 }
 
 #[cfg(test)]
@@ -71,5 +76,49 @@ mod tests {
     #[test]
     fn empty_input_maps_to_nothing() {
         assert!(map_ordered(&[] as &[u8], |b| *b).is_empty());
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn a_cheap_batch_stays_on_the_calling_thread() {
+        let on_pool = map_ordered(&[0u8, 1], |_| rayon::current_thread_index().is_some());
+        assert_eq!(on_pool, [false, false]);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn an_expensive_batch_forks_after_its_first_item() {
+        let items: Vec<u32> = (0..16).collect();
+        let on_pool = map_ordered(&items, |_| {
+            std::thread::sleep(Duration::from_micros(100));
+            rayon::current_thread_index().is_some()
+        });
+        assert!(!on_pool[0], "the first item runs on the calling thread");
+        assert!(on_pool[1..].iter().all(|pool| *pool), "{on_pool:?}");
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn the_fork_decision_projects_the_whole_batch() {
+        let us = Duration::from_micros;
+        // 128 items at 1 µs each project to 128 µs: stay on the caller.
+        assert!(!forks_after(us(64), 64, 128));
+        // 128 items at 4 µs each project to 512 µs: fork the rest.
+        assert!(forks_after(us(16), 4, 128));
+        // Exactly at the threshold forks.
+        assert!(forks_after(us(250), 64, 128));
+        assert!(!forks_after(us(250) - Duration::from_nanos(1), 64, 128));
+        // One slow item in a large batch forks at once.
+        assert!(forks_after(us(500), 1, 2));
+        // Nothing is left to fork once every item is done.
+        assert!(!forks_after(Duration::from_secs(1), 128, 128));
+        assert!(!forks_after(Duration::from_secs(1), 1, 1));
+        // Large inputs do not overflow the projection.
+        assert!(forks_after(
+            Duration::from_secs(365 * 24 * 3600),
+            1,
+            usize::MAX
+        ));
+        assert!(!forks_after(Duration::ZERO, usize::MAX - 1, usize::MAX));
     }
 }
