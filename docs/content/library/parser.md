@@ -34,7 +34,7 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 |------|---------|
 | `parse_sigma_yaml(&str) -> Result<SigmaCollection, SigmaParserError>` | The main entry point. Accepts single-document or multi-document YAML (`---` separator). |
 | `parse_sigma_file(&Path)`, `parse_sigma_directory(&Path)` | File and directory variants. |
-| `ruleset::{resolve_ruleset, resolve_loaded, load_sources, validate_spec}` | Resolve a named ruleset spec into a `ResolvedRuleset`: walk sources, apply selectors and dependency policies, apply overlays, and report decisions and warnings. The spec types (`RulesetSpec`, `RuleSelector`, `OverlayEntry`, `OverlayPatch`) are public. `ResolveOptions { confine_to }` rejects paths outside a root. {{ added "unreleased" }} |
+| `ruleset::{resolve_ruleset, resolve_loaded, load_sources, validate_spec}` | Resolve a named ruleset spec into a `ResolvedRuleset`: walk sources, apply selectors and dependency policies, apply overlays, and report decisions and warnings. The spec types (`RulesetSpec`, `RuleSelector`, `OverlayEntry`, `OverlayPatch`) are public. `ResolveOptions { confine_to }` rejects paths outside a root. {{ added "0.28.0" }} |
 | `SigmaCollection` | A bag of `SigmaRule`, `CorrelationRule`, and `FilterRule` parsed from one input, plus the `diagnostics` found while parsing it. |
 | `CollectionDiagnostic`, `DiagnosticKind`, `DiagnosticSeverity` | One parse error or parse warning, with its kind, severity, message, document index, file path, and source location. See [Error handling](#error-handling). {{ added "0.25.0" }} |
 | `SigmaRule` | A detection rule (`title`, `id`, `sigma_version`, `logsource`, `detection`, `condition`, …). |
@@ -50,7 +50,7 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `lint::catalogue::catalogue() -> Vec<LintRuleInfo>` | Programmatic metadata for every lint rule: stable id, default severity, fix disposition, one-line description. |
 | `ads::ads_catalogue() -> Vec<AdsSectionInfo>` | The nine [ADS](../guide/detection-strategy.md) sections: id, carrier field, default-required, description. `AdsSection`/`AdsDocument` read present and missing sections off a `SigmaRule`. |
 | `lint::fix::apply_fixes_to_source(&str, &[&LintWarning]) -> SourceFixOutcome` | Apply every safe fix to a YAML source string, preserving comments and formatting; reports applied/failed counts. |
-| `emit_rule_yaml`, `emit_correlation_yaml`, `emit_filter_yaml`, `emit_collection_yaml` | Canonical emitters for detection, correlation, and filter rules. `emit_collection_yaml` covers detection rules only. {{ added "unreleased" }} |
+| `emit_rule_yaml`, `emit_correlation_yaml`, `emit_filter_yaml`, `emit_collection_yaml` | Canonical emitters for detection, correlation, and filter rules. `emit_collection_yaml` covers detection rules only. {{ added "0.28.0" }} |
 | `format_yaml(&str) -> Result<FormatOutcome, FormatError>` | Rewrite a Sigma YAML file into the canonical layout, keeping comments, anchors, tags, and directives. See [Formatting](#formatting). |
 | `format_yaml_range(&str, usize, usize) -> Result<Option<RangeEdit>, FormatError>` | Format only the smallest block mapping that contains a byte range, for editor selection formatting. |
 | `reference::{MODIFIERS, MITRE_TACTICS}` | Field-modifier descriptions and MITRE ATT&CK tactic metadata, shared with the LSP and the MCP server. |

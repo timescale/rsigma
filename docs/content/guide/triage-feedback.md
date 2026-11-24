@@ -61,7 +61,7 @@ Redelivery is safe: dispositions deduplicate on `(fingerprint or incident_id, ve
 
 ## Tenancy
 
-With tenancy enabled, disposition buckets are keyed by tenant. A tenant token's dispositions are bound to its tenant; a body `tenant` naming another tenant is `403`. The disposition view is filtered to the token's tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+With tenancy enabled, disposition buckets are keyed by tenant. A tenant token's dispositions are bound to its tenant; a body `tenant` naming another tenant is `403`. The disposition view is filtered to the token's tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## The numerator knob
 

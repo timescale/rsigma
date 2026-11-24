@@ -16,7 +16,7 @@ rsigma engine daemon [OPTIONS] [--rules <RULES> | --ruleset <NAME> [--ruleset <N
 
 ## Description
 
-Loads rules and pipelines, opens an event source, evaluates events as they arrive, fans the detections out to one or more sinks, and stays alive until it receives `SIGTERM`/`SIGINT`. Reloads rules, pipelines, and the enrichers, alert-pipeline, and risk files on file change, `SIGHUP`, or `POST /api/v1/reload`. The file watcher follows `.yml` and `.yaml` changes under the rules path and in the directories that hold the `-p` pipeline files and the `--enrichers`, `--alert-pipeline`, and `--risk` files. {{ added "unreleased" }} It does not watch TLS files, which reload on `SIGHUP` or `POST /api/v1/reload`. `--source` and `--webhook` files are read once at startup. A reload with an invalid file keeps the previous configuration. Exposes Prometheus metrics, REST control endpoints, and OTLP log ingestion on the same `--api-addr`.
+Loads rules and pipelines, opens an event source, evaluates events as they arrive, fans the detections out to one or more sinks, and stays alive until it receives `SIGTERM`/`SIGINT`. Reloads rules, pipelines, and the enrichers, alert-pipeline, and risk files on file change, `SIGHUP`, or `POST /api/v1/reload`. The file watcher follows `.yml` and `.yaml` changes under the rules path and in the directories that hold the `-p` pipeline files and the `--enrichers`, `--alert-pipeline`, and `--risk` files. {{ added "0.28.0" }} It does not watch TLS files, which reload on `SIGHUP` or `POST /api/v1/reload`. `--source` and `--webhook` files are read once at startup. A reload with an invalid file keeps the previous configuration. Exposes Prometheus metrics, REST control endpoints, and OTLP log ingestion on the same `--api-addr`.
 
 This is the long-running counterpart of [`engine eval`](eval.md). Use it when you need state to survive restarts, hot-reload across rule changes, or a Prometheus-scrapeable detection engine.
 
@@ -29,11 +29,11 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 | Flag | Description |
 |------|-------------|
 | `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | Named rulesets from the configuration, evaluated side by side. Repeatable. May also be supplied via `daemon.rulesets` (with optional `when` schema bindings). Conflicts with `--rules`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | Named rulesets from the configuration, evaluated side by side. Repeatable. May also be supplied via `daemon.rulesets` (with optional `when` schema bindings). Conflicts with `--rules`. {{ added "0.28.0" }} |
 
 ### Several rulesets
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Repeat `--ruleset` to run several named rulesets side by side. Each ruleset keeps its own engines, pipelines, and correlation state, and every result carries a `ruleset` field. The configuration can supply the list with schema bindings:
 
@@ -76,7 +76,7 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--input <URL>` | `stdin` | Event source. Schemes: `stdin`, `http` (accepts `POST /api/v1/events`), `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock` (newline-delimited events over a Unix domain socket). |
-| `--stdin-mode <MODE>` | `batch` | How a stdin input ends (config `daemon.input.stdin_mode`). `batch` exits at end of input and reports the [batch result](#batch-runs) in the exit code. `stream` keeps the daemon running after end of input until a shutdown signal, restores state like the other inputs, and exits `0`. Ignored for other inputs. {{ added "unreleased" }} |
+| `--stdin-mode <MODE>` | `batch` | How a stdin input ends (config `daemon.input.stdin_mode`). `batch` exits at end of input and reports the [batch result](#batch-runs) in the exit code. `stream` keeps the daemon running after end of input until a shutdown signal, restores state like the other inputs, and exits `0`. Ignored for other inputs. {{ added "0.28.0" }} |
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With features: `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog (`+HH:MM` or `-HH:MM`). |
 | `--syslog-strip-bom <BOOL>` | `true` | Strip a leading UTF-8 BOM (`U+FEFF`) from RFC 5424 syslog messages. RFC 5424 treats the BOM as an encoding marker, not content. Pass `--syslog-strip-bom false` to keep it byte-for-byte. |
@@ -87,22 +87,22 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC), `otlphttp(s)://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`); the `s` variants use TLS. On Unix, `unix:///path/to.sock` writes NDJSON to a local collector socket. Repeatable for fan-out. Query params: `?on_full=drop` (best-effort), `?format=ndjson\|ocsf` (line and OTLP sinks; see [OCSF Findings](../../guide/ocsf-findings.md)), `?ocsf_version=<v>` (only with `format=ocsf`; default `1.1.0`), `?ocsf_incident_class=2004\|2005` {{ added "unreleased" }} (only with `format=ocsf`; `2005` emits incidents as [Incident Findings](../../guide/ocsf-findings.md#incident-finding-class-2005), default `2004`; `2005` also requires `?ocsf_assignee_group=<name>`, which is rejected on class 2004 and on OTLP), `?compression=gzip` (OTLP), `?timeout=<duration>` {{ added "0.25.0" }} (OTLP per-attempt export deadline, default `10s`), and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last two for mutual TLS) and `?tls_domain=` (SNI override). OTLP schemes require the `daemon-otlp` build. |
+| `--output <URL>` | `stdout` | Detection sink. Schemes: `stdout`, `file://<path>`, `nats://<host>:<port>/<subject>`, `otlp(s)://<host>:<port>` (OTLP/gRPC), `otlphttp(s)://<host>:<port>` (OTLP/HTTP, posts to `/v1/logs`); the `s` variants use TLS. On Unix, `unix:///path/to.sock` writes NDJSON to a local collector socket. Repeatable for fan-out. Query params: `?on_full=drop` (best-effort), `?format=ndjson\|ocsf` (line and OTLP sinks; see [OCSF Findings](../../guide/ocsf-findings.md)), `?ocsf_version=<v>` (only with `format=ocsf`; default `1.1.0`), `?ocsf_incident_class=2004\|2005` {{ added "0.28.0" }} (only with `format=ocsf`; `2005` emits incidents as [Incident Findings](../../guide/ocsf-findings.md#incident-finding-class-2005), default `2004`; `2005` also requires `?ocsf_assignee_group=<name>`, which is rejected on class 2004 and on OTLP), `?compression=gzip` (OTLP), `?timeout=<duration>` {{ added "0.25.0" }} (OTLP per-attempt export deadline, default `10s`), and for TLS `?ca=`, `?client_cert=`, `?client_key=` (PEM paths, the last two for mutual TLS) and `?tls_domain=` (SNI override). OTLP schemes require the `daemon-otlp` build. |
 | `--dlq <URL>` | unset | Dead-letter queue for events that fail parsing or sink delivery. Same schemes as `--output`. When unset, parse failures are counted on `rsigma_events_parse_errors_total` and discarded, and delivery failures are discarded with a rate-limited `warn` log that carries how many were dropped. {{ added "0.25.0" }} |
-| `--include-event` | off | Embed the full event JSON in every detection match. Enrichers that read `${detection.fields.*}` or `${detection.event.*}` do not need it: the daemon retains events for them automatically and strips them before delivery (see [Enrichers](../../guide/enrichers.md#kind-and-template-namespaces)). {{ added "unreleased" }} |
+| `--include-event` | off | Embed the full event JSON in every detection match. Enrichers that read `${detection.fields.*}` or `${detection.event.*}` do not need it: the daemon retains events for them automatically and strips them before delivery (see [Enrichers](../../guide/enrichers.md#kind-and-template-namespaces)). {{ added "0.28.0" }} |
 | `--match-detail <LEVEL>` | `off` | Match-detail verbosity: `off` (field + value only), `summary` (adds matcher kind, selection, case sensitivity, and reports keyword/absence matches), or `full` (also records the matched pattern). Also settable via `daemon.engine.match_detail`. See [Evaluating Rules](../../guide/evaluating-rules.md#match-detail). |
 | `--pretty` | off | Pretty-print JSON output. |
 | `--sink-retry-max <N>` | `3` | Max delivery retries per sink before routing the result to the DLQ. |
 | `--sink-backoff-base-ms <MS>` | `100` | Base backoff for the first sink delivery retry. |
 | `--sink-backoff-max-ms <MS>` | `5000` | Backoff ceiling for sink delivery retries. |
-| `--sink-batch-max <N>` | `64` | Max results drained into one sink delivery batch. Must be at least 1. Stdout, `file://`, `unix://`, NATS, and OTLP sinks deliver a drained batch together: one write for the line sinks, every JetStream publish before the acks are awaited for NATS, and one export request for OTLP. Webhooks still post one request per result. {{ added "unreleased" }} |
-| `--sink-batch-flush-ms <MS>` | `0` | How long a batch smaller than `--sink-batch-max` waits for more results before it is delivered. `0` delivers whatever is queued at once; a positive value trades that much latency for larger batches. {{ added "unreleased" }} |
+| `--sink-batch-max <N>` | `64` | Max results drained into one sink delivery batch. Must be at least 1. Stdout, `file://`, `unix://`, NATS, and OTLP sinks deliver a drained batch together: one write for the line sinks, every JetStream publish before the acks are awaited for NATS, and one export request for OTLP. Webhooks still post one request per result. {{ added "0.28.0" }} |
+| `--sink-batch-flush-ms <MS>` | `0` | How long a batch smaller than `--sink-batch-max` waits for more results before it is delivered. `0` delivers whatever is queued at once; a positive value trades that much latency for larger batches. {{ added "0.28.0" }} |
 
 Each sink serializes in its own wire format. The default is RSigma's native NDJSON; `?format=ocsf` emits [OCSF Detection Finding](../../guide/ocsf-findings.md) (class 2004) JSON instead, one finding per line. The parameter is accepted on `stdout`, `file://`, `nats://`, and `unix://` sinks only, and `format=` on an OTLP spec, the `--dlq`, or the `daemon.api.audit.sink` fails startup, as does an unknown value.
 
 Each `--output` sink runs its own bounded queue and worker: results are delivered with bounded exponential-backoff retry, and a result is sent to the DLQ only after retries are exhausted. Fan-out is isolated up to each sink's queue depth, so a slow sink does not immediately stall the others; a slow durable sink eventually applies backpressure, the cost of preserving at-least-once delivery. An acknowledgment is released to the source only once every sink has committed the result, and `?on_full=drop` opts a sink out of that contract in favor of never stalling. A sink commits a failed result by handing it to the DLQ writer, so the ack does not wait for the DLQ sink's write; a failed DLQ write is logged and counted on `rsigma_dlq_write_failures_total`. {{ added "0.25.0" }} The file and `unix://` sinks write each result's lines in one go and do not repeat lines a failed attempt already wrote when they retry it; a line a failed file write cut off is ended before anything else is appended. {{ added "0.25.0" }}
 
-A worker makes the first attempt for a drained batch together and retries each failed result on its own, in order, with the same retry budget, backoff, and DLQ routing as a single result. Results a failed line write never reached are not counted as failed; each gets its own attempt after the cut-off result settles. Retries do not repeat what a sink knows went out: stdout, file, and `unix://` sinks skip the lines a failed write delivered, and a stdout line cut off by a failure is ended before the next write; NATS publishes only the messages JetStream did not confirm; a webhook posts only the results that did not go out. Delivery stays at-least-once, so a message whose ack was lost, or a request that timed out after the receiver took it, is sent again. NATS publishes a whole batch before it awaits the acks, so a message retried after a failed ack can land after messages published after it. When a whole NATS or OTLP batch fails, for example because the OTLP export request fails or the NATS stream cannot be reached, each result in it is retried separately, with its own backoff, and counts its own retry on `rsigma_sink_retries_total`. Those retries run one after another, so the backoffs of one failed batch add up before its last result is delivered. Log records a collector rejects in a partial success are not retried, as the OTLP specification asks; they are counted on `rsigma_sink_otlp_rejected_records_total` and logged in a warning at most once every 10 seconds. {{ added "unreleased" }}
+A worker makes the first attempt for a drained batch together and retries each failed result on its own, in order, with the same retry budget, backoff, and DLQ routing as a single result. Results a failed line write never reached are not counted as failed; each gets its own attempt after the cut-off result settles. Retries do not repeat what a sink knows went out: stdout, file, and `unix://` sinks skip the lines a failed write delivered, and a stdout line cut off by a failure is ended before the next write; NATS publishes only the messages JetStream did not confirm; a webhook posts only the results that did not go out. Delivery stays at-least-once, so a message whose ack was lost, or a request that timed out after the receiver took it, is sent again. NATS publishes a whole batch before it awaits the acks, so a message retried after a failed ack can land after messages published after it. When a whole NATS or OTLP batch fails, for example because the OTLP export request fails or the NATS stream cannot be reached, each result in it is retried separately, with its own backoff, and counts its own retry on `rsigma_sink_retries_total`. Those retries run one after another, so the backoffs of one failed batch add up before its last result is delivered. Log records a collector rejects in a partial success are not retried, as the OTLP specification asks; they are counted on `rsigma_sink_otlp_rejected_records_total` and logged in a warning at most once every 10 seconds. {{ added "0.28.0" }}
 
 Acknowledgment guarantees differ by transport. NATS is durable at-least-once: results un-acked at shutdown are redelivered on restart. The HTTP and OTLP push receivers are at-most-once on ingest, since the request is accepted as soon as the event is queued.
 
@@ -119,14 +119,14 @@ Acknowledgment guarantees differ by transport. NATS is durable at-least-once: re
 
 | Flag | Description |
 |------|-------------|
-| `--enrichers <PATH>` | YAML file declaring post-evaluation enrichers. Hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; failed reloads keep the previous pipeline active. See [Enrichers](../../guide/enrichers.md) for the schema, the seven primitives, and the recipes catalog. While a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, the daemon retains each detection's event for it and strips the event after enrichment unless `--include-event`, capture, or the rule's `rsigma.include_event` asks for it; the effective value is logged when a reload changes it. {{ added "unreleased" }} |
+| `--enrichers <PATH>` | YAML file declaring post-evaluation enrichers. Hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; failed reloads keep the previous pipeline active. See [Enrichers](../../guide/enrichers.md) for the schema, the seven primitives, and the recipes catalog. While a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, the daemon retains each detection's event for it and strips the event after enrichment unless `--include-event`, capture, or the rule's `rsigma.include_event` asks for it; the effective value is logged when a reload changes it. {{ added "0.28.0" }} |
 | `--stix-store <DIR>` | Local [`FsStore`](../../library/rstix.md#rstix-graph-marking-store) root for enrichers with `type: stix` (`stix-enrich` feature). Same layout as [`taxii sync`](../../cli/taxii/sync.md). Reloaded from disk on enricher hot-reload. Config-file equivalent: `daemon.stix_store`. {{ added "0.23.0" }} |
 | `--stix-store-allow-custom` | Parse MITRE ATT&CK and other custom SDOs (`x_*` types) when loading `--stix-store` (`stix-enrich` feature). Required when the store was populated with `taxii sync --allow-custom` or `taxii store --allow-custom`. Config-file equivalent: `daemon.stix_store_allow_custom`. {{ added "0.23.0" }} |
 | `--alert-pipeline <PATH>` | YAML file declaring the alert pipeline. It runs after enrichment and before the sinks: it silences results matching operator-defined matchers, inhibits lower-priority results while a matching source is active, deduplicates by a configurable fingerprint (first fire passes, duplicates fold, re-emit on `repeat_interval`, resolve after `resolve_timeout`), and groups survivors into incidents (`group_by` equality or an opt-in `entity_graph` union-find), annotating each pass-through result with its `incident_id` and emitting an `IncidentResult` on the `group_wait`, `group_interval`, and `repeat_interval` timers. Open incidents are readable at `GET /api/v1/incidents`; silences are managed at `/api/v1/silences`, which needs this flag and bounds API silences by `max_silence_duration` and `allow_broad_silences`. {{ added "0.27.0" }} Hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; failed reloads keep the previous pipeline active. Selector, matcher, and scope errors reject the daemon at startup. See [Alert Pipeline](../../guide/alert-pipeline.md). |
 | `--risk <PATH>` | YAML file declaring the risk-based alerting layer. It runs after enrichment and before the alert pipeline: it annotates each in-scope firing with a risk score and one or more risk objects (entities) under the reserved `risk.score` and `risk.objects` enrichment keys, accumulates risk per entity over a sliding window, and emits a high-fidelity `RiskIncidentResult` when an entity crosses the score or ATT&CK-tactic-count threshold (subject to a per-entity cooldown). Open entities are readable at `GET /api/v1/risk`. Hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; failed reloads keep the previous config active. Selector, scope, and score errors reject the daemon at startup. See [Risk-Based Alerting](../../guide/risk-based-alerting.md). |
 | `--webhook <FILE_OR_DIR>` | Webhook config file (or directory of `*.yml`/`*.yaml` files) declaring template-driven HTTP output sinks. Repeatable. Each detection or correlation matching a webhook's `kind` and `scope` renders a templated URL, headers, and JSON body and POSTs it. Webhooks are best-effort (at-most-once): undeliverable results land in the `--dlq` and never block the durable sinks. Validated at startup; not hot-reloaded. See [Webhooks](../../guide/webhooks.md). |
 
-The enrichers file accepts `max_concurrent_enrichments: <N>` at the top level (default `16`) plus a list of enricher entries, each declaring `kind: detection | correlation`, a primitive `type:` (`template`/`lookup`/`http`/`command`/`stix`/`mmdb`/`dns`), an `inject_field`, and primitive-specific keys (`template`, `url`/`headers`/`cache_ttl`, `command`, `source`/`extract`/`default`, `stix_id`/`text_search`/`attack_technique`/`type_filter`, `db_path`/`fields`, `record_type`/`nameservers`/`negative_cache_ttl`/`cache_max_entries`, ...). Cross-namespace template references are rejected at startup with a clear error pointing at the offending field. Keys that are unknown, or that do not apply to an entry's `type:`, are rejected at load with an error naming the key, and the same holds for unknown keys in webhooks and risk files. {{ added "unreleased" }}
+The enrichers file accepts `max_concurrent_enrichments: <N>` at the top level (default `16`) plus a list of enricher entries, each declaring `kind: detection | correlation`, a primitive `type:` (`template`/`lookup`/`http`/`command`/`stix`/`mmdb`/`dns`), an `inject_field`, and primitive-specific keys (`template`, `url`/`headers`/`cache_ttl`, `command`, `source`/`extract`/`default`, `stix_id`/`text_search`/`attack_technique`/`type_filter`, `db_path`/`fields`, `record_type`/`nameservers`/`negative_cache_ttl`/`cache_max_entries`, ...). Cross-namespace template references are rejected at startup with a clear error pointing at the offending field. Keys that are unknown, or that do not apply to an entry's `type:`, are rejected at load with an error naming the key, and the same holds for unknown keys in webhooks and risk files. {{ added "0.28.0" }}
 
 The webhooks file (also settable as the `daemon.output.webhooks` path list) declares a list of `webhooks:` entries, each with an `id`, `kind: detection | correlation`, a `url`, optional `headers` and `body` templates, and optional `timeout`, `retry`, `rate_limit`, `scope`, and `queue_size`. Secrets are referenced via `${ENV_VAR}` rather than stored in the file. See [Webhooks](../../guide/webhooks.md) for the schema and the Slack/Teams/Discord/PagerDuty recipe catalog.
 
@@ -193,12 +193,12 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 | `--action <ACTION>` | `alert` | Post-fire action: `alert` (keep state, re-alert on next match) or `reset` (clear window state). |
 | `--emit-detections` | off | Emit output for rules that only feed correlations, including correlations referenced by another correlation. By default, referenced rules are emitted only when a referencing correlation has top-level `generate: true`. {{ added "0.24.0" }} |
 | `--no-detections` | off | Deprecated compatibility flag. Correlation-only detections are suppressed by default. |
-| `--correlation-event-mode <MODE>` | `none` | `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "unreleased" }} |
-| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window. A chained parent applies its own cap to the events its children deliver. {{ added "unreleased" }} |
+| `--correlation-event-mode <MODE>` | `none` | `none`, `full` (deflate-compressed full bodies), `refs` (timestamp + ID only). Results with events also carry `event_sources`, and chained correlations carry the events their child correlations retained. {{ added "0.28.0" }} |
+| `--max-correlation-events <N>` | `10` | Cap on stored events per correlation window. A chained parent applies its own cap to the events its children deliver. {{ added "0.28.0" }} |
 | `--max-state-entries <N>` | `100000` | Hard cap on correlation state entries across all correlations and group keys. When reached, the stalest entries are evicted to 90% capacity and a warning is logged. |
 | `--max-group-entries <N>` | unset | Cap on retained entries within a single correlation group's window state. Bounds within-window growth of chatty groups; oldest entries are dropped (session windows keep their span anchor). Unset = unbounded, and a correlation with a `timespan` longer than one hour and no `rsigma.max_group_entries` logs a warning at load. {{ added "0.25.0" }} |
-| `--tenancy` | off | Enable logical multi-tenancy. Requires bearer-token auth and a tenant binding on every input source; startup refuses otherwise. Equivalent to `daemon.tenancy.enabled: true`. {{ added "unreleased" }} |
-| `--max-tenant-state <N>` | unset | Per-tenant correlation state cap. At a tenant's cap, that tenant's own expired entries are evicted first, then its stalest entries. Requires tenancy. {{ added "unreleased" }} |
+| `--tenancy` | off | Enable logical multi-tenancy. Requires bearer-token auth and a tenant binding on every input source; startup refuses otherwise. Equivalent to `daemon.tenancy.enabled: true`. {{ added "0.28.0" }} |
+| `--max-tenant-state <N>` | unset | Per-tenant correlation state cap. At a tenant's cap, that tenant's own expired entries are evicted first, then its stalest entries. Requires tenancy. {{ added "0.28.0" }} |
 | `--timestamp-field <FIELD>` | unset | Field name to prepend to the timestamp extraction list. Repeatable. |
 | `--timestamp-fallback <MODE>` | `wallclock` | Behavior when no timestamp is found: `wallclock` (use wall clock time) or `skip` (skip correlation state for that event). Use `skip` for forensic replay. |
 
@@ -208,7 +208,7 @@ See [TLS deployment](../../reference/security.md#tls-termination-for-the-api-lis
 |------|---------|-------------|
 | `--state-db <PATH>` | unset | SQLite database for persisting correlation, alert-pipeline, risk-accumulator, and watchlist-indicator state across restarts. When set, state is loaded on startup and saved periodically and on shutdown. Watchlist rows are written before the HTTP response. A restart loads at most the source cap and logs how many saved indicators were left out. |
 | `--state-save-interval <SECONDS>` | `30` | Periodic snapshot interval. No effect without `--state-db`. |
-| `--clear-state` | off | Clear stored state on startup, including watchlist indicators. With `--replay-from-*`, forces a clean slate even if the replay starts after the stored position. In a stdin batch run, the only way to start fresh when the stored state cannot be restored. {{ added "unreleased" }} |
+| `--clear-state` | off | Clear stored state on startup, including watchlist indicators. With `--replay-from-*`, forces a clean slate even if the replay starts after the stored position. In a stdin batch run, the only way to start fresh when the stored state cannot be restored. {{ added "0.28.0" }} |
 | `--keep-state` | off | Force restore stored state even during replay. Use for forward catch-up where you want to preserve cross-boundary correlation windows. Mutually exclusive with `--clear-state`. |
 
 ### Tenancy
@@ -217,46 +217,46 @@ See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the 
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `daemon.tenancy.enabled` | `false` | Enable tenant isolation. Also enabled by `--tenancy`. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.correlation_state` | unset | Per-tenant correlation state cap. Also set by `--max-tenant-state`. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.active_alerts` | unset | Per-tenant active-alert cap. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.incidents` | unset | Per-tenant open-incident cap. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "unreleased" }} |
-| `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "unreleased" }} |
-| `daemon.tenancy.metrics_tenant_allowlist` | empty | Tenants whose match counts get their own metric label. Others count under `other`. {{ added "unreleased" }} |
-| `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "unreleased" }} |
-| `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "unreleased" }} |
-| `daemon.rulesets[].tenants` | empty | Tenants admitted to a named ruleset. Empty means every tenant. {{ added "unreleased" }} |
-| sink `tenant=<id>` | unset | Only deliver results of one tenant to this findings sink. Refused on `--dlq` and `audit.sink`. {{ added "unreleased" }} |
-| sink `{tenant}` | unset | Render a whole NATS subject token or a whole file path component per tenant, once per findings sink. Refused on other schemes, `--dlq`, and `audit.sink`. {{ added "unreleased" }} |
-| file sink `?max_open=` | `64` | Maximum open per-tenant file handles. Only valid on a file path with `{tenant}`. {{ added "unreleased" }} |
+| `daemon.tenancy.enabled` | `false` | Enable tenant isolation. Also enabled by `--tenancy`. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.correlation_state` | unset | Per-tenant correlation state cap. Also set by `--max-tenant-state`. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.active_alerts` | unset | Per-tenant active-alert cap. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.incidents` | unset | Per-tenant open-incident cap. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "0.28.0" }} |
+| `daemon.tenancy.metrics_tenant_allowlist` | empty | Tenants whose match counts get their own metric label. Others count under `other`. {{ added "0.28.0" }} |
+| `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "0.28.0" }} |
+| `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "0.28.0" }} |
+| `daemon.rulesets[].tenants` | empty | Tenants admitted to a named ruleset. Empty means every tenant. {{ added "0.28.0" }} |
+| sink `tenant=<id>` | unset | Only deliver results of one tenant to this findings sink. Refused on `--dlq` and `audit.sink`. {{ added "0.28.0" }} |
+| sink `{tenant}` | unset | Render a whole NATS subject token or a whole file path component per tenant, once per findings sink. Refused on other schemes, `--dlq`, and `audit.sink`. {{ added "0.28.0" }} |
+| file sink `?max_open=` | `64` | Maximum open per-tenant file handles. Only valid on a file path with `{tenant}`. {{ added "0.28.0" }} |
 
-Each `daemon.tenancy.quotas` value must be at least 1, and setting any quota (or `--max-tenant-state`) requires `daemon.tenancy.enabled`. {{ added "unreleased" }}
+Each `daemon.tenancy.quotas` value must be at least 1, and setting any quota (or `--max-tenant-state`) requires `daemon.tenancy.enabled`. {{ added "0.28.0" }}
 
 ### Throughput
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--buffer-size <N>` | `10000` | Bounded mpsc capacity for source→engine and engine→sink queues, counted in events. Must be at least 1. {{ added "unreleased" }} |
-| `--batch-size <N>` | `128` | Maximum events per detection batch, capped at `--buffer-size`. Batches enable parallel detection across events. When the rule set has no correlation rules, the daemon may keep several batches in flight (see `--detect-inflight`); correlation engines stay one batch at a time. Must be at least 1. {{ added "unreleased" }} |
-| `--worker-threads <N>` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. Unset keeps Tokio's default (`TOKIO_WORKER_THREADS`, else one per CPU core). Also `daemon.runtime.worker_threads`. {{ added "unreleased" }} |
-| `--detect-threads <N>` | `RAYON_NUM_THREADS`, else one per CPU core | Threads in the pool that parses and evaluates batches. Also `daemon.runtime.detect_threads`. {{ added "unreleased" }} |
-| `--detect-inflight <N>` | `RSIGMA_DETECT_INFLIGHT`, else scales with the detection threads (1 on one thread, up to 5 on eight or more) | Detection batches evaluated concurrently, 1 to 8, when the rule set has no correlation rules. Sink and ack order stay sequential. With correlation rules the depth is always 1, and the daemon logs why when a larger depth was requested. Also `daemon.runtime.detect_inflight`. {{ added "unreleased" }} |
+| `--buffer-size <N>` | `10000` | Bounded mpsc capacity for source→engine and engine→sink queues, counted in events. Must be at least 1. {{ added "0.28.0" }} |
+| `--batch-size <N>` | `128` | Maximum events per detection batch, capped at `--buffer-size`. Batches enable parallel detection across events. When the rule set has no correlation rules, the daemon may keep several batches in flight (see `--detect-inflight`); correlation engines stay one batch at a time. Must be at least 1. {{ added "0.28.0" }} |
+| `--worker-threads <N>` | Tokio default | Tokio worker threads for ingestion, the API, and sink delivery. Unset keeps Tokio's default (`TOKIO_WORKER_THREADS`, else one per CPU core). Also `daemon.runtime.worker_threads`. {{ added "0.28.0" }} |
+| `--detect-threads <N>` | `RAYON_NUM_THREADS`, else one per CPU core | Threads in the pool that parses and evaluates batches. Also `daemon.runtime.detect_threads`. {{ added "0.28.0" }} |
+| `--detect-inflight <N>` | `RSIGMA_DETECT_INFLIGHT`, else scales with the detection threads (1 on one thread, up to 5 on eight or more) | Detection batches evaluated concurrently, 1 to 8, when the rule set has no correlation rules. Sink and ack order stay sequential. With correlation rules the depth is always 1, and the daemon logs why when a larger depth was requested. Also `daemon.runtime.detect_inflight`. {{ added "0.28.0" }} |
 | `--drain-timeout <SECONDS>` | `5` | Seconds to wait for in-flight events to drain on shutdown. |
 
-A zero `--buffer-size`, `--batch-size`, or `--sink-batch-max` is rejected, and so is a zero `daemon.input.buffer_size`, `daemon.input.batch_size`, or `daemon.output.batch_max` in a config file, which stops the daemon with exit code `3`. {{ added "unreleased" }}
+A zero `--buffer-size`, `--batch-size`, or `--sink-batch-max` is rejected, and so is a zero `daemon.input.buffer_size`, `daemon.input.batch_size`, or `daemon.output.batch_max` in a config file, which stops the daemon with exit code `3`. {{ added "0.28.0" }}
 
-The flag beats the `daemon.runtime` config key, which beats the environment variable. One startup line, `Thread pools sized`, reports the effective `worker_threads`, `detection_threads`, and `detect_inflight`. {{ added "unreleased" }}
+The flag beats the `daemon.runtime` config key, which beats the environment variable. One startup line, `Thread pools sized`, reports the effective `worker_threads`, `detection_threads`, and `detect_inflight`. {{ added "0.28.0" }}
 
-When a source finds the event channel full, the daemon logs `Input channel full, backpressure applied` at most once every 10 seconds with a `suppressed` count of the occurrences since the previous warning, and once more when the source ends if any are pending. `rsigma_back_pressure_events_total` still counts every occurrence, for stdin, NATS, Unix socket, HTTP, and OTLP input. {{ added "unreleased" }}
+When a source finds the event channel full, the daemon logs `Input channel full, backpressure applied` at most once every 10 seconds with a `suppressed` count of the occurrences since the previous warning, and once more when the source ends if any are pending. `rsigma_back_pressure_events_total` still counts every occurrence, for stdin, NATS, Unix socket, HTTP, and OTLP input. {{ added "0.28.0" }}
 
-Batches that cost less than waking the detection pool are parsed and evaluated on the calling thread: detection forks across the pool once the time a batch has taken so far projects it to cost at least 500 µs, and parsing stays on the calling thread for batches under 32 KiB of input. Results and their order are the same either way. {{ added "unreleased" }}
+Batches that cost less than waking the detection pool are parsed and evaluated on the calling thread: detection forks across the pool once the time a batch has taken so far projects it to cost at least 500 µs, and parsing stays on the calling thread for batches under 32 KiB of input. Results and their order are the same either way. {{ added "0.28.0" }}
 
 #### Tuning
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Measured with `scripts/perf/stdin-daemon.sh` on an Apple M4 Pro (12 cores), stdin to stdout, medians of five runs, wall and system seconds. The all-match lane is one trivial rule that matches each of 1,000,000 events; the no-match lane is the same events and a rule that matches none; the SigmaHQ lane is the pinned 3,132-rule SigmaHQ tree over 1,000,000 Windows events (3,023,700 matches).
 
@@ -412,7 +412,7 @@ The remaining keys are config-file-only under `daemon.capture`:
 | `daemon.capture.max_spool_bytes` | `10737418240` | Completed-bundle disk budget. A larger bundle fails before commit. |
 | `daemon.capture.spool_queue_capacity` | `128` | In-flight spool jobs. |
 
-When capture is enabled, detection event payloads are retained internally even without `--include-event`, then stripped before sink delivery unless `--include-event` was also set. The strip keeps the event of a rule that sets `rsigma.include_event: "true"` and leaves correlation `events`, `event_refs`, and `event_sources` alone. {{ added "unreleased" }}
+When capture is enabled, detection event payloads are retained internally even without `--include-event`, then stripped before sink delivery unless `--include-event` was also set. The strip keeps the event of a rule that sets `rsigma.include_event: "true"` and leaves correlation `events`, `event_refs`, and `event_sources` alone. {{ added "0.28.0" }}
 
 ## Examples
 
@@ -469,7 +469,7 @@ rsigma engine daemon -r rules/ \
 
 ### Export detections to an OpenTelemetry collector
 
-Each result becomes one OTLP log record (Sigma level mapped to OTLP severity, rule title as the body, the full result as attributes). With `?format=ocsf`, the body is the [OCSF finding](../../guide/ocsf-findings.md#otlp-log-bodies) and the record carries no attributes. {{ added "unreleased" }} Requires a `daemon-otlp` build.
+Each result becomes one OTLP log record (Sigma level mapped to OTLP severity, rule title as the body, the full result as attributes). With `?format=ocsf`, the body is the [OCSF finding](../../guide/ocsf-findings.md#otlp-log-bodies) and the record carries no attributes. {{ added "0.28.0" }} Requires a `daemon-otlp` build.
 
 ```bash
 # OTLP/gRPC (default port 4317)
@@ -537,7 +537,7 @@ rsigma engine daemon -r rules/ \
 Full HTTP API reference: [HTTP API](../../reference/http-api.md). All metric definitions: [Prometheus metrics](../../reference/metrics.md).
 
 ## Batch runs
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 With `--input stdin` (or `--input stdin://`) and the default `--stdin-mode batch`, `engine daemon` is a one-shot batch runner: it reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, because the stored state is restored at startup.
 
@@ -588,8 +588,8 @@ See [Serverless](../../deployment/serverless.md) for an AWS Lambda handler and a
 |------|---------|
 | `0` | Normal shutdown (including `--dry-run`). |
 | `2` | Initial rules could not be loaded or compiled. |
-| `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. In a stdin batch run, also stored state that cannot be restored. {{ added "unreleased" }} |
-| `4` | `RUNTIME_ERROR`: a stdin batch run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "unreleased" }} |
+| `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. In a stdin batch run, also stored state that cannot be restored. {{ added "0.28.0" }} |
+| `4` | `RUNTIME_ERROR`: a stdin batch run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "0.28.0" }} |
 
 ## See also
 

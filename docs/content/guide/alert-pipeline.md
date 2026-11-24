@@ -88,7 +88,7 @@ Expired silences are garbage-collected on the background tick. The dynamic (API)
 
 ## Tenancy
 
-With tenancy enabled, dedup, incidents, inhibition, and silences are keyed per tenant. A silence declared in this config applies to every tenant unless it sets `tenant`; an API silence from a tenant token is bound to that tenant. Inhibition always works within one tenant. `daemon.tenancy.quotas` caps active alerts and incidents per tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+With tenancy enabled, dedup, incidents, inhibition, and silences are keyed per tenant. A silence declared in this config applies to every tenant unless it sets `tenant`; an API silence from a tenant token is bound to that tenant. Inhibition always works within one tenant. `daemon.tenancy.quotas` caps active alerts and incidents per tenant. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## Deduplication
 
@@ -119,7 +119,7 @@ dedup:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `strip_event` | `false` | Retain the event for selector resolution, then drop raw event payloads (detection `event`, correlation `events`/`event_refs` and their `event_sources`) before sink delivery. {{ added "unreleased" }} |
+| `strip_event` | `false` | Retain the event for selector resolution, then drop raw event payloads (detection `event`, correlation `events`/`event_refs` and their `event_sources`) before sink delivery. {{ added "0.28.0" }} |
 | `scope.rules`/`scope.tags`/`scope.levels` | empty | Restrict which results the layer acts on. Out-of-scope results pass through untouched. Same syntax as the enrichers `scope`. |
 | `dedup.fingerprint` | required | Selectors hashed (with the rule identity) into the fingerprint. At least one is required when `dedup` is set. |
 | `dedup.repeat_interval` | `0` | Re-emit cadence for a still-active alert (humantime, e.g. `1h`). `0` means pure suppression. |

@@ -29,8 +29,8 @@ Output uses the global `--output-format` layer. Without an explicit format the c
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rules` / `-r` | required unless `--ruleset`, repeatable | Sigma rule file or directory. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | none | Named ruleset from the configuration to test instead of `--rules`. Exemplars added by overlays are replayed. {{ added "unreleased" }} |
-| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to test instead of `--rules`. Exemplars added by overlays are replayed. {{ added "0.28.0" }} |
+| `--config <PATH>` | discovery | Path to an rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }} |
 | `--pipeline` / `-p` | none | Builtin pipeline name or YAML file (repeatable). |
 | `--fail-on-missing` | off | Exit 1 when a detection or correlation rule has no exemplars. |
 

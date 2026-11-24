@@ -24,8 +24,8 @@ The command verifies two invariants before printing anything. First, every suppl
 ## Inputs
 
 - `-r, --rules <PATH>`: Sigma rule file or directory. Conflicts with `--ruleset`.
-- `--ruleset <NAME>`: named ruleset from the configuration to tune instead of `--rules`. {{ added "unreleased" }}
-- `--config <PATH>`: rsigma config file. Overrides config-file discovery. {{ added "unreleased" }}
+- `--ruleset <NAME>`: named ruleset from the configuration to tune instead of `--rules`. {{ added "0.28.0" }}
+- `--config <PATH>`: rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }}
 - `--rule <ID|TITLE>`: target rule id, with exact-title fallback. Required for a ruleset containing more than one detection rule.
 - `--fp <JSON|@PATH>`: false-positive events as one inline JSON event or an NDJSON/EVTX file. When omitted, reads NDJSON from stdin. Conflicts with `--from-dispositions`.
 - `--tp <JSON|@PATH>`: required true-positive events as one inline JSON event or an NDJSON/EVTX file. Required unless `--from-dispositions` is set. Conflicts with `--from-dispositions`.

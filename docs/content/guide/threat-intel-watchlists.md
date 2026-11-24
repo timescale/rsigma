@@ -4,7 +4,7 @@ description: "Push indicators into a running RSigma daemon and match them from S
 
 # Threat intel watchlists
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A watchlist is a dynamic source whose values are pushed over the daemon API instead of fetched from a file or a feed. Use it for indicators that change between rule reloads: a handful of C2 addresses, a short domain list, a hash an analyst just confirmed.
 
@@ -93,7 +93,7 @@ The enricher does not by itself rebuild rules. A watchlist that no pipeline refe
 
 ## STIX indicator sources
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A watchlist is the list you push. A STIX source is a list the daemon pulls. Both can feed the same `${source.<id>.…}` expansion and the same lookup enricher. STIX sources need the `stix-source` feature.
 
@@ -148,7 +148,7 @@ Field-by-field rules, the observable keys, and the JSON shape are in [Dynamic So
 
 ## From a TI report to a rule
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A STIX bundle can also become a Sigma rule, instead of a pipeline value. `rsigma rule draft --from-stix` reads the bundle, or one indicator object, and prints one rule per logsource. Addresses, CIDR ranges, domains, URLs, file hashes, file names, and registry keys are drafted. Email addresses, mutexes, MAC addresses, and ASNs are not. A pattern that is not a simple `=` or `IN` comparison is skipped, and so is a revoked indicator. Expired and not-yet-valid indicators are skipped unless you pass `--include-expired`. A registry key drops its hive and matches `TargetObject` with `|contains`, so a Sysmon event that records the short hive and appends the value name still matches. An IPv6 address is written in the shortened form Sysmon records. `--date` must be `YYYY-MM-DD`. `--observable` and `--include-expired` are rejected when `--from-stix` is absent.
 

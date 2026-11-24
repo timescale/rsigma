@@ -30,8 +30,8 @@ For narrative coverage, including the PostgreSQL and LynxDB workflows, see [Rule
 |------|-------------|
 | `-t, --target <TARGET>` | Backend to convert to. Run [`backend targets`](targets.md) for the live list. Native: `postgres` (aliases `postgresql`, `pg`), `lynxdb`, `fibratus`, `test`. Any other target is delegated to sigma-cli when installed. |
 | `[RULES]...` | Path(s) to Sigma rule file(s) or a directory. Required unless `--ruleset` is set. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | Named ruleset from the configuration to convert instead of rule paths. Native targets convert the in-memory collection; delegated targets materialize the resolved ruleset into a temporary directory for sigma-cli. A ruleset's pipelines are not applied; pass `-p` explicitly. {{ added "unreleased" }} |
-| `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | Named ruleset from the configuration to convert instead of rule paths. Native targets convert the in-memory collection; delegated targets materialize the resolved ruleset into a temporary directory for sigma-cli. A ruleset's pipelines are not applied; pass `-p` explicitly. {{ added "0.28.0" }} |
+| `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }} |
 
 ### Output
 

@@ -75,7 +75,7 @@ Webhook sinks (`--webhook`) use the same egress-filtered client, so the policy g
 
 ### STIX indicator sources
 
-{{ added "unreleased" }} A `type: taxii` source uses the same egress policy. The API root is checked before the first poll, and every address the name resolves to is checked again. An IP literal in the API root, or in an absolute URL the server returns, is rejected before the request. While that filter is set the client follows no redirects and uses no proxy, so a proxy variable cannot move the request off the filtered path. `rsigma taxii sync` is a separate command and is not covered by this filter.
+{{ added "0.28.0" }} A `type: taxii` source uses the same egress policy. The API root is checked before the first poll, and every address the name resolves to is checked again. An IP literal in the API root, or in an absolute URL the server returns, is rejected before the request. While that filter is set the client follows no redirects and uses no proxy, so a proxy variable cannot move the request off the filtered path. `rsigma taxii sync` is a separate command and is not covered by this filter.
 
 TAXII credentials are environment variable names in the source YAML. The values are read when the resolver is built and are not written into the declaration or into errors. A missing variable fails startup and names the variable.
 
@@ -85,11 +85,11 @@ A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `
 
 ### STIX stores
 
-{{ added "unreleased" }} `rsigma taxii store` and `rsigma taxii sync` write one file per object id under the store's `objects/` directory, and `--allow-custom` accepts any object type. A STIX id parses only when its type name follows the STIX 2.1 rules (3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter) and its UUID is in hyphenated form, so a bundle or TAXII collection cannot name a path outside the store with an id such as `../../x--<uuid>` or `/tmp/x--<uuid>`. The store also checks every file name before it writes or deletes, independent of the parser.
+{{ added "0.28.0" }} `rsigma taxii store` and `rsigma taxii sync` write one file per object id under the store's `objects/` directory, and `--allow-custom` accepts any object type. A STIX id parses only when its type name follows the STIX 2.1 rules (3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter) and its UUID is in hyphenated form, so a bundle or TAXII collection cannot name a path outside the store with an id such as `../../x--<uuid>` or `/tmp/x--<uuid>`. The store also checks every file name before it writes or deletes, independent of the parser.
 
 ### DNS enricher
 
-{{ added "unreleased" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
+{{ added "0.28.0" }} A `type: dns` enricher resolves a name that comes from the event, so that name's authoritative servers see a query from the resolver the daemon uses. That reveals to the authoritative operator that the event was processed and roughly when, even though the answer never reaches them. Reverse lookups for an event-supplied IP address reach the zone that owns the `in-addr.arpa` or `ip6.arpa` range instead.
 
 The egress policy does not apply to the DNS enricher. The enricher sends queries only to the nameservers an operator configured, or to the system resolver when `nameservers` is empty, and it never opens a connection to an address it got back. Filtering the answers would also break common setups, because the AWS VPC resolver at `169.254.169.253` is link-local and the `default` preset denies link-local addresses.
 
@@ -97,7 +97,7 @@ Mitigations: narrow which results trigger the lookup with `scope`, point `namese
 
 ### Memory-mapped MMDB databases
 
-{{ added "unreleased" }} By default the `mmdb` enricher reads each database into memory, so rewriting the file in place cannot crash the daemon: the next check reloads the file once it parses, and keeps the previous reader until then. An entry with `mmap: true` (`mmdb-mmap` feature) memory-maps the file instead, and the mapping is only sound while nothing writes to or truncates the file. Writing to a mapped database in place can crash the daemon with `SIGBUS`. Replace mapped databases by writing a new file next to the old one and renaming it over the old path, as `geoipupdate` does; the daemon keeps reading the old file until it maps the new one. Anyone who can write the database file can crash a daemon that maps it, so keep it writable only by the updater. See [Enrichers](../guide/enrichers.md#mmdb-local-mmdb-lookup).
+{{ added "0.28.0" }} By default the `mmdb` enricher reads each database into memory, so rewriting the file in place cannot crash the daemon: the next check reloads the file once it parses, and keeps the previous reader until then. An entry with `mmap: true` (`mmdb-mmap` feature) memory-maps the file instead, and the mapping is only sound while nothing writes to or truncates the file. Writing to a mapped database in place can crash the daemon with `SIGBUS`. Replace mapped databases by writing a new file next to the old one and renaming it over the old path, as `geoipupdate` does; the daemon keeps reading the old file until it maps the new one. Anyone who can write the database file can crash a daemon that maps it, so keep it writable only by the updater. See [Enrichers](../guide/enrichers.md#mmdb-local-mmdb-lookup).
 
 ## Parser robustness
 
@@ -120,17 +120,17 @@ Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON ev
 
 The PostgreSQL backend (`backend convert -t postgres`) generates SQL by:
 
-- Double-quoting field names other than plain lowercase identifiers (`"CommandLine" ILIKE '%whoami%'`), with a `"` inside the name doubled (`"a""b"`). {{ added "unreleased" }}
+- Double-quoting field names other than plain lowercase identifiers (`"CommandLine" ILIKE '%whoami%'`), with a `"` inside the name doubled (`"a""b"`). {{ added "0.28.0" }}
 - Always single-quoting string literals with SQL-standard escaping (`'don''t'`).
 - Validating identifiers (`table`, `schema`, `database`) against `^[A-Za-z_][A-Za-z0-9_$]*$` before insertion. Non-matching identifiers fail conversion with `InvalidIdentifier`.
-- Substituting query template placeholders in a single pass, so placeholder text such as `{rule.title}` inside a rule's values is never expanded, and rendering the rule title and ID in a template with single quotes doubled. {{ added "unreleased" }}
+- Substituting query template placeholders in a single pass, so placeholder text such as `{rule.title}` inside a rule's values is never expanded, and rendering the rule title and ID in a template with single quotes doubled. {{ added "0.28.0" }}
 - Never templating user-controlled strings into SQL keywords or structural positions.
 
 This means a Sigma rule that contains a `'` or `;` or `--` in a value still produces safe SQL.
 
-The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "unreleased" }}
+The LynxDB backend (`backend convert -t lynxdb`) double-quotes and escapes string values and regexes, and renders field names bare, because LynxDB has no quoted identifier syntax. A field name outside LynxDB identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, `:`, or `-`) fails conversion instead of reaching the query. Template placeholders are substituted in a single pass, as in the PostgreSQL backend, so placeholder text in a rule's values cannot add pipeline stages. {{ added "0.28.0" }}
 
-The Fibratus backend (`backend convert -t fibratus`) renders field names bare. A field name outside Fibratus identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, or `$`, with optional `[...]` index segments) fails conversion instead of reaching the filter expression. Each rule is a YAML document, and any value that a block scalar cannot carry, such as a `\r`, NEL, or U+2028 line break, is written as an escaped double-quoted scalar, so rule content cannot add keys such as `action` to the generated rule. {{ added "unreleased" }}
+The Fibratus backend (`backend convert -t fibratus`) renders field names bare. A field name outside Fibratus identifier syntax (a letter or `_`, then letters, digits, `_`, `.`, or `$`, with optional `[...]` index segments) fails conversion instead of reaching the filter expression. Each rule is a YAML document, and any value that a block scalar cannot carry, such as a `\r`, NEL, or U+2028 line break, is written as an escaped double-quoted scalar, so rule content cannot add keys such as `action` to the generated rule. {{ added "0.28.0" }}
 
 See [Backends: PostgreSQL](backends/postgres.md), [Backends: LynxDB](backends/lynxdb.md), and [Backends: Fibratus](backends/fibratus.md).
 
@@ -205,7 +205,7 @@ Bearer-token authentication with `resource:action` permissions gates the daemon 
 Design properties:
 
 - **Secrets are env-only.** The config names an environment variable per token (`token_env`, the same posture as webhook `signing.secret_env`); the value never lives in YAML or on the command line, and a missing or empty variable fails startup before the listener binds.
-- **A floor on tenant-bound secrets.** A token bound to a tenant (`tenant` or `all_tenants: true`) needs a secret of at least 32 bytes, or startup fails; generate one with `openssl rand -hex 32`. A shorter secret on any other token logs a warning. {{ added "unreleased" }}
+- **A floor on tenant-bound secrets.** A token bound to a tenant (`tenant` or `all_tenants: true`) needs a secret of at least 32 bytes, or startup fails; generate one with `openssl rand -hex 32`. A shorter secret on any other token logs a warning. {{ added "0.28.0" }}
 - **Constant-time comparison.** Every presented token is compared against every configured secret in constant time, so timing cannot leak a matched prefix.
 - **Least privilege by role.** Built-in roles `reader`/`operator`/`ingest`/`admin` plus custom roles as permission lists with `*` wildcards. A log shipper's `ingest` token carries only `events:ingest` and cannot create silences or trigger reloads; `reload:execute` is deliberately excluded from `operator` so config-changing control stays with `admin` tokens.
 - **Fail-closed route table.** A route added without a permission mapping requires the full `*` grant rather than defaulting open.
@@ -215,13 +215,13 @@ Design properties:
 
 Authentication complements TLS rather than replacing it: tokens authenticate *who* is calling, TLS protects the token in transit. On a non-loopback TCP listener, pair the auth block with `--tls-cert`/`--tls-key` (or a TLS-terminating proxy) so bearer tokens are never sent in cleartext. On a `unix://` listener the socket file permissions already gate access, and auth adds per-client differentiation on top when several local users share the socket.
 
-A token with `sources:write` can push, replace, and delete watchlist indicators. Those values are matched against events, so treat the token like the ability to change which traffic alerts. Requests are size-capped (4 MiB, 10,000 indicators, and the source's `max_indicators`, or 4096 when a pipeline references the watchlist). When `--state-db` is set, the audit trail also rejects a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) and records each accepted change. {{ added "unreleased" }}
+A token with `sources:write` can push, replace, and delete watchlist indicators. Those values are matched against events, so treat the token like the ability to change which traffic alerts. Requests are size-capped (4 MiB, 10,000 indicators, and the source's `max_indicators`, or 4096 when a pipeline references the watchlist). When `--state-db` is set, the audit trail also rejects a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) and records each accepted change. {{ added "0.28.0" }}
 
 A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "0.27.0" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so a single call cannot mute every rule, or every rule of a severity, indefinitely. API silences created before these limits applied are kept, and the daemon logs their ids at startup and on reload. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
 
 ## Multi-tenancy
 
-Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "unreleased" }}
+Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "0.28.0" }}
 
 The model fails closed. With tenancy enabled, the daemon refuses to start without bearer-token auth, refuses anonymous requests, and refuses a token that declares neither `tenant` nor `all_tenants: true`. Every pull source must carry a tenant, and an `all_tenants` token cannot ingest because it has no tenant to bind. A shared untenanted correlation bucket cannot form: the engine skips untenanted events and counts them.
 
@@ -277,7 +277,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
 - `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
 - `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
-- `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "unreleased" }}
+- `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "0.28.0" }}
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.

@@ -6,7 +6,7 @@ description: "Run real-time Sigma detection with the RSigma daemon: inputs, sink
 
 `rsigma engine daemon` runs RSigma as a long-running service: it keeps a compiled engine in memory, reads events from a continuous source, writes detections to one or more sinks, and exposes a small HTTP API for health checks, metrics, and management. Use it when you need state to survive restarts, hot-reload across rule changes, or a Prometheus-scrapeable detection engine.
 
-The daemon can also run several named rulesets side by side with `--ruleset` or `daemon.rulesets`, each with its own pipelines and correlation state. See [Rulesets](rulesets.md#several-rulesets-side-by-side). {{ added "unreleased" }}
+The daemon can also run several named rulesets side by side with `--ruleset` or `daemon.rulesets`, each with its own pipelines and correlation state. See [Rulesets](rulesets.md#several-rulesets-side-by-side). {{ added "0.28.0" }}
 
 This page covers the daemon's lifecycle, input and output options, hot-reload, state persistence, and the HTTP API surface. For NATS-specific operations (auth, replay, consumer groups, DLQ) see [NATS Streaming](nats-streaming.md). For OTLP ingestion see [OTLP Integration](otlp-integration.md).
 
@@ -166,7 +166,7 @@ For a 50 K/s ingest target, `--buffer-size 50000 --batch-size 64 --drain-timeout
 
 Three triggers cause the daemon to re-read its rules, pipelines, and the enrichers, alert-pipeline, and risk files, debounced at 500 ms:
 
-1. A file system change to any `.yml` or `.yaml` file under the rules directory, or in the directory of a pipeline file passed via `-p` or of the `--enrichers`, `--alert-pipeline`, or `--risk` file. {{ added "unreleased" }}
+1. A file system change to any `.yml` or `.yaml` file under the rules directory, or in the directory of a pipeline file passed via `-p` or of the `--enrichers`, `--alert-pipeline`, or `--risk` file. {{ added "0.28.0" }}
 2. A `SIGHUP` signal (Unix only). This also triggers re-resolution of dynamic sources.
 3. A `POST /api/v1/reload` request.
 

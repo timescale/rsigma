@@ -123,7 +123,7 @@ By default, a detection referenced by a correlation contributes to correlation s
 
 The same applies to a correlation referenced by another correlation. In a chain where a detection feeds a child correlation that feeds a parent correlation, only the parent produces a result; the child still updates the parent's state. `generate: true` on the parent also emits the child, and `--emit-detections` emits every detection and correlation match in the chain. {{ added "0.24.0" }}
 
-A chained parent in `full` or `refs` event mode carries the events its child correlations retained when they fired and fed it. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, and event cap (`rsigma.max_correlation_events`, else `--max-correlation-events`) decide which events it keeps. A parent's event mode makes its children retain events even when their own mode is `none`; their own results still carry no events. Raw events that went into a child that never fired are not included, because they did not contribute to any firing. {{ added "unreleased" }}
+A chained parent in `full` or `refs` event mode carries the events its child correlations retained when they fired and fed it. Each event appears once, oldest first, even when a child re-fires and delivers it again, and the parent's own `timespan`, window mode, and event cap (`rsigma.max_correlation_events`, else `--max-correlation-events`) decide which events it keeps. A parent's event mode makes its children retain events even when their own mode is `none`; their own results still carry no events. Raw events that went into a child that never fired are not included, because they did not contribute to any firing. {{ added "0.28.0" }}
 
 ```yaml
 title: Repeated brute force bursts
@@ -141,7 +141,7 @@ custom_attributes:
     rsigma.max_correlation_events: 20
 ```
 
-Every correlation result that carries `events` or `event_refs` also carries `event_sources`, a list of the same length where entry `i` describes event `i`. `rule` names the referenced rule the event matched, as written in the correlation's `rules:` list, which tells the two sides of a `temporal` correlation apart. `via` names the child correlation (its id, else name, else title) that delivered the event to a chained parent; in a three-level chain the top result names its immediate child. An event that reaches a parent through two children keeps the source of the child that delivered it first. An event restored from a state snapshot written by an earlier version has an empty source, `{}`. {{ added "unreleased" }}
+Every correlation result that carries `events` or `event_refs` also carries `event_sources`, a list of the same length where entry `i` describes event `i`. `rule` names the referenced rule the event matched, as written in the correlation's `rules:` list, which tells the two sides of a `temporal` correlation apart. `via` names the child correlation (its id, else name, else title) that delivered the event to a chained parent; in a three-level chain the top result names its immediate child. An event that reaches a parent through two children keeps the source of the child that delivered it first. An event restored from a state snapshot written by an earlier version has an empty source, `{}`. {{ added "0.28.0" }}
 
 ```json
 "event_sources": [
@@ -150,7 +150,7 @@ Every correlation result that carries `events` or `event_refs` also carries `eve
 ]
 ```
 
-When a tumbling or session parent window resets, the parent clears its events, but a child that fires in the new window can deliver older events it still holds, because they contributed to that firing. {{ added "unreleased" }}
+When a tumbling or session parent window resets, the parent clears its events, but a child that fires in the new window can deliver older events it still holds, because they contributed to that firing. {{ added "0.28.0" }}
 
 | Flag | Purpose |
 |------|---------|
@@ -158,8 +158,8 @@ When a tumbling or session parent window resets, the parent clears its events, b
 | `--action <alert,reset>` | After a correlation fires: `alert` keeps state and can re-fire; `reset` clears the window. |
 | `--emit-detections` | Emit detection and correlation matches even when they only feed correlations. |
 | `--no-detections` | Deprecated compatibility flag. Correlation-only detections are already suppressed by default. |
-| `--correlation-event-mode <none,full,refs>` | Include contributing events: `none` (zero overhead), `full` (deflate-compressed bodies), `refs` (timestamp + ID only). Chained parents carry the events their child correlations retained, with `event_sources`. {{ added "unreleased" }} |
-| `--max-correlation-events N` | Cap events stored per correlation window. Default 10. A chained parent applies its own cap to the events it receives. {{ added "unreleased" }} |
+| `--correlation-event-mode <none,full,refs>` | Include contributing events: `none` (zero overhead), `full` (deflate-compressed bodies), `refs` (timestamp + ID only). Chained parents carry the events their child correlations retained, with `event_sources`. {{ added "0.28.0" }} |
+| `--max-correlation-events N` | Cap events stored per correlation window. Default 10. A chained parent applies its own cap to the events it receives. {{ added "0.28.0" }} |
 | `--max-state-entries N` | Hard cap on correlation state entries across all correlations and group keys. Default 100,000. |
 | `--max-group-entries N` | Cap retained entries within a single group's window. Unset = unbounded. |
 | `--timestamp-field FIELD` | Prepend a field name to the timestamp extraction list (default `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`). |

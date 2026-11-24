@@ -41,11 +41,11 @@ enrichers:
     # ... primitive-specific fields below ...
 ```
 
-Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`, `mmap: false`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "unreleased" }}
+Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`, `mmap: false`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "0.28.0" }}
 
 ## Misses and errors
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A miss is a lookup that ran and found no data for its key: a `lookup` source cache miss or an extract that matched nothing, a `stix` query with no objects or an extract that returned `null`, an `mmdb` address with no record or an empty projection, a `dns` NXDOMAIN or NODATA answer, and an `http` response whose status is listed in `miss_status`. An `http` result that is `null` after the optional `extract` is not a miss: it injects `default` when one is configured, and `null` otherwise. Everything else that stops an enricher (a timeout, a non-2xx status that is not listed, an invalid key, a store or resolver error, an extract evaluation error) is a failure. `template` and `command` have no misses.
 
@@ -122,14 +122,14 @@ Detection variables (`${detection.*}`):
 |---|---|
 | `${detection.rule.title}`/`.id`/`.level` | Rule metadata from `RuleHeader` |
 | `${detection.tags}` | Comma-joined `tags` |
-| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields`; when the rule did not match on `<name>`, the value of `<name>` in the event {{ added "unreleased" }} |
+| `${detection.fields.<name>}` | The matched value of `<name>` from `matched_fields`; when the rule did not match on `<name>`, the value of `<name>` in the event {{ added "0.28.0" }} |
 | `${detection.event.<dotted.path>}` | JSON path into the original event |
 
-`${detection.fields.<name>}` reads a matched field first, even when its value is null or empty. When no matched field has that name, it reads `<name>` from the event: the whole name as a top-level key first, then as a dotted path (`process.parent.name`, `addresses.0`). If neither exists, it renders empty. A rule therefore does not have to select on `SourceIp` for an enricher keyed on `${detection.fields.SourceIp}` to see it. {{ added "unreleased" }}
+`${detection.fields.<name>}` reads a matched field first, even when its value is null or empty. When no matched field has that name, it reads `<name>` from the event: the whole name as a top-level key first, then as a dotted path (`process.parent.name`, `addresses.0`). If neither exists, it renders empty. A rule therefore does not have to select on `SourceIp` for an enricher keyed on `${detection.fields.SourceIp}` to see it. {{ added "0.28.0" }}
 
-The daemon retains each detection's event automatically whenever a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, so these templates resolve without `--include-event`. Without `--include-event` or capture, the event is stripped right after enrichment, before the risk layer, the alert pipeline, and the sinks; with capture on, it is stripped after capture admission as before. A rule that sets `rsigma.include_event: "true"` keeps its event either way, and `--include-event` delivers every event. Retention follows enricher reloads: it turns on when a reloaded file starts reading the event and off when it stops. Only the fields each type renders count: the `template` text, `lookup` and `stix` `extract`, `stix_id`, `text_search`, the `http` `url`, `body`, and header values, `command` arguments and `env` values, and the `mmdb` and `dns` `key`. The `http` and `dns` `extract`, which are not templates, do not turn it on. The MCP server's `evaluate_events` tool retains and strips events the same way for the enrichers passed to it. {{ added "unreleased" }}
+The daemon retains each detection's event automatically whenever a loaded enricher reads `${detection.fields.*}` or `${detection.event.*}`, so these templates resolve without `--include-event`. Without `--include-event` or capture, the event is stripped right after enrichment, before the risk layer, the alert pipeline, and the sinks; with capture on, it is stripped after capture admission as before. A rule that sets `rsigma.include_event: "true"` keeps its event either way, and `--include-event` delivers every event. Retention follows enricher reloads: it turns on when a reloaded file starts reading the event and off when it stops. Only the fields each type renders count: the `template` text, `lookup` and `stix` `extract`, `stix_id`, `text_search`, the `http` `url`, `body`, and header values, `command` arguments and `env` values, and the `mmdb` and `dns` `key`. The `http` and `dns` `extract`, which are not templates, do not turn it on. The MCP server's `evaluate_events` tool retains and strips events the same way for the enrichers passed to it. {{ added "0.28.0" }}
 
-Retention serializes the event into every detection only while a loaded enricher reads the payload, the same work `--include-event` does. {{ added "unreleased" }}
+Retention serializes the event into every detection only while a loaded enricher reads the payload, the same work `--include-event` does. {{ added "0.28.0" }}
 
 Correlation variables (`${correlation.*}`):
 
@@ -158,7 +158,7 @@ There is no `scope.kinds` axis: the top-level `kind` already gates which result 
 
 ## Tenancy
 
-`scope.tenants` restricts an enricher to listed tenants. Dynamic sources, watchlists, STIX sources, MMDB databases, and DNS caches stay operator-global and shared. For per-tenant data, declare per-tenant source ids and reference them only from that tenant's ruleset. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+`scope.tenants` restricts an enricher to listed tenants. Dynamic sources, watchlists, STIX sources, MMDB databases, and DNS caches stay operator-global and shared. For per-tenant data, declare per-tenant source ids and reference them only from that tenant's ruleset. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## The seven primitives
 
@@ -193,11 +193,11 @@ Reads a value from the shared dynamic [source cache](../reference/dynamic-source
 The decision matrix:
 
 - **Cache hit + extract matches** → inject the extracted value
-- **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "unreleased" }}
-- **Cache miss** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "unreleased" }}
+- **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "0.28.0" }}
+- **Cache miss** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "0.28.0" }}
 - **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
 
-Writing `default: null` injects `null` on a miss; omitting `default` leaves the miss to `on_miss` or `on_error`. See [Misses and errors](#misses-and-errors). {{ added "unreleased" }}
+Writing `default: null` injects `null` on a miss; omitting `default` leaves the miss to `on_miss` or `on_error`. See [Misses and errors](#misses-and-errors). {{ added "0.28.0" }}
 
 `lookup` requires at least one dynamic source to be configured on the daemon via `--source <file>`. The loader surfaces a clear error at startup if a `lookup` enricher is configured without a source cache. Source declarations live only in standalone `--source` files. A pipeline is not required. See [Using dynamic sources with `lookup` enrichers](#using-dynamic-sources-with-lookup-enrichers).
 
@@ -229,7 +229,7 @@ Query modes (at least one required):
 | `text_search` | Template-expanded substring → [`StixQuery::text_search`](../library/rstix.md#rstix-graph-marking-store). |
 | `attack_technique: true` | Uses the first `attack.t*` technique tag on the firing rule (for example `attack.t1059.001` → search `1059.001`). |
 
-Optional `type_filter` restricts to known STIX 2.1 type names (`indicator`, `attack-pattern`, …). Custom `x_*` MITRE types are matched via `text_search` without a filter. `max_results` defaults to `1`. On a miss (no objects, or an extract that returns `null`), `default` is injected when configured; otherwise `on_miss` applies, or `on_error` when `on_miss` is absent (same contract as `lookup`). {{ added "unreleased" }}
+Optional `type_filter` restricts to known STIX 2.1 type names (`indicator`, `attack-pattern`, …). Custom `x_*` MITRE types are matched via `text_search` without a filter. `max_results` defaults to `1`. On a miss (no objects, or an extract that returns `null`), `default` is injected when configured; otherwise `on_miss` applies, or `on_error` when `on_miss` is absent (same contract as `lookup`). {{ added "0.28.0" }}
 
 Operational loop:
 
@@ -239,7 +239,7 @@ Operational loop:
 
 ### `mmdb`: local MMDB lookup
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Look up an IP address in an operator-supplied MaxMind DB (MMDB) file and inject the decoded record. The lookup is vendor-neutral: any MMDB layout works, including GeoLite2 and GeoIP2 City or ASN, IP2Location, IP2Proxy, and databases you build yourself, because records are decoded generically into JSON. Requires the `mmdb-enrich` feature, which is included in the prebuilt binaries. Databases are not bundled; point `db_path` at a file you downloaded or generated.
 
@@ -277,8 +277,8 @@ Miss and error handling:
 | Situation | Result |
 |---|---|
 | Record found and, with `fields`, at least one path present | Inject the object (hit) |
-| No record for the IP | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
-| `fields` configured but no path present | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
+| No record for the IP | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "0.28.0" }} |
+| `fields` configured but no path present | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "0.28.0" }} |
 | `key` renders empty | Fetch error, then `on_error` |
 | `key` is not an IP address | Parse error, then `on_error` |
 | Record decode or path type mismatch | Parse error, then `on_error` |
@@ -286,7 +286,7 @@ Miss and error handling:
 
 The database is checked for replacement about once a minute. A changed file is reopened and swapped in off the hot path, and the previous reader stays active if the reopen fails. An unchanged file is not reloaded. Replace databases atomically: write the new file next to the old one, then `mv` it over the old path. `geoipupdate` already does this. A single-file bind mount pins the original inode, so mount the containing directory instead.
 
-Set `mmap: true` to memory-map the database instead of reading it into memory (see the sizing notes below). It needs the `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include; without the feature, `mmap: true` fails at load. Entries that share a `db_path` must agree on `mmap`. A mapped file must be replaced, never rewritten: writing to it in place or truncating it while the daemon has it mapped can crash the daemon with `SIGBUS`. The atomic replacement above is safe, because the daemon keeps reading the old file until it maps the new one on the next check. {{ added "unreleased" }}
+Set `mmap: true` to memory-map the database instead of reading it into memory (see the sizing notes below). It needs the `mmdb-mmap` feature, which the prebuilt binaries and the Docker image include; without the feature, `mmap: true` fails at load. Entries that share a `db_path` must agree on `mmap`. A mapped file must be replaced, never rewritten: writing to it in place or truncating it while the daemon has it mapped can crash the daemon with `SIGBUS`. The atomic replacement above is safe, because the daemon keeps reading the old file until it maps the new one on the next check. {{ added "0.28.0" }}
 
 ```yaml
 - id: geo_src
@@ -349,11 +349,11 @@ Operational metrics for this primitive:
 - Alert on staleness with `(time() - rsigma_enrichment_mmdb_build_epoch_seconds{database="/var/lib/geoip/GeoLite2-City.mmdb"}) > 86400 * 7`.
 - Catch a wrong `key` field with the misses-to-hits ratio: `sum(rate(rsigma_enrichment_mmdb_misses_total[5m])) / clamp_min(sum(rate(rsigma_enrichment_mmdb_hits_total[5m])), 1) > 0.5`.
 
-Sizing: by default each database is read fully into memory once, however many entries name its `db_path`. With `mmap: true` the file is memory-mapped instead: its pages live in the operating system's page cache, which every process that maps or reads the file shares and the kernel can evict under memory pressure, and the first lookup that touches a page loads it, from disk when it is not already cached. With a 93 MB database that merges geo, ASN, and anonymity data, the daemon's idle resident memory was 113 MB with the file read into memory and 21.5 MB with it mapped (18.5 MB without enrichers), and 174 MB and 141 MB after 100,000 lookups of random IPv4 addresses. Once its pages are resident, a mapped lookup costs the same as an owned one. A lookup costs a few microseconds per enricher per result. Each path in `fields` is decoded separately, so a projection of a few paths costs less than the full record, while a projection of many paths can cost more than the full record. Each entry repeats the key render and the tree lookup, so one entry with several fields is cheaper than several entries on the same file: in the crate's benchmarks, one entry with 17 paths cost about 13% less than three entries with the same paths. {{ added "unreleased" }}
+Sizing: by default each database is read fully into memory once, however many entries name its `db_path`. With `mmap: true` the file is memory-mapped instead: its pages live in the operating system's page cache, which every process that maps or reads the file shares and the kernel can evict under memory pressure, and the first lookup that touches a page loads it, from disk when it is not already cached. With a 93 MB database that merges geo, ASN, and anonymity data, the daemon's idle resident memory was 113 MB with the file read into memory and 21.5 MB with it mapped (18.5 MB without enrichers), and 174 MB and 141 MB after 100,000 lookups of random IPv4 addresses. Once its pages are resident, a mapped lookup costs the same as an owned one. A lookup costs a few microseconds per enricher per result. Each path in `fields` is decoded separately, so a projection of a few paths costs less than the full record, while a projection of many paths can cost more than the full record. Each entry repeats the key render and the tree lookup, so one entry with several fields is cheaper than several entries on the same file: in the crate's benchmarks, one entry with 17 paths cost about 13% less than three entries with the same paths. {{ added "0.28.0" }}
 
 ### `dns`: DNS lookup
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Resolve a template-expanded name through DNS and inject the answers as presentation-format strings. Requires the `dns-enrich` feature, which is included in the prebuilt binaries. The lookup uses the system resolver unless `nameservers` lists explicit servers.
 
@@ -387,9 +387,9 @@ Miss and error handling:
 | Situation | Result |
 |---|---|
 | At least one answer of the queried type | Inject the array (hit) |
-| NXDOMAIN or NODATA | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
+| NXDOMAIN or NODATA | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "0.28.0" }} |
 | `IP` where one of A or AAAA answers | Inject the answers from the side that answered |
-| `IP` where both sides miss | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "unreleased" }} |
+| `IP` where both sides miss | Inject `default` when configured, otherwise apply `on_miss` (logged at debug) {{ added "0.28.0" }} |
 | `key` renders empty | Fetch error, then `on_error` |
 | `key` has the wrong form for the record type | Parse error, then `on_error` |
 | Resolver timeout | Timeout error, then `on_error` |
@@ -423,9 +423,9 @@ Per-result `reqwest` request with template-expanded URL, headers, and optional b
     tags: ["attack.execution", "attack.defense_evasion"]
 ```
 
-`default` is the value injected for a `null` result and for a listed status. `miss_status` lists response statuses, each in `300..=599`, that mean "no data for this key" rather than a failure, for APIs that answer an unknown indicator with a status such as 404. It is empty by default, so every non-2xx status is a failure. A listed status is a miss: the body is not read and `extract` does not run. An entry outside `300..=599` fails at load. {{ added "unreleased" }}
+`default` is the value injected for a `null` result and for a listed status. `miss_status` lists response statuses, each in `300..=599`, that mean "no data for this key" rather than a failure, for APIs that answer an unknown indicator with a status such as 404. It is empty by default, so every non-2xx status is a failure. A listed status is a miss: the body is not read and `extract` does not run. An entry outside `300..=599` fails at load. {{ added "0.28.0" }}
 
-Miss and error handling: {{ added "unreleased" }}
+Miss and error handling: {{ added "0.28.0" }}
 
 | Situation | Result |
 |---|---|
@@ -435,7 +435,7 @@ Miss and error handling: {{ added "unreleased" }}
 | `extract` evaluation error | Extract error, then `on_error` |
 | Any other non-2xx status, a timeout, a transport error, a body over the cap, or invalid JSON | `on_error`, even when `default` is set |
 
-Both 2xx bodies and `miss_status` responses are cached for `cache_ttl`, and `extract` and `default` are applied again on each cache hit. {{ added "unreleased" }}
+Both 2xx bodies and `miss_status` responses are cached for `cache_ttl`, and `extract` and `default` are applied again on each cache hit. {{ added "0.28.0" }}
 
 Event and correlation values are escaped for where they land. In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so a field value cannot add path segments, start a query, or reach another path on the host; a value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. In `body`, values are JSON-string-escaped, so a value inside a JSON string literal cannot add keys; a placeholder outside a string literal is inserted as raw text. `${ENV_VAR}` values in `url` are inserted verbatim, and header values are not escaped (CR and LF are rejected). {{ added "0.25.0" }}
 
@@ -592,13 +592,13 @@ To use it with a provider, adapt three fields:
 - `headers`: how the provider takes its key. Send the key in a header rather than a query parameter, because `${ENV_VAR}` values in `url` are inserted verbatim and a failed request logs the full URL. For a keyless tier, remove `headers`; a provider can reject an empty key instead of treating it as keyless.
 - `extract`: the response paths on the right of each key.
 
-The `extract` injects the same shape as the `mmdb` recipe, and `default` injects `{country: "unknown"}` when the provider has no record for the address, so moving between a hosted API and a local database does not change what downstream consumers read. Providers commonly answer private and reserved addresses with HTTP 200 and a body that says there is no record, and each says it differently; `select(.country_code)` yields `null` for every body without the field you need, and `default` covers that `null`. If the provider answers an unknown address with a status such as 404 instead, add it to `miss_status`. A rejected key or an exhausted quota typically returns another non-2xx status, which goes through `on_error`. {{ added "unreleased" }}
+The `extract` injects the same shape as the `mmdb` recipe, and `default` injects `{country: "unknown"}` when the provider has no record for the address, so moving between a hosted API and a local database does not change what downstream consumers read. Providers commonly answer private and reserved addresses with HTTP 200 and a body that says there is no record, and each says it differently; `select(.country_code)` yields `null` for every body without the field you need, and `default` covers that `null`. If the provider answers an unknown address with a status such as 404 instead, add it to `miss_status`. A rejected key or an exhausted quota typically returns another non-2xx status, which goes through `on_error`. {{ added "0.28.0" }}
 
 Every lookup sends the address to the provider, internal addresses included. Use `mmdb` when addresses must stay inside your network.
 
 ### `enrich_ip_rdns`: reverse DNS name by IP
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 Use `type: dns` with `record_type: PTR`. The injected value is the first name the reverse zone returns, without its trailing root dot.
 
@@ -643,7 +643,7 @@ enrichers:
       tags: ["attack.execution", "attack.defense_evasion"]
 ```
 
-Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `null` when VirusTotal has no report for the hash (HTTP 404). A `null` rather than a placeholder string keeps the field an object wherever it has a value, so a sink with a typed schema does not reject either form. A 404 is cached for `cache_ttl` like a report. {{ added "unreleased" }}
+Expected `enrichments.file_reputation` shape: the `last_analysis_stats` object, or `null` when VirusTotal has no report for the hash (HTTP 404). A `null` rather than a placeholder string keeps the field an object wherever it has a value, so a sink with a typed schema does not reject either form. A 404 is cached for `cache_ttl` like a report. {{ added "0.28.0" }}
 
 ### `enrich_cve_kev`: known-exploited-vulnerability flag
 
@@ -730,7 +730,7 @@ The pipeline writes into `RuleHeader::enrichments` lazily, so detections and cor
 
 ## Logging
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A miss without `default` logs at debug level (`Enricher found no data`), so routine misses do not flood the log. A miss covered by `default` is a success and is not logged. Every other failure logs a warning (`Enricher failed, skipping`, `... injecting null`, or `... dropping result`) at most once per 10 seconds per enricher id. Every warning carries a `suppressed` field: the number of failures of that enricher since the previous warning that were not logged. When the enrichers are reloaded, failures not yet reported are logged once per enricher id as `Enricher failures suppressed since the last warning`, with the same field.
 
@@ -738,7 +738,7 @@ A miss without `default` logs at debug level (`Enricher found no data`), so rout
 
 | Metric | Labels | Description |
 |---|---|---|
-| `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`miss`/`drop`. A miss that is skipped or injected as `null` reports `miss` {{ added "unreleased" }} |
+| `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`miss`/`drop`. A miss that is skipped or injected as `null` reports `miss` {{ added "0.28.0" }} |
 | `rsigma_enrichment_duration_seconds` | `enricher_id`, `kind` | Per-enricher latency histogram |
 | `rsigma_enrichment_queue_depth` | none | Pending enrichment calls (sum across both kinds) |
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |

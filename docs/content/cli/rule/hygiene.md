@@ -55,7 +55,7 @@ The broken-coverage rollup needs each rule's full referenced-field set, so it jo
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-r, --rules <PATH>` | required unless `--ruleset` | Sigma rule file or directory (repeatable). May also be supplied via `hygiene.rules`. Conflicts with `--ruleset`. |
-| `--ruleset <NAME>` | none | Named ruleset from the configuration to report on instead of `--rules`. May also be supplied via `hygiene.ruleset`. {{ added "unreleased" }} |
+| `--ruleset <NAME>` | none | Named ruleset from the configuration to report on instead of `--rules`. May also be supplied via `hygiene.ruleset`. {{ added "0.28.0" }} |
 | `--metrics <FILE\|URL>` | unset | A Prometheus exposition snapshot file or a `/metrics` URL. May also be supplied via `hygiene.metrics`. |
 | `--metrics-window <DURATION>` | unset | Range-query window (e.g. `7d`, `24h`) when `--metrics` is a query-API base. May also be supplied via `hygiene.metrics_window`. |
 | `--corpus <PATH>` | unset | Event corpus file or directory replayed for offline fire counts (repeatable). |

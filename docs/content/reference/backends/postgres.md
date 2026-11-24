@@ -57,9 +57,9 @@ A comparison on a missing field is NULL in SQL, and `NOT NULL` is still NULL, so
 
 Field names other than plain lowercase identifiers are double-quoted (`"CommandLine"`). String literals are always single-quoted with PostgreSQL-standard escaping (`'don''t'`). Identifiers passed through `-O table=...` are validated against `^[A-Za-z_][A-Za-z0-9_$]*$` before insertion; non-matching identifiers fail conversion with `InvalidIdentifier`. See [Security Hardening: SQL injection prevention](../security.md#sql-injection-prevention).
 
-A `"` inside a quoted field name is doubled (`"a""b"`), so it cannot end the identifier. {{ added "unreleased" }}
+A `"` inside a quoted field name is doubled (`"a""b"`), so it cannot end the identifier. {{ added "0.28.0" }}
 
-A `query_expression_placeholders` template can use `{query}`, `{table}`, `{rule.title}`, and `{rule.id}`. Each placeholder is substituted once, so placeholder text inside a rule's values stays literal. The rule title and ID render with single quotes doubled, so place them inside a string literal such as `'{rule.title}'`. {{ added "unreleased" }}
+A `query_expression_placeholders` template can use `{query}`, `{table}`, `{rule.title}`, and `{rule.id}`. Each placeholder is substituted once, so placeholder text inside a rule's values stays literal. The rule title and ID render with single quotes doubled, so place them inside a string literal such as `'{rule.title}'`. {{ added "0.28.0" }}
 
 ## Output formats
 

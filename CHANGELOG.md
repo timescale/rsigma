@@ -4,6 +4,22 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-24
+
+**TL;DR**
+RSigma v0.28.0 is the "detection engineering at scale" release: a single daemon serves several tenants with their state kept apart, named rulesets curate and pin the rules each one runs, STIX and TAXII feeds and pushed watchlists turn threat intel into detections, and five security advisories are fixed in the PostgreSQL, LynxDB, and Fibratus backends and the STIX store. It is the largest RSigma release to date.
+* Multi-tenancy: one daemon serves several tenants, bound only by operator-issued tokens, sources, and NATS subscriptions. Correlation, dedup, incident, silence, risk, and disposition state is keyed per tenant, `daemon.tenancy.quotas` caps each tenant, API routes are scoped to the token's tenant, and sinks route by `{tenant}` (#732).
+* Rulesets: `rulesets:` curates rules with selectors, overlays, and a deterministic lockfile, with the `rsigma ruleset` command group and `--ruleset` on the rule, eval, convert, and hunt commands (#712). Several rulesets run side by side in eval and the daemon, each with its own pipelines and correlation state (#715), and the `convert:` manifest with `rsigma backend build` converts groups of rules into queries plus a per-rule manifest (#717).
+* Threat intel: TAXII 2.1 collections and STIX bundles become dynamic source values (#722), `watchlist` sources take indicators pushed over the API and rebuild the rules that reference them (#716), and `rule draft --from-stix` drafts Sigma rules from STIX indicators (#731), thanks to @SecurityEnthusiast.
+* Enrichment: templates read fields the rule did not match from the event, and the daemon keeps the event only as long as an enricher needs it (#739). A lookup that finds nothing is a miss with its own `on_miss` handling, and the `http` enricher gains `default` and `miss_status` (#740). New `dns` (#708) and `mmdb` (#706) enrichers, with `mmap: true` for `mmdb` cutting idle memory with a 93 MB database from 113 MB to 21.5 MB (#741), and a hosted-API GeoIP recipe (#735, thanks to @Vlam9988).
+* Throughput: daemon intake no longer wakes the whole thread pool for small batches, cutting system CPU for 1,000,000 events and one rule that matches them all from 5.66 s to 0.97 s, and `--worker-threads`, `--detect-threads`, and `--detect-inflight` size the pools (#742). Sinks deliver a batch at once, taking 100,000 events to NATS JetStream from 12.21 s to 0.65 s and to OTLP from 16.65 s to 0.59 s, and retries no longer repeat deliveries the sink knows went out (#743). A stdout sink that keeps up with its queue writes on its own thread, so batching does not slow down a daemon whose enrichers are the slow stage (#747). `engine daemon --input stdin` runs one batch to the end of input and exits, for serverless and cron callers (#714).
+* Correlation and output: chained correlations carry their contributing `events` or `event_refs`, plus `event_sources` naming the rule and child correlation behind each event (#737). OCSF findings are written by eval, backtest, sinks, and webhooks (#711), and `udm_events.yml` canonicalizes Google SecOps UDM events (#705), thanks to @SecurityEnthusiast.
+* Config safety: unknown keys in `rsigma.yaml` and in enricher, webhook, risk, and dynamic source files fail at load with the key named, and the daemon reloads when the enrichers, alert-pipeline, or risk file changes (#738).
+* Security: the PostgreSQL backend escapes quotes in field names and expands placeholders once ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7), #718), the LynxDB backend rejects unsafe field names and expands placeholders once ([GHSA-f96v-37xh-p653](https://github.com/timescale/rsigma/security/advisories/GHSA-f96v-37xh-p653), #719), the Fibratus backend rejects unsafe field names ([GHSA-98v4-pmv2-h8qq](https://github.com/timescale/rsigma/security/advisories/GHSA-98v4-pmv2-h8qq)) and escapes YAML line breaks ([GHSA-gx4c-rpx5-2w58](https://github.com/timescale/rsigma/security/advisories/GHSA-gx4c-rpx5-2w58), #734), and STIX ids are validated before they name a store file ([GHSA-g52x-rcvw-c2qw](https://github.com/timescale/rsigma/security/advisories/GHSA-g52x-rcvw-c2qw), #733), all five reported by @nexus8222. `async-nats` 0.52 stops a header `\r` from panicking the NATS source (#723), and `url` 2.5.9 fixes RUSTSEC-2026-0592 (#738).
+* Dependencies: Dependabot roll-ups with pySigma 2.1.0 in the engine test image (#723, #730), `psm` 0.1.32 with the `cargo deny` license exception for `ar_archive_writer` (#726), and the VS Code extension declaring VS Code 1.91 (#725).
+* Breaking: unknown `rsigma.yaml` keys stop every command with exit `3`, and unknown or inapplicable keys in enricher, webhook, risk, and source files fail to load (#738). An enricher with `default: null` injects `null` on a miss (#740). `--input stdin` exits `3` when stored state cannot be restored and `4` when a run does not complete (#714), and a zero `--buffer-size`, `--batch-size`, or `--sink-batch-max` is rejected (#742). LynxDB and Fibratus conversion rejects field names outside their identifier syntax (#719, #734), and STIX ids outside the STIX 2.1 type-name rules no longer parse (#733). Correlation, alert-pipeline, risk, and disposition snapshots move to version 2, which older releases cannot read (#732). In the libraries, `EnricherConfig` and `EnrichersConfigError` are `#[non_exhaustive]` (#738), `EnrichErrorKind` gains `Miss` (#740), `CorrelationBody` gains `event_sources` (#737), the tenancy types gain tenant fields (#732), `RuleHeader` gains `ruleset` and `CorrelationSnapshot` gains `rulesets` (#712, #715), `SourceType` and `DataFormat` gain variants (#716, #722), `DraftError` (#731) and `StixIdError` (#733) gain variants, `TickOutput` and `RiskOutput` gain `finding_links` (#711), and Fibratus `sanitize_field` is replaced by `field_ident` (#734). See the migration notes in the entries below.
+* Docs and CI: the docs home page is redesigned and every internal fragment link is checked at build time (#710), the fuzz crate is checked on every PR (#724), the agent skill covers schema pipelines, hunting, and rule set review (#707), and `rsigma --features` lists every optional feature, checked against the crate manifest (#745).
+
 ### Faster stdout delivery with enrichers (#747)
 
 A stdout sink whose worker keeps up with its queue now writes each batch on a dedicated `rsigma-stdout` thread. Before, every batch went through Tokio's `block_in_place`, which moves the runtime worker to another thread for the write. When enrichment is the slow stage, the sink worker drains about two results at a time, so that move happened about every second result, and the enrichment task kept changing threads. Batched delivery (#743) made each write cheaper, so the worker returned to its queue sooner, woke more often, and moved the runtime more often: at the default `--sink-batch-flush-ms 0`, an enriched daemon ran slower than before #743. A worker that falls behind, with results still queued behind the batch it drained, keeps writing in place, so a busy sink pays no round trip to the writer thread. Delivery order, retries, and the lines a retry skips are unchanged.
@@ -173,6 +189,8 @@ See [Correlation in eval mode](https://rsigma.io/guide/evaluating-rules/#correla
 
 The `enrich_ip_geoip` recipe gains a hosted-API variant: an `http` enricher with a response cache, the API key in a header instead of the URL, and a jq `extract` that injects the same `{country, region, city}` shape as the `mmdb` variant, with `{country: "unknown"}` for addresses the provider has no record for. The CLI README lists the three GeoIP variants together again. Docs only.
 
+Thanks to @Vlam9988, whose #713 proposed the hosted-API variant this recipe builds on.
+
 ### Daemon batch runs over stdin (#714)
 
 `rsigma engine daemon --input stdin` is a one-shot batch runner for serverless and cron callers. It reads stdin to end of input, evaluates every event, drains every sink and the dead-letter queue, saves `--state-db`, and exits. A correlation window that spans batches fires in the run that completes it, and after exit the state database is a single file with no `-wal` or `-shm` sidecar.
@@ -196,6 +214,8 @@ The Fibratus backend passed field names through unchanged, so a field name such 
 
 **Breaking changes:** `rsigma_convert::backends::fibratus::shared::sanitize_field` is replaced by `field_ident`, which returns `Result<&str>` and rejects names outside Fibratus identifier syntax.
 
+Thanks to @nexus8222 for reporting both issues.
+
 ### STIX ids are validated before they name a store file (security, #733)
 
 `StixId::parse` checked only the `--` delimiter and the UUID, and `FsStore` used the id as a file name under `objects/`. With `--allow-custom`, a bundle passed to `rsigma taxii store` or a collection read by `rsigma taxii sync` could carry an id such as `../../x--<uuid>` or `/tmp/x--<uuid>` and write a JSON file outside the store ([GHSA-g52x-rcvw-c2qw](https://github.com/timescale/rsigma/security/advisories/GHSA-g52x-rcvw-c2qw)).
@@ -204,6 +224,8 @@ The Fibratus backend passed field names through unchanged, so a field name such 
 - `FsStore` checks the file name for every id before it writes or deletes and fails with `StoreError::InvalidObjectId`, so an id built with `StixId::generate` from an unchecked type name cannot escape the store either.
 
 **Breaking changes:** `StixIdError` gains the `InvalidTypeName` and `NonHyphenatedUuid` variants. Ids that broke the STIX type-name rules, such as uppercase or two-character type names, no longer parse, and an `FsStore` that already holds such an id fails to open until the file is removed.
+
+Thanks to @nexus8222 for reporting this issue.
 
 ### Multi-tenant daemon (#732)
 
@@ -239,6 +261,8 @@ The title comes from `--title`, or from the indicator name when one indicator co
 
 **Breaking.** Exhaustive matches on `DraftError` must handle the new variants.
 
+Thanks to @SecurityEnthusiast for this contribution.
+
 ### pySigma 2.1.0 and dependency follow-up for #723 (#730)
 
 Rolls up the Dependabot PRs that opened after #723. The pySigma engine image moves to pySigma 2.1.0 (#728), with `requirements.txt` re-resolved for Python 3.13 against packages released on or before 2026-11-12, which also brings `jq` 1.13.0, `certifi` 2026.10.23, and `types-pyyaml` 6.0.12.20261111. The `test` backend still matches pySigma's output. CI: `taiki-e/install-action` v2.90.3, repinned by commit SHA (#729). Held back: the `python:3.15-slim` base image (#727), because `google-re2` publishes no Python 3.15 wheel and the slim image has no compiler to build it from source; `tikv-jemallocator` 0.7.0 (#425) remains excluded after the measured musl daemon throughput regression.
@@ -271,6 +295,8 @@ A TAXII source polls indicators of spec version 2.1. The first poll reads from t
 
 **Breaking changes.** Code that matches on `SourceType` or `DataFormat` exhaustively must handle `Taxii` and `Stix`. `SourceType::File` and `SourceType::Http` gain a `stix` field: set it to `None` when the source is not `format: stix`. A TAXII envelope that exceeds the parse limits now fails instead of being parsed.
 
+Thanks to @SecurityEnthusiast for this contribution.
+
 ### LynxDB output rejects unsafe field names and expands template placeholders once (security, #719)
 
 The LynxDB backend rendered field names verbatim, so a field name such as `Image=* OR CommandLine` rewrote the logic of the generated `search` or `where` stage. It also substituted `{rule.title}`, `{rule.id}`, and pipeline state keys into the finished query after the detection was rendered, so a field name or regex value of `{rule.title}` was replaced by the raw title, which could close a quoted string and append pipeline stages such as `| stats count by host` ([GHSA-f96v-37xh-p653](https://github.com/timescale/rsigma/security/advisories/GHSA-f96v-37xh-p653)).
@@ -279,6 +305,8 @@ The LynxDB backend rendered field names verbatim, so a field name such as `Image
 - Query template placeholders are substituted in a single pass with `render_query_template`, so placeholder text inside a rule's values stays literal. Pipeline state still takes precedence over the default `index`.
 
 **Breaking changes.** A rule or pipeline that maps a field to a name outside LynxDB identifier syntax now fails to convert for LynxDB. Such a name did not convert to a working query before.
+
+Thanks to @nexus8222, whose PostgreSQL report ([GHSA-799c-444p-fhj7](https://github.com/timescale/rsigma/security/advisories/GHSA-799c-444p-fhj7)) led to this finding.
 
 ### PostgreSQL output escapes quotes in field names and expands template placeholders once (security, #718)
 
@@ -291,6 +319,8 @@ The PostgreSQL backend wrapped mixed-case field names in double quotes without d
 
 No breaking changes.
 
+Thanks to @nexus8222 for reporting this issue.
+
 ### Watchlist sources and rebuilds on source change (#716)
 
 A dynamic source with `type: watchlist` holds indicators pushed over the daemon HTTP API. Nothing is fetched. `POST`, `PUT`, and `DELETE /api/v1/sources/{source_id}/indicators` add, replace, and delete values, and `GET` lists the unexpired ones. Each value is compared exactly, after surrounding whitespace is removed. An empty value, a value longer than `max_value_length` (default 2048 bytes), or a value containing an ASCII control character is rejected. Expiry comes from the item's `expires_at`, then the item's `ttl`, then the request `ttl`, then the source `default_ttl`. When none of those is set, the indicator stays until it is deleted. A sweeper drops expired indicators about every 10 seconds.
@@ -302,6 +332,8 @@ With `--state-db`, indicators are written through before the response. Writes to
 `POST`, `PUT`, and `DELETE` require `sources:write` and are audited. `GET` requires `sources:read` and is not audited. `DELETE` carries a JSON body. The audit trail records a SHA-256 digest of that body and does not store the body itself. A request may carry at most 10,000 indicators and 4 MiB. When the audit trail is enabled, a body larger than `daemon.api.audit.max_body_bytes` (default 64 KiB) is rejected with 413 before the handler runs. `max_indicators` (default 100,000) caps the stored set. An `expires_at` that is not later than the current time is rejected. `refresh`, `format`, `extract`, and `timeout` are rejected on a watchlist, and the ids `resolve` and `cache` are reserved.
 
 **Breaking changes.** Rules that reference a dynamic source now change when that source's value changes, without `POST /api/v1/reload`. Code that matches on `SourceType` exhaustively must handle the `Watchlist` variant.
+
+Thanks to @SecurityEnthusiast for this contribution.
 
 ### Conversion manifest (#717)
 
@@ -353,6 +385,8 @@ Line sinks accept `?format=ocsf` with optional `?ocsf_version=1.1.0|1.3.0` (defa
 
 See [OCSF Findings](https://rsigma.io/guide/ocsf-findings/) and [Output formats](https://rsigma.io/reference/output/).
 
+Thanks to @SecurityEnthusiast for this contribution.
+
 ### Documentation home page redesign, flat anchor aliases, and fragment validation (#710)
 
 The `rsigma.io` home page opens with a split hero, a tabbed quick-run snippet (`Evaluate`, `Daemon`, `Convert`, `Rust`), a tabbed install bar, a four-card benchmark strip, the detection-loop diagram paired with workflow cards, grouped downstream integrations, and a minimal footer, with focus mode (`Alt+F`) enabled site-wide. The version-tag legend moves to [Release Notes](https://rsigma.io/release-notes/#version-tags).
@@ -369,7 +403,7 @@ The daemon exposes `rsigma_enrichment_dns_cache_hits_total`, `rsigma_enrichment_
 
 The library surface adds `DnsEnricher`, `DnsRecordType`, `DnsResolverConfig`, and `SUPPORTED_DNS_RECORD_TYPES`, plus four `MetricsHook` methods for cache hits, cache misses, query results, and label pre-registration.
 
-Breaking changes: `EnricherConfig` has four new public fields, so code that builds it with a struct literal must add `record_type: None`, `nameservers: Vec::new()`, `negative_cache_ttl: None`, and `cache_max_entries: None`. YAML configs are unaffected.
+Breaking changes: `EnricherConfig` gains the public `record_type`, `nameservers`, `negative_cache_ttl`, and `cache_max_entries` fields. In this release it is also `#[non_exhaustive]` (#738), so library code builds it by deserializing a config instead of with a struct literal. YAML configs are unaffected.
 
 See [Enrichers](https://rsigma.io/guide/enrichers/#dns-dns-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
 
@@ -381,6 +415,8 @@ The `skills/rsigma` skill now tells agents to pass a canonicalizing pipeline wit
 
 Adds path-only `udm_events.yml` for Google SecOps UDM-shaped eval input (Chronicle / Bindplane-style nested JSON). Maps the portable five Sigma categories with `metadata.event_type` gates.
 
+Thanks to @SecurityEnthusiast for this contribution.
+
 ### Native MMDB enricher (#706)
 
 `rsigma-runtime` adds a `type: mmdb` enricher that looks up an IP address in an operator-supplied MaxMind DB file and injects the decoded record under `enrichments.<field>`. Any MMDB layout works (GeoLite2 and GeoIP2 City or ASN, IP2Location, IP2Proxy, and databases you build yourself) because records are decoded generically into JSON, and an optional `fields:` map projects values through dotted paths where numeric segments are array indexes. Entries that name the same `db_path` share one loaded reader, for both detection and correlation kinds.
@@ -391,9 +427,11 @@ The daemon exposes `rsigma_enrichment_mmdb_hits_total`, `rsigma_enrichment_mmdb_
 
 The library surface adds `MmdbEnricher`, `MmdbDatabase`, `MmdbFields`, and `MmdbLookupError`, six `MetricsHook` methods for hits, misses, reloads, build epoch, and label pre-registration, and an `EnrichersConfigError::Database` variant for a database that fails to open at config load.
 
-Breaking changes: `EnrichersConfigError` is not `#[non_exhaustive]`, so an exhaustive `match` on it needs an arm for `Database`. `EnricherConfig` has three new public fields, so code that builds it with a struct literal must add `db_path: None`, `key: None`, and `fields: BTreeMap::new()`. YAML configs are unaffected.
+Breaking changes: `EnrichersConfigError` gains the `Database` variant, and in this release the enum is also `#[non_exhaustive]` (#738), so a `match` on it needs a wildcard arm. `EnricherConfig` gains the public `db_path`, `key`, and `fields` fields and is built by deserializing a config (#738). YAML configs are unaffected.
 
 See [Enrichers](https://rsigma.io/guide/enrichers/#mmdb-local-mmdb-lookup) and [Prometheus metrics](https://rsigma.io/reference/metrics/).
+
+[v0.27.0...v0.28.0](https://github.com/timescale/rsigma/compare/v0.27.0...v0.28.0)
 
 ## [0.27.0] - 2026-11-12
 
@@ -4042,6 +4080,7 @@ First release of rsigma -- a Sigma detection toolkit in Rust. Ships a parser, ev
 
 Initial crates.io publish. Reserved the `rsigma` crate name with a minimal CLI binary (parser + evaluator only, no linter/LSP/pipelines/correlation). Superseded the same day by v0.2.0, which is the first feature-complete release.
 
+[0.28.0]: https://github.com/timescale/rsigma/releases/tag/v0.28.0
 [0.27.0]: https://github.com/timescale/rsigma/releases/tag/v0.27.0
 [0.26.0]: https://github.com/timescale/rsigma/releases/tag/v0.26.0
 [0.25.0]: https://github.com/timescale/rsigma/releases/tag/v0.25.0

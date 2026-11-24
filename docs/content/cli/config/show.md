@@ -29,7 +29,7 @@ into a single tree, and reports the winning layer for every leaf. Security-sensi
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <PATH>` | discovery chain | Load only this file. |
-| `--for <SECTION>` | all sections | Restrict output to `global`, `daemon`, `eval`, `rulesets`, or `convert`. Other top-level sections (`backtest`, `mcp`, …) appear only when `--for` is omitted. {{ added "unreleased" }} |
+| `--for <SECTION>` | all sections | Restrict output to `global`, `daemon`, `eval`, `rulesets`, or `convert`. Other top-level sections (`backtest`, `mcp`, …) appear only when `--for` is omitted. {{ added "0.28.0" }} |
 | `--format <text\|json\|yaml>` | `text` when unset | Output shape. When unset, the global `--output-format` is used (`json`/`ndjson`/`table`/`csv`/`tsv`). Local `--format` wins over the global selector and prints a precedence warning. See [Output Formats](../../reference/output.md). |
 
 ## Output

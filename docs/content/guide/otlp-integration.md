@@ -77,7 +77,7 @@ Because of the map-body flattening, a rule that selects `EventID: 4625` against 
 
 ## Tenancy
 
-With tenancy enabled, the OTLP HTTP and gRPC ingest routes take the tenant from the bearer token, never from a resource or log attribute. Every exported result carries `tenant_id` as a log-record attribute. See [Multi-tenancy](multi-tenancy.md). {{ added "unreleased" }}
+With tenancy enabled, the OTLP HTTP and gRPC ingest routes take the tenant from the bearer token, never from a resource or log attribute. Every exported result carries `tenant_id` as a log-record attribute. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
 
 ## Agent recipes
 

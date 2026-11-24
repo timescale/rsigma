@@ -4,7 +4,7 @@ description: "Curate vendored Sigma rules into named rulesets with selectors, ov
 
 # Rulesets
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A ruleset is a named curation of Sigma rules declared in `rsigma.yaml`. It selects documents from one or more source trees, resolves correlation dependencies, applies metadata overlays, and can be materialized into a directory with a lockfile. Every rule-loading command that takes `--ruleset` resolves the same way, so the CLI, MCP tools, and the build output agree on what a ruleset contains.
 
@@ -175,7 +175,7 @@ The MCP tools `validate_rules`, `evaluate_events`, `list_fields`, `convert_rules
 
 ## Several rulesets side by side
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `engine eval`, MCP `evaluate_events`, and `engine daemon` can evaluate several rulesets over the same events. Each ruleset keeps its own compiled engines, pipelines, and correlation state. Results carry a `ruleset` field naming the ruleset that produced them, and the results for one event are concatenated in declaration order.
 
@@ -191,7 +191,7 @@ In the daemon, the ruleset list and definitions are read once at startup. Changi
 
 ### Tenant bindings
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 A `daemon.rulesets` entry can list `tenants` next to `when`. A bound ruleset receives only events whose tenant is listed; an unbound ruleset receives every tenant's events, with its state still keyed per tenant. `when` and `tenants` combine with AND. A tenant rejection counts in the same `skipped` counters as a `when` rejection, and `ruleset_stats` reports the binding.
 
@@ -212,7 +212,7 @@ A CLI `--ruleset` list replaces the configured list and carries no `tenants`, li
 
 ## Converting a ruleset
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 `convert:` groups name a ruleset, a target, and an output path, and `rsigma backend build` writes the queries plus a manifest for each group. Pipelines come only from the conversion group, never from the ruleset. See [Rule Conversion](rule-conversion.md#convert-named-rulesets).
 

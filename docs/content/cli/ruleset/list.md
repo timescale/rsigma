@@ -4,7 +4,7 @@ description: "List declared rulesets, their source counts, selectors, overlays, 
 
 # `rsigma ruleset list`
 
-{{ added "unreleased" }}
+{{ added "0.28.0" }}
 
 List the rulesets declared in `rsigma.yaml` and report whether each one resolves.
 

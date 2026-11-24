@@ -60,7 +60,7 @@ Other startup failures exit with code `2` (the initial rules could not be loaded
 Event source exhausted, engine shutting down
 ```
 
-The default input is `stdin`, and the daemon stops when standard input closes. Under systemd, in a detached container, or with `&` in a non-interactive shell, it closes immediately. Use a long-lived input: `--input http`, a `nats://` URL, or a `unix://` socket. To keep a stdin daemon running after its input ends, pass `--stdin-mode stream`. {{ added "unreleased" }}
+The default input is `stdin`, and the daemon stops when standard input closes. Under systemd, in a detached container, or with `&` in a non-interactive shell, it closes immediately. Use a long-lived input: `--input http`, a `nats://` URL, or a `unix://` socket. To keep a stdin daemon running after its input ends, pass `--stdin-mode stream`. {{ added "0.28.0" }}
 
 ## Some rules are missing
 
@@ -116,7 +116,7 @@ When every field is present but the verdict is still `NO MATCH`, the per-item li
 
 ## Rule changes are not picked up
 
-The daemon's file watcher reloads when a `.yml` or `.yaml` file changes anywhere under the rules path, or in the directory of a pipeline, enrichers, alert-pipeline, or risk file. {{ added "unreleased" }} It does not watch TLS files, and it does not see Kubernetes ConfigMap updates reliably. For those, trigger the reload yourself:
+The daemon's file watcher reloads when a `.yml` or `.yaml` file changes anywhere under the rules path, or in the directory of a pipeline, enrichers, alert-pipeline, or risk file. {{ added "0.28.0" }} It does not watch TLS files, and it does not see Kubernetes ConfigMap updates reliably. For those, trigger the reload yourself:
 
 ```bash
 kill -HUP <daemon-pid>          # Unix
