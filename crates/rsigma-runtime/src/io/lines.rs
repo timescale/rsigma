@@ -227,16 +227,63 @@ impl<W: Write> LineWriter<W> {
     where
         C: Copy + Into<Option<&'c DeliveryContext>>,
     {
+        let pending = self.begin_write(items, encoding);
+        let written = (!pending.is_empty()).then(|| {
+            write_lines(
+                &mut self.inner,
+                pending.end_torn_line,
+                pending.batch.bytes(),
+            )
+        });
+        self.finish_write(items, pending, written)
+    }
+
+    /// Encode a batch whose write runs somewhere else, such as on a
+    /// [`WriterThread`], for [`Self::finish_write`] to settle. No other write
+    /// on this writer may run between the two calls.
+    pub(crate) fn begin_write<'c, C>(
+        &mut self,
+        items: &[(&ProcessResult, C)],
+        encoding: LineEncoding<'_>,
+    ) -> PendingWrite
+    where
+        C: Copy + Into<Option<&'c DeliveryContext>>,
+    {
         self.resume
             .retain(items.iter().filter_map(|(_, ctx)| (*ctx).into()));
-        let (batch, starts, mut outcomes) = encode_batch(items, &self.resume, encoding);
-        let failure = if batch.bytes().is_empty() {
-            None
-        } else {
-            self.write_batch(&batch)
-                .err()
-                .map(|(written, err)| (batch.complete_lines(written), err.into()))
-        };
+        let (batch, starts, outcomes) = encode_batch(items, &self.resume, encoding);
+        PendingWrite {
+            batch,
+            starts,
+            outcomes,
+            end_torn_line: self.torn,
+        }
+    }
+
+    /// Settle a batch from [`Self::begin_write`], returning one outcome per
+    /// delivery the write reached. `written` is `None` when the batch had
+    /// nothing to write.
+    pub(crate) fn finish_write<'c, C>(
+        &mut self,
+        items: &[(&ProcessResult, C)],
+        pending: PendingWrite,
+        written: Option<Result<(), ShortWrite>>,
+    ) -> Vec<Result<(), RuntimeError>>
+    where
+        C: Copy + Into<Option<&'c DeliveryContext>>,
+    {
+        let PendingWrite {
+            batch,
+            starts,
+            mut outcomes,
+            ..
+        } = pending;
+        let failure = written.and_then(|written| {
+            let lines = self.record_write(&batch, &written);
+            lines
+                .zip(written.err())
+                .map(|(lines, short)| (lines, short.error.into()))
+        });
         settle_batch(
             items,
             &batch,
@@ -251,22 +298,131 @@ impl<W: Write> LineWriter<W> {
     pub(crate) fn write_line(&mut self, json: &str) -> Result<(), RuntimeError> {
         let mut batch = LineBatch::default();
         batch.push(json);
-        self.write_batch(&batch).map_err(|(_, err)| err.into())
+        let written = write_lines(&mut self.inner, self.torn, batch.bytes());
+        self.record_write(&batch, &written);
+        written.map_err(|short| short.error.into())
     }
 
-    /// Write `batch` in full. A failure reports how many of its bytes were
-    /// written.
-    fn write_batch(&mut self, batch: &LineBatch) -> Result<(), (usize, io::Error)> {
-        if self.torn {
-            write_counted(&mut self.inner, b"\n").map_err(|(_, err)| (0, err))?;
-            self.torn = false;
+    /// Track whether a write of `batch` left a line cut off. On a failure,
+    /// returns how many whole lines of `batch` went out.
+    fn record_write(
+        &mut self,
+        batch: &LineBatch,
+        written: &Result<(), ShortWrite>,
+    ) -> Option<usize> {
+        match written {
+            Ok(()) => {
+                self.torn = false;
+                None
+            }
+            Err(ShortWrite { written: None, .. }) => Some(0),
+            Err(ShortWrite {
+                written: Some(bytes),
+                ..
+            }) => {
+                self.torn = batch.ends_mid_line(*bytes);
+                Some(batch.complete_lines(*bytes))
+            }
         }
-        let outcome = write_counted(&mut self.inner, batch.bytes())
-            .and_then(|()| self.inner.flush().map_err(|err| (batch.bytes().len(), err)));
-        if let Err((written, _)) = &outcome {
-            self.torn = batch.ends_mid_line(*written);
+    }
+}
+
+/// A batch encoded by [`LineWriter::begin_write`], waiting for its write.
+pub(crate) struct PendingWrite {
+    batch: LineBatch,
+    starts: Vec<usize>,
+    outcomes: Vec<Result<(), RuntimeError>>,
+    /// End the line an earlier failed write cut off before writing the batch.
+    end_torn_line: bool,
+}
+
+impl PendingWrite {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.batch.bytes().is_empty()
+    }
+}
+
+/// A write that stopped before the whole batch went out.
+#[derive(Debug)]
+pub(crate) struct ShortWrite {
+    /// Bytes of the batch written. `None` when none were: ending the torn
+    /// line failed first, or the writer thread was gone.
+    written: Option<usize>,
+    error: io::Error,
+}
+
+/// Write `bytes` in full, first ending the line an earlier failed write cut
+/// off when `end_torn_line` is set.
+fn write_lines<W: Write>(out: &mut W, end_torn_line: bool, bytes: &[u8]) -> Result<(), ShortWrite> {
+    if end_torn_line {
+        write_counted(out, b"\n").map_err(|(_, error)| ShortWrite {
+            written: None,
+            error,
+        })?;
+    }
+    write_counted(out, bytes)
+        .and_then(|()| out.flush().map_err(|err| (bytes.len(), err)))
+        .map_err(|(written, error)| ShortWrite {
+            written: Some(written),
+            error,
+        })
+}
+
+/// A dedicated thread that runs a line sink's blocking writes, so a delivery
+/// worker awaits each batch write instead of blocking a runtime thread or
+/// moving the runtime to another thread for every batch.
+pub(crate) struct WriterThread {
+    jobs: std::sync::mpsc::Sender<WriteJob>,
+}
+
+struct WriteJob {
+    bytes: Vec<u8>,
+    end_torn_line: bool,
+    done: tokio::sync::oneshot::Sender<Result<(), ShortWrite>>,
+}
+
+impl WriterThread {
+    /// Start a thread named `name` that writes each batch to the writer
+    /// `open` returns for it.
+    pub(crate) fn spawn<W, F>(name: &str, mut open: F) -> io::Result<Self>
+    where
+        W: Write,
+        F: FnMut() -> W + Send + 'static,
+    {
+        let (jobs, rx) = std::sync::mpsc::channel::<WriteJob>();
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .spawn(move || {
+                for job in rx {
+                    let written = write_lines(&mut open(), job.end_torn_line, &job.bytes);
+                    let _ = job.done.send(written);
+                }
+            })?;
+        Ok(WriterThread { jobs })
+    }
+
+    /// Write a batch from [`LineWriter::begin_write`] on the thread, in the
+    /// order the writes were requested.
+    pub(crate) async fn write(&self, pending: &mut PendingWrite) -> Result<(), ShortWrite> {
+        let (done, outcome) = tokio::sync::oneshot::channel();
+        let job = WriteJob {
+            bytes: std::mem::take(&mut pending.batch.bytes),
+            end_torn_line: pending.end_torn_line,
+            done,
+        };
+        if self.jobs.send(job).is_err() {
+            return Err(ShortWrite::stopped());
         }
-        outcome
+        outcome.await.unwrap_or_else(|_| Err(ShortWrite::stopped()))
+    }
+}
+
+impl ShortWrite {
+    fn stopped() -> Self {
+        ShortWrite {
+            written: None,
+            error: io::Error::other("the writer thread stopped"),
+        }
     }
 }
 
@@ -569,6 +725,153 @@ mod tests {
                 lines[4].as_str(),
             ],
             "no line is written twice and the torn line is ended"
+        );
+    }
+
+    /// One [`FlakyWriter`] stream shared by a writer thread and an inline
+    /// writer.
+    #[derive(Clone)]
+    struct Shared(Arc<std::sync::Mutex<FlakyWriter>>);
+
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Shared {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.lock().unwrap().out.clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    async fn write_on(
+        writer: &WriterThread,
+        out: &mut LineWriter<Shared>,
+        items: &[(&ProcessResult, &DeliveryContext)],
+        encoding: LineEncoding<'_>,
+    ) -> Vec<Result<(), RuntimeError>> {
+        let mut pending = out.begin_write(items, encoding);
+        let written = writer.write(&mut pending).await;
+        out.finish_write(items, pending, Some(written))
+    }
+
+    #[tokio::test]
+    async fn a_batch_on_the_writer_thread_keeps_lines_whole_across_failures() {
+        let ocsf = crate::ocsf::OcsfOptions::default();
+        let deliveries = [
+            results(&["one"]),
+            results(&["two-a", "two-b", "two-c"]),
+            results(&["three"]),
+        ];
+        let contexts = [
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+            DeliveryContext::new(),
+        ];
+        let lines: Vec<String> = deliveries.iter().flatten().map(line).collect();
+        let items: Vec<(&ProcessResult, &DeliveryContext)> =
+            deliveries.iter().zip(contexts.iter()).collect();
+        // All of item 1, the first line of item 2, and half of its second.
+        let budget = lines[0].len() + 1 + lines[1].len() + 1 + lines[2].len() / 2;
+        let stream = Shared(Arc::new(std::sync::Mutex::new(FlakyWriter::new(budget))));
+        let for_thread = stream.clone();
+        let writer = WriterThread::spawn("test-writer", move || for_thread.clone()).unwrap();
+        let mut out = LineWriter::new(stream.clone());
+
+        let outcomes = write_on(&writer, &mut out, &items, encoding(&ocsf)).await;
+        assert_eq!(outcomes.len(), 2, "the write never reached item 3");
+        assert!(outcomes[0].is_ok());
+        assert!(outcomes[1].is_err());
+
+        // The torn item's retry goes through the thread, the next item inline.
+        stream.0.lock().unwrap().budget = usize::MAX;
+        let retry = write_on(&writer, &mut out, &items[1..2], encoding(&ocsf)).await;
+        assert!(retry[0].is_ok());
+        out.write_result(&deliveries[2], Some(&contexts[2]), encoding(&ocsf))
+            .unwrap();
+
+        assert_eq!(
+            stream.lines(),
+            [
+                lines[0].as_str(),
+                lines[1].as_str(),
+                &lines[2][..lines[2].len() / 2],
+                lines[2].as_str(),
+                lines[3].as_str(),
+                lines[4].as_str(),
+            ],
+            "no line is written twice and the torn line is ended"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_write_on_the_writer_thread_leaves_the_runtime_free() {
+        let ocsf = crate::ocsf::OcsfOptions::default();
+        let result = results(&["a"]);
+        let ctx = DeliveryContext::new();
+        let items = [(&result, &ctx)];
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let released_in_time = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = released_in_time.clone();
+        // The write waits for a task on this single-threaded runtime, which
+        // can only run while the write is in flight if the write does not
+        // hold the runtime's thread.
+        let writer = WriterThread::spawn("test-gated", move || {
+            let in_time = gate.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
+            seen.store(in_time, std::sync::atomic::Ordering::SeqCst);
+            Vec::new()
+        })
+        .unwrap();
+        let mut out = LineWriter::new(Vec::new());
+        let mut pending = out.begin_write(&items, encoding(&ocsf));
+
+        let (written, ()) = tokio::join!(writer.write(&mut pending), async {
+            tokio::task::yield_now().await;
+            let _ = release.send(());
+        });
+
+        assert!(written.is_ok());
+        assert!(
+            released_in_time.load(std::sync::atomic::Ordering::SeqCst),
+            "the runtime ran another task while the write was in flight"
+        );
+        assert!(out.finish_write(&items, pending, Some(written))[0].is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stopped_writer_thread_fails_the_batch_without_recording_progress() {
+        let ocsf = crate::ocsf::OcsfOptions::default();
+        let result = results(&["first", "second"]);
+        let ctx = DeliveryContext::new();
+        let items = [(&result, &ctx)];
+        let writer = WriterThread::spawn("test-stopped", || -> Vec<u8> {
+            panic!("the writer thread stops")
+        })
+        .unwrap();
+        let stream = Shared(Arc::new(std::sync::Mutex::new(FlakyWriter::new(
+            usize::MAX,
+        ))));
+        let mut out = LineWriter::new(stream.clone());
+
+        for _ in 0..2 {
+            let outcomes = write_on(&writer, &mut out, &items, encoding(&ocsf)).await;
+            assert!(outcomes[0].is_err(), "a lost write fails the delivery");
+        }
+        out.write_result(&result, Some(&ctx), encoding(&ocsf))
+            .unwrap();
+        assert_eq!(
+            stream.lines(),
+            [line(&result[0]), line(&result[1])],
+            "the retry starts from the first line"
         );
     }
 

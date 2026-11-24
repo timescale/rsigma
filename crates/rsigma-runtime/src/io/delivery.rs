@@ -58,9 +58,15 @@ pub trait DeliverySink: Send + 'static {
     /// on its own once the failed items before it have settled. The default
     /// delivers the items one at a time and stops at the first failure, so
     /// later items wait for its retries and keep their order.
+    ///
+    /// `backlog` is set when more results were already queued behind the
+    /// batch, so the worker is the slower side. A sink can use it to choose
+    /// between a lower-latency write and one that is lighter on the tasks
+    /// feeding the worker; the default ignores it.
     fn deliver_batch<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+        _backlog: bool,
     ) -> BatchFuture<'a> {
         Box::pin(async move {
             let mut outcomes = Vec::with_capacity(items.len());
@@ -107,8 +113,9 @@ impl DeliverySink for Sink {
     fn deliver_batch<'a>(
         &'a mut self,
         items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+        backlog: bool,
     ) -> BatchFuture<'a> {
-        self.send_batch_with_context(items)
+        self.send_batch_with_context(items, backlog)
     }
     fn deliver_incident<'a>(
         &'a mut self,
@@ -527,6 +534,7 @@ async fn worker_loop<S: DeliverySink>(
             }
         }
         metrics.on_sink_queue_depth_change(label, -(batch.len() as i64));
+        let backlog = !rx.is_empty();
         let mut start = 0;
         while start < batch.len() {
             let target = match &batch[start].payload {
@@ -538,6 +546,7 @@ async fn worker_loop<S: DeliverySink>(
                     deliver_results(
                         &mut sink,
                         &batch[start..end],
+                        backlog,
                         &cfg,
                         dlq_tx.as_ref(),
                         &metrics,
@@ -588,6 +597,7 @@ fn drain_ready(
 async fn deliver_results<S: DeliverySink>(
     sink: &mut S,
     run: &[DeliveryItem],
+    backlog: bool,
     cfg: &DeliveryConfig,
     dlq_tx: Option<&mpsc::Sender<DeliveryFailure>>,
     metrics: &Arc<dyn MetricsHook>,
@@ -600,7 +610,7 @@ async fn deliver_results<S: DeliverySink>(
             _ => None,
         })
         .collect();
-    let mut outcomes = sink.deliver_batch(&items).await.into_iter();
+    let mut outcomes = sink.deliver_batch(&items, backlog).await.into_iter();
     for (result, ctx) in items {
         // An item without an outcome gets a full attempt of its own.
         let first_failure = match outcomes.next() {
@@ -1150,12 +1160,14 @@ mod tests {
     }
 
     /// Records each batched first attempt and each single delivery by
-    /// sequence number. The item at `fail_at` fails its batched attempt and
-    /// then `retry_failures` retries before it succeeds. With `stop_at_failure`
-    /// the batch returns no outcome for the items after it.
+    /// sequence number, and the backlog flag of each batch. The item at
+    /// `fail_at` fails its batched attempt and then `retry_failures` retries
+    /// before it succeeds. With `stop_at_failure` the batch returns no
+    /// outcome for the items after it.
     #[derive(Default)]
     struct BatchLog {
         batches: Vec<Vec<u64>>,
+        backlogs: Vec<bool>,
         singles: Vec<u64>,
         incidents: usize,
     }
@@ -1215,13 +1227,14 @@ mod tests {
         fn deliver_batch<'a>(
             &'a mut self,
             items: &'a [(&'a ProcessResult, &'a DeliveryContext)],
+            backlog: bool,
         ) -> BatchFuture<'a> {
             Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .batches
+                let mut log = self.log.lock().unwrap();
+                log.batches
                     .push(items.iter().map(|(_, ctx)| ctx.seq()).collect());
+                log.backlogs.push(backlog);
+                drop(log);
                 let attempted = match self.fail_at {
                     Some(at) if self.stop_at_failure => (at + 1).min(items.len()),
                     _ => items.len(),
@@ -1596,6 +1609,40 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
         assert_eq!(log.lock().unwrap().batches, [seqs]);
         dispatcher.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_batch_reports_a_backlog_while_results_wait_behind_it() {
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let sink = BatchSink::new();
+        let log = sink.log.clone();
+        let cfg = DeliveryConfig {
+            batch_max: 2,
+            batch_flush: Duration::ZERO,
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Block, cfg)],
+            None,
+            ack_tx,
+            noop_metrics(),
+        );
+
+        // The worker only runs once this task yields, so all five are queued
+        // before it drains the first batch.
+        let seqs = dispatch_results(&dispatcher, 5).await;
+        dispatcher.shutdown().await;
+
+        let log = log.lock().unwrap();
+        assert_eq!(
+            log.batches,
+            [seqs[0..2].to_vec(), seqs[2..4].to_vec(), seqs[4..].to_vec()]
+        );
+        assert_eq!(
+            log.backlogs,
+            [true, true, false],
+            "only the last batch had nothing queued behind it"
+        );
     }
 
     #[tokio::test]

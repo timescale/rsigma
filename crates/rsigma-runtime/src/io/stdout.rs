@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use parking_lot::Mutex;
 
 use rsigma_eval::{ProcessResult, TenantId};
@@ -5,11 +7,13 @@ use rsigma_eval::{ProcessResult, TenantId};
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
 use crate::io::SinkFormat;
-use crate::io::lines::{LineEncoding, LineWriter};
+use crate::io::lines::{LineEncoding, LineWriter, WriterThread};
 
 /// Serializes ProcessResult to one line per result and writes it to stdout.
 ///
 /// A delivery's lines, or a whole batch of deliveries, go out in one write.
+/// Batches the delivery worker drains while keeping up are written on one
+/// `rsigma-stdout` thread shared by every stdout sink.
 /// When a delivery is retried after a failed write, lines that already
 /// reached stdout are not written again, and a line cut off by the failure is
 /// ended before anything else is written.
@@ -76,11 +80,31 @@ impl StdoutSink {
 
     /// Write a batch of deliveries in one write, one outcome per delivery the
     /// write reached.
-    pub(crate) fn send_batch(
+    ///
+    /// Without a `backlog` the delivery worker is keeping up, and the batch
+    /// is written on the stdout writer thread, so the runtime thread stays
+    /// with the tasks that feed the worker. With one the worker is the
+    /// bottleneck, and the batch is written in place through
+    /// [`super::blocking_write`]: a full batch shares the cost of moving the
+    /// runtime to another thread, and the write adds no round trip.
+    pub(crate) async fn send_batch(
         &self,
         items: &[(&ProcessResult, &DeliveryContext)],
+        backlog: bool,
     ) -> Vec<Result<(), RuntimeError>> {
-        self.with_writer(|out| out.write_results(items, self.encoding()))
+        let writer = if backlog { None } else { stdout_writer() };
+        let Some(writer) = writer else {
+            return super::blocking_write(|| {
+                self.with_writer(|out| out.write_results(items, self.encoding()))
+            });
+        };
+        let mut pending = self.out.lock().begin_write(items, self.encoding());
+        let written = if pending.is_empty() {
+            None
+        } else {
+            Some(writer.write(&mut pending).await)
+        };
+        self.out.lock().finish_write(items, pending, written)
     }
 
     /// Run `write` holding the process's stdout lock as well as this sink's
@@ -118,4 +142,21 @@ impl StdoutSink {
         }
         self.send_raw(json)
     }
+}
+
+/// The process's stdout writer thread, started on first use. `None` when it
+/// could not be started.
+fn stdout_writer() -> Option<&'static WriterThread> {
+    static WRITER: OnceLock<Option<WriterThread>> = OnceLock::new();
+    WRITER
+        .get_or_init(
+            || match WriterThread::spawn("rsigma-stdout", || std::io::stdout().lock()) {
+                Ok(writer) => Some(writer),
+                Err(error) => {
+                    tracing::warn!(%error, "Could not start the stdout writer thread");
+                    None
+                }
+            },
+        )
+        .as_ref()
 }
