@@ -4,6 +4,7 @@
 
 use std::io::{self, Write};
 
+use parking_lot::Mutex;
 use rsigma_eval::{ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
@@ -401,6 +402,25 @@ impl WriterThread {
         Ok(WriterThread { jobs })
     }
 
+    /// Write the lines of several deliveries through `out` on the thread,
+    /// returning one outcome per delivery the write reached, as
+    /// [`LineWriter::write_results`] does. `out` is locked to encode and to
+    /// settle the batch, but not while the thread writes it.
+    pub(crate) async fn write_results<W: Write>(
+        &self,
+        out: &Mutex<LineWriter<W>>,
+        items: &[(&ProcessResult, &DeliveryContext)],
+        encoding: LineEncoding<'_>,
+    ) -> Vec<Result<(), RuntimeError>> {
+        let mut pending = out.lock().begin_write(items, encoding);
+        let written = if pending.is_empty() {
+            None
+        } else {
+            Some(self.write(&mut pending).await)
+        };
+        out.lock().finish_write(items, pending, written)
+    }
+
     /// Write a batch from [`LineWriter::begin_write`] on the thread, in the
     /// order the writes were requested.
     pub(crate) async fn write(&self, pending: &mut PendingWrite) -> Result<(), ShortWrite> {
@@ -753,17 +773,6 @@ mod tests {
         }
     }
 
-    async fn write_on(
-        writer: &WriterThread,
-        out: &mut LineWriter<Shared>,
-        items: &[(&ProcessResult, &DeliveryContext)],
-        encoding: LineEncoding<'_>,
-    ) -> Vec<Result<(), RuntimeError>> {
-        let mut pending = out.begin_write(items, encoding);
-        let written = writer.write(&mut pending).await;
-        out.finish_write(items, pending, Some(written))
-    }
-
     #[tokio::test]
     async fn a_batch_on_the_writer_thread_keeps_lines_whole_across_failures() {
         let ocsf = crate::ocsf::OcsfOptions::default();
@@ -785,18 +794,21 @@ mod tests {
         let stream = Shared(Arc::new(std::sync::Mutex::new(FlakyWriter::new(budget))));
         let for_thread = stream.clone();
         let writer = WriterThread::spawn("test-writer", move || for_thread.clone()).unwrap();
-        let mut out = LineWriter::new(stream.clone());
+        let out = Mutex::new(LineWriter::new(stream.clone()));
 
-        let outcomes = write_on(&writer, &mut out, &items, encoding(&ocsf)).await;
+        let outcomes = writer.write_results(&out, &items, encoding(&ocsf)).await;
         assert_eq!(outcomes.len(), 2, "the write never reached item 3");
         assert!(outcomes[0].is_ok());
         assert!(outcomes[1].is_err());
 
         // The torn item's retry goes through the thread, the next item inline.
         stream.0.lock().unwrap().budget = usize::MAX;
-        let retry = write_on(&writer, &mut out, &items[1..2], encoding(&ocsf)).await;
+        let retry = writer
+            .write_results(&out, &items[1..2], encoding(&ocsf))
+            .await;
         assert!(retry[0].is_ok());
-        out.write_result(&deliveries[2], Some(&contexts[2]), encoding(&ocsf))
+        out.lock()
+            .write_result(&deliveries[2], Some(&contexts[2]), encoding(&ocsf))
             .unwrap();
 
         assert_eq!(
@@ -831,20 +843,19 @@ mod tests {
             Vec::new()
         })
         .unwrap();
-        let mut out = LineWriter::new(Vec::new());
-        let mut pending = out.begin_write(&items, encoding(&ocsf));
+        let out = Mutex::new(LineWriter::new(Vec::new()));
 
-        let (written, ()) = tokio::join!(writer.write(&mut pending), async {
-            tokio::task::yield_now().await;
-            let _ = release.send(());
-        });
+        let (outcomes, ()) =
+            tokio::join!(writer.write_results(&out, &items, encoding(&ocsf)), async {
+                tokio::task::yield_now().await;
+                let _ = release.send(());
+            });
 
-        assert!(written.is_ok());
+        assert!(outcomes[0].is_ok());
         assert!(
             released_in_time.load(std::sync::atomic::Ordering::SeqCst),
             "the runtime ran another task while the write was in flight"
         );
-        assert!(out.finish_write(&items, pending, Some(written))[0].is_ok());
     }
 
     #[tokio::test]
@@ -860,13 +871,14 @@ mod tests {
         let stream = Shared(Arc::new(std::sync::Mutex::new(FlakyWriter::new(
             usize::MAX,
         ))));
-        let mut out = LineWriter::new(stream.clone());
+        let out = Mutex::new(LineWriter::new(stream.clone()));
 
         for _ in 0..2 {
-            let outcomes = write_on(&writer, &mut out, &items, encoding(&ocsf)).await;
+            let outcomes = writer.write_results(&out, &items, encoding(&ocsf)).await;
             assert!(outcomes[0].is_err(), "a lost write fails the delivery");
         }
-        out.write_result(&result, Some(&ctx), encoding(&ocsf))
+        out.lock()
+            .write_result(&result, Some(&ctx), encoding(&ocsf))
             .unwrap();
         assert_eq!(
             stream.lines(),

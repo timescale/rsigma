@@ -98,13 +98,9 @@ impl StdoutSink {
                 self.with_writer(|out| out.write_results(items, self.encoding()))
             });
         };
-        let mut pending = self.out.lock().begin_write(items, self.encoding());
-        let written = if pending.is_empty() {
-            None
-        } else {
-            Some(writer.write(&mut pending).await)
-        };
-        self.out.lock().finish_write(items, pending, written)
+        writer
+            .write_results(&self.out, items, self.encoding())
+            .await
     }
 
     /// Run `write` holding the process's stdout lock as well as this sink's
