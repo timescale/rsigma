@@ -633,7 +633,14 @@ fn replace_strings_in_detection(
     match detection {
         Detection::AllOf(items) => {
             for item in items.iter_mut() {
-                if item_conditions_match(item, state, detection_conditions, field_name_conditions) {
+                if holds_strings(item)
+                    && item_conditions_match(
+                        item,
+                        state,
+                        detection_conditions,
+                        field_name_conditions,
+                    )
+                {
                     replace_strings_in_values(&mut item.values, re, replace);
                 }
             }
@@ -1272,7 +1279,14 @@ fn map_strings_in_detection(
     match detection {
         Detection::AllOf(items) => {
             for item in items.iter_mut() {
-                if item_conditions_match(item, state, detection_conditions, field_name_conditions) {
+                if holds_strings(item)
+                    && item_conditions_match(
+                        item,
+                        state,
+                        detection_conditions,
+                        field_name_conditions,
+                    )
+                {
                     map_string_expand_values(&mut item.values, mapping);
                 }
             }
@@ -1610,7 +1624,14 @@ fn apply_case_in_detection(
     match detection {
         Detection::AllOf(items) => {
             for item in items.iter_mut() {
-                if item_conditions_match(item, state, detection_conditions, field_name_conditions) {
+                if holds_strings(item)
+                    && item_conditions_match(
+                        item,
+                        state,
+                        detection_conditions,
+                        field_name_conditions,
+                    )
+                {
                     for val in item.values.iter_mut() {
                         apply_case_to_value(val, case_type);
                     }
@@ -1684,6 +1705,19 @@ fn apply_case_to_value(val: &mut SigmaValue, case_type: &str) {
 // =============================================================================
 // Shared helper: check if a detection item matches both sets of conditions
 // =============================================================================
+
+/// Whether the item's values are strings to the string value transformations
+/// (`replace_string`, `map_string`, `case`). A `re` value is a regular
+/// expression, a `cidr` value a network, and a `fieldref` value a field name,
+/// so rewriting them as text changes what they mean; pySigma's string value
+/// transformations skip them too.
+fn holds_strings(item: &DetectionItem) -> bool {
+    !item
+        .field
+        .modifiers
+        .iter()
+        .any(|m| matches!(m, Modifier::Re | Modifier::Cidr | Modifier::FieldRef))
+}
 
 /// pySigma's `match_detection_item`: the detection-item conditions and the
 /// field-name conditions evaluated over the item's field name or any of its
