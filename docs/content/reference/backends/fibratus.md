@@ -36,7 +36,7 @@ Pass with `-O key=value` (repeatable). Unknown keys are silently ignored so forw
 | `temporal_permute` | `false` | When `true`, expands a `temporal` (any-order) correlation into one ordered sequence document per permutation of the referenced rules (so any matching order alerts), capped at N <= 3 (1/2/6 documents). Larger correlations return `UnsupportedCorrelation`. Each document gets a distinct title and id suffix so Fibratus treats them as separate rules. |
 | `correlation_method` | unset | Override a rule's own `rsigma.window` for this conversion (pySigma-style). Two values: `sliding` (the native Fibratus `sequence ... maxspan` form) and `session` (degraded sliding sequence + warning). `tumbling` is intentionally absent because Fibratus cannot represent it; passing it returns `UnsupportedCorrelation`. `rsigma backend formats fibratus` lists the available methods. |
 | `gap` | unset | Default session gap (e.g. `5m`, `2h`) for rules that request a session window without declaring their own `rsigma.gap`. Used only in the warning text the degraded session path emits; the rendered Fibratus query still relies on `maxspan` for the time-window cap because the engine has no `maxpause`-style primitive. A rule's own `rsigma.gap` always wins. |
-| `case_sensitive` | `false` | Force the bare (case-sensitive) operators globally. Equivalent to setting `|cased` on every value. |
+| `case_sensitive` | `false` | Force the bare (case-sensitive) operators globally. Equivalent to setting `\|cased` on every value. |
 
 ## Modifier mapping
 

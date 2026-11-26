@@ -445,8 +445,8 @@ Condition semantics follow pySigma:
 | `map_string` | `mapping: {k: v \| [v1, v2]}` | Map string values to replacements (supports one-to-many) |
 | `set_value` | `value`, `force_type` (`str`/`num`) | Replace detection item values |
 | `convert_type` | `target_type` (`str`/`num`/`int`/`float`/`bool`, default: `str`) | Convert values between types; `num` parses an integer or float as pySigma does. A value that can't be converted is an error, and `re`, `cidr`, `fieldref`, and `exists` values are left as they are |
-| `value_placeholders` | `allow_unresolved` (default: `false`), `include`/`exclude` | Expand `%placeholder%` in `|expand` values; multi-value variables produce a Cartesian product and unresolved variables fail unless runtime substitution is explicitly allowed |
-| `wildcard_placeholders` | `include`/`exclude` | Replace handled placeholders with wildcards in `|expand` values |
+| `value_placeholders` | `allow_unresolved` (default: `false`), `include`/`exclude` | Expand `%placeholder%` in `\|expand` values; multi-value variables produce a Cartesian product and unresolved variables fail unless runtime substitution is explicitly allowed |
+| `wildcard_placeholders` | `include`/`exclude` | Replace handled placeholders with wildcards in `\|expand` values |
 | `query_expression_placeholders` | `expression` (default: `""`) | Backend query placeholders (no-op in eval); `mapping`, `include`, and `exclude` are rejected |
 | `set_state` | `key`, `val` (`value` alias) | Store typed key-value pairs in pipeline state |
 | `rule_failure` | `message` (default: `"rule failure"`) | Raise an error for matching rules |

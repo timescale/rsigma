@@ -222,6 +222,35 @@ function expandVersionTags(src, page, releases) {
     .join("\n");
 }
 
+/**
+ * Fail on a table row whose inline code holds an unescaped `|`. Markdown
+ * splits table cells before it parses code spans, so the pipe ends the cell
+ * and the rest of the row is lost; write it as `\|`.
+ *
+ * @param {string} src
+ * @param {string} page Page path for error messages.
+ */
+function checkTablePipes(src, page) {
+  let inFence = false;
+  for (const line of src.split("\n")) {
+    const t = line.trimStart();
+    if (t.startsWith("```") || t.startsWith("~~~")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !t.startsWith("|")) {
+      continue;
+    }
+    for (const [, code] of line.matchAll(/`([^`]*)`/g)) {
+      if (/(^|[^\\])\|/.test(code)) {
+        throw new Error(
+          `docmd-plugin-rsigma: ${page} has an unescaped "|" in \`${code}\` inside a table row; write it as "\\|" so the cell does not end there`,
+        );
+      }
+    }
+  }
+}
+
 const INCLUDE_MARKDOWN_RE = /\{%\s*include-markdown\s+"([^"]+)"\s*%\}/g;
 
 /**
@@ -1166,6 +1195,7 @@ export default {
     let out = inlineIncludeMarkdown(src, filePath ?? repoRoot, repoRoot);
     out = substituteRsigmaMacros(out, rsigmaVars);
     out = expandVersionTags(out, filePath ?? "a page", releases);
+    checkTablePipes(out, filePath ?? "a page");
     // Linkify `#123` issue/PR shorthand on the release-notes page (the inlined
     // CHANGELOG), replacing the old MkDocs magiclink behaviour.
     if (typeof filePath === "string" && /release-notes\.md$/.test(filePath)) {

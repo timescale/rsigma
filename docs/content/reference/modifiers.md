@@ -79,4 +79,4 @@ To require the field to be present, add a separate `Field|exists: true` item to 
 
 ## Empty value lists
 
-`Field: []` is a null check: it matches when the field is missing or `null`, as in pySigma. `Field|neq: []` matches when the field has a non-null value. An empty value list without a field name is rejected, and so is `|all` with fewer than two values, including `Field|contains|all: []`, which pySigma accepts.
+`Field: []` is a null check: it matches when the field is missing or `null`, as in pySigma. `Field|neq: []` matches when the field has a non-null value. An empty value list without a field name is rejected, and so is `|all` with no values, such as `Field|contains|all: []`, which pySigma accepts. `|all` with a single value is accepted and matches like the same value without `|all`; `rule lint` flags it as [`single_value_all_modifier`](lint-rules.md#modifier-and-related-hygiene-7) and can remove the modifier.

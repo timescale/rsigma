@@ -17,7 +17,7 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 | Condition expression length | `MAX_CONDITION_LEN` | 64 KiB | Rule parser | Rule rejected at parse time with an `InvalidCondition` error. |
 | Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. |
 | JSON event traversal depth | `MAX_NESTING_DEPTH` | 64 | Keyword search inside nested JSON | Traversal stops; deeper fields are not matched against keyword detections. |
-| Windash expansion | `MAX_WINDASH_DASHES` | 8 | `|windash` modifier (5^8 variants), in evaluation and conversion | Compile or conversion error if a value contains more than 8 dash characters (`-`, `/`, `–`, `—`, or `―`). {{ added "0.24.0" }} |
+| Windash expansion | `MAX_WINDASH_DASHES` | 8 | `\|windash` modifier (5^8 variants), in evaluation and conversion | Compile or conversion error if a value contains more than 8 dash characters (`-`, `/`, `–`, `—`, or `―`). {{ added "0.24.0" }} |
 | Correlation chain depth | `MAX_CHAIN_DEPTH` | 10 | Engine | Stops chaining beyond 10 levels; logs at `WARN` (`rsigma_eval::correlation_engine`). |
 | Correlation state entries | `max_state_entries` | 100,000 | Engine, all correlation rules combined | Hard cap; eviction drops the stalest 10% with a `WARN` log when reached. Watch via `rsigma_correlation_state_entries`. |
 
