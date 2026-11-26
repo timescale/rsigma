@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `convert_type` accepts `num` and rejects values it can't convert
+
+The `convert_type` pipeline transformation now accepts `target_type: num`, pySigma's name for a number, and parses each value as an integer or a float the way pySigma does. Before, `num` was not recognized, so a pipeline written for pySigma left every value unchanged without an error. An unknown or non-string `target_type` is now rejected when the pipeline loads, and `re`, `cidr`, `fieldref`, and `exists` values are left alone, as in pySigma.
+
+Breaking: a value that can't be converted, such as `foo` with `target_type: num` or `int`, now fails the rule with an error naming the value and the rule, as pySigma does. Before, it was kept unchanged.
+
 ### String value transformations leave regex, CIDR, and field reference values alone (#751)
 
 The `replace_string`, `map_string`, and `case` pipeline transformations no longer rewrite the values of `re`, `cidr`, and `fieldref` detection items, matching pySigma, whose string value transformations skip those value types. Before, `case: upper` turned the regex `^\d+$` into `^\D+$`, which matches the opposite characters, and `replace_string` or `map_string` could rewrite a CIDR network or the name of the referenced field, all without an error. This applied in evaluation and in conversion.
