@@ -1579,6 +1579,27 @@ detection:
     }
 
     #[test]
+    fn cased_keyword_is_a_case_sensitive_match_in_where() {
+        let q = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    cased:
+        '|cased': WhoAmI
+    keywords:
+        - ipconfig
+    condition: cased or keywords
+"#,
+        );
+        assert_eq!(
+            q,
+            vec![r#"FROM main | where match(_raw, "WhoAmI") OR match(_raw, "(?i)ipconfig")"#]
+        );
+    }
+
+    #[test]
     fn keyword_with_slash_renders_in_where() {
         let q = convert(
             r#"

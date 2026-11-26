@@ -1632,6 +1632,22 @@ detection:
     }
 
     #[test]
+    fn test_cased_keyword_converts_as_the_plain_term() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    keywords:
+        '|cased': WhoAmI
+    condition: keywords
+"#,
+        );
+        assert_eq!(queries, vec!["_=\"WhoAmI\""]);
+    }
+
+    #[test]
     fn test_bool_keyword_converts_as_text() {
         let queries = convert_rule_yaml(
             r#"

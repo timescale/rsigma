@@ -1,0 +1,14 @@
+description: A cased keyword matches the text only in the case it is written.
+rule:
+  title: keyword cased
+  logsource: {category: process_creation, product: windows}
+  detection:
+    keywords:
+      '|cased': 'WhoAmI'
+    condition: keywords
+events:
+  - {CommandLine: 'cmd /c WhoAmI'}
+  - {CommandLine: 'cmd /c whoami'}
+  - {CommandLine: 'ipconfig'}
+matches: [0]
+unsupported: [fibratus, fibratus-nomacros, postgres-jsonb, postgres-columns]
