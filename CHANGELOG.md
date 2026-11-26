@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Custom backend examples in the docs (#PR)
+### Custom backend examples in the docs (#762)
 
 The library docs' custom backend example used a `TextQueryConfig::PYSIGMA_DEFAULTS` constant and a `Backend::text_query_config` method that do not exist, and said the trait's default `convert_rule` does the work, when `convert_rule` has no default. The section now lists the required methods, points `convert_rule` at `convert_rule_via_ir`, and says to start a config from an existing one. The developer guide's example imported the `text_convert_*` helpers from the crate root, where they are not exported; it now imports them from `rsigma_convert::backend`.
 
