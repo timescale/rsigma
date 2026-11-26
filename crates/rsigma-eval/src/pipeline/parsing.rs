@@ -18,7 +18,7 @@ use super::sources::{
     STIX_OBSERVABLE_KEYS, SourceRef, SourceType, StixOptions, TaxiiAuthConfig, is_valid_source_id,
     scan_source_templates,
 };
-use super::transformations::{Transformation, parse_condition_field};
+use super::transformations::{Transformation, parse_condition_field, parse_number};
 use super::{Pipeline, TransformationItem};
 
 // =============================================================================
@@ -544,12 +544,24 @@ fn parse_transformation(obj: &yaml_serde::Mapping) -> Result<Transformation> {
         }
 
         "convert_type" => {
-            let target_type = obj
-                .get(ykey("target_type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("str")
-                .to_string();
-            Ok(Transformation::ConvertType { target_type })
+            let target_type = match obj.get(ykey("target_type")) {
+                None => "str",
+                Some(value) => match value.as_str() {
+                    Some(
+                        t @ ("str" | "string" | "num" | "int" | "integer" | "float" | "bool"
+                        | "boolean"),
+                    ) => t,
+                    _ => {
+                        return Err(EvalError::Pipeline(format!(
+                            "invalid convert_type 'target_type' {value:?}; expected 'str', \
+                             'num', 'int', 'float', or 'bool'"
+                        )));
+                    }
+                },
+            };
+            Ok(Transformation::ConvertType {
+                target_type: target_type.to_string(),
+            })
         }
 
         "regex" => {
@@ -1206,20 +1218,11 @@ fn force_set_value_type(
     };
     match force_type.as_str() {
         Some("str") => Ok(SigmaValue::String(SigmaString::new(&text))),
-        Some("num") => {
-            let trimmed = text.trim();
-            if let Ok(int) = trimmed.parse::<i64>() {
-                Ok(SigmaValue::Integer(int))
-            } else if let Ok(float) = trimmed.parse::<f64>()
-                && float.is_finite()
-            {
-                Ok(SigmaValue::Float(float))
-            } else {
-                Err(EvalError::Pipeline(format!(
-                    "set_value value '{text}' can't be converted to a number"
-                )))
-            }
-        }
+        Some("num") => parse_number(&text).ok_or_else(|| {
+            EvalError::Pipeline(format!(
+                "set_value value '{text}' can't be converted to a number"
+            ))
+        }),
         _ => Err(EvalError::Pipeline(format!(
             "invalid set_value 'force_type' {force_type:?}; expected 'str' or 'num'"
         ))),

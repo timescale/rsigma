@@ -6,7 +6,7 @@
 
 mod helpers;
 
-pub(super) use helpers::parse_condition_field;
+pub(super) use helpers::{parse_condition_field, parse_number};
 
 pub use helpers::MAX_PLACEHOLDER_COMBINATIONS;
 #[cfg(test)]
@@ -189,7 +189,8 @@ pub enum Transformation {
     SetValue { value: SigmaValue },
 
     /// Convert detection item values to a different type.
-    /// Supported: "str", "int", "float", "bool".
+    /// Supported: "str" and "num" (as in pySigma), plus "int", "float", and
+    /// "bool". A value that can't be converted is an error.
     ConvertType { target_type: String },
 
     /// Convert plain string values to regex patterns.
@@ -554,7 +555,7 @@ impl Transformation {
                     detection_item_conditions,
                     field_name_conditions,
                     target_type,
-                );
+                )?;
                 Ok(true)
             }
 

@@ -892,6 +892,116 @@ fn test_convert_type_string_to_int() {
     }
 }
 
+fn convert(
+    target_type: &str,
+    field: FieldSpec,
+    values: Vec<SigmaValue>,
+) -> Result<Vec<SigmaValue>> {
+    let mut rule = make_test_rule();
+    rule.detection.named.insert(
+        "selection".to_string(),
+        Detection::AllOf(vec![DetectionItem { field, values }]),
+    );
+    let t = Transformation::ConvertType {
+        target_type: target_type.to_string(),
+    };
+    t.apply(&mut rule, &mut PipelineState::default(), &[], &[], false)?;
+    let Detection::AllOf(items) = &rule.detection.named["selection"] else {
+        panic!("expected AllOf");
+    };
+    Ok(items[0].values.clone())
+}
+
+fn plain_field(name: &str) -> FieldSpec {
+    FieldSpec::new(Some(name.to_string()), vec![])
+}
+
+#[test]
+fn test_convert_type_num() {
+    let values = convert(
+        "num",
+        plain_field("EventID"),
+        vec![
+            SigmaValue::String(SigmaString::new("4688")),
+            SigmaValue::String(SigmaString::new(" 4.5 ")),
+            SigmaValue::Integer(7),
+            SigmaValue::Null,
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        values,
+        vec![
+            SigmaValue::Integer(4688),
+            SigmaValue::Float(4.5),
+            SigmaValue::Integer(7),
+            SigmaValue::Null,
+        ]
+    );
+}
+
+#[test]
+fn test_convert_type_rejects_unconvertible_values() {
+    for (target, value) in [
+        ("num", SigmaValue::String(SigmaString::new("foo"))),
+        ("num", SigmaValue::String(SigmaString::new("4*"))),
+        ("num", SigmaValue::Bool(true)),
+        ("int", SigmaValue::String(SigmaString::new("4.5"))),
+        ("float", SigmaValue::String(SigmaString::new("x"))),
+        ("bool", SigmaValue::String(SigmaString::new("maybe"))),
+    ] {
+        let err = convert(target, plain_field("F"), vec![value.clone()])
+            .expect_err("unconvertible value should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("can't be converted") && msg.contains(target) && msg.contains("Test Rule"),
+            "{target} {value:?}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn test_convert_type_skips_typed_values() {
+    for (modifier, value) in [
+        (Modifier::Re, SigmaValue::from_raw_string("^a.*$")),
+        (
+            Modifier::Cidr,
+            SigmaValue::String(SigmaString::new("10.0.0.0/8")),
+        ),
+        (
+            Modifier::FieldRef,
+            SigmaValue::String(SigmaString::new("Other")),
+        ),
+        (Modifier::Exists, SigmaValue::Bool(true)),
+    ] {
+        let field = FieldSpec::new(Some("F".to_string()), vec![modifier]);
+        let values = convert("num", field, vec![value.clone()]).unwrap();
+        assert_eq!(values, vec![value]);
+    }
+}
+
+#[test]
+fn parse_convert_type_target_type() {
+    use crate::pipeline::parse_pipeline;
+
+    let pipeline = |target: &str| {
+        parse_pipeline(&format!(
+            "name: t\ntransformations:\n  - type: convert_type\n{target}"
+        ))
+    };
+    let Transformation::ConvertType { target_type } =
+        &pipeline("").unwrap().transformations[0].transformation
+    else {
+        panic!("expected ConvertType");
+    };
+    assert_eq!(target_type, "str");
+    assert!(pipeline("    target_type: num\n").is_ok());
+    for bad in ["    target_type: number\n", "    target_type: 5\n"] {
+        let err = pipeline(bad).expect_err("invalid target_type should be rejected");
+        assert!(format!("{err}").contains("target_type"), "{err}");
+    }
+}
+
 #[test]
 fn test_convert_type_int_to_string() {
     let mut named = HashMap::new();
