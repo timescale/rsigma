@@ -37,7 +37,7 @@ No features. The crate is pure Rust + `regex`.
 | `PostgresBackend` | The PostgreSQL/TimescaleDB backend. Output formats: `default`, `view`, `timescaledb`, `continuous_aggregate`, `sliding_window`. |
 | `LynxDbBackend` | The LynxDB backend. Output formats: `default`, `minimal`. |
 | `FibratusBackend` | The Fibratus backend. Output formats: `default`, `expr`, `yaml`, `rule`. |
-| `TextQueryTestBackend` | A backend-neutral text format used by the test suite and useful for debugging how a rule lowers to a generic boolean expression. It renders values, in-lists, and CIDR matches the way pySigma's `TextQueryTestBackend` does, so the two can be compared output for output. `cased` values stay out of in-lists, which pySigma would render case-insensitively, and selections keep name order rather than definition order. {{ added "0.24.0" }} |
+| `TextQueryTestBackend` | A backend-neutral text format used by the test suite and useful for debugging how a rule lowers to a generic boolean expression. It renders values, in-lists, and CIDR matches the way pySigma's `TextQueryTestBackend` does, so the two can be compared output for output. `cased` values stay out of in-lists, which pySigma would render case-insensitively, and selections keep name order rather than definition order. {{ added "0.24.0" }} A `fieldref` with `startswith`, `endswith`, or `contains` renders as `A=fieldref_startswith(B)`, `A=fieldref_endswith(B)`, or `A=fieldref_contains(B)`, a field-less `contains` value gets `*` on both ends, and regexes escape `bar` as well as `/`, all as in pySigma. {{ added "unreleased" }} |
 | `convert_collection(backend, &SigmaCollection, &[Pipeline], output_format)` | Convert a whole collection, applying pipelines per rule. Returns a `ConversionOutput` with per-rule `queries` and per-rule `errors`. The collection's filters are merged into the rules they target before pipelines run, and each correlation is an `UnsupportedCorrelation` error on a backend without correlation support. {{ added "0.24.0" }} |
 | `Backend::convert_rule(rule, output_format, &PipelineState)` | Lower-level single-rule entry point on the trait. |
 | `ConversionOutput`, `ConversionResult`, `ConversionState`, `PipelineState` | Collection/result wrappers, the per-condition conversion state (`ConversionState`), and the per-rule pipeline state (`PipelineState` from `rsigma-eval`). |
@@ -125,6 +125,10 @@ impl Backend for MyBackend {
 The default `convert_rule` lowers the rule to `IrRule`, walks the resulting `IrDetection` and `IrCondition`, and dispatches into `text_*` helpers (e.g. `text_convert_field_str_ir`, `text_convert_ir_pattern`) that consult the config. Only override the leaves that your backend needs to behave differently from pySigma's `TextQueryBackend` default.
 
 A keyword with `cased` goes to `convert_keyword_str_cased` instead of `convert_keyword_str`. The default rejects it with `UnsupportedModifier`, since a full-text search usually ignores case; override it when your backend can match a keyword case-sensitively. {{ added "unreleased" }}
+
+A field-less value with `contains`, such as `'|contains': whoami`, goes to `convert_keyword_contains`. The default renders it as a regular keyword, which already matches a substring; the test backend overrides it to add `*` on both ends, as pySigma does. {{ added "unreleased" }}
+
+`TextQueryConfig` has `field_eq_field_startswith_expression`, `field_eq_field_endswith_expression`, and `field_eq_field_contains_expression` next to `field_eq_field_expression`, for `fieldref` with `startswith`, `endswith`, or `contains`. {{ added "unreleased" }}
 
 A keyword with `base64` or `base64offset` encodes to fragments of a longer base64 string, and each fragment goes to `convert_keyword_substr`. The default renders it as a regular keyword; override it when your keyword search matches whole words only, as PostgreSQL and LynxDB do. {{ added "unreleased" }}
 
