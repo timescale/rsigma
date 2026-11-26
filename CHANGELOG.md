@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### String value transformations leave regex, CIDR, and field reference values alone
+### String value transformations leave regex, CIDR, and field reference values alone (#751)
 
 The `replace_string`, `map_string`, and `case` pipeline transformations no longer rewrite the values of `re`, `cidr`, and `fieldref` detection items, matching pySigma, whose string value transformations skip those value types. Before, `case: upper` turned the regex `^\d+$` into `^\D+$`, which matches the opposite characters, and `replace_string` or `map_string` could rewrite a CIDR network or the name of the referenced field, all without an error. This applied in evaluation and in conversion.
 
