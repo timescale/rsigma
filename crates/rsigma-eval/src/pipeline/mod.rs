@@ -38,6 +38,7 @@
 pub mod builtin;
 pub mod conditions;
 pub mod finalizers;
+mod modifiers;
 mod parsing;
 pub mod sources;
 pub mod state;
@@ -58,6 +59,7 @@ pub use conditions::{
     StateOperator, ValueMatch, eval_condition_expr,
 };
 pub use finalizers::Finalizer;
+pub use modifiers::ApplyModifiers;
 pub use parsing::{
     parse_pipeline, parse_pipeline_file, parse_sources, parse_sources_dir, parse_sources_file,
     parse_transformation_items, validate_source_refs,
@@ -78,6 +80,9 @@ pub struct Pipeline {
     pub priority: i32,
     /// Pipeline variables used for placeholder expansion.
     pub vars: HashMap<String, Vec<String>>,
+    /// When the transformations see the effect of value modifiers
+    /// (`apply_modifiers:`). Default: [`ApplyModifiers::Last`].
+    pub apply_modifiers: ApplyModifiers,
     /// Ordered list of transformations with their conditions.
     pub transformations: Vec<TransformationItem>,
     /// Finalizers (stored for YAML compat; eval-mode ignores them).
@@ -114,6 +119,9 @@ impl Pipeline {
     pub fn apply(&self, rule: &mut SigmaRule, state: &mut PipelineState) -> Result<()> {
         state.reset_rule();
         state.track_detection_items = uses_detection_item_applied(&self.transformations);
+        if self.apply_modifiers == ApplyModifiers::First {
+            modifiers::apply_to_rule(rule);
+        }
 
         for item in &self.transformations {
             if !self.check_rule_conditions(rule, state, item) {

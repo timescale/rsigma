@@ -95,7 +95,7 @@ known_failures:          # optional: engine label to a confirmed defect
     actual: [1]
 ```
 
-The engine labels are `eval`, `postgres-jsonb`, `postgres-columns`, `lynxdb`, `fibratus`, `fibratus-nomacros`, and `test-pysigma`. Known failures use `type: match-mismatch` with the exact matched indexes, `type: engine-error` with a required error substring, `type: output-difference` with the exact rsigma and reference queries, or `type: reference-error` with the exact rsigma queries and a required substring of the error from a reference that rejects the rule. A failure that changes outcome or starts passing fails the test, so a fix must update or remove its entry. Prefer cases that probe edge behavior (missing fields, escapes, grouping, case) over happy paths.
+The engine labels are `eval`, `postgres-jsonb`, `postgres-columns`, `lynxdb`, `fibratus`, `fibratus-nomacros`, and `test-pysigma`. Known failures use `type: match-mismatch` with the exact matched indexes, `type: engine-error` with a required error substring, `type: output-difference` with the exact rsigma and reference queries, or `type: reference-error` with the exact rsigma queries and a required substring of the error from a reference that rejects the rule. A failure that changes outcome or starts passing fails the test, so a fix must update or remove its entry. Prefer cases that probe edge behavior (missing fields, escapes, grouping, case) over happy paths. pySigma rejects the `apply_modifiers` pipeline key and always applies modifiers first, so the `test-pysigma` run sends a case's pipeline without it.
 
 The `eval` run is part of `cargo test`. The engine runs are `#[ignore]`d and need extra tooling:
 

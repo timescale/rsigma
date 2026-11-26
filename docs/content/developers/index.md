@@ -21,7 +21,7 @@ rsigma/
 │   ├── rsigma-lsp/         # The `rsigma-lsp` language server
 │   └── rstix/              # STIX 2.1 parsing, patterns, and validation
 ├── docs/                   # This site (docmd)
-├── fuzz/                   # 37 cargo-fuzz harnesses
+├── fuzz/                   # 39 cargo-fuzz harnesses
 ├── tests/fixtures/         # Cross-crate test data (dynamic pipelines, etc.)
 ├── crates/rsigma-eval/pipelines/  # Built-in processing pipelines (ecs_windows, ecs_linux, fibratus_windows, sysmon)
 ├── .github/workflows/      # CI: test, fuzz, audit, docker, publish, release

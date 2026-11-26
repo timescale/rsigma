@@ -161,6 +161,7 @@ mod tests {
             name: "test".to_string(),
             priority: 0,
             vars: HashMap::new(),
+            apply_modifiers: Default::default(),
             transformations: vec![TransformationItem {
                 id: None,
                 transformation: Transformation::Include {

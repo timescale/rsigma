@@ -84,6 +84,7 @@ pub fn grouping_cases(corpus: &Path, accept: impl Fn(&Case) -> bool) -> CorpusSa
             description: String::new(),
             rule_yaml: rule.yaml.clone(),
             pipeline_yaml: None,
+            reference_pipeline_yaml: None,
             logsource_category: None,
             events: rule.events(&name, &fields),
             matches: Vec::new(),

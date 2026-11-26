@@ -144,6 +144,37 @@ pub fn expand_encoded(
     Ok(out)
 }
 
+/// Reject values an encoding chain cannot represent: wildcards under base64,
+/// whose output has no character boundaries to keep them at, and non-ASCII
+/// text under a UTF-16 encoding that is matched as a string.
+pub fn check_encodable(encodings: &[IrEncoding], pattern: &IrPattern) -> Result<(), IrError> {
+    let base64 = encodings
+        .iter()
+        .any(|e| matches!(e, IrEncoding::Base64 | IrEncoding::Base64Offset));
+    if base64 && pattern.has_wildcards() {
+        return Err(IrError::IncompatibleValue(
+            "|base64 and |base64offset do not support wildcards; escape * and ? as \\* and \\? to match them literally".into(),
+        ));
+    }
+    let utf16 = encodings.iter().any(|e| {
+        matches!(
+            e,
+            IrEncoding::Wide | IrEncoding::Utf16 | IrEncoding::Utf16Be
+        )
+    });
+    let non_ascii = pattern
+        .parts
+        .iter()
+        .any(|p| matches!(p, IrPatternPart::Literal(t) if !t.is_ascii()));
+    if utf16 && !base64 && non_ascii {
+        return Err(IrError::IncompatibleValue(
+            "|wide, |utf16, and |utf16be without |base64 or |base64offset require an ASCII value"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 fn literal(text: String) -> IrPattern {
     IrPattern {
         parts: vec![IrPatternPart::Literal(text)],

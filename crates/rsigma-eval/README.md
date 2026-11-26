@@ -406,6 +406,10 @@ Builtin pipelines: `ecs_windows`, `ecs_linux`, `fibratus_windows`, and `sysmon` 
 - **Sorting**: pipelines are sorted by `priority` on add.
 - **State isolation**: each pipeline gets its own `PipelineState`; state is not shared across pipelines. Use `apply_pipelines_with_state()` to collect merged state for backends.
 
+### When Modifiers Apply
+
+`Pipeline.apply_modifiers` (`apply_modifiers:` in YAML) controls what value transformations see. The default, `ApplyModifiers::Last`, keeps modifiers on the detection item until the rule compiles, so `replace_string` on `F|contains: foo` sees `foo`. `ApplyModifiers::First` (`apply_modifiers: first`) rewrites the values before the pipeline's transformations run, as pySigma does when it parses a rule: `contains`, `startswith`, and `endswith` become `*` wildcards, and the encoding modifiers encode the value. Items without a field, and items with other modifiers such as `re`, `cidr`, or `fieldref`, are left as they are. See [When modifiers apply](https://rsigma.io/guide/processing-pipelines/#when-modifiers-apply).
+
 ### Transformation Item Fields
 
 Each transformation item in a pipeline can have:

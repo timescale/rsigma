@@ -19,7 +19,7 @@ use super::sources::{
     scan_source_templates,
 };
 use super::transformations::{Transformation, parse_condition_field, parse_number};
-use super::{Pipeline, TransformationItem};
+use super::{ApplyModifiers, Pipeline, TransformationItem};
 
 // =============================================================================
 // YAML parsing
@@ -58,6 +58,20 @@ fn parse_pipeline_value(value: &yaml_serde::Value) -> Result<Pipeline> {
 
     let vars = parse_vars(obj.get(ykey("vars")));
 
+    let apply_modifiers = match obj.get(ykey("apply_modifiers")) {
+        None => ApplyModifiers::default(),
+        Some(value) => match yaml_scalar_to_string(value).as_deref() {
+            Some("last") => ApplyModifiers::Last,
+            Some("first") => ApplyModifiers::First,
+            other => {
+                return Err(EvalError::Pipeline(format!(
+                    "unknown apply_modifiers '{}' (supported: first, last)",
+                    other.unwrap_or("<non-scalar>")
+                )));
+            }
+        },
+    };
+
     let transformations = if let Some(items) = obj.get(ykey("transformations")) {
         parse_transformation_items(items)?
     } else {
@@ -92,6 +106,7 @@ fn parse_pipeline_value(value: &yaml_serde::Value) -> Result<Pipeline> {
         name,
         priority,
         vars,
+        apply_modifiers,
         transformations,
         finalizers,
         source_refs,

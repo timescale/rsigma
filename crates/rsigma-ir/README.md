@@ -29,6 +29,7 @@ Because the matcher model is faithful and lossless, lowering is reversible: [`ra
 | [`raise_rule`] / [`RaiseOptions`] / [`ir_pattern_to_sigma`] | HIR → AST, the inverse of `lower_rule` (used by reverse conversion) |
 | [`LowerOptions`] | Strict vs placeholder-preserving lowering |
 | [`expand_encoded`] / [`expand_encoded_detections`] / [`expand_encoded_detection`] / [`expand_encoded_matcher`] | Replay encoding modifiers into the plain string matches eval compiles and backends render |
+| [`check_encodable`] | Reject a value an encoding chain cannot represent, such as a wildcard under base64 |
 | [`optimize_rule`] / [`flatten_condition`] / [`eliminate_dead_detections`] | Opt-in, semantics-preserving HIR passes |
 | [`common_subexpressions`] | Non-mutating analysis of repeated detection items |
 | [`encode_rules`] / [`decode_rules`] / [`HirCacheHeader`] | Versioned HIR cache (CBOR) with schema-version check |
@@ -71,6 +72,7 @@ MIT. See the repository root.
 [`expand_encoded_detections`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/encoding/fn.expand_encoded_detections.html
 [`expand_encoded_detection`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/encoding/fn.expand_encoded_detection.html
 [`expand_encoded_matcher`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/encoding/fn.expand_encoded_matcher.html
+[`check_encodable`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/encoding/fn.check_encodable.html
 [`optimize_rule`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.optimize_rule.html
 [`flatten_condition`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.flatten_condition.html
 [`eliminate_dead_detections`]: https://docs.rs/rsigma-ir/latest/rsigma_ir/optimize/fn.eliminate_dead_detections.html

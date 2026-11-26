@@ -48,6 +48,8 @@ jobs:
             max_len: 1024
           - target: fuzz_pipeline_yaml
             max_len: 4096
+          - target: fuzz_apply_modifiers
+            max_len: 1024
           - target: fuzz_input_formats
             max_len: 4096
           - target: fuzz_rule_tune

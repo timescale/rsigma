@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 38 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 32 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 39 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 33 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
 
 ## Harness inventory
 
@@ -18,6 +18,7 @@ The workspace ships 38 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_field_modifiers` | The 30+ Sigma modifiers. | 256 |
 | `fuzz_regex_compile` | The hardened regex compilation path (size and complexity caps). | 1024 |
 | `fuzz_pipeline_yaml` | Pipeline YAML parser. | 4096 |
+| `fuzz_apply_modifiers` | Differential test for `apply_modifiers: first`: a rule with arbitrary modifiers and values must match the same events whether a pipeline applies its modifiers first or leaves them for compilation. {{ added "unreleased" }} | 1024 |
 | `fuzz_pipeline_sources_yaml` | Dynamic source spec parser. | 8192 |
 | `fuzz_watchlist_request` | Watchlist push, replace, and delete bodies. The first byte selects the operation. The rest is JSON. {{ added "0.28.0" }} | 4096 |
 | `fuzz_alert_pipeline_config` | Alert-pipeline configuration parser. | 4096 |
