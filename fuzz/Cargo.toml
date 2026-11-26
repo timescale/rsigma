@@ -140,6 +140,11 @@ path = "fuzz_targets/fuzz_http_response.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_apply_modifiers"
+path = "fuzz_targets/fuzz_apply_modifiers.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_eval_matcher_diff"
 path = "fuzz_targets/fuzz_eval_matcher_diff.rs"
 doc = false
