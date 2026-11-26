@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `hashes_fields` keeps `neq`, `all`, and `cased`
+### `hashes_fields` keeps `neq`, `all`, and `cased` (#755)
 
 The `hashes_fields` transformation replaced a `Hashes` item with new per-algorithm items that had no modifiers, so a filter such as `Hashes|contains|neq: MD5=...` became a positive match on `FileMD5` and the rule fired only on the hashes it meant to exclude. `all` was dropped the same way, so a rule that required every listed hash matched any one of them, and `cased` was lost. The new items now keep `neq`, `all`, and `cased`, and are joined by De Morgan's laws: a negated item excludes every listed hash, and an `all` item requires each of them. This applied in evaluation and in conversion. pySigma 2.1.0 drops these modifiers too, so a converted negated hashes item now differs from pySigma's, which matches the excluded hashes.
 
