@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Cased keywords convert case-sensitively or fail (#PR)
+### Cased keywords convert case-sensitively or fail (#759)
 
 Conversion ignored `cased` on a field-less value, such as `'|cased': WhoAmI`, and rendered a case-insensitive keyword, so the converted rule also matched `whoami` while evaluation did not. LynxDB now renders a cased keyword in `where` as `match(_raw, "WhoAmI")`, without `(?i)`. PostgreSQL full-text search can't match case, so the conversion now fails, as it does for a keyword with `startswith`. The test backend keeps the plain term, as pySigma does.
 
