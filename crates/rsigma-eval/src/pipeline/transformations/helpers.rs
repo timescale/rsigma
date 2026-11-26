@@ -438,28 +438,42 @@ pub(super) struct AddedCondition<'a> {
     pub(super) template: bool,
 }
 
+/// Parse an `add_condition` key such as `IpAddress|cidr` into its field name
+/// and modifier chain, the way a rule's detection keys are parsed.
+pub(crate) fn parse_condition_field(key: &str) -> Result<FieldSpec> {
+    rsigma_parser::parse_field_spec(key)
+        .map_err(|e| EvalError::Pipeline(format!("add_condition: invalid field '{key}': {e}")))
+}
+
 pub(super) fn add_conditions(rule: &mut SigmaRule, added: &AddedCondition<'_>) -> Result<()> {
     let logsource = rule.logsource.clone();
     let mut items: Vec<DetectionItem> = added
         .conditions
         .iter()
-        .map(|(field, values)| DetectionItem {
-            field: FieldSpec::new(Some(field.clone()), Vec::new()),
-            values: if added.template {
+        .map(|(key, values)| {
+            let field = parse_condition_field(key)?;
+            let raw = field.has_modifier(Modifier::Re);
+            let values = if added.template {
                 values
                     .iter()
                     .map(|value| match value {
-                        SigmaValue::String(s) => SigmaValue::String(SigmaString::new(
-                            &substitute_logsource_template(&s.original, &logsource),
-                        )),
+                        SigmaValue::String(s) => {
+                            let text = substitute_logsource_template(&s.original, &logsource);
+                            if raw {
+                                SigmaValue::from_raw_string(&text)
+                            } else {
+                                SigmaValue::String(SigmaString::new(&text))
+                            }
+                        }
                         other => other.clone(),
                     })
                     .collect()
             } else {
                 values.clone()
-            },
+            };
+            Ok(DetectionItem { field, values })
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     // Field-to-field equalities lower through the `fieldref` modifier so the
     // value is treated as another field name (`field = other_field`), not a

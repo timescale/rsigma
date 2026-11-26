@@ -100,7 +100,7 @@ Pipelines compose 26 transformation types. The most common ones in practice are:
 | `field_name_prefix_mapping` | Rename fields by prefix. |
 | `field_name_prefix`/`field_name_suffix` | Add a static prefix or suffix to every field name. |
 | `field_name_transform` | Case conversion (`lower`, `upper`, `snake_case`, `title`). |
-| `add_condition` | Inject extra detection conditions (e.g. `EventID: 1` or `EventID: [12, 13, 14]` for OR-linked values); `field_refs` injects field-to-field comparisons (`evt.pid: thread.pid`) instead of literals. `name` names the added detection (it must not collide with an existing one) and `template: true` substitutes `$category`, `$product`, and `$service` in string values. {{ added "0.24.0" }} |
+| `add_condition` | Inject extra detection conditions (e.g. `EventID: 1` or `EventID: [12, 13, 14]` for OR-linked values). Keys take modifiers like rule detection keys, so `IpAddress\|cidr: 10.0.0.0/8` matches the network and an unknown modifier fails when the pipeline loads; `field_refs` injects field-to-field comparisons (`evt.pid: thread.pid`) instead of literals. `name` names the added detection (it must not collide with an existing one) and `template: true` substitutes `$category`, `$product`, and `$service` in string values. {{ added "0.24.0" }} |
 | `drop_detection_item` | Remove matching detection items. |
 | `change_logsource` | Modify `category`, `product`, `service`. |
 | `replace_string` | Regex string replacement in values. `skip_special: true` leaves wildcards untouched and `interpret_special: true` parses wildcards in the replaced text. {{ added "0.24.0" }} |

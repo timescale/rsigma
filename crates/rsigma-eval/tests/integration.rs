@@ -239,6 +239,67 @@ detection:
 }
 
 #[test]
+fn pipeline_add_condition_modifier_key_matches_then_maps() {
+    // A negated `IpAddress|cidr` exclusion must apply the modifier to the
+    // `IpAddress` field, and a later field mapping must rename that field.
+    let pipeline_yaml = r#"
+name: Exclusion
+transformations:
+  - type: add_condition
+    name: exclusion_range
+    negated: true
+    conditions:
+      IpAddress|cidr: 209.0.0.0/16
+      Workstation|re: '^WS-.*\d$'
+  - type: field_name_mapping
+    mapping:
+      IpAddress: source.ip
+"#;
+    let pipeline = parse_pipeline(pipeline_yaml).unwrap();
+
+    let rule_yaml = r#"
+title: External Remote SMB Logon from Public IP
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4624
+        LogonType: 3
+    filter_main_local_ranges:
+        IpAddress|cidr:
+            - '10.0.0.0/8'
+            - '192.168.0.0/16'
+    condition: selection and not 1 of filter_main_*
+level: high
+"#;
+    let collection = parse_sigma_yaml(rule_yaml).unwrap();
+    let mut engine = Engine::new_with_pipeline(pipeline);
+    engine.add_collection(&collection).unwrap();
+
+    let fires = |ip: &str, workstation: &str| {
+        let ev = json!({
+            "EventID": 4624,
+            "LogonType": 3,
+            "source.ip": ip,
+            "Workstation": workstation,
+        });
+        !engine.evaluate(&JsonEvent::borrow(&ev)).is_empty()
+    };
+
+    // Inside the excluded range, from a matching workstation: excluded.
+    assert!(!fires("209.0.221.130", "WS-01"));
+    // Outside the range, or the workstation fails the regex: still fires.
+    assert!(fires("8.8.8.8", "WS-01"));
+    assert!(fires("209.0.221.130", "LAPTOP"));
+    // The network literal and an invalid address are not inside the range.
+    assert!(fires("209.0.0.0/16", "WS-01"));
+    assert!(fires("271.0.221.130", "WS-01"));
+    // The rule's own filter still applies.
+    assert!(!fires("10.1.2.3", "LAPTOP"));
+}
+
+#[test]
 fn pipeline_one_to_many_field_mapping_preserves_other_and_clauses() {
     // A selection contains TWO items; only one is multi-mapped. The other
     // (single-field) item must continue to AND with each expansion branch.

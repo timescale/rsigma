@@ -439,7 +439,7 @@ Condition semantics follow pySigma:
 | `field_name_suffix` | `suffix` | Add a suffix to all field names |
 | `field_name_transform` | `transform_func`, `mapping`, `apply_keyword` (only `false`) | Case transformation (see below) |
 | `drop_detection_item` | none | Remove matching detection items |
-| `add_condition` | `conditions: {k: v \| [v1, v2, ...]}`, `negated` (default: `false`), `name`, `template` (default: `false`) | Inject additional detection conditions; list values are OR-linked. `name` names the added detection and must not collide with an existing one; `template: true` substitutes `$category`, `$product`, and `$service` in string values |
+| `add_condition` | `conditions: {k: v \| [v1, v2, ...]}`, `negated` (default: `false`), `name`, `template` (default: `false`) | Inject additional detection conditions; list values are OR-linked, and keys take modifiers like rule detection keys (`IpAddress\|cidr`). `name` names the added detection and must not collide with an existing one; `template: true` substitutes `$category`, `$product`, and `$service` in string values |
 | `change_logsource` | `category`, `product`, `service` | Modify logsource fields |
 | `replace_string` | `regex`, `replacement`, `skip_special` (default: `false`), `interpret_special` (default: `false`) | Regex-based string replacement (`skip_special` preserves wildcards; `interpret_special` parses wildcards in the replaced text) |
 | `map_string` | `mapping: {k: v \| [v1, v2]}` | Map string values to replacements (supports one-to-many) |
