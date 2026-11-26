@@ -45,7 +45,7 @@ LynxDB's `search` matches tokens case-insensitively and only knows the `*` wildc
 - a number or boolean compared for equality
 - `exists: true`/`false`
 
-Anything else renders the whole condition as `FROM <index> | where ...`: regexes, CIDR, `null`, empty strings, `cased`, numeric comparisons, `?`, a literal `*`, a `*` between literals, and strings with other characters such as `/`, `>`, quotes, or brackets. Search alone would miss or over-match those values, and mixing a `search` term with a `where` stage cannot express a regex nested under an `OR` or `NOT`.
+Anything else renders the whole condition as `FROM <index> | where ...`: regexes, CIDR, `null`, empty strings, `cased`, keywords with `base64` or `base64offset`, numeric comparisons, `?`, a literal `*`, a `*` between literals, and strings with other characters such as `/`, `>`, quotes, or brackets. Search alone would miss or over-match those values, and mixing a `search` term with a `where` stage cannot express a regex nested under an `OR` or `NOT`.
 
 ## Modifier mapping
 
@@ -66,7 +66,7 @@ Verified against the LynxDB backend's golden tests at [`crates/rsigma-convert/sr
 | Empty string | | `coalesce(json_extract(_raw, "field")="", false)` |
 | `exists: true`/`false` | `field=*`/`NOT field=*` | `isnotnull(json_extract(_raw, "field"))`/`isnull(...)` |
 | Value list (`field` with multiple values) | `field="val1" OR field="val2"` | `match(field, "(?i)^val1$") OR match(field, "(?i)^val2$")` |
-| Keywords | `"keyword"`, without outer wildcards, since a keyword already matches a substring | `match(_raw, "(?i)keyword")`, with the keyword escaped as serde_json writes it in the raw JSON; a wildcard matches within one JSON string. A `cased` keyword drops the `(?i)`. {{ added "unreleased" }} |
+| Keywords | `"keyword"`, without outer wildcards, since a keyword already matches a substring | `match(_raw, "(?i)keyword")`, with the keyword escaped as serde_json writes it in the raw JSON; a wildcard matches within one JSON string. A `cased` keyword drops the `(?i)`. {{ added "unreleased" }} A keyword with `base64` or `base64offset` always renders this way, since its encoded forms sit inside longer words, which `search` misses. {{ added "unreleased" }} |
 | Boolean `AND`, `OR`, `NOT` | Parenthesized where the non-standard precedence (`NOT > OR > AND`) requires it: an `AND` under an `OR`, and a compound operand of `NOT`. | Standard precedence. |
 
 Field names render bare, because LynxDB has no quoted identifier syntax. A field name must start with a letter or `_` and contain only letters, digits, `_`, `.`, `:`, and `-`, such as `cs-uri-query` or `winlog.event_data.Image`. Any other field name fails conversion with `invalid LynxDB field name`, since LynxDB would not read it as one field. {{ added "0.28.0" }}

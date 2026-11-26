@@ -331,6 +331,23 @@ pub trait Backend: Send + Sync {
         ))
     }
 
+    /// Keyword (unbound) string term that can sit inside a word, such as a
+    /// `base64offset` fragment of an encoded value. A full-text search over
+    /// whole words misses it, so such backends override this; the default
+    /// renders it as any other keyword term.
+    fn convert_keyword_substr(
+        &self,
+        pattern: &IrPattern,
+        case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        if case_insensitive {
+            self.convert_keyword_str(pattern, state)
+        } else {
+            self.convert_keyword_str_cased(pattern, state)
+        }
+    }
+
     /// Keyword (unbound) numeric term.
     fn convert_keyword_num(
         &self,

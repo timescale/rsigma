@@ -27,19 +27,23 @@ pub const MAX_WINDASH_DASHES: usize = 8;
 pub fn expand_encoded_detections(
     detections: &mut HashMap<String, IrDetection>,
 ) -> Result<(), IrError> {
-    detections.values_mut().try_for_each(expand_detection)
+    detections
+        .values_mut()
+        .try_for_each(expand_encoded_detection)
 }
 
-fn expand_detection(det: &mut IrDetection) -> Result<(), IrError> {
+/// Replace every [`IrMatcher::Encoded`] in one detection, as
+/// [`expand_encoded_detections`] does for a whole detection map.
+pub fn expand_encoded_detection(det: &mut IrDetection) -> Result<(), IrError> {
     match det {
         IrDetection::AllOf(items) => items
             .iter_mut()
             .try_for_each(|item| expand_encoded_matcher(&mut item.matcher)),
         IrDetection::AnyOf(dets) | IrDetection::And(dets) => {
-            dets.iter_mut().try_for_each(expand_detection)
+            dets.iter_mut().try_for_each(expand_encoded_detection)
         }
         IrDetection::Keywords(matcher) => expand_encoded_matcher(matcher),
-        IrDetection::ArrayMatch { body, .. } => expand_detection(body),
+        IrDetection::ArrayMatch { body, .. } => expand_encoded_detection(body),
         IrDetection::Conditional { named, .. } => expand_encoded_detections(named),
     }
 }

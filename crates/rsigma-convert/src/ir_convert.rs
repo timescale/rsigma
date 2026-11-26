@@ -11,11 +11,13 @@
 use std::collections::HashMap;
 
 use rsigma_ir::{
-    IrCondition, IrDetection, IrDetectionItem, IrMatcher, IrNumber, IrStrOp, NumericLiteral,
+    IrCondition, IrDetection, IrDetectionItem, IrEncoding, IrMatcher, IrNumber, IrStrOp,
+    NumericLiteral,
 };
 use rsigma_parser::{Quantifier, SelectorPattern};
 
 use crate::backend::{Backend, CompareOp, TokenType};
+use crate::condition_ir::ir_err;
 use crate::convert::field_has_positional_index;
 use crate::error::{ConvertError, Result};
 use crate::state::{ConversionState, ConvertResult};
@@ -245,6 +247,33 @@ fn convert_keyword<B: Backend + ?Sized>(
             pattern,
             case_insensitive: false,
         } => backend.convert_keyword_str_cased(pattern, state),
+        IrMatcher::Encoded {
+            encodings,
+            op,
+            pattern,
+            case_insensitive,
+        } => {
+            let base64 = encodings
+                .iter()
+                .any(|e| matches!(e, IrEncoding::Base64 | IrEncoding::Base64Offset));
+            let parts = rsigma_ir::encoding::expand_encoded(encodings, *op, pattern)
+                .map_err(ir_err)?
+                .into_iter()
+                .map(|(op, pattern)| {
+                    if base64 {
+                        backend.convert_keyword_substr(&pattern, *case_insensitive, state)
+                    } else {
+                        let variant = IrMatcher::Str {
+                            op,
+                            pattern,
+                            case_insensitive: *case_insensitive,
+                        };
+                        convert_keyword(backend, &variant, state)
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            backend.convert_condition_or(&parts)
+        }
         IrMatcher::NumericEq(n) => backend.convert_keyword_num(number(n)?, state),
         _ => Err(ConvertError::UnsupportedKeyword),
     }

@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Base64 keywords match in PostgreSQL and LynxDB (#760)
+
+A keyword with `base64` or `base64offset`, such as `'|base64offset|contains': IEX`, never matched in PostgreSQL or LynxDB. Each encoded form is a fragment of a longer base64 string, and both backends searched for it as a whole word: PostgreSQL through full-text search, and LynxDB through `search`, which skips segments whose bloom filter lacks the fragment. PostgreSQL now matches each fragment as a substring of the event text with `ILIKE`, or `LIKE` with `cased`, and LynxDB with a `match(_raw, ...)` regex in `where`. Library backends receive these fragments through the new `Backend::convert_keyword_substr` method, which defaults to the regular keyword rendering.
+
 ### Cased keywords convert case-sensitively or fail (#759)
 
 Conversion ignored `cased` on a field-less value, such as `'|cased': WhoAmI`, and rendered a case-insensitive keyword, so the converted rule also matched `whoami` while evaluation did not. LynxDB now renders a cased keyword in `where` as `match(_raw, "WhoAmI")`, without `(?i)`. PostgreSQL full-text search can't match case, so the conversion now fails, as it does for a keyword with `startswith`. The test backend keeps the plain term, as pySigma does.

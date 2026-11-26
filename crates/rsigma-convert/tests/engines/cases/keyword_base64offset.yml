@@ -1,0 +1,22 @@
+description: A base64offset keyword matches the value base64-encoded at each of the three byte offsets inside a longer encoded string.
+rule:
+  title: keyword base64offset
+  logsource: {category: process_creation, product: windows}
+  detection:
+    keywords:
+      '|base64offset|contains': 'IEX'
+    condition: keywords
+events:
+  - {CommandLine: 'powershell -enc SUVYIChOZXctT2JqZWN0IE5ldC5XZWJDbGllbnQp'}
+  - {CommandLine: 'powershell -enc eElFWCAoTmV3LU9iamVjdCBOZXQuV2ViQ2xpZW50KQ=='}
+  - {CommandLine: 'powershell -enc eHhJRVggKE5ldy1PYmplY3QgTmV0LldlYkNsaWVudCk='}
+  - {CommandLine: 'powershell -enc R2V0LVByb2Nlc3M='}
+  - {CommandLine: 'IEX (New-Object Net.WebClient)'}
+matches: [0, 1, 2]
+unsupported: [fibratus, fibratus-nomacros]
+known_failures:
+  test-pysigma:
+    type: reference-error
+    reason: "pySigma 2.1.0 fails on an encoding modifier in a keyword"
+    actual: ['_="SUVY" or _="lFW" or _="JRV"']
+    contains: "Unexpected value type class in condition parse tree: SigmaExpansion"

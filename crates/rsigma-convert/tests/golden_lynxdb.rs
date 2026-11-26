@@ -95,6 +95,11 @@ fn golden_keywords() {
 }
 
 #[test]
+fn golden_keywords_base64offset() {
+    run_golden("keywords_base64offset");
+}
+
+#[test]
 fn golden_exists_null_bool() {
     run_golden("exists_null_bool");
 }

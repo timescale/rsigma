@@ -91,6 +91,11 @@ fn golden_keywords_fulltext() {
 }
 
 #[test]
+fn golden_keywords_base64offset() {
+    run_golden("keywords_base64offset");
+}
+
+#[test]
 fn golden_wildcard() {
     run_golden("wildcard");
 }

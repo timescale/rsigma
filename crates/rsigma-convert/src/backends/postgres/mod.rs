@@ -763,6 +763,22 @@ impl Backend for PostgresBackend {
         ))
     }
 
+    /// Full-text search matches whole words, so a term inside a word is a
+    /// `LIKE` substring match over the event text.
+    fn convert_keyword_substr(
+        &self,
+        pattern: &IrPattern,
+        case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        reject_nul_pattern("PostgreSQL", pattern)?;
+        let search_target = self.keyword_search_target(state);
+        let like_op = if case_insensitive { "ILIKE" } else { "LIKE" };
+        let inner = self.build_like_value_ir(pattern);
+        let val = self.wrap_like_wildcards(&inner, true, false, false);
+        Ok(format!("{search_target} {like_op} {val}"))
+    }
+
     fn convert_keyword_num(
         &self,
         value: NumericLiteral,
