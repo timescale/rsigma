@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Modifiers in `add_condition` keys
+
+An `add_condition` key such as `IpAddress|cidr` is now parsed like a rule's detection key, so the condition matches `IpAddress` with the `cidr` modifier. Before, the whole key was taken as the field name and the value was compared as a plain string, so the condition never matched: a negated exclusion let every event through and a plain condition stopped the rule from firing, both silently. This applied to every modifier, in evaluation and in conversion. Keys are checked when the pipeline loads, so an unknown modifier or `|not` is an error, and a `re` value keeps `*` and `?` literal.
+
 ## [0.28.0] - 2026-11-24
 
 **TL;DR**
