@@ -1,0 +1,29 @@
+description: A pipeline add_condition key carries its modifiers, so a negated cidr condition excludes a network.
+rule:
+  title: add condition modifier
+  logsource: {category: network_connection, product: windows}
+  detection:
+    selection:
+      DestinationIp|cidr: '10.0.0.0/8'
+    condition: selection
+pipeline:
+  name: exclude source network
+  priority: 10
+  transformations:
+    - id: source_exclusion
+      type: add_condition
+      negated: true
+      conditions:
+        SourceIp|cidr: '192.168.0.0/16'
+events:
+  - {DestinationIp: '10.1.2.3', SourceIp: '192.168.1.5'}
+  - {DestinationIp: '10.1.2.3', SourceIp: '172.16.0.1'}
+  - {DestinationIp: '11.0.0.1', SourceIp: '172.16.0.1'}
+  - {DestinationIp: '10.0.0.9', SourceIp: '192.169.0.1'}
+matches: [1, 3]
+known_failures:
+  test-pysigma:
+    type: output-difference
+    reason: "the added condition is appended instead of prepended"
+    actual: ["cidrmatch('DestinationIp', \"10.0.0.0/8\") and not cidrmatch('SourceIp', \"192.168.0.0/16\")"]
+    reference: ["not cidrmatch('SourceIp', \"192.168.0.0/16\") and cidrmatch('DestinationIp', \"10.0.0.0/8\")"]
