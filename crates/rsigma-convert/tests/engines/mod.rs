@@ -106,6 +106,11 @@ pub enum KnownFailure {
         actual: Vec<String>,
         reference: Vec<String>,
     },
+    ReferenceError {
+        reason: String,
+        actual: Vec<String>,
+        contains: String,
+    },
 }
 
 impl KnownFailure {
@@ -113,7 +118,8 @@ impl KnownFailure {
         match self {
             Self::MatchMismatch { reason, .. }
             | Self::EngineError { reason, .. }
-            | Self::OutputDifference { reason, .. } => reason,
+            | Self::OutputDifference { reason, .. }
+            | Self::ReferenceError { reason, .. } => reason,
         }
     }
 
@@ -138,6 +144,12 @@ impl KnownFailure {
                     reference: got_reference,
                 },
             ) => actual == got && reference == got_reference,
+            (
+                Self::ReferenceError {
+                    actual, contains, ..
+                },
+                Problem::ReferenceRejected { actual: got, error },
+            ) => actual == got && error.contains(contains),
             _ => false,
         }
     }
@@ -251,22 +263,30 @@ fn parse_known_failure(name: &str, label: &str, value: &yaml_serde::Value) -> Kn
             reason,
             contains: required_str("contains"),
         },
-        "output-difference" => {
+        kind @ ("output-difference" | "reference-error") => {
             let queries = |key: &str| {
                 serde_json::from_value(
-                    serde_json::to_value(value.get(key).unwrap_or_else(|| {
-                        panic!("{name}: `{label}` output difference needs `{key}`")
-                    }))
+                    serde_json::to_value(
+                        value
+                            .get(key)
+                            .unwrap_or_else(|| panic!("{name}: `{label}` {kind} needs `{key}`")),
+                    )
                     .unwrap(),
                 )
-                .unwrap_or_else(|e| {
-                    panic!("{name}: `{label}` output difference has invalid `{key}`: {e}")
-                })
+                .unwrap_or_else(|e| panic!("{name}: `{label}` {kind} has invalid `{key}`: {e}"))
             };
-            KnownFailure::OutputDifference {
-                reason,
-                actual: queries("actual"),
-                reference: queries("reference"),
+            if kind == "reference-error" {
+                KnownFailure::ReferenceError {
+                    reason,
+                    actual: queries("actual"),
+                    contains: required_str("contains"),
+                }
+            } else {
+                KnownFailure::OutputDifference {
+                    reason,
+                    actual: queries("actual"),
+                    reference: queries("reference"),
+                }
             }
         }
         kind => panic!("{name}: `{label}` has unknown known-failure type `{kind}`"),
