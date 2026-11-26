@@ -1058,6 +1058,93 @@ fn test_case_transformation_upper() {
     }
 }
 
+/// A rule with one plain item and one `re`, `cidr`, and `fieldref` item.
+fn make_typed_value_rule() -> SigmaRule {
+    let mut rule = make_test_rule();
+    let item = |field: &str, modifiers: Vec<Modifier>, value: SigmaValue| DetectionItem {
+        field: FieldSpec::new(Some(field.to_string()), modifiers),
+        values: vec![value],
+    };
+    rule.detection.named.insert(
+        "selection".to_string(),
+        Detection::AllOf(vec![
+            item(
+                "CommandLine",
+                vec![],
+                SigmaValue::String(SigmaString::new("run 10")),
+            ),
+            item(
+                "CommandLine",
+                vec![Modifier::Re],
+                SigmaValue::from_raw_string(r"^run \d+$"),
+            ),
+            item(
+                "SourceIp",
+                vec![Modifier::Cidr],
+                SigmaValue::String(SigmaString::new("10.0.0.0/8")),
+            ),
+            item(
+                "User",
+                vec![Modifier::FieldRef],
+                SigmaValue::String(SigmaString::new("run")),
+            ),
+        ]),
+    );
+    rule
+}
+
+fn item_strings(rule: &SigmaRule) -> Vec<String> {
+    let Detection::AllOf(items) = &rule.detection.named["selection"] else {
+        panic!("expected AllOf");
+    };
+    items
+        .iter()
+        .map(|item| match &item.values[0] {
+            SigmaValue::String(s) => s.original.clone(),
+            other => panic!("expected a string value, got {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn test_string_value_transformations_skip_typed_values() {
+    let typed = [r"^run \d+$", "10.0.0.0/8", "run"];
+    let cases = [
+        (
+            Transformation::CaseTransformation {
+                case_type: "upper".to_string(),
+            },
+            "RUN 10",
+        ),
+        (
+            Transformation::ReplaceString {
+                regex: "run|10|d".to_string(),
+                replacement: "x".to_string(),
+                skip_special: false,
+                interpret_special: false,
+            },
+            "x x",
+        ),
+        (
+            Transformation::MapString {
+                mapping: [r"^run \d+$", "10.0.0.0/8", "run", "run 10"]
+                    .into_iter()
+                    .map(|k| (k.to_string(), vec!["mapped".to_string()]))
+                    .collect(),
+            },
+            "mapped",
+        ),
+    ];
+    for (t, plain) in cases {
+        let mut rule = make_typed_value_rule();
+        let mut state = PipelineState::default();
+        t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+        let values = item_strings(&rule);
+        assert_eq!(values[0], plain, "{t:?} should rewrite the plain value");
+        assert_eq!(values[1..], typed, "{t:?} should leave typed values alone");
+    }
+}
+
 #[test]
 fn test_nest_transformation() {
     let mut rule = make_test_rule();
