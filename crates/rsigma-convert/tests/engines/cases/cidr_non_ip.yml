@@ -16,3 +16,12 @@ events:
   - {DestinationIp: ':::::'}
   - {DestinationIp: '11.0.0.1'}
 matches: [0, 3]
+known_failures:
+  fibratus:
+    type: engine-error
+    reason: "Fibratus types net.dip as an IP address, so an event cannot carry a value that is not one"
+    contains: "net.dip: invalid IP \"-\""
+  fibratus-nomacros:
+    type: engine-error
+    reason: "Fibratus types net.dip as an IP address, so an event cannot carry a value that is not one"
+    contains: "net.dip: invalid IP \"-\""
