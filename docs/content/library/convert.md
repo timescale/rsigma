@@ -89,40 +89,9 @@ LynxDB has no CLI `-O` options; its only knob is the target index, controlled vi
 
 ## Writing a custom backend
 
-The smallest viable backend implements `Backend`, returns a `TextQueryConfig`, and lets the trait's default methods do the heavy lifting:
+A backend implements `Backend`. The required methods are `name`, `formats`, `convert_rule`, the condition combinators (`convert_condition_and`, `convert_condition_or`, `convert_condition_not`), `escape_and_quote_field`, the value leaves (`convert_field_str`, `convert_field_eq_num`, `convert_field_regex`, `convert_keyword_str`, and the rest), `finish_query`, `finalize_query`, and `finalize_output`. The other methods have defaults.
 
-```rust
-use rsigma_convert::{Backend, TextQueryConfig, TokenType};
-
-pub struct MyBackend;
-
-static MY_CONFIG: TextQueryConfig = TextQueryConfig {
-    precedence: (TokenType::NOT, TokenType::AND, TokenType::OR),
-    group_expression: "({expr})",
-    token_separator: " ",
-    and_token: "AND",
-    or_token: "OR",
-    not_token: "NOT",
-    eq_token: " = ",
-    not_eq_token: Some(" <> "),
-    // ... 80+ other knobs, see the docs.rs page
-    .. TextQueryConfig::PYSIGMA_DEFAULTS
-};
-
-impl Backend for MyBackend {
-    fn name(&self) -> &str { "my_backend" }
-
-    fn formats(&self) -> &[(&str, &str)] {
-        &[("default", "Plain MyBackend query")]
-    }
-
-    fn text_query_config(&self) -> Option<&TextQueryConfig> {
-        Some(&MY_CONFIG)
-    }
-}
-```
-
-The default `convert_rule` lowers the rule to `IrRule`, walks the resulting `IrDetection` and `IrCondition`, and dispatches into `text_*` helpers (e.g. `text_convert_field_str_ir`, `text_convert_ir_pattern`) that consult the config. Only override the leaves that your backend needs to behave differently from pySigma's `TextQueryBackend` default.
+`convert_rule` usually delegates to `condition_ir::convert_rule_via_ir`, which lowers the rule to `IrRule`, walks the resulting `IrDetection` and `IrCondition`, and calls the leaves. A text backend holds a `&'static TextQueryConfig` and implements the leaves with the `text_*` helpers in `rsigma_convert::backend` (e.g. `text_convert_field_str_ir`, `text_convert_ir_pattern`), which render values the way pySigma's `TextQueryBackend` does, and writes its own rendering only where the target differs. `TextQueryConfig` has no `Default` impl, so start from an existing config such as `backends::test::TEXT_QUERY_TEST_CONFIG` and set every field.
 
 A keyword with `cased` goes to `convert_keyword_str_cased` instead of `convert_keyword_str`. The default rejects it with `UnsupportedModifier`, since a full-text search usually ignores case; override it when your backend can match a keyword case-sensitively. {{ added "unreleased" }}
 
