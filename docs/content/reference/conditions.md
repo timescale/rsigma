@@ -50,7 +50,7 @@ Inside an array body, such as `tags[any]: 'admin'`, a field-less value matches t
 
 ## Converting keywords
 
-Backends render each keyword value as one full-text term. A field-less `|all` list becomes the terms joined with `AND`, and `|neq` negates them. A field-less value with `startswith` or `endswith` has no full-text equivalent and fails conversion with `UnsupportedKeyword`. A field-less value with `cased` matches case-sensitively where the backend can do so, as LynxDB does with a regex, and fails conversion where its full-text search ignores case, as PostgreSQL's does. {{ added "unreleased" }}
+Backends render each keyword value as one full-text term. A field-less `|all` list becomes the terms joined with `AND`, and `|neq` negates them. A field-less value with `startswith` or `endswith` has no full-text equivalent and fails conversion with `UnsupportedKeyword`. A field-less value with `cased` matches case-sensitively where the backend can do so, as LynxDB does with a regex, and fails conversion where its full-text search ignores case, as PostgreSQL's does. {{ added "unreleased" }} A field-less value with `base64` or `base64offset` encodes to fragments of a longer base64 string, so PostgreSQL and LynxDB match each fragment as a substring rather than as a whole word. {{ added "unreleased" }}
 
 Full-text engines may match keywords differently from the evaluator: PostgreSQL matches whole tokens rather than substrings (see [PostgreSQL keywords](backends/postgres.md)), and Fibratus has no full-text search, so keyword rules fail to convert.
 
