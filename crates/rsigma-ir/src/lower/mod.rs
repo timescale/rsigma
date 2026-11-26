@@ -75,6 +75,16 @@ pub fn lower_conditions(section: &Detections) -> Result<Vec<IrCondition>> {
 
 /// Lower a parsed detection into `IrDetection`.
 pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrDetection> {
+    lower_detection_in(detection, opts, false)
+}
+
+/// Lower a detection whose field-less items match the event when
+/// `array_member` is false, and an array member inside an array body.
+fn lower_detection_in(
+    detection: &Detection,
+    opts: &LowerOptions,
+    array_member: bool,
+) -> Result<IrDetection> {
     match detection {
         Detection::AllOf(items) => {
             if items.is_empty() {
@@ -84,7 +94,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
             }
             let lowered: Result<Vec<_>> = items
                 .iter()
-                .map(|item| lower_detection_item(item, opts))
+                .map(|item| lower_item(item, opts, array_member))
                 .collect();
             Ok(IrDetection::AllOf(lowered?))
         }
@@ -94,7 +104,10 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
                     "AnyOf detection must not be empty (would never match)".into(),
                 ));
             }
-            let lowered: Result<Vec<_>> = dets.iter().map(|d| lower_detection(d, opts)).collect();
+            let lowered: Result<Vec<_>> = dets
+                .iter()
+                .map(|d| lower_detection_in(d, opts, array_member))
+                .collect();
             Ok(IrDetection::AnyOf(lowered?))
         }
         Detection::ArrayMatch {
@@ -102,7 +115,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
             quantifier,
             body,
         } => {
-            let compiled_body = lower_detection(body, opts)?;
+            let compiled_body = lower_detection_in(body, opts, true)?;
             Ok(IrDetection::ArrayMatch {
                 field: field.clone(),
                 quantifier: *quantifier,
@@ -115,7 +128,10 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
                     "And detection must not be empty".into(),
                 ));
             }
-            let lowered: Result<Vec<_>> = dets.iter().map(|d| lower_detection(d, opts)).collect();
+            let lowered: Result<Vec<_>> = dets
+                .iter()
+                .map(|d| lower_detection_in(d, opts, array_member))
+                .collect();
             Ok(IrDetection::And(lowered?))
         }
         Detection::Conditional { named, condition } => {
@@ -126,7 +142,7 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
             }
             let mut lowered_named = HashMap::new();
             for (k, d) in named {
-                lowered_named.insert(k.clone(), lower_detection(d, opts)?);
+                lowered_named.insert(k.clone(), lower_detection_in(d, opts, array_member)?);
             }
             let names: Vec<String> = lowered_named.keys().cloned().collect();
             let lowered_cond = lower_condition(condition, &names)?;
@@ -155,6 +171,14 @@ pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrD
 
 /// Lower a detection item — absorbs modifier interpretation.
 pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result<IrDetectionItem> {
+    lower_item(item, opts, false)
+}
+
+fn lower_item(
+    item: &DetectionItem,
+    opts: &LowerOptions,
+    array_member: bool,
+) -> Result<IrDetectionItem> {
     if !opts.permissive_placeholders {
         for v in &item.values {
             reject_placeholders(v)?;
@@ -232,7 +256,12 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
     let matchers: Result<Vec<IrMatcher>> = item
         .values
         .iter()
-        .map(|v| lower_value(v, &value_ctx))
+        .map(|v| match (v, &item.field.name) {
+            // A field-less boolean searches the event for the word, as in a
+            // keyword list; inside an array body it compares the member.
+            (SigmaValue::Bool(_), None) if !array_member => lower_value_keywords(v),
+            _ => lower_value(v, &value_ctx),
+        })
         .collect();
     let matchers = matchers?;
 

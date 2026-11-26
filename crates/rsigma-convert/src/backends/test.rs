@@ -1631,6 +1631,22 @@ detection:
     }
 
     #[test]
+    fn test_field_less_bool_converts_as_text() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        '|neq': true
+    condition: sel
+"#,
+        );
+        assert_eq!(queries, vec!["not _=\"true\""]);
+    }
+
+    #[test]
     fn test_anchored_field_less_value_is_unsupported() {
         let err = convert_rule_yaml_err(
             r#"
