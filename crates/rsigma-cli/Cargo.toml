@@ -134,7 +134,7 @@ rusqlite = { version = "0.42", features = ["bundled"], optional = true }
 tower-http = { version = "0.7", features = ["trace"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 getrandom = { version = "0.4", optional = true }
-async-nats = { version = "0.52", optional = true }
+async-nats = { version = "0.53", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 time = { version = "0.3", optional = true }
 prost = { version = "0.14", optional = true }
@@ -167,7 +167,7 @@ predicates = "3.1.4"
 tempfile = "3.25.0"
 insta = "1.46"
 tokio = { version = "1", features = ["full"] }
-async-nats = "0.52"
+async-nats = "0.53"
 bytes = "1"
 futures = "0.3"
 testcontainers = "0.27"
