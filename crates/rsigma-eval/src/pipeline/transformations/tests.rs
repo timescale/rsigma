@@ -2211,3 +2211,143 @@ transformations:
         );
     }
 }
+
+fn added_items(rule: &SigmaRule, name: &str) -> Vec<DetectionItem> {
+    match rule.detection.named.get(name) {
+        Some(Detection::AllOf(items)) => items.clone(),
+        other => panic!("expected AllOf detection '{name}', got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_add_condition_splits_modifier_key() {
+    let mut rule = make_test_rule();
+    let mut state = PipelineState::default();
+    let mut conds = HashMap::new();
+    conds.insert(
+        "IpAddress|cidr".to_string(),
+        vec![SigmaValue::String(SigmaString::new("209.0.0.0/16"))],
+    );
+    let t = Transformation::AddCondition {
+        conditions: conds,
+        field_refs: HashMap::new(),
+        negated: true,
+        prepend: false,
+        name: Some("exclusion_range".to_string()),
+        template: false,
+    };
+    t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+    let items = added_items(&rule, "exclusion_range");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].field.name.as_deref(), Some("IpAddress"));
+    assert_eq!(items[0].field.modifiers, vec![Modifier::Cidr]);
+    assert_eq!(
+        items[0].values,
+        vec![SigmaValue::String(SigmaString::new("209.0.0.0/16"))]
+    );
+}
+
+#[test]
+fn test_add_condition_template_keeps_regex_raw() {
+    let mut rule = make_test_rule();
+    rule.logsource.service = Some("sshd".to_string());
+    let mut state = PipelineState::default();
+    let mut conds = HashMap::new();
+    conds.insert(
+        "Path|re".to_string(),
+        vec![SigmaValue::from_raw_string("^/var/log/$service/.*")],
+    );
+    conds.insert(
+        "Image|endswith".to_string(),
+        vec![SigmaValue::String(SigmaString::new("*\\$product.exe"))],
+    );
+    let t = Transformation::AddCondition {
+        conditions: conds,
+        field_refs: HashMap::new(),
+        negated: false,
+        prepend: false,
+        name: Some("templated".to_string()),
+        template: true,
+    };
+    t.apply(&mut rule, &mut state, &[], &[], false).unwrap();
+
+    let items = added_items(&rule, "templated");
+    let path = items
+        .iter()
+        .find(|i| i.field.name.as_deref() == Some("Path"))
+        .unwrap();
+    assert_eq!(path.field.modifiers, vec![Modifier::Re]);
+    assert_eq!(
+        path.values,
+        vec![SigmaValue::from_raw_string("^/var/log/sshd/.*")]
+    );
+    let image = items
+        .iter()
+        .find(|i| i.field.name.as_deref() == Some("Image"))
+        .unwrap();
+    assert_eq!(image.field.modifiers, vec![Modifier::EndsWith]);
+    assert_eq!(
+        image.values,
+        vec![SigmaValue::String(SigmaString::new("*\\windows.exe"))]
+    );
+}
+
+#[test]
+fn parse_add_condition_with_modifier_keys() {
+    use crate::pipeline::parse_pipeline;
+
+    let yaml = r#"
+name: t
+priority: 1
+transformations:
+  - id: add_modifiers
+    type: add_condition
+    conditions:
+      CommandLine|contains|all: ['-enc', '*bypass*']
+      Path|re: 'C:\\Users\\.*\.exe'
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let Transformation::AddCondition { conditions, .. } =
+        &pipeline.transformations[0].transformation
+    else {
+        panic!("expected AddCondition");
+    };
+    assert_eq!(
+        conditions.get("CommandLine|contains|all").unwrap(),
+        &vec![
+            SigmaValue::String(SigmaString::new("-enc")),
+            SigmaValue::String(SigmaString::new("*bypass*")),
+        ]
+    );
+    // A regex keeps `*` and `?` literal instead of parsing them as wildcards.
+    assert_eq!(
+        conditions.get("Path|re").unwrap(),
+        &vec![SigmaValue::from_raw_string(r"C:\\Users\\.*\.exe")]
+    );
+}
+
+#[test]
+fn parse_add_condition_rejects_invalid_modifier() {
+    use crate::pipeline::parse_pipeline;
+
+    for key in ["IpAddress|cidrr", "User|not"] {
+        let yaml = format!(
+            r#"
+name: t
+priority: 1
+transformations:
+  - id: add_invalid
+    type: add_condition
+    conditions:
+      {key}: value
+"#
+        );
+        let err = parse_pipeline(&yaml).expect_err("invalid modifier should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("add_condition") && msg.contains(key),
+            "error should name the offending key: {err}"
+        );
+    }
+}

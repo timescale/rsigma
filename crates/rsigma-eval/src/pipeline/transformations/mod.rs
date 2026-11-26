@@ -6,6 +6,8 @@
 
 mod helpers;
 
+pub(super) use helpers::parse_condition_field;
+
 pub use helpers::MAX_PLACEHOLDER_COMBINATIONS;
 #[cfg(test)]
 mod tests;
@@ -67,6 +69,9 @@ pub enum Transformation {
     /// A multi-element vec creates a detection item with multiple values, which
     /// are OR-linked per Sigma semantics — matching pySigma's
     /// `AddConditionTransformation` behavior.
+    ///
+    /// Keys are detection keys: `IpAddress|cidr` adds a `cidr` match on
+    /// `IpAddress`, parsed the same way as a rule's `field|modifier` keys.
     AddCondition {
         conditions: HashMap<String, Vec<SigmaValue>>,
         /// Field-to-field equality conditions (`field` equals the value of
