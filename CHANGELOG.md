@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Test backend output matches pySigma for fieldref, regex, and field-less contains (#PR)
+### Test backend output matches pySigma for fieldref, regex, and field-less contains (#761)
 
 The `test` backend rendered `fieldref` with `startswith`, `endswith`, or `contains` as `A startswith B`, where pySigma's `TextQueryTestBackend` renders `A=fieldref_startswith(B)`. It also rendered a field-less `contains` value as the bare term, `_="whoami"`, where pySigma adds wildcards: `_="*whoami*"`. A keyword list is unchanged, `_="whoami"`, as in pySigma. Its regexes now escape `bar` as well as `/`, as pySigma's test backend does. New engine cases cover these forms against pySigma, and they also check matching for fieldref with each substring operator, field-less `contains`, and a regex with a slash.
 
