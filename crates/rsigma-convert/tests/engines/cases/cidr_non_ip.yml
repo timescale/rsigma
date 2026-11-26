@@ -1,0 +1,18 @@
+description: cidr skips values that are not addresses, such as the '-' Windows logs for a missing address, instead of failing.
+rule:
+  title: cidr non ip
+  logsource: {category: network_connection, product: windows}
+  detection:
+    selection:
+      DestinationIp|cidr: '10.0.0.0/8'
+    v6:
+      DestinationIp|cidr: 'fe80::/10'
+    condition: selection or v6
+events:
+  - {DestinationIp: '10.1.2.3'}
+  - {DestinationIp: '-'}
+  - {DestinationIp: '999.1.1.1'}
+  - {DestinationIp: 'fe80::1'}
+  - {DestinationIp: ':::::'}
+  - {DestinationIp: '11.0.0.1'}
+matches: [0, 3]
