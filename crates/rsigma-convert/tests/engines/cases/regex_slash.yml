@@ -1,0 +1,13 @@
+description: A regex with a slash matches the slash literally.
+rule:
+  title: regex slash
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|re: 'foobar/baz'
+    condition: selection
+events:
+  - {CommandLine: 'curl http://x/foobar/baz'}
+  - {CommandLine: 'curl http://x/foobar-baz'}
+  - {CommandLine: 'curl http://x/foo/baz'}
+matches: [0]

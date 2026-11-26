@@ -1,0 +1,14 @@
+description: fieldref with startswith matches when the field starts with the value of the other field, case-insensitively.
+rule:
+  title: fieldref startswith
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|fieldref|startswith: Image
+    condition: selection
+unsupported: [lynxdb]
+events:
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'C:\Windows\cmd.exe /c whoami'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'c:\windows\CMD.EXE /c whoami'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c C:\Windows\cmd.exe'}
+matches: [0, 1]

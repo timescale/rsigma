@@ -1759,6 +1759,61 @@ detection:
         assert_eq!(queries, vec!["Path=/C:\\/Windows\\/.*/"]);
     }
 
+    #[test]
+    fn test_re_escapes_bar_as_pysigma_does() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Path|re: 'foobar'
+    condition: selection
+"#,
+        );
+        assert_eq!(queries, vec!["Path=/foo\\bar/"]);
+    }
+
+    #[test]
+    fn test_fieldref_substring_operators() {
+        for (modifier, expected) in [
+            ("startswith", "A=fieldref_startswith(B)"),
+            ("endswith", "A=fieldref_endswith(B)"),
+            ("contains", "A=fieldref_contains(B)"),
+        ] {
+            let queries = convert_rule_yaml(&format!(
+                "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        A|fieldref|{modifier}: B\n    condition: selection\n"
+            ));
+            assert_eq!(queries, vec![expected], "{modifier}");
+        }
+    }
+
+    #[test]
+    fn test_field_less_contains_adds_wildcards() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        '|contains': whoami
+    cased:
+        '|contains|cased': WhoAmI
+    wild:
+        '|contains|all': ['*foo', 'bar*']
+    keywords:
+        - ipconfig
+    condition: sel or cased or wild or keywords
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec![r#"_="*whoami*" or _="*WhoAmI*" or _="*foo*" and _="*bar*" or _="ipconfig""#]
+        );
+    }
+
     /// Convert a rule expected to fail and return the resulting error message.
     fn convert_rule_yaml_err(yaml: &str) -> ConvertError {
         let collection = parse_sigma_yaml(yaml).unwrap();

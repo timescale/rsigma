@@ -1,0 +1,14 @@
+description: fieldref with contains matches when the field contains the value of the other field, case-insensitively.
+rule:
+  title: fieldref contains
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|fieldref|contains: Image
+    condition: selection
+unsupported: [lynxdb]
+events:
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c C:\Windows\cmd.exe /k'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c c:\windows\CMD.EXE /k'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c C:\Windows\System32\cmd.exe'}
+matches: [0, 1]
