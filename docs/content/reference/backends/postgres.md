@@ -36,7 +36,7 @@ Every Sigma modifier is translated to a native PostgreSQL construct. The mapping
 | `endswith` | `"field" ILIKE '%value'` |
 | `cased` (any of the above) | switches `ILIKE` to `LIKE` (case-sensitive); a plain `cased` equality renders as `"field" = 'value'` |
 | `re` | `"field" ~ 'pattern'` (case-sensitive, as the Sigma specification requires); `~*` with `\|i`. `\|m` adds the `(?w)` embedded option so `^` and `$` match at line breaks, merged into a leading options group such as `(?i)` because PostgreSQL reads only one. PostgreSQL's `.` matches a line break even without `\|s`, so a regex can over-match a multi-line value but never misses one. {{ added "0.24.0" }} |
-| `cidr` | `("field")::inet <<= 'value'::cidr` |
+| `cidr` | `(CASE WHEN ("field")::text ~ '^address$' THEN ("field")::inet END) <<= 'value'::cidr`, where `address` is a pattern for an IPv4 or IPv6 address of the network's family. The value is cast only when it is such an address, so a value such as `-`, which Windows logs for a missing address, does not match instead of failing the whole query, as in the rsigma engine. In columns mode the address may carry a mask, as an `inet` column's text does. |
 | `exists: true` | `"field" IS NOT NULL`; `data->'field' IS NOT NULL` in [JSONB mode](#jsonb-mode) |
 | `exists: false` | `"field" IS NULL`; `data->'field' IS NULL` in [JSONB mode](#jsonb-mode) |
 | number, `lt`, `lte`, `gt`, `gte` | `"field" > 1000`; JSONB mode casts the text to `numeric` (see [JSONB mode](#jsonb-mode)) |
@@ -189,7 +189,8 @@ data->'args'->>-1
 (jsonb_typeof(data->'connections') = 'array' AND EXISTS (
   SELECT 1 FROM jsonb_array_elements(data->'connections') AS __sigma_e0
   WHERE __sigma_e0->>'protocol' ILIKE 'TCP'
-    AND (__sigma_e0->>'ip')::inet <<= '123.1.0.0/16'::cidr))
+    AND (CASE WHEN (__sigma_e0->>'ip')::text ~ '^address$'
+      THEN (__sigma_e0->>'ip')::inet END) <<= '123.1.0.0/16'::cidr))
 ```
 
 `[all]` adds a non-empty guard and `NOT EXISTS (... WHERE (...) IS NOT TRUE)`, so an element that lacks a field the body tests fails the block. Because `[none]` and `[all_or_empty]` must match an empty or missing array, they lower to a `CASE` that only unnests an actual array and treats a missing/null value as a match:
@@ -210,7 +211,8 @@ An **extended** block body (a `condition:` plus named element-scoped sub-selecti
 -- connections[any]: { condition: in_cidr and not is_tcp, in_cidr: {ip|cidr: ...}, is_tcp: {protocol: TCP} }
 (jsonb_typeof(data->'connections') = 'array' AND EXISTS (
   SELECT 1 FROM jsonb_array_elements(data->'connections') AS __sigma_e0
-  WHERE (__sigma_e0->>'ip')::inet <<= '123.1.0.0/16'::cidr
+  WHERE (CASE WHEN (__sigma_e0->>'ip')::text ~ '^address$'
+      THEN (__sigma_e0->>'ip')::inet END) <<= '123.1.0.0/16'::cidr
     AND (__sigma_e0->>'protocol' ILIKE 'TCP') IS NOT TRUE))
 ```
 
