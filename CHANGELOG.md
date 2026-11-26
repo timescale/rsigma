@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### String value transformations leave regex, CIDR, and field reference values alone
+
+The `replace_string`, `map_string`, and `case` pipeline transformations no longer rewrite the values of `re`, `cidr`, and `fieldref` detection items, matching pySigma, whose string value transformations skip those value types. Before, `case: upper` turned the regex `^\d+$` into `^\D+$`, which matches the opposite characters, and `replace_string` or `map_string` could rewrite a CIDR network or the name of the referenced field, all without an error. This applied in evaluation and in conversion.
+
 ### Modifiers in `add_condition` keys (#750)
 
 An `add_condition` key such as `IpAddress|cidr` is now parsed like a rule's detection key, so the condition matches `IpAddress` with the `cidr` modifier. Before, the whole key was taken as the field name and the value was compared as a plain string, so the condition never matched: a negated exclusion let every event through and a plain condition stopped the rule from firing, both silently. This applied to every modifier, in evaluation and in conversion. Keys are checked when the pipeline loads, so an unknown modifier or `|not` is an error, and a `re` value keeps `*` and `?` literal.

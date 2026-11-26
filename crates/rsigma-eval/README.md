@@ -462,6 +462,8 @@ Condition semantics follow pySigma:
 
 **Aliases**: `case` is accepted as an alias for `case_transformation`.
 
+`replace_string`, `map_string`, and `case_transformation` leave the values of `re`, `cidr`, and `fieldref` items unchanged, as pySigma does.
+
 #### `field_name_transform` Functions
 
 | Value | Behavior |

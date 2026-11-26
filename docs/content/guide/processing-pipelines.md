@@ -112,6 +112,8 @@ Pipelines compose 26 transformation types. The most common ones in practice are:
 | `query_expression_placeholders` | Backend query template envelope (used by `rsigma-convert`). Its `mapping`, `include`, and `exclude` parameters are rejected because no backend renders placeholders as query expressions. {{ added "0.24.0" }} |
 | `nest` | Apply a group of transformations conditionally. |
 
+`replace_string`, `map_string`, and `case` rewrite string values only: like pySigma, they leave `re`, `cidr`, and `fieldref` values unchanged, since those are a regular expression, a network, and a field name rather than text.
+
 The full list with every field is in the [`rsigma-eval` README](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#transformations-26-types). All transformations support the same three-tier condition system below.
 
 ## Conditions: when does a transformation run?
