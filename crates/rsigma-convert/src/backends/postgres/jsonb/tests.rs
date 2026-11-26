@@ -1,7 +1,7 @@
 use rsigma_eval::pipeline::state::PipelineState;
 use rsigma_parser::parse_sigma_yaml;
 
-use super::super::tests::{convert, convert_with};
+use super::super::tests::{convert, convert_with, ipv4_in};
 use super::*;
 use crate::backend::Backend;
 
@@ -47,9 +47,10 @@ detection:
     );
     assert_eq!(
         queries,
-        vec![
-            "SELECT * FROM security_events WHERE (metadata->>'SourceIP')::inet <<= '10.0.0.0/8'::cidr"
-        ]
+        vec![format!(
+            "SELECT * FROM security_events WHERE {}",
+            ipv4_in("metadata->>'SourceIP'", "10.0.0.0/8", false)
+        )]
     );
 }
 
@@ -257,9 +258,10 @@ detection:
     );
     assert_eq!(
         queries,
-        vec![
-            "SELECT * FROM security_events WHERE (data->'client'->>'ipAddress')::inet <<= '10.0.0.0/8'::cidr"
-        ]
+        vec![format!(
+            "SELECT * FROM security_events WHERE {}",
+            ipv4_in("data->'client'->>'ipAddress'", "10.0.0.0/8", false)
+        )]
     );
 }
 
@@ -332,13 +334,13 @@ detection:
     );
     assert_eq!(
         queries,
-        vec![
+        vec![format!(
             "SELECT * FROM security_events WHERE \
-             (jsonb_typeof(data->'connections') = 'array' AND EXISTS \
-             (SELECT 1 FROM jsonb_array_elements(data->'connections') AS __sigma_e0 \
-             WHERE __sigma_e0->>'protocol' ILIKE 'TCP' AND \
-             (__sigma_e0->>'ip')::inet <<= '123.1.0.0/16'::cidr))"
-        ]
+                 (jsonb_typeof(data->'connections') = 'array' AND EXISTS \
+                 (SELECT 1 FROM jsonb_array_elements(data->'connections') AS __sigma_e0 \
+                 WHERE __sigma_e0->>'protocol' ILIKE 'TCP' AND {}))",
+            ipv4_in("__sigma_e0->>'ip'", "123.1.0.0/16", false)
+        )]
     );
 }
 
@@ -424,7 +426,7 @@ detection:
         "{q}"
     );
     assert!(
-        q.contains("(__sigma_e0->>'ip')::inet <<= '123.1.0.0/16'::cidr"),
+        q.contains(&ipv4_in("__sigma_e0->>'ip'", "123.1.0.0/16", false)),
         "{q}"
     );
     // The per-element negation lowers to IS NOT TRUE inside the element scope.
@@ -595,10 +597,10 @@ detection:
     );
     assert_eq!(
         queries,
-        vec![
-            "SELECT * FROM security_events WHERE \
-             (data->'connections'->0->>'ip')::inet <<= '10.0.0.0/8'::cidr"
-        ]
+        vec![format!(
+            "SELECT * FROM security_events WHERE {}",
+            ipv4_in("data->'connections'->0->>'ip'", "10.0.0.0/8", false)
+        )]
     );
 }
 
