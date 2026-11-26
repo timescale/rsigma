@@ -1222,17 +1222,36 @@ fn hash_value_group(
             hashes.valid_hash_algos.join(", ")
         )));
     }
-    Ok(Detection::AnyOf(
-        by_field
-            .into_iter()
-            .map(|(field, values)| {
-                Detection::AllOf(vec![DetectionItem {
-                    field: FieldSpec::new(Some(field), Vec::new()),
-                    values,
-                }])
-            })
-            .collect(),
-    ))
+    // The item is an OR over its values, an AND under `all`, and `neq`
+    // negates it, so by De Morgan the per-field items keep `all` and `neq`
+    // and are joined with AND when exactly one of the two is set.
+    let all = item.field.has_modifier(Modifier::All);
+    let neq = item.field.has_modifier(Modifier::Neq);
+    let cased = item.field.has_modifier(Modifier::Cased);
+    let parts = by_field
+        .into_iter()
+        .map(|(field, values)| {
+            let mut modifiers = Vec::new();
+            if all && values.len() > 1 {
+                modifiers.push(Modifier::All);
+            }
+            if cased {
+                modifiers.push(Modifier::Cased);
+            }
+            if neq {
+                modifiers.push(Modifier::Neq);
+            }
+            Detection::AllOf(vec![DetectionItem {
+                field: FieldSpec::new(Some(field), modifiers),
+                values,
+            }])
+        })
+        .collect();
+    Ok(if all != neq {
+        Detection::And(parts)
+    } else {
+        Detection::AnyOf(parts)
+    })
 }
 
 /// The text of a Sigma string with wildcards written as `*` and `?`.

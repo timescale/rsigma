@@ -739,6 +739,65 @@ fn test_hashes_fields_decomposition() {
     assert_eq!(single_item(&groups[1]), ("FileMD5", vec!["def456", "0011"]));
 }
 
+/// The detection a `Hashes` item with `modifiers` becomes, and the modifiers
+/// of each per-algorithm item in it.
+fn split_hashes(modifiers: &[Modifier]) -> (Detection, Vec<Vec<Modifier>>) {
+    let mut rule = make_test_rule();
+    rule.detection.named.insert(
+        "selection".to_string(),
+        Detection::AllOf(vec![DetectionItem {
+            field: FieldSpec::new(Some("Hashes".to_string()), modifiers.to_vec()),
+            values: ["MD5=aa", "SHA1=bb", "MD5=cc"]
+                .iter()
+                .map(|v| SigmaValue::String(SigmaString::new(v)))
+                .collect(),
+        }]),
+    );
+    let mut state = PipelineState::default();
+    hashes_transformation(&["SHA1", "MD5"], "File")
+        .apply(&mut rule, &mut state, &[], &[], false)
+        .unwrap();
+    let detection = rule.detection.named.remove("selection").unwrap();
+    let (Detection::AnyOf(groups) | Detection::And(groups)) = &detection else {
+        panic!("expected a group over hash fields, got {detection:?}");
+    };
+    let item_modifiers = groups
+        .iter()
+        .map(|group| match group {
+            Detection::AllOf(items) => items[0].field.modifiers.clone(),
+            other => panic!("expected AllOf, got {other:?}"),
+        })
+        .collect();
+    (detection, item_modifiers)
+}
+
+#[test]
+fn test_hashes_fields_keeps_the_item_logic() {
+    use Modifier::{All, Cased, Contains, Neq};
+
+    let (detection, modifiers) = split_hashes(&[Contains]);
+    assert!(matches!(detection, Detection::AnyOf(_)));
+    assert_eq!(modifiers, vec![vec![], vec![]]);
+
+    // not (md5 or sha1) is (not md5) and (not sha1).
+    let (detection, modifiers) = split_hashes(&[Contains, Neq]);
+    assert!(matches!(detection, Detection::And(_)));
+    assert_eq!(modifiers, vec![vec![Neq], vec![Neq]]);
+
+    // Every value must match; `all` stays only where a field has several.
+    let (detection, modifiers) = split_hashes(&[Contains, All]);
+    assert!(matches!(detection, Detection::And(_)));
+    assert_eq!(modifiers, vec![vec![All], vec![]]);
+
+    // not (md5 and sha1) is (not md5) or (not sha1).
+    let (detection, modifiers) = split_hashes(&[Contains, All, Neq]);
+    assert!(matches!(detection, Detection::AnyOf(_)));
+    assert_eq!(modifiers, vec![vec![All, Neq], vec![Neq]]);
+
+    let (_, modifiers) = split_hashes(&[Cased]);
+    assert_eq!(modifiers, vec![vec![Cased], vec![Cased]]);
+}
+
 #[test]
 fn test_hashes_fields_infers_algorithm_from_length_and_strips_wildcards() {
     let md5 = "0123456789abcdef0123456789abcdef";
