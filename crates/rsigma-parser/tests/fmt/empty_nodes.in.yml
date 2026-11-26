@@ -6,6 +6,6 @@ detection:
         Empty:
         EmptyItem:
             -
-        Null: ~
+        Tilde: ~
         Anchored: &a
     condition: selection
