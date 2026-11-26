@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Pipelines can apply modifiers before their transformations
+### Pipelines can apply modifiers before their transformations (#771)
 
 pySigma applies value modifiers when it parses a rule, so its value transformations see `*foo*` for `F|contains: foo` and the encoded text for `F|base64: foo`. rsigma applies them when it compiles or converts the rule, so the same pipeline saw the raw value and could produce a rule that matches different events. For example, `set_value` on a `contains` item kept the `contains`, where pySigma makes it an exact match. A pipeline can now set `apply_modifiers: first` to rewrite the values the way pySigma does before its transformations run: `contains`, `startswith`, and `endswith` become `*` wildcards, and `base64`, `base64offset`, `wide`, `utf16`, `utf16be`, and `windash` encode the value. The default, `apply_modifiers: last`, keeps the current behavior. The processing pipelines guide describes both and the cases the rewrite leaves alone.
 
