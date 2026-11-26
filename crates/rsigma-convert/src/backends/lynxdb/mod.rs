@@ -623,6 +623,21 @@ impl Backend for LynxDbBackend {
         Ok(format!("match(_raw, {})", quote_str(&re)))
     }
 
+    /// `search` skips segments whose bloom filter lacks the term's tokens, so
+    /// a term inside a word is a regex over the raw JSON in `where`.
+    fn convert_keyword_substr(
+        &self,
+        pattern: &IrPattern,
+        case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        if let Some(placeholder) = self.needs_where(state) {
+            return Ok(placeholder);
+        }
+        let re = pattern_regex(pattern, IrStrOp::Contains, case_insensitive, true);
+        Ok(format!("match(_raw, {})", quote_str(&re)))
+    }
+
     fn convert_keyword_num(
         &self,
         value: NumericLiteral,

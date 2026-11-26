@@ -99,12 +99,34 @@ pub(crate) fn ir_err(e: rsigma_ir::IrError) -> ConvertError {
 }
 
 /// Lower a rule to the IR that conversion walks, with encoding modifiers
-/// expanded into plain matches.
+/// expanded into plain matches on fields. Keywords keep them, since a
+/// keyword term that is a base64 fragment renders differently.
 pub(crate) fn lower_rule_for_conversion(rule: &SigmaRule) -> Result<IrRule> {
     let mut ir =
         rsigma_ir::lower_rule(rule, &rsigma_ir::LowerOptions::default()).map_err(ir_err)?;
-    rsigma_ir::encoding::expand_encoded_detections(&mut ir.detections).map_err(ir_err)?;
+    ir.detections
+        .values_mut()
+        .try_for_each(expand_field_encodings)
+        .map_err(ir_err)?;
     Ok(ir)
+}
+
+fn expand_field_encodings(det: &mut IrDetection) -> std::result::Result<(), rsigma_ir::IrError> {
+    match det {
+        IrDetection::AllOf(items) => items
+            .iter_mut()
+            .filter(|item| item.field.is_some())
+            .try_for_each(|item| rsigma_ir::encoding::expand_encoded_matcher(&mut item.matcher)),
+        IrDetection::AnyOf(dets) | IrDetection::And(dets) => {
+            dets.iter_mut().try_for_each(expand_field_encodings)
+        }
+        IrDetection::Keywords(_) => Ok(()),
+        // A field-less item in an array body compares the array member.
+        IrDetection::ArrayMatch { body, .. } => rsigma_ir::encoding::expand_encoded_detection(body),
+        IrDetection::Conditional { named, .. } => {
+            named.values_mut().try_for_each(expand_field_encodings)
+        }
+    }
 }
 
 /// Fresh state for converting one condition of a rule.
