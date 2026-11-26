@@ -238,8 +238,13 @@ fn convert_keyword<B: Backend + ?Sized>(
         IrMatcher::Str {
             op: IrStrOp::Exact | IrStrOp::Contains,
             pattern,
-            ..
+            case_insensitive: true,
         } => backend.convert_keyword_str(pattern, state),
+        IrMatcher::Str {
+            op: IrStrOp::Exact | IrStrOp::Contains,
+            pattern,
+            case_insensitive: false,
+        } => backend.convert_keyword_str_cased(pattern, state),
         IrMatcher::NumericEq(n) => backend.convert_keyword_num(number(n)?, state),
         _ => Err(ConvertError::UnsupportedKeyword),
     }

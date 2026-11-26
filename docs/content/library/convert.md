@@ -124,6 +124,8 @@ impl Backend for MyBackend {
 
 The default `convert_rule` lowers the rule to `IrRule`, walks the resulting `IrDetection` and `IrCondition`, and dispatches into `text_*` helpers (e.g. `text_convert_field_str_ir`, `text_convert_ir_pattern`) that consult the config. Only override the leaves that your backend needs to behave differently from pySigma's `TextQueryBackend` default.
 
+A keyword with `cased` goes to `convert_keyword_str_cased` instead of `convert_keyword_str`. The default rejects it with `UnsupportedModifier`, since a full-text search usually ignores case; override it when your backend can match a keyword case-sensitively. {{ added "unreleased" }}
+
 The numeric leaves (`convert_field_eq_num`, `convert_field_compare_op`, `convert_keyword_num`) receive a `rsigma_ir::NumericLiteral` rather than an `f64`, so integers above 2^53 reach the backend exactly. Render it with `to_string()` to get the exact digits. {{ added "0.25.0" }}
 
 `render_query_template(template, lookup)` substitutes `{name}` placeholders in a query template in one pass: `lookup` returns the text for a name, or `None` to keep the placeholder as written. Substituted text is never scanned again, so a rule value or title that contains a placeholder stays literal. `text_finish_query` uses it, and a backend with its own `finish_query` should too, rather than calling `str::replace` on a string that already holds the rendered detection. {{ added "0.28.0" }}

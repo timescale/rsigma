@@ -66,7 +66,7 @@ Verified against the LynxDB backend's golden tests at [`crates/rsigma-convert/sr
 | Empty string | | `coalesce(json_extract(_raw, "field")="", false)` |
 | `exists: true`/`false` | `field=*`/`NOT field=*` | `isnotnull(json_extract(_raw, "field"))`/`isnull(...)` |
 | Value list (`field` with multiple values) | `field="val1" OR field="val2"` | `match(field, "(?i)^val1$") OR match(field, "(?i)^val2$")` |
-| Keywords | `"keyword"`, without outer wildcards, since a keyword already matches a substring | `match(_raw, "(?i)keyword")`, with the keyword escaped as serde_json writes it in the raw JSON; a wildcard matches within one JSON string |
+| Keywords | `"keyword"`, without outer wildcards, since a keyword already matches a substring | `match(_raw, "(?i)keyword")`, with the keyword escaped as serde_json writes it in the raw JSON; a wildcard matches within one JSON string. A `cased` keyword drops the `(?i)`. {{ added "unreleased" }} |
 | Boolean `AND`, `OR`, `NOT` | Parenthesized where the non-standard precedence (`NOT > OR > AND`) requires it: an `AND` under an `OR`, and a compound operand of `NOT`. | Standard precedence. |
 
 Field names render bare, because LynxDB has no quoted identifier syntax. A field name must start with a letter or `_` and contain only letters, digits, `_`, `.`, `:`, and `-`, such as `cs-uri-query` or `winlog.event_data.Image`. Any other field name fails conversion with `invalid LynxDB field name`, since LynxDB would not read it as one field. {{ added "0.28.0" }}

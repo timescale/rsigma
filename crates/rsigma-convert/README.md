@@ -268,6 +268,7 @@ Key methods:
 | `convert_field_compare_op` | Numeric comparison via `CompareOp` (`gt`, `gte`, `lt`, `lte`) |
 | `convert_field_exists` | Field existence check |
 | `convert_keyword_str` / `convert_keyword_num` | Unbound/keyword value matching |
+| `convert_keyword_str_cased` | Case-sensitive keyword (`cased`); the default rejects it |
 | `convert_condition_and` / `convert_condition_or` / `convert_condition_not` | Combine sub-expressions |
 | `convert_condition_group` | Parenthesize a compound operand for its parent operator; the default follows `NOT` > `AND` > `OR` and always groups under `NOT`, as pySigma does. Text backends delegate to `text_convert_condition_group` so their `precedence` applies |
 | `finish_query` | Assemble final query with deferred parts |

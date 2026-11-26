@@ -796,6 +796,15 @@ impl Backend for TextQueryTestBackend {
         Ok(expr.replace("{value}", &v))
     }
 
+    /// pySigma renders a cased keyword as the plain term.
+    fn convert_keyword_str_cased(
+        &self,
+        pattern: &IrPattern,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        self.convert_keyword_str(pattern, state)
+    }
+
     fn convert_keyword_num(
         &self,
         value: NumericLiteral,
@@ -1016,6 +1025,14 @@ impl Backend for MandatoryPipelineTestBackend {
         state: &mut ConversionState,
     ) -> Result<String> {
         self.0.convert_keyword_str(pattern, state)
+    }
+
+    fn convert_keyword_str_cased(
+        &self,
+        pattern: &IrPattern,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        self.0.convert_keyword_str_cased(pattern, state)
     }
 
     fn convert_keyword_num(
@@ -1612,6 +1629,22 @@ detection:
 "#,
         );
         assert_eq!(queries, vec!["not (_=\"whoami\" or _=\"ipconfig\")"]);
+    }
+
+    #[test]
+    fn test_cased_keyword_converts_as_the_plain_term() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    keywords:
+        '|cased': WhoAmI
+    condition: keywords
+"#,
+        );
+        assert_eq!(queries, vec!["_=\"WhoAmI\""]);
     }
 
     #[test]

@@ -609,6 +609,20 @@ impl Backend for LynxDbBackend {
         Ok(expr.replace("{value}", &v))
     }
 
+    /// `search` ignores case, so a cased keyword is a case-sensitive regex
+    /// over the raw JSON in `where`.
+    fn convert_keyword_str_cased(
+        &self,
+        pattern: &IrPattern,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        if let Some(placeholder) = self.needs_where(state) {
+            return Ok(placeholder);
+        }
+        let re = pattern_regex(pattern, IrStrOp::Contains, false, true);
+        Ok(format!("match(_raw, {})", quote_str(&re)))
+    }
+
     fn convert_keyword_num(
         &self,
         value: NumericLiteral,
@@ -1561,6 +1575,27 @@ detection:
             vec![
                 r#"FROM main | where match(_raw, "(?i)C:\\\\\\\\Temp") AND match(CommandLine, "x")"#
             ]
+        );
+    }
+
+    #[test]
+    fn cased_keyword_is_a_case_sensitive_match_in_where() {
+        let q = convert(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    cased:
+        '|cased': WhoAmI
+    keywords:
+        - ipconfig
+    condition: cased or keywords
+"#,
+        );
+        assert_eq!(
+            q,
+            vec![r#"FROM main | where match(_raw, "WhoAmI") OR match(_raw, "(?i)ipconfig")"#]
         );
     }
 

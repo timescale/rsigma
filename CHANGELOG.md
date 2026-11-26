@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Cased keywords convert case-sensitively or fail (#759)
+
+Conversion ignored `cased` on a field-less value, such as `'|cased': WhoAmI`, and rendered a case-insensitive keyword, so the converted rule also matched `whoami` while evaluation did not. LynxDB now renders a cased keyword in `where` as `match(_raw, "WhoAmI")`, without `(?i)`. PostgreSQL full-text search can't match case, so the conversion now fails, as it does for a keyword with `startswith`. The test backend keeps the plain term, as pySigma does.
+
+Breaking for library backends: the new `Backend::convert_keyword_str_cased` method receives cased keywords, and its default rejects them. A backend that can match a keyword case-sensitively overrides it.
+
 ### Field-less keys that can never match fail to parse (#758)
 
 A detection key without a field name, such as `'|cidr': 10.0.0.0/8`, `'|gt': 5`, `'|hour': 3`, `'|fieldref': User`, or `'': null`, parsed and compiled, but no event could match it, and with `|neq` every event matched. `rule validate` and `rule lint` accepted these rules. These keys now fail to parse with an error naming the modifier, as `'|exists': true` and a null keyword already did, and as pySigma rejects them. A field-less boolean, such as `'': true`, now matches the word `true` as a boolean keyword does, instead of never matching.

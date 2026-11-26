@@ -633,6 +633,27 @@ detection:
 }
 
 #[test]
+fn test_cased_keyword_is_rejected() {
+    let collection = parse_sigma_yaml(
+        r#"
+title: Test
+logsource:
+    category: test
+detection:
+    keywords:
+        '|cased': WhoAmI
+    condition: keywords
+"#,
+    )
+    .unwrap();
+    let err = PostgresBackend::new()
+        .convert_rule(&collection.rules[0], "default", &PipelineState::default())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cased on a keyword"), "{err}");
+}
+
+#[test]
 fn test_keywords_reference_the_row_of_the_rule_table() {
     let collection = parse_sigma_yaml(
         r#"

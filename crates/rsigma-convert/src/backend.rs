@@ -319,6 +319,18 @@ pub trait Backend: Send + Sync {
         state: &mut ConversionState,
     ) -> Result<String>;
 
+    /// Case-sensitive keyword (unbound) string term, for `|cased`. The
+    /// default rejects it, since a full-text search usually ignores case.
+    fn convert_keyword_str_cased(
+        &self,
+        _pattern: &IrPattern,
+        _state: &mut ConversionState,
+    ) -> Result<String> {
+        Err(ConvertError::UnsupportedModifier(
+            "cased on a keyword, which this backend can't match case-sensitively".into(),
+        ))
+    }
+
     /// Keyword (unbound) numeric term.
     fn convert_keyword_num(
         &self,
