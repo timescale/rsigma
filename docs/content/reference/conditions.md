@@ -44,6 +44,8 @@ detection:
     condition: keywords
 ```
 
+A field-less boolean is the word, as in a keyword list, so `'': true` matches `flag is TRUE now` and `'|neq': true` matches events without the word. A modifier that compares one typed value, `cidr`, `fieldref`, `gt`, `gte`, `lt`, `lte`, or a time part such as `hour`, has nothing to compare against without a field, and neither does a null check, so `'|cidr': 10.0.0.0/8` or `'': null` fails to parse, as `'|exists': true` does. pySigma rejects these keys too. In an array body, `ips[any]|cidr: 10.0.0.0/8` or `vals[any]: null` compares each member, and stays valid.
+
 Inside an array body, such as `tags[any]: 'admin'`, a field-less value matches the array member itself rather than any value in the event. See [Array Matching](../guide/array-matching.md).
 
 ## Converting keywords
