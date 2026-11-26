@@ -31,3 +31,11 @@ known_failures:
     reason: "pySigma's hashes_fields drops neq from the items it creates, so its query matches the hashes the rule excludes"
     actual: ["Image endswith \"\\x.exe\" and not FileMD5=\"0123456789abcdef0123456789abcdef\" and not FileSHA1=\"0123456789abcdef0123456789abcdef01234567\""]
     reference: ["Image endswith \"\\x.exe\" and (FileMD5=\"0123456789abcdef0123456789abcdef\" or FileSHA1=\"0123456789abcdef0123456789abcdef01234567\")"]
+  fibratus:
+    type: engine-error
+    reason: "Fibratus has no hash fields, so the pipeline's FileMD5 and FileSHA1 have no Fibratus mapping"
+    contains: "field FileMD5 has no Fibratus mapping"
+  fibratus-nomacros:
+    type: engine-error
+    reason: "Fibratus has no hash fields, so the pipeline's FileMD5 and FileSHA1 have no Fibratus mapping"
+    contains: "field FileMD5 has no Fibratus mapping"
