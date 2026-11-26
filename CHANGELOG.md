@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### `exists` honors `neq`
+### `exists` honors `neq` (#753)
 
 `Field|exists|neq: true` now matches when the field is missing, as `neq` negates the whole detection item. Before, lowering handled `exists` before applying `neq` and dropped it, so the item behaved like `Field|exists: true` and matched the opposite events, in evaluation and in every conversion backend, without a warning.
 
