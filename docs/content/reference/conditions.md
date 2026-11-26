@@ -30,10 +30,10 @@ A detection key made only of modifiers, such as `'|all':`, applies its values to
 
 | Key | Matches when |
 |---|---|
-| `'|all': [a, b]` | every value occurs somewhere in the event, in one event value or in several |
-| `'|neq': [a, b]` | no event value contains any of the values |
-| `'|startswith': a` | some event value starts with `a` |
-| `'|re': 'a.*b'` | some event value matches the regular expression |
+| `'\|all': [a, b]` | every value occurs somewhere in the event, in one event value or in several |
+| `'\|neq': [a, b]` | no event value contains any of the values |
+| `'\|startswith': a` | some event value starts with `a` |
+| `'\|re': 'a.*b'` | some event value matches the regular expression |
 
 ```yaml
 detection:

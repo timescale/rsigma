@@ -108,7 +108,7 @@ Pipelines compose 26 transformation types. The most common ones in practice are:
 | `set_value` | Replace detection item values. `force_type: str` or `force_type: num` converts the value first. {{ added "0.24.0" }} |
 | `set_state` | Store backend-relevant key/value pairs (`table`, `schema`, `index`) using `key` and `val` (`value` remains an alias). {{ added "0.24.0" }} |
 | `set_custom_attribute` | Set per-rule attributes that engines and backends read (`rsigma.*`, `postgres.*`). |
-| `value_placeholders` | Expand Sigma `%name%` placeholders in `|expand` detection values (used with pipeline `vars:` and dynamic sources). |
+| `value_placeholders` | Expand Sigma `%name%` placeholders in `\|expand` detection values (used with pipeline `vars:` and dynamic sources). |
 | `query_expression_placeholders` | Backend query template envelope (used by `rsigma-convert`). Its `mapping`, `include`, and `exclude` parameters are rejected because no backend renders placeholders as query expressions. {{ added "0.24.0" }} |
 | `nest` | Apply a group of transformations conditionally. |
 
