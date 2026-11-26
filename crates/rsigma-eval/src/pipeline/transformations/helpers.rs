@@ -1467,7 +1467,8 @@ pub(super) fn convert_detection_item_types(
     detection_conditions: &[&ConditionSet<DetectionItemCondition>],
     field_name_conditions: &[&ConditionSet<FieldNameCondition>],
     target_type: &str,
-) {
+) -> Result<()> {
+    let rule_title = rule.title.clone();
     for detection in rule.detection.named.values_mut() {
         convert_types_in_detection(
             detection,
@@ -1475,8 +1476,10 @@ pub(super) fn convert_detection_item_types(
             detection_conditions,
             field_name_conditions,
             target_type,
-        );
+            &rule_title,
+        )?;
     }
+    Ok(())
 }
 
 fn convert_types_in_detection(
@@ -1485,18 +1488,31 @@ fn convert_types_in_detection(
     detection_conditions: &[&ConditionSet<DetectionItemCondition>],
     field_name_conditions: &[&ConditionSet<FieldNameCondition>],
     target_type: &str,
-) {
+    rule_title: &str,
+) -> Result<()> {
     match detection {
         Detection::AllOf(items) => {
             for item in items.iter_mut() {
-                if item_conditions_match(item, state, detection_conditions, field_name_conditions) {
+                if converts_values(item)
+                    && item_conditions_match(
+                        item,
+                        state,
+                        detection_conditions,
+                        field_name_conditions,
+                    )
+                {
                     for val in item.values.iter_mut() {
-                        *val = convert_value(val, target_type);
+                        *val = convert_value(val, target_type).ok_or_else(|| {
+                            EvalError::Pipeline(format!(
+                                "convert_type: value '{val}' can't be converted to \
+                                 {target_type} (rule: {rule_title})"
+                            ))
+                        })?;
                     }
                 }
             }
         }
-        Detection::AnyOf(subs) => {
+        Detection::AnyOf(subs) | Detection::And(subs) => {
             for sub in subs.iter_mut() {
                 convert_types_in_detection(
                     sub,
@@ -1504,7 +1520,8 @@ fn convert_types_in_detection(
                     detection_conditions,
                     field_name_conditions,
                     target_type,
-                );
+                    rule_title,
+                )?;
             }
         }
         Detection::ArrayMatch { body, .. } => {
@@ -1514,18 +1531,8 @@ fn convert_types_in_detection(
                 detection_conditions,
                 field_name_conditions,
                 target_type,
-            );
-        }
-        Detection::And(subs) => {
-            for sub in subs.iter_mut() {
-                convert_types_in_detection(
-                    sub,
-                    state,
-                    detection_conditions,
-                    field_name_conditions,
-                    target_type,
-                );
-            }
+                rule_title,
+            )?;
         }
         Detection::Conditional { named, .. } => {
             for sub in named.values_mut() {
@@ -1535,60 +1542,73 @@ fn convert_types_in_detection(
                     detection_conditions,
                     field_name_conditions,
                     target_type,
-                );
+                    rule_title,
+                )?;
             }
         }
         Detection::Keywords(_) => {}
     }
+    Ok(())
 }
 
-fn convert_value(val: &SigmaValue, target: &str) -> SigmaValue {
-    match target {
-        "str" | "string" => match val {
-            SigmaValue::String(_) => val.clone(),
-            SigmaValue::Integer(n) => SigmaValue::String(SigmaString::new(&n.to_string())),
-            SigmaValue::Float(f) => SigmaValue::String(SigmaString::new(&f.to_string())),
-            SigmaValue::Bool(b) => SigmaValue::String(SigmaString::new(&b.to_string())),
-            SigmaValue::Null => SigmaValue::String(SigmaString::new("null")),
+/// Whether `convert_type` applies to the item's values. A `re`, `cidr`,
+/// `fieldref`, or `exists` value is a regular expression, a network, a field
+/// name, or a presence check rather than a string or number, and pySigma's
+/// `convert_type` leaves those alone.
+fn converts_values(item: &DetectionItem) -> bool {
+    !item.field.modifiers.iter().any(|m| {
+        matches!(
+            m,
+            Modifier::Re | Modifier::Cidr | Modifier::FieldRef | Modifier::Exists
+        )
+    })
+}
+
+/// Parse a string as pySigma's `SigmaNumber` does: an integer when it is one,
+/// otherwise a finite float.
+pub(crate) fn parse_number(text: &str) -> Option<SigmaValue> {
+    let trimmed = text.trim();
+    if let Ok(int) = trimmed.parse::<i64>() {
+        Some(SigmaValue::Integer(int))
+    } else {
+        trimmed
+            .parse::<f64>()
+            .ok()
+            .filter(|float| float.is_finite())
+            .map(SigmaValue::Float)
+    }
+}
+
+/// Convert one value to `target`, or `None` when it has no such
+/// representation. A null check stays a null check for every target but `str`.
+fn convert_value(val: &SigmaValue, target: &str) -> Option<SigmaValue> {
+    let text = |s: &SigmaString| s.as_plain().unwrap_or_else(|| s.original.clone());
+    match (target, val) {
+        (_, SigmaValue::Null) if !matches!(target, "str" | "string") => Some(val.clone()),
+        ("str" | "string", SigmaValue::String(_)) => Some(val.clone()),
+        ("str" | "string", other) => Some(SigmaValue::String(SigmaString::new(&match other {
+            SigmaValue::Null => "null".to_string(),
+            other => other.to_string(),
+        }))),
+        ("num", SigmaValue::Integer(_) | SigmaValue::Float(_)) => Some(val.clone()),
+        ("num", SigmaValue::String(s)) => parse_number(&text(s)),
+        ("int" | "integer", SigmaValue::String(s)) => text(s).parse().ok().map(SigmaValue::Integer),
+        ("int" | "integer", SigmaValue::Integer(_)) => Some(val.clone()),
+        ("int" | "integer", SigmaValue::Float(f)) => Some(SigmaValue::Integer(*f as i64)),
+        ("int" | "integer", SigmaValue::Bool(b)) => Some(SigmaValue::Integer(i64::from(*b))),
+        ("float", SigmaValue::String(s)) => text(s).parse().ok().map(SigmaValue::Float),
+        ("float", SigmaValue::Float(_)) => Some(val.clone()),
+        ("float", SigmaValue::Integer(n)) => Some(SigmaValue::Float(*n as f64)),
+        ("float", SigmaValue::Bool(b)) => Some(SigmaValue::Float(if *b { 1.0 } else { 0.0 })),
+        ("bool" | "boolean", SigmaValue::String(s)) => match text(s).to_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(SigmaValue::Bool(true)),
+            "false" | "0" | "no" => Some(SigmaValue::Bool(false)),
+            _ => None,
         },
-        "int" | "integer" => match val {
-            SigmaValue::String(s) => {
-                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                plain
-                    .parse::<i64>()
-                    .map(SigmaValue::Integer)
-                    .unwrap_or_else(|_| val.clone())
-            }
-            SigmaValue::Float(f) => SigmaValue::Integer(*f as i64),
-            SigmaValue::Bool(b) => SigmaValue::Integer(if *b { 1 } else { 0 }),
-            _ => val.clone(),
-        },
-        "float" => match val {
-            SigmaValue::String(s) => {
-                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                plain
-                    .parse::<f64>()
-                    .map(SigmaValue::Float)
-                    .unwrap_or_else(|_| val.clone())
-            }
-            SigmaValue::Integer(n) => SigmaValue::Float(*n as f64),
-            SigmaValue::Bool(b) => SigmaValue::Float(if *b { 1.0 } else { 0.0 }),
-            _ => val.clone(),
-        },
-        "bool" | "boolean" => match val {
-            SigmaValue::String(s) => {
-                let plain = s.as_plain().unwrap_or_else(|| s.original.clone());
-                match plain.to_lowercase().as_str() {
-                    "true" | "1" | "yes" => SigmaValue::Bool(true),
-                    "false" | "0" | "no" => SigmaValue::Bool(false),
-                    _ => val.clone(),
-                }
-            }
-            SigmaValue::Integer(n) => SigmaValue::Bool(*n != 0),
-            SigmaValue::Float(f) => SigmaValue::Bool(*f != 0.0),
-            _ => val.clone(),
-        },
-        _ => val.clone(),
+        ("bool" | "boolean", SigmaValue::Bool(_)) => Some(val.clone()),
+        ("bool" | "boolean", SigmaValue::Integer(n)) => Some(SigmaValue::Bool(*n != 0)),
+        ("bool" | "boolean", SigmaValue::Float(f)) => Some(SigmaValue::Bool(*f != 0.0)),
+        _ => None,
     }
 }
 

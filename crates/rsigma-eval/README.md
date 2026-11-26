@@ -444,7 +444,7 @@ Condition semantics follow pySigma:
 | `replace_string` | `regex`, `replacement`, `skip_special` (default: `false`), `interpret_special` (default: `false`) | Regex-based string replacement (`skip_special` preserves wildcards; `interpret_special` parses wildcards in the replaced text) |
 | `map_string` | `mapping: {k: v \| [v1, v2]}` | Map string values to replacements (supports one-to-many) |
 | `set_value` | `value`, `force_type` (`str`/`num`) | Replace detection item values |
-| `convert_type` | `target_type` (`str`/`int`/`float`/`bool`, default: `str`) | Convert values between types |
+| `convert_type` | `target_type` (`str`/`num`/`int`/`float`/`bool`, default: `str`) | Convert values between types; `num` parses an integer or float as pySigma does. A value that can't be converted is an error, and `re`, `cidr`, `fieldref`, and `exists` values are left as they are |
 | `value_placeholders` | `allow_unresolved` (default: `false`), `include`/`exclude` | Expand `%placeholder%` in `|expand` values; multi-value variables produce a Cartesian product and unresolved variables fail unless runtime substitution is explicitly allowed |
 | `wildcard_placeholders` | `include`/`exclude` | Replace handled placeholders with wildcards in `|expand` values |
 | `query_expression_placeholders` | `expression` (default: `""`) | Backend query placeholders (no-op in eval); `mapping`, `include`, and `exclude` are rejected |
