@@ -303,7 +303,7 @@ For text-based query backends (the vast majority), create a `TextQueryConfig` wi
 3. Override specific methods for backend-specific behavior (e.g. deferred regex for Splunk, SQL-specific CIDR handling for PostgreSQL).
 4. Register your backend in the CLI's `try_native_backend()` registry (a native backend takes precedence over sigma-cli delegation for that target).
 
-See `backends/test.rs` for a complete reference implementation, `backends/postgres.rs` for a production backend with SQL-specific overrides, and `backends/lynxdb/` for a `TextQueryConfig`-based backend with custom precedence handling that switches to a second config for `where` expressions.
+See `backends/test.rs` for a complete reference implementation, `backends/postgres/` for a production backend with SQL-specific overrides, and `backends/lynxdb/` for a `TextQueryConfig`-based backend with custom precedence handling that switches to a second config for `where` expressions.
 
 ## PostgreSQL Backend Details
 

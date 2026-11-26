@@ -52,15 +52,17 @@ Step 3: implement the trait. Hold the config as `&'static TextQueryConfig`, dele
 The condition walker passes every compound operand through `convert_condition_group` before combining it. Delegating to `text_convert_condition_group` parenthesizes by the config's `precedence`, so a target where `OR` binds tighter than `AND` only needs a different `precedence` tuple. {{ added "0.24.0" }}
 
 ```rust
+use rsigma_convert::backend::{
+    text_convert_condition_and, text_convert_condition_group, text_convert_condition_not,
+    text_convert_condition_or,
+    text_convert_field_str_ir, text_escape_and_quote_field,
+    // … other text_convert_* helpers as needed
+};
 use rsigma_convert::{
     Backend, TextQueryConfig, TokenType,
     condition_ir::convert_rule_via_ir,
     error::Result,
     state::ConversionState,
-    text_convert_condition_and, text_convert_condition_group, text_convert_condition_not,
-    text_convert_condition_or,
-    text_convert_field_str_ir, text_escape_and_quote_field,
-    // … other text_convert_* helpers as needed
 };
 use rsigma_eval::pipeline::state::PipelineState;
 use rsigma_ir::{IrPattern, IrStrOp};
