@@ -1,0 +1,21 @@
+description: A pipeline case transformation leaves regex values alone, so uppercasing does not turn \d into \D.
+rule:
+  title: case transformation regex
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|re: '^run \d+$'
+    condition: selection
+pipeline:
+  name: uppercase values
+  priority: 10
+  transformations:
+    - id: upper
+      type: case
+      method: upper
+events:
+  - {CommandLine: 'run 42'}
+  - {CommandLine: 'run x'}
+  - {CommandLine: 'RUN x'}
+  - {CommandLine: 'RUN 42'}
+matches: [0]
