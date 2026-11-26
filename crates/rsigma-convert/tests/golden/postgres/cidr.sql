@@ -1,1 +1,1 @@
-SELECT * FROM security_events WHERE ("SourceIP")::inet <<= '10.0.0.0/8'::cidr
+SELECT * FROM security_events WHERE (CASE WHEN ("SourceIP")::text ~ '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(/(3[0-2]|[12]?[0-9]))?$' THEN ("SourceIP")::inet END) <<= '10.0.0.0/8'::cidr

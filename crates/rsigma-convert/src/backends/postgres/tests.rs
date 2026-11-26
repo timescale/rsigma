@@ -26,6 +26,16 @@ pub(super) fn convert_with(yaml: &str, backend: &PostgresBackend) -> Vec<String>
     results
 }
 
+/// `expr <<= 'cidr'::cidr`, with `expr` cast to `inet` only when its text is
+/// an IPv4 address, followed by a mask when `mask` is set.
+pub(super) fn ipv4_in(expr: &str, cidr: &str, mask: bool) -> String {
+    let octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+    let mask = if mask { "(/(3[0-2]|[12]?[0-9]))?" } else { "" };
+    format!(
+        "(CASE WHEN ({expr})::text ~ '^({octet}\\.){{3}}{octet}{mask}$' THEN ({expr})::inet END) <<= '{cidr}'::cidr"
+    )
+}
+
 // --- Basic detection ---
 // Note: PostgreSQL quoted identifiers use double quotes for mixed-case field names.
 // Fields matching ^[a-z_][a-z0-9_]*$ are unquoted; others get "quoted".
@@ -333,8 +343,80 @@ detection:
     );
     assert_eq!(
         queries,
-        vec![r#"SELECT * FROM security_events WHERE ("SourceIP")::inet <<= '10.0.0.0/8'::cidr"#]
+        vec![format!(
+            "SELECT * FROM security_events WHERE {}",
+            ipv4_in(r#""SourceIP""#, "10.0.0.0/8", true)
+        )]
     );
+}
+
+#[test]
+fn test_cidr_ipv6() {
+    let queries = convert(
+        r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        SourceIP|cidr: 'fe80::/10'
+    condition: selection
+"#,
+    );
+    let q = &queries[0];
+    assert!(
+        q.starts_with(r#"SELECT * FROM security_events WHERE (CASE WHEN ("SourceIP")::text ~ '^(([0-9A-Fa-f]{1,4}:){6}"#),
+        "{q}"
+    );
+    assert!(
+        q.ends_with(r#"(/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))?$' THEN ("SourceIP")::inet END) <<= 'fe80::/10'::cidr"#),
+        "{q}"
+    );
+}
+
+#[test]
+fn address_patterns_accept_what_the_engine_parses() {
+    let v4 = regex::Regex::new(&format!("^{IPV4_ADDRESS_PATTERN}$")).unwrap();
+    let v6 = regex::Regex::new(&format!("^{}$", ipv6_address_pattern())).unwrap();
+    for text in [
+        "10.1.2.3",
+        "0.0.0.0",
+        "255.255.255.255",
+        "010.0.0.1",
+        "256.1.1.1",
+        "1.2.3",
+        "1.2.3.4.5",
+        "::",
+        "::1",
+        "1::",
+        "fe80::1",
+        "FE80::A:b:C",
+        "2001:db8::8a2e:370:7334",
+        "2001:0db8:0000:0000:0000:ff00:0042:8329",
+        "::ffff:10.0.0.1",
+        "64:ff9b::192.0.2.33",
+        "1:2:3:4:5:6:7::",
+        "::2:3:4:5:6:7:8",
+        "1:2:3:4:5:6:7:8:9",
+        "1::2::3",
+        ":::::",
+        "12345::",
+        "fe80::1%eth0",
+        "fe80::1/64",
+        "-",
+        "",
+    ] {
+        assert_eq!(
+            v4.is_match(text),
+            text.parse::<std::net::Ipv4Addr>().is_ok(),
+            "IPv4 {text:?}"
+        );
+        assert_eq!(
+            v6.is_match(text),
+            text.parse::<std::net::Ipv6Addr>().is_ok(),
+            "IPv6 {text:?}"
+        );
+    }
 }
 
 // --- Numeric, Boolean, Null ---

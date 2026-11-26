@@ -652,11 +652,26 @@ impl Backend for PostgresBackend {
         &self,
         field: &str,
         cidr: &str,
-        _state: &mut ConversionState,
+        state: &mut ConversionState,
     ) -> Result<ConvertResult> {
         let f = self.field_expr(field)?;
+        // The value is cast only when its text is an address of the network's
+        // family, so a value such as `-` compares as NULL instead of failing
+        // the query. A column may be of type `inet`, whose text carries a
+        // mask, so a mask is allowed there.
+        let v6 = cidr.contains(':');
+        let address = if v6 {
+            ipv6_address_pattern()
+        } else {
+            IPV4_ADDRESS_PATTERN.to_string()
+        };
+        let pattern = match (self.is_text_field(field, state), v6) {
+            (true, _) => address,
+            (false, true) => format!("{address}(/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))?"),
+            (false, false) => format!("{address}(/(3[0-2]|[12]?[0-9]))?"),
+        };
         Ok(ConvertResult::Query(format!(
-            "({f})::inet <<= '{cidr}'::cidr"
+            "(CASE WHEN ({f})::text ~ '^{pattern}$' THEN ({f})::inet END) <<= '{cidr}'::cidr"
         )))
     }
 
@@ -893,4 +908,27 @@ impl Backend for PostgresBackend {
     ) -> Result<Vec<String>> {
         self.convert_correlation(rule, output_format, pipeline_state, warnings)
     }
+}
+
+/// A dotted-quad IPv4 address with octets from 0 to 255 and no leading zeros.
+const IPV4_ADDRESS_PATTERN: &str = "((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+
+/// An IPv6 address in any RFC 4291 text form, following the RFC 3986
+/// `IPv6address` grammar.
+fn ipv6_address_pattern() -> String {
+    let h16 = "[0-9A-Fa-f]{1,4}";
+    let ls32 = format!("({h16}:{h16}|{IPV4_ADDRESS_PATTERN})");
+    let head = |n: usize| format!("(({h16}:){{0,{n}}}{h16})?");
+    let forms = [
+        format!("({h16}:){{6}}{ls32}"),
+        format!("::({h16}:){{5}}{ls32}"),
+        format!("({h16})?::({h16}:){{4}}{ls32}"),
+        format!("{}::({h16}:){{3}}{ls32}", head(1)),
+        format!("{}::({h16}:){{2}}{ls32}", head(2)),
+        format!("{}::{h16}:{ls32}", head(3)),
+        format!("{}::{ls32}", head(4)),
+        format!("{}::{h16}", head(5)),
+        format!("{}::", head(6)),
+    ];
+    format!("({})", forms.join("|"))
 }
