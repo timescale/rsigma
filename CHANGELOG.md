@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Docs tables with `|` in code
+
+Eleven table cells in the docs and two in the `rsigma-eval` README had an unescaped `|` inside inline code, such as `|expand` or `|windash`. Markdown splits table cells before it reads code spans, so each pipe ended its cell and cut the row short: the `value_placeholders` row in the processing pipelines guide stopped at "placeholders in", and the modifier rows in the conditions reference lost their descriptions. The pipes are escaped, and the docs build now fails on an unescaped `|` in a table row's inline code. The modifiers reference also said that `|all` with a single value is rejected; it is accepted, matches like the value without `|all`, and `rule lint` flags it as `single_value_all_modifier`.
+
 ### `hashes_fields` keeps `neq`, `all`, and `cased` (#755)
 
 The `hashes_fields` transformation replaced a `Hashes` item with new per-algorithm items that had no modifiers, so a filter such as `Hashes|contains|neq: MD5=...` became a positive match on `FileMD5` and the rule fired only on the hashes it meant to exclude. `all` was dropped the same way, so a rule that required every listed hash matched any one of them, and `cased` was lost. The new items now keep `neq`, `all`, and `cased`, and are joined by De Morgan's laws: a negated item excludes every listed hash, and an `all` item requires each of them. This applied in evaluation and in conversion. pySigma 2.1.0 drops these modifiers too, so a converted negated hashes item now differs from pySigma's, which matches the excluded hashes.
