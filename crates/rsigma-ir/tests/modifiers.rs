@@ -197,6 +197,28 @@ fn lowering_rejects_non_boolean_exists_on_a_rewritten_item() {
 }
 
 #[test]
+fn lowering_negates_exists_under_neq() {
+    for (value, expect) in [("true", false), ("false", true)] {
+        let yaml = format!(
+            "title: T\nlogsource: {{ category: test }}\ndetection:\n    selection:\n        \
+             Field|exists|neq: {value}\n    condition: selection\n"
+        );
+        let collection = rsigma_parser::parse_sigma_yaml(&yaml).unwrap();
+        let ir = rsigma_ir::lower_rule(&collection.rules[0], &rsigma_ir::LowerOptions::default())
+            .unwrap();
+        let Some(rsigma_ir::IrDetection::AllOf(items)) = ir.detections.get("selection") else {
+            panic!("expected AllOf");
+        };
+        assert!(
+            matches!(items[0].matcher, rsigma_ir::IrMatcher::Exists(e) if e == expect),
+            "exists|neq: {value}: {:?}",
+            items[0].matcher
+        );
+        assert_eq!(items[0].exists, Some(expect));
+    }
+}
+
+#[test]
 fn lowering_rejects_invalid_values_on_rewritten_items() {
     let rule = rule_with_item(&["fieldref"], "Other*");
     let err = rsigma_ir::lower_rule(&rule, &rsigma_ir::LowerOptions::default());
