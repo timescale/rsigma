@@ -331,6 +331,22 @@ pub trait Backend: Send + Sync {
         ))
     }
 
+    /// Field-less string with `contains`, such as `'|contains': oami`. pySigma
+    /// adds `*` around it as it does for a field; the default renders it as
+    /// any other keyword term, since a keyword already matches a substring.
+    fn convert_keyword_contains(
+        &self,
+        pattern: &IrPattern,
+        case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        if case_insensitive {
+            self.convert_keyword_str(pattern, state)
+        } else {
+            self.convert_keyword_str_cased(pattern, state)
+        }
+    }
+
     /// Keyword (unbound) string term that can sit inside a word, such as a
     /// `base64offset` fragment of an encoded value. A full-text search over
     /// whole words misses it, so such backends override this; the default
@@ -553,6 +569,9 @@ pub struct TextQueryConfig {
 
     // --- Field-to-field comparison ---
     pub field_eq_field_expression: Option<&'static str>,
+    pub field_eq_field_startswith_expression: Option<&'static str>,
+    pub field_eq_field_endswith_expression: Option<&'static str>,
+    pub field_eq_field_contains_expression: Option<&'static str>,
     pub field_eq_field_escaping_quoting: bool,
 
     // --- Deferred query parts ---

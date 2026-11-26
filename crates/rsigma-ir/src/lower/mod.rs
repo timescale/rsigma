@@ -25,7 +25,7 @@ use crate::{
 
 use helpers::{Result, yaml_to_json_map};
 use mod_ctx::ModCtx;
-use value::{lower_value, lower_value_keywords};
+use value::{lower_fieldless_bool, lower_value, lower_value_keywords};
 
 /// Options controlling the lowering strictness.
 #[derive(Debug, Clone, Default)]
@@ -259,7 +259,7 @@ fn lower_item(
         .map(|v| match (v, &item.field.name) {
             // A field-less boolean searches the event for the word, as in a
             // keyword list; inside an array body it compares the member.
-            (SigmaValue::Bool(_), None) if !array_member => lower_value_keywords(v),
+            (SigmaValue::Bool(b), None) if !array_member => Ok(lower_fieldless_bool(*b)),
             _ => lower_value(v, &value_ctx),
         })
         .collect();

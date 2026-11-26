@@ -301,6 +301,11 @@ fn convert_keyword_item<B: Backend + ?Sized>(
             let expr = convert_keyword_item(backend, inner, state)?;
             negate(backend, Operand::new(expr, matcher_op(inner)))
         }
+        IrMatcher::Str {
+            op: IrStrOp::Contains,
+            pattern,
+            case_insensitive,
+        } => backend.convert_keyword_contains(pattern, *case_insensitive, state),
         other => convert_keyword(backend, other, state),
     }
 }

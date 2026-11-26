@@ -176,6 +176,9 @@ pub static FIBRATUS_CONFIG: TextQueryConfig = TextQueryConfig {
 
     // Field-to-field comparison is native: `ps.pid = ps.parent.pid`.
     field_eq_field_expression: Some("{field1} = {field2}"),
+    field_eq_field_startswith_expression: None,
+    field_eq_field_endswith_expression: None,
+    field_eq_field_contains_expression: None,
     field_eq_field_escaping_quoting: false,
 
     // No deferred-tail section: the YAML envelope is built in

@@ -147,6 +147,9 @@ pub static POSTGRES_CONFIG: TextQueryConfig = TextQueryConfig {
     unbound_value_re_expression: None,
 
     field_eq_field_expression: Some("{field1} = {field2}"),
+    field_eq_field_startswith_expression: None,
+    field_eq_field_endswith_expression: None,
+    field_eq_field_contains_expression: None,
     field_eq_field_escaping_quoting: true,
 
     deferred_start: None,
