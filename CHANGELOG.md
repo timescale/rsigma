@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Field-less keys that can never match fail to parse
+### Field-less keys that can never match fail to parse (#758)
 
 A detection key without a field name, such as `'|cidr': 10.0.0.0/8`, `'|gt': 5`, `'|hour': 3`, `'|fieldref': User`, or `'': null`, parsed and compiled, but no event could match it, and with `|neq` every event matched. `rule validate` and `rule lint` accepted these rules. These keys now fail to parse with an error naming the modifier, as `'|exists': true` and a null keyword already did, and as pySigma rejects them. A field-less boolean, such as `'': true`, now matches the word `true` as a boolean keyword does, instead of never matching.
 
