@@ -1,0 +1,1 @@
+FROM main | where match(_raw, "(?i)SUVY") OR match(_raw, "(?i)lFW") OR match(_raw, "(?i)JRV") OR match(_raw, "TmV0") OR match(_raw, "5ld") OR match(_raw, "OZX") OR match(_raw, "(?i)whoami")

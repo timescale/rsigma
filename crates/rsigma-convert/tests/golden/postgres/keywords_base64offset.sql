@@ -1,0 +1,1 @@
+SELECT * FROM security_events WHERE security_events::text ILIKE '%SUVY%' OR security_events::text ILIKE '%lFW%' OR security_events::text ILIKE '%JRV%' OR security_events::text LIKE '%TmV0%' OR security_events::text LIKE '%5ld%' OR security_events::text LIKE '%OZX%' OR to_tsvector('simple', security_events::text) @@ plainto_tsquery('simple', 'whoami')

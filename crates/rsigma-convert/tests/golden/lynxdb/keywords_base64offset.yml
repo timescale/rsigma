@@ -1,0 +1,11 @@
+title: Base64offset Keywords Test
+logsource:
+    category: test
+detection:
+    encoded:
+        '|base64offset|contains': 'IEX'
+    cased:
+        '|base64offset|contains|cased': 'Net'
+    keywords:
+        - whoami
+    condition: encoded or cased or keywords
