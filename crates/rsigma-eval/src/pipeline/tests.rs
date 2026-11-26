@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rsigma_parser::{CorrelationRule, SigmaString, SigmaValue};
+use rsigma_parser::{CorrelationRule, Modifier, SigmaString, SigmaValue};
 
 use super::*;
 
@@ -240,6 +240,7 @@ fn test_merge_pipelines_sorts_by_priority() {
             name: "C".to_string(),
             priority: 30,
             vars: HashMap::new(),
+            apply_modifiers: Default::default(),
             transformations: vec![],
             finalizers: vec![],
             source_refs: vec![],
@@ -248,6 +249,7 @@ fn test_merge_pipelines_sorts_by_priority() {
             name: "A".to_string(),
             priority: 10,
             vars: HashMap::new(),
+            apply_modifiers: Default::default(),
             transformations: vec![],
             finalizers: vec![],
             source_refs: vec![],
@@ -256,6 +258,7 @@ fn test_merge_pipelines_sorts_by_priority() {
             name: "B".to_string(),
             priority: 20,
             vars: HashMap::new(),
+            apply_modifiers: Default::default(),
             transformations: vec![],
             finalizers: vec![],
             source_refs: vec![],
@@ -3666,4 +3669,262 @@ fn field_name_processing_item_applied_survives_later_renames() {
     .unwrap();
     let transformed = transform_rule(&[pipeline], &rule).unwrap();
     assert_eq!(transformed.rule.fields, ["p.G2_s", "p.H"]);
+}
+
+fn apply_first(detection: &str, transformations: &str) -> rsigma_parser::SigmaRule {
+    let pipeline = parse_pipeline(&format!(
+        "name: first\napply_modifiers: first\ntransformations:\n{transformations}"
+    ))
+    .unwrap();
+    transform_rule(&[pipeline], &conformance_rule(detection))
+        .unwrap()
+        .rule
+}
+
+fn item_texts(item: &rsigma_parser::DetectionItem) -> Vec<String> {
+    item.values
+        .iter()
+        .map(|value| match value {
+            SigmaValue::String(s) => s.original.clone(),
+            other => panic!("expected a string, got {other:?}"),
+        })
+        .collect()
+}
+
+const NO_TRANSFORMATIONS: &str = "  - type: field_name_suffix\n    suffix: ''\n";
+
+#[test]
+fn apply_modifiers_parses_first_and_last_and_defaults_to_last() {
+    let parse = |line: &str| parse_pipeline(&format!("name: p\n{line}transformations: []\n"));
+    assert_eq!(parse("").unwrap().apply_modifiers, ApplyModifiers::Last);
+    assert_eq!(
+        parse("apply_modifiers: last\n").unwrap().apply_modifiers,
+        ApplyModifiers::Last
+    );
+    assert_eq!(
+        parse("apply_modifiers: first\n").unwrap().apply_modifiers,
+        ApplyModifiers::First
+    );
+    for invalid in ["early", "true", "[first]"] {
+        let error = parse(&format!("apply_modifiers: {invalid}\n")).unwrap_err();
+        assert!(
+            error.to_string().contains("(supported: first, last)"),
+            "{invalid}: {error}"
+        );
+    }
+}
+
+#[test]
+fn apply_modifiers_last_keeps_modifiers_on_the_item() {
+    let rule = conformance_rule("  sel:\n    F|contains: foo");
+    let pipeline = parse_pipeline(&format!(
+        "name: last\ntransformations:\n{NO_TRANSFORMATIONS}"
+    ))
+    .unwrap();
+    let transformed = transform_rule(&[pipeline], &rule).unwrap();
+    let item = &conformance_items(&transformed.rule)[0];
+    assert_eq!(item.field.modifiers, [Modifier::Contains]);
+    assert_eq!(item_texts(item), ["foo"]);
+}
+
+#[test]
+fn apply_modifiers_first_turns_string_operators_into_wildcards() {
+    let cases = [
+        ("F|contains: foo", vec!["*foo*"], vec![]),
+        ("F|startswith: foo", vec!["foo*"], vec![]),
+        ("F|endswith: foo", vec!["*foo"], vec![]),
+        (
+            "F|contains|cased: Foo",
+            vec!["*Foo*"],
+            vec![Modifier::Cased],
+        ),
+        ("F|contains|neq: foo", vec!["*foo*"], vec![Modifier::Neq]),
+        (
+            "F|contains|all: [a, b]",
+            vec!["*a*", "*b*"],
+            vec![Modifier::All],
+        ),
+        ("F|contains: 'a\\*b?'", vec!["*a\\*b?*"], vec![]),
+        ("F|contains: ''", vec!["*"], vec![]),
+        ("F|contains: '*'", vec!["*"], vec![]),
+        ("F|contains: 'foo*'", vec!["*foo*"], vec![]),
+        ("F|startswith: '*a'", vec!["*a*"], vec![]),
+        ("F|endswith: '*a'", vec!["*a"], vec![]),
+        ("F|contains: 'a\\*'", vec!["*a\\**"], vec![]),
+        ("F|endswith: '\\\\'", vec!["*\\\\"], vec![]),
+    ];
+    for (detection, values, modifiers) in cases {
+        let rule = apply_first(&format!("  sel:\n    {detection}"), NO_TRANSFORMATIONS);
+        let item = &conformance_items(&rule)[0];
+        assert_eq!(item_texts(item), values, "{detection}");
+        assert_eq!(item.field.modifiers, modifiers, "{detection}");
+    }
+}
+
+#[test]
+fn apply_modifiers_first_encodes_values() {
+    let cases = [
+        ("F|base64: foo", vec!["Zm9v"]),
+        ("F|base64|contains: foo", vec!["*Zm9v*"]),
+        (
+            "F|base64offset|contains: foo",
+            vec!["*Zm9v*", "*Zvb*", "*mb2*"],
+        ),
+        ("F|utf16be|base64: ab", vec!["AGEAYg=="]),
+        ("F|wide|contains: ab", vec!["*a\u{0}b\u{0}*"]),
+        (
+            "F|windash|contains: ' -a'",
+            vec![
+                "* -a*",
+                "* /a*",
+                "* \u{2013}a*",
+                "* \u{2014}a*",
+                "* \u{2015}a*",
+            ],
+        ),
+    ];
+    for (detection, values) in cases {
+        let rule = apply_first(&format!("  sel:\n    {detection}"), NO_TRANSFORMATIONS);
+        let item = &conformance_items(&rule)[0];
+        assert_eq!(item_texts(item), values, "{detection}");
+        assert!(item.field.modifiers.is_empty(), "{detection}");
+    }
+}
+
+#[test]
+fn apply_modifiers_first_splits_all_when_values_have_several_variants() {
+    let rule = apply_first(
+        "  sel:\n    F|base64offset|contains|all: [foo, bar]",
+        NO_TRANSFORMATIONS,
+    );
+    let items = conformance_items(&rule);
+    assert_eq!(items.len(), 2);
+    assert_eq!(item_texts(&items[0]), ["*Zm9v*", "*Zvb*", "*mb2*"]);
+    assert_eq!(item_texts(&items[1]), ["*YmFy*", "*Jhc*", "*iYX*"]);
+    assert!(items.iter().all(|item| item.field.modifiers.is_empty()));
+}
+
+#[test]
+fn apply_modifiers_first_leaves_items_it_cannot_express() {
+    for detection in [
+        "F: foo",
+        "F|re: 'f.o'",
+        "F|cidr: 10.0.0.0/8",
+        "F|fieldref|contains: G",
+        "F|contains|expand: '%x%'",
+        "F|exists: true",
+        "F|gt: 5",
+        "'|contains': foo",
+        "'|endswith': foo",
+        "'|base64offset|contains': foo",
+        "F|base64offset|contains|all|neq: [foo, bar]",
+    ] {
+        let original = conformance_rule(&format!("  sel:\n    {detection}"));
+        let rule = apply_first(&format!("  sel:\n    {detection}"), NO_TRANSFORMATIONS);
+        assert_eq!(
+            conformance_items(&rule),
+            conformance_items(&original),
+            "{detection}"
+        );
+    }
+}
+
+#[test]
+fn apply_modifiers_first_lets_value_transformations_see_the_modified_value() {
+    let replaced = apply_first(
+        "  sel:\n    F|contains: foo",
+        "  - type: replace_string\n    regex: '^f'\n    replacement: b\n",
+    );
+    assert_eq!(item_texts(&conformance_items(&replaced)[0]), ["*foo*"]);
+
+    let set = apply_first(
+        "  sel:\n    F|contains: foo",
+        "  - type: set_value\n    value: bar\n",
+    );
+    let item = &conformance_items(&set)[0];
+    assert_eq!(item_texts(item), ["bar"]);
+    assert!(item.field.modifiers.is_empty());
+
+    let encoded = apply_first(
+        "  sel:\n    F|base64: foo",
+        "  - type: replace_string\n    regex: Zm\n    replacement: XX\n",
+    );
+    assert_eq!(item_texts(&conformance_items(&encoded)[0]), ["XX9v"]);
+}
+
+#[test]
+fn apply_modifiers_first_matches_the_same_events_without_transformations() {
+    let detections = [
+        "F|contains: foo",
+        "F|startswith|cased: Foo",
+        "F|endswith|neq: foo",
+        "F|contains|all: [foo, bar]",
+        "F|base64offset|contains|all: [foo, bar]",
+        "F|base64|contains: foo",
+        "F|windash|contains: ' -a'",
+        "F|wide|base64offset|contains: foo",
+        "F|contains: ''",
+        "F|startswith: 'f*'",
+    ];
+    let events = [
+        "foo",
+        "Foo bar",
+        "xfoobarx",
+        "barfoo",
+        "Zm9vYmFy",
+        "xxZm9vxx",
+        "cmd /a",
+        "cmd \u{2013}a",
+        "ZgBvAG8A",
+        "",
+    ];
+    for detection in detections {
+        let collection = rsigma_parser::parse_sigma_yaml(&format!(
+            "title: t\nlogsource:\n  category: test\ndetection:\n  sel:\n    {detection}\n  condition: sel\n"
+        ))
+        .unwrap();
+        let matches = |mode: &str| {
+            let pipeline = parse_pipeline(&format!(
+                "name: p\napply_modifiers: {mode}\ntransformations:\n{NO_TRANSFORMATIONS}"
+            ))
+            .unwrap();
+            let mut engine = crate::Engine::new();
+            engine.add_pipeline(pipeline);
+            engine.add_collection(&collection).unwrap();
+            events
+                .iter()
+                .map(|value| {
+                    let event = serde_json::json!({ "F": value });
+                    !engine
+                        .evaluate(&crate::event::JsonEvent::borrow(&event))
+                        .is_empty()
+                })
+                .collect::<Vec<_>>()
+        };
+        let last = matches("last");
+        assert!(last.contains(&true), "{detection} matches nothing");
+        assert_eq!(matches("first"), last, "{detection}");
+    }
+}
+
+#[test]
+fn apply_modifiers_first_leaves_values_an_encoding_cannot_represent() {
+    let rule = conformance_rule("  sel:\n    F|base64|contains: ab\n    G|wide: ab");
+    let earlier = parse_pipeline(
+        "name: earlier\ntransformations:\n  - type: replace_string\n    regex: b\n    replacement: '*'\n    field_name_conditions:\n      - type: include_fields\n        fields: [F]\n  - type: replace_string\n    regex: b\n    replacement: é\n    field_name_conditions:\n      - type: include_fields\n        fields: [G]\n",
+    )
+    .unwrap();
+    let first = parse_pipeline(&format!(
+        "name: first\napply_modifiers: first\ntransformations:\n{NO_TRANSFORMATIONS}"
+    ))
+    .unwrap();
+    let transformed = transform_rule(&[earlier, first], &rule).unwrap();
+    let items = conformance_items(&transformed.rule);
+    assert_eq!(
+        items[0].field.modifiers,
+        [Modifier::Base64, Modifier::Contains]
+    );
+    assert_eq!(item_texts(&items[0]), ["a*"]);
+    assert_eq!(items[1].field.modifiers, [Modifier::Wide]);
+    assert_eq!(item_texts(&items[1]), ["aé"]);
 }

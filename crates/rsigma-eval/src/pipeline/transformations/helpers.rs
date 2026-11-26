@@ -736,7 +736,7 @@ fn replace_strings_in_values(values: &mut [SigmaValue], re: &Regex, replace: &St
 }
 
 /// Join adjacent plain parts so a rebuilt string has the canonical shape.
-fn merge_plain_parts(parts: Vec<StringPart>) -> Vec<StringPart> {
+pub(in crate::pipeline) fn merge_plain_parts(parts: Vec<StringPart>) -> Vec<StringPart> {
     let mut merged: Vec<StringPart> = Vec::with_capacity(parts.len());
     for part in parts {
         match (merged.last_mut(), part) {
@@ -749,7 +749,7 @@ fn merge_plain_parts(parts: Vec<StringPart>) -> Vec<StringPart> {
 }
 
 /// Reconstruct the `original` string from parts, re-escaping wildcards.
-fn parts_to_original(parts: &[StringPart]) -> String {
+pub(in crate::pipeline) fn parts_to_original(parts: &[StringPart]) -> String {
     let mut out = String::new();
     for part in parts {
         match part {

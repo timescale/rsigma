@@ -94,6 +94,7 @@ fn make_pipeline_with_vars(n_vars: usize, _values_per_var: usize) -> Pipeline {
         name: "bench-pipeline".to_string(),
         priority: 10,
         vars,
+        apply_modifiers: Default::default(),
         transformations: vec![],
         finalizers: vec![],
         source_refs: vec![],
