@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Docs tables with `|` in code
+### Docs tables with `|` in code (#756)
 
 Eleven table cells in the docs and two in the `rsigma-eval` README had an unescaped `|` inside inline code, such as `|expand` or `|windash`. Markdown splits table cells before it reads code spans, so each pipe ended its cell and cut the row short: the `value_placeholders` row in the processing pipelines guide stopped at "placeholders in", and the modifier rows in the conditions reference lost their descriptions. The pipes are escaped, and the docs build now fails on an unescaped `|` in a table row's inline code. The modifiers reference also said that `|all` with a single value is rejected; it is accepted, matches like the value without `|all`, and `rule lint` flags it as `single_value_all_modifier`.
 
