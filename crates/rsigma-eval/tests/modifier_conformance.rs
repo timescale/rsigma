@@ -360,6 +360,15 @@ fn exists_checks_presence_and_counts_null_as_present() {
         [0, 1, 2]
     );
     assert_eq!(matching("selection:\n  User|exists: false", &events), [3]);
+    // `neq` negates the whole item, so it inverts the presence check.
+    assert_eq!(
+        matching("selection:\n  User|exists|neq: true", &events),
+        [3]
+    );
+    assert_eq!(
+        matching("selection:\n  User|exists|neq: false", &events),
+        [0, 1, 2]
+    );
 }
 
 #[test]

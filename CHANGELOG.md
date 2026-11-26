@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `exists` honors `neq` (#753)
+
+`Field|exists|neq: true` now matches when the field is missing, as `neq` negates the whole detection item. Before, lowering handled `exists` before applying `neq` and dropped it, so the item behaved like `Field|exists: true` and matched the opposite events, in evaluation and in every conversion backend, without a warning.
+
 ### `convert_type` accepts `num` and rejects values it can't convert (#752)
 
 The `convert_type` pipeline transformation now accepts `target_type: num`, pySigma's name for a number, and parses each value as an integer or a float the way pySigma does. Before, `num` was not recognized, so a pipeline written for pySigma left every value unchanged without an error. An unknown or non-string `target_type` is now rejected when the pipeline loads, and `re`, `cidr`, `fieldref`, and `exists` values are left alone, as in pySigma.

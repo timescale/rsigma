@@ -198,6 +198,8 @@ pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result
             _ => None,
         }
         .ok_or_else(|| IrError::IncompatibleValue("|exists takes a single boolean value".into()))?;
+        // `|neq` negates the whole item, so `|exists|neq: true` means the field is absent.
+        let expect = expect != ctx.has_neq();
         return Ok(IrDetectionItem {
             field: item.field.name.clone(),
             matcher: IrMatcher::Exists(expect),

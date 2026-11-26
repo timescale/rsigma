@@ -1,0 +1,31 @@
+description: neq negates exists, so exists neq true matches events that lack the field, but not a field whose value is null.
+rule:
+  title: exists neq
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      User|exists|neq: true
+    condition: selection
+events:
+  - {User: 'admin'}
+  - {Image: 'C:\x.exe'}
+  - {User: null}
+matches: [1]
+known_failures:
+  postgres-columns:
+    type: match-mismatch
+    reason: "a typed column stores an absent field and a null value as the same SQL NULL"
+    actual: [1, 2]
+  fibratus:
+    type: match-mismatch
+    reason: "Fibratus reads a field the event lacks, or holds as null, as an empty string, so a null value counts as absent"
+    actual: [1, 2]
+  fibratus-nomacros:
+    type: match-mismatch
+    reason: "Fibratus reads a field the event lacks, or holds as null, as an empty string, so a null value counts as absent"
+    actual: [1, 2]
+  test-pysigma:
+    type: output-difference
+    reason: "neq on exists lowers to the inverse presence check instead of a negated one"
+    actual: ["notexists(User)"]
+    reference: ["not exists(User)"]

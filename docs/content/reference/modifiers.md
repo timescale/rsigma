@@ -73,7 +73,7 @@ An integer value, with or without `gt`, `gte`, `lt`, or `lte`, matches and compa
 
 ## `neq`
 
-`neq` negates the whole detection item. `Field|neq: [a, b]` matches when the field is neither `a` nor `b`, and it also matches when the field is missing or `null`. The same applies to `|fieldref|neq`: the item matches unless both fields are present and equal.
+`neq` negates the whole detection item. `Field|neq: [a, b]` matches when the field is neither `a` nor `b`, and it also matches when the field is missing or `null`. The same applies to `|fieldref|neq`: the item matches unless both fields are present and equal. With `exists`, `neq` inverts the presence check, so `Field|exists|neq: true` matches when the field is missing, like `Field|exists: false`.
 
 To require the field to be present, add a separate `Field|exists: true` item to the same selection.
 
