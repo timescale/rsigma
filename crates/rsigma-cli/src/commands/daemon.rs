@@ -2242,6 +2242,11 @@ fn run_daemon(
         require_tls: nats_auth.nats_require_tls,
         ..Default::default()
     };
+    // `daemon-tls` compiles rustls with aws-lc-rs beside async-nats' ring, so
+    // rustls has no process default for the NATS client's TLS; pin aws-lc-rs,
+    // the provider the API listener uses.
+    #[cfg(all(feature = "daemon-nats", feature = "daemon-tls"))]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let file_pipeline_paths: Vec<PathBuf> = pipeline_paths
         .into_iter()
