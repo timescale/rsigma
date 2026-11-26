@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### PostgreSQL `cidr` on values that are not addresses
+### PostgreSQL `cidr` on values that are not addresses (#754)
 
 The PostgreSQL backend cast a `cidr` field straight to `inet`, so a single row holding a value that is not an IP address, such as the `-` Windows logs for a missing address, failed the whole query with `invalid input syntax for type inet`. The value is now cast only when its text is an IPv4 or IPv6 address of the network's family, so other values do not match, as in the rsigma engine. In columns mode the address may carry a mask, so an `inet` column still matches. Converted queries change shape: `("field")::inet <<= '10.0.0.0/8'::cidr` becomes `(CASE WHEN ("field")::text ~ '^...$' THEN ("field")::inet END) <<= '10.0.0.0/8'::cidr`.
 
