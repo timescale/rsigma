@@ -1,0 +1,20 @@
+description: With apply_modifiers first, replace_string sees the contains value as *whoami*, so an anchored regex leaves it unchanged as in pySigma.
+rule:
+  title: apply modifiers replace string
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|contains: 'whoami'
+    condition: selection
+pipeline:
+  name: anchored replace
+  apply_modifiers: first
+  transformations:
+    - type: replace_string
+      regex: '^w'
+      replacement: 'x'
+events:
+  - {CommandLine: 'cmd /c whoami /all'}
+  - {CommandLine: 'cmd /c xhoami'}
+  - {CommandLine: 'WHOAMI'}
+matches: [0, 2]

@@ -51,6 +51,9 @@ pub struct Case {
     pub rule_yaml: String,
     /// Processing pipeline applied before any engine pipeline, and in eval.
     pub pipeline_yaml: Option<String>,
+    /// The pipeline as pySigma receives it. pySigma always applies modifiers
+    /// before its transformations and rejects the `apply_modifiers` key.
+    pub reference_pipeline_yaml: Option<String>,
     pub logsource_category: Option<String>,
     pub events: Vec<Value>,
     pub matches: Vec<usize>,
@@ -226,6 +229,13 @@ fn load_case(path: &Path) -> Case {
         pipeline_yaml: doc
             .get("pipeline")
             .map(|p| yaml_serde::to_string(p).unwrap()),
+        reference_pipeline_yaml: doc.get("pipeline").map(|p| {
+            let mut p = p.clone();
+            if let Some(mapping) = p.as_mapping_mut() {
+                mapping.remove("apply_modifiers");
+            }
+            yaml_serde::to_string(&p).unwrap()
+        }),
         logsource_category,
         events,
         matches,

@@ -1,0 +1,19 @@
+description: With apply_modifiers first, set_value replaces the endswith value and its wildcard, so the item becomes an exact match as in pySigma.
+rule:
+  title: apply modifiers set value
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      Image|endswith: '\cmd.exe'
+    condition: selection
+pipeline:
+  name: exact image
+  apply_modifiers: first
+  transformations:
+    - type: set_value
+      value: 'C:\Windows\System32\cmd.exe'
+events:
+  - {Image: 'C:\Windows\System32\cmd.exe'}
+  - {Image: 'D:\tools\C:\Windows\System32\cmd.exe'}
+  - {Image: 'C:\Windows\System32\pwsh.exe'}
+matches: [0]

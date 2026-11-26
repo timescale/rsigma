@@ -1,0 +1,20 @@
+description: With apply_modifiers first, replace_string edits the base64-encoded value as in pySigma.
+rule:
+  title: apply modifiers base64
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|base64|contains: 'whoami'
+    condition: selection
+pipeline:
+  name: encoded replace
+  apply_modifiers: first
+  transformations:
+    - type: replace_string
+      regex: 'd2'
+      replacement: 'X2'
+events:
+  - {CommandLine: 'powershell -enc X2hvYW1p'}
+  - {CommandLine: 'powershell -enc d2hvYW1p'}
+  - {CommandLine: 'whoami'}
+matches: [0]
