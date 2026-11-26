@@ -77,7 +77,7 @@ pub static TEXT_QUERY_TEST_CONFIG: TextQueryConfig = TextQueryConfig {
     re_expression: Some("{field}=/{regex}/"),
     not_re_expression: None,
     re_escape_char: Some("\\"),
-    re_escape: &["/"],
+    re_escape: &["/", "bar"],
     re_escape_escape_char: Some("\\"),
 
     cidr_expression: Some("cidrmatch('{field}', \"{value}\")"),
@@ -109,6 +109,9 @@ pub static TEXT_QUERY_TEST_CONFIG: TextQueryConfig = TextQueryConfig {
     unbound_value_re_expression: Some("_=/{value}/"),
 
     field_eq_field_expression: Some("{field1}=fieldref({field2})"),
+    field_eq_field_startswith_expression: Some("{field1}=fieldref_startswith({field2})"),
+    field_eq_field_endswith_expression: Some("{field1}=fieldref_endswith({field2})"),
+    field_eq_field_contains_expression: Some("{field1}=fieldref_contains({field2})"),
     field_eq_field_escaping_quoting: true,
 
     deferred_start: Some(" | "),
@@ -757,21 +760,22 @@ impl Backend for TextQueryTestBackend {
                 "cased field reference (fieldref|cased)".into(),
             ));
         }
-        if !matches!(op, IrStrOp::Exact) {
-            let f1 = text_escape_and_quote_field(self.config, field1);
-            let f2 = text_escape_and_quote_field(self.config, field2);
-            let token = match op {
-                IrStrOp::Contains => "contains",
-                IrStrOp::StartsWith => "startswith",
-                IrStrOp::EndsWith => "endswith",
-                IrStrOp::Exact => unreachable!("exact handled below"),
-            };
-            return Ok(ConvertResult::Query(format!("{f1} {token} {f2}")));
-        }
-        let expr = self
-            .config
-            .field_eq_field_expression
-            .ok_or_else(|| ConvertError::UnsupportedModifier("fieldref".into()))?;
+        let (expr, modifier) = match op {
+            IrStrOp::Exact => (self.config.field_eq_field_expression, "fieldref"),
+            IrStrOp::StartsWith => (
+                self.config.field_eq_field_startswith_expression,
+                "fieldref|startswith",
+            ),
+            IrStrOp::EndsWith => (
+                self.config.field_eq_field_endswith_expression,
+                "fieldref|endswith",
+            ),
+            IrStrOp::Contains => (
+                self.config.field_eq_field_contains_expression,
+                "fieldref|contains",
+            ),
+        };
+        let expr = expr.ok_or_else(|| ConvertError::UnsupportedModifier(modifier.into()))?;
         let f1 = text_escape_and_quote_field(self.config, field1);
         let f2 = if self.config.field_eq_field_escaping_quoting {
             text_escape_and_quote_field(self.config, field2)
@@ -803,6 +807,22 @@ impl Backend for TextQueryTestBackend {
         state: &mut ConversionState,
     ) -> Result<String> {
         self.convert_keyword_str(pattern, state)
+    }
+
+    fn convert_keyword_contains(
+        &self,
+        pattern: &IrPattern,
+        _case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        let mut parts = pattern.parts.clone();
+        if parts.first() != Some(&IrPatternPart::WildcardMulti) {
+            parts.insert(0, IrPatternPart::WildcardMulti);
+        }
+        if parts.last() != Some(&IrPatternPart::WildcardMulti) {
+            parts.push(IrPatternPart::WildcardMulti);
+        }
+        self.convert_keyword_str(&IrPattern { parts }, state)
     }
 
     fn convert_keyword_num(
@@ -1033,6 +1053,16 @@ impl Backend for MandatoryPipelineTestBackend {
         state: &mut ConversionState,
     ) -> Result<String> {
         self.0.convert_keyword_str_cased(pattern, state)
+    }
+
+    fn convert_keyword_contains(
+        &self,
+        pattern: &IrPattern,
+        case_insensitive: bool,
+        state: &mut ConversionState,
+    ) -> Result<String> {
+        self.0
+            .convert_keyword_contains(pattern, case_insensitive, state)
     }
 
     fn convert_keyword_num(
@@ -1727,6 +1757,61 @@ detection:
         // `:` is in add_escaped for string values, not re_escape, so it stays unescaped.
         // `/` is in re_escape, so both slashes get escaped.
         assert_eq!(queries, vec!["Path=/C:\\/Windows\\/.*/"]);
+    }
+
+    #[test]
+    fn test_re_escapes_bar_as_pysigma_does() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        Path|re: 'foobar'
+    condition: selection
+"#,
+        );
+        assert_eq!(queries, vec!["Path=/foo\\bar/"]);
+    }
+
+    #[test]
+    fn test_fieldref_substring_operators() {
+        for (modifier, expected) in [
+            ("startswith", "A=fieldref_startswith(B)"),
+            ("endswith", "A=fieldref_endswith(B)"),
+            ("contains", "A=fieldref_contains(B)"),
+        ] {
+            let queries = convert_rule_yaml(&format!(
+                "title: Test\nlogsource:\n    category: test\ndetection:\n    selection:\n        A|fieldref|{modifier}: B\n    condition: selection\n"
+            ));
+            assert_eq!(queries, vec![expected], "{modifier}");
+        }
+    }
+
+    #[test]
+    fn test_field_less_contains_adds_wildcards() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        '|contains': whoami
+    cased:
+        '|contains|cased': WhoAmI
+    wild:
+        '|contains|all': ['*foo', 'bar*']
+    keywords:
+        - ipconfig
+    condition: sel or cased or wild or keywords
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec![r#"_="*whoami*" or _="*WhoAmI*" or _="*foo*" and _="*bar*" or _="ipconfig""#]
+        );
     }
 
     /// Convert a rule expected to fail and return the resulting error message.

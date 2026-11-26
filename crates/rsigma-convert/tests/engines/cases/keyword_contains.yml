@@ -1,0 +1,14 @@
+description: A field-less value with contains matches the text anywhere in the event, case-insensitively.
+rule:
+  title: keyword contains
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      '|contains': 'whoami'
+    condition: selection
+events:
+  - {CommandLine: 'cmd /c whoami'}
+  - {CommandLine: 'cmd /c WHOAMI /all'}
+  - {CommandLine: 'ipconfig'}
+matches: [0, 1]
+unsupported: [fibratus, fibratus-nomacros]

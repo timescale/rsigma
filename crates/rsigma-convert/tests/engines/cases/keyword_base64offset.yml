@@ -18,5 +18,5 @@ known_failures:
   test-pysigma:
     type: reference-error
     reason: "pySigma 2.1.0 fails on an encoding modifier in a keyword"
-    actual: ['_="SUVY" or _="lFW" or _="JRV"']
+    actual: ['_="*SUVY*" or _="*lFW*" or _="*JRV*"']
     contains: "Unexpected value type class in condition parse tree: SigmaExpansion"

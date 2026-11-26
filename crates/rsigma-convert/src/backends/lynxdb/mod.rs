@@ -110,6 +110,9 @@ const SEARCH_CONFIG: TextQueryConfig = TextQueryConfig {
     unbound_value_re_expression: None,
 
     field_eq_field_expression: None,
+    field_eq_field_startswith_expression: None,
+    field_eq_field_endswith_expression: None,
+    field_eq_field_contains_expression: None,
     field_eq_field_escaping_quoting: false,
 
     deferred_start: None,

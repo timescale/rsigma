@@ -15,7 +15,7 @@ The crate provides a generic conversion framework that any backend can plug into
 - **Condition tree walker** that recursively converts `ConditionExpr` nodes into query strings with selector/quantifier support.
 - **Orchestrator** via `convert_collection()`, which merges filters into the rules they target, applies pipelines, converts each rule, and collects results and errors. A backend without correlation support reports each correlation as an `UnsupportedCorrelation` error.
 - **Deferred expressions** through the `DeferredExpression` trait and `DeferredTextExpression` for backends that need post-query appendages (e.g. Splunk `| regex`, `| where`).
-- **Test backend** with `TextQueryTestBackend` and `MandatoryPipelineTestBackend` for backend-neutral foundation testing. Its output matches pySigma's `TextQueryTestBackend`: values are escaped and quoted the same way, the expression follows the value's wildcard shape, values of one field become `in` and `contains-all` lists, and CIDR matches render as `cidrmatch('Field', "cidr")`.
+- **Test backend** with `TextQueryTestBackend` and `MandatoryPipelineTestBackend` for backend-neutral foundation testing. Its output matches pySigma's `TextQueryTestBackend`: values are escaped and quoted the same way, the expression follows the value's wildcard shape, values of one field become `in` and `contains-all` lists, and CIDR matches render as `cidrmatch('Field', "cidr")`. A `fieldref` with `startswith`, `endswith`, or `contains` renders as `A=fieldref_startswith(B)` and so on, and a field-less `contains` value gets `*` on both ends.
 - **PostgreSQL/TimescaleDB backend** with native `ILIKE`, regex (`~`, `~*` with `|i`), CIDR (`inet`/`cidr`), full-text search (`tsvector`/`tsquery`), JSONB field access, correlation via CTEs and window functions, and TimescaleDB-specific output formats (continuous aggregates, `time_bucket` queries, view generation).
 - **LynxDB backend** generating SPL2-compatible `FROM <index> | search ...` queries with glob wildcards and correct parenthesization for LynxDB's non-standard boolean precedence (`NOT > OR > AND`), and `FROM <index> | where ...` queries for rules whose values `search` cannot match exactly.
 
@@ -269,6 +269,7 @@ Key methods:
 | `convert_field_exists` | Field existence check |
 | `convert_keyword_str` / `convert_keyword_num` | Unbound/keyword value matching |
 | `convert_keyword_str_cased` | Case-sensitive keyword (`cased`); the default rejects it |
+| `convert_keyword_contains` | Field-less value with `contains`; the default renders it as a regular keyword |
 | `convert_keyword_substr` | Keyword fragment that can sit inside a word, such as a `base64offset` encoding; the default renders it as a regular keyword |
 | `convert_condition_and` / `convert_condition_or` / `convert_condition_not` | Combine sub-expressions |
 | `convert_condition_group` | Parenthesize a compound operand for its parent operator; the default follows `NOT` > `AND` > `OR` and always groups under `NOT`, as pySigma does. Text backends delegate to `text_convert_condition_group` so their `precedence` applies |

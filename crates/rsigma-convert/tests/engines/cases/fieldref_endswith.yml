@@ -1,0 +1,14 @@
+description: fieldref with endswith matches when the field ends with the value of the other field, case-insensitively.
+rule:
+  title: fieldref endswith
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      CommandLine|fieldref|endswith: Image
+    condition: selection
+unsupported: [lynxdb]
+events:
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c C:\Windows\cmd.exe'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'cmd /c c:\windows\CMD.EXE'}
+  - {Image: 'C:\Windows\cmd.exe', CommandLine: 'C:\Windows\cmd.exe /c whoami'}
+matches: [0, 1]

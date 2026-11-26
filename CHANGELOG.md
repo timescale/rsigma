@@ -4,6 +4,14 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Test backend output matches pySigma for fieldref, regex, and field-less contains (#761)
+
+The `test` backend rendered `fieldref` with `startswith`, `endswith`, or `contains` as `A startswith B`, where pySigma's `TextQueryTestBackend` renders `A=fieldref_startswith(B)`. It also rendered a field-less `contains` value as the bare term, `_="whoami"`, where pySigma adds wildcards: `_="*whoami*"`. A keyword list is unchanged, `_="whoami"`, as in pySigma. Its regexes now escape `bar` as well as `/`, as pySigma's test backend does. New engine cases cover these forms against pySigma, and they also check matching for fieldref with each substring operator, field-less `contains`, and a regex with a slash.
+
+`TextQueryConfig` gains `field_eq_field_startswith_expression`, `field_eq_field_endswith_expression`, and `field_eq_field_contains_expression`, matching pySigma's `field_equals_field_*_expression`, and `Backend` gains `convert_keyword_contains`, which receives a field-less `contains` value and defaults to the regular keyword rendering. A field-less boolean now lowers to an exact match of the word in the IR, like a field-less string, and matches the same events.
+
+Breaking for library backends: a `TextQueryConfig` literal must set the three new fields.
+
 ### Base64 keywords match in PostgreSQL and LynxDB (#760)
 
 A keyword with `base64` or `base64offset`, such as `'|base64offset|contains': IEX`, never matched in PostgreSQL or LynxDB. Each encoded form is a fragment of a longer base64 string, and both backends searched for it as a whole word: PostgreSQL through full-text search, and LynxDB through `search`, which skips segments whose bloom filter lacks the fragment. PostgreSQL now matches each fragment as a substring of the event text with `ILIKE`, or `LIKE` with `cased`, and LynxDB with a `match(_raw, ...)` regex in `where`. Library backends receive these fragments through the new `Backend::convert_keyword_substr` method, which defaults to the regular keyword rendering.

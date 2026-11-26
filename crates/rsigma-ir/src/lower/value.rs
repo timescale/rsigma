@@ -304,6 +304,16 @@ fn lower_str(pattern: IrPattern, ctx: &ModCtx) -> IrMatcher {
 /// Keywords carry no field and match substring-wise across all event values;
 /// the faithful pattern lets eval reproduce the plain-vs-wildcard behavior and
 /// convert render the term.
+/// A field-less boolean searches the event for the word `true` or `false`.
+/// It has no `contains`, so it lowers like a field-less string without one.
+pub(super) fn lower_fieldless_bool(b: bool) -> IrMatcher {
+    IrMatcher::Str {
+        op: IrStrOp::Exact,
+        pattern: plain_pattern(if b { "true" } else { "false" }),
+        case_insensitive: true,
+    }
+}
+
 pub(super) fn lower_value_keywords(value: &SigmaValue) -> Result<IrMatcher> {
     let ci = true;
     match value {
