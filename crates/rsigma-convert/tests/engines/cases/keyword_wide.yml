@@ -1,0 +1,13 @@
+description: A field-less value with wide matches the UTF-16LE text anywhere in the event, and not the UTF-8 text.
+rule:
+  title: keyword wide
+  logsource: {category: process_creation, product: windows}
+  detection:
+    selection:
+      '|wide|contains': 'IEX'
+    condition: selection
+events:
+  - {CommandLine: "I\u0000E\u0000X\u0000 x"}
+  - {CommandLine: 'IEX x'}
+matches: [0]
+unsupported: [fibratus, fibratus-nomacros, postgres-jsonb, postgres-columns]

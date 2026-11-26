@@ -1,0 +1,13 @@
+description: An IPv6 cidr matches addresses inside the network only, and not IPv4 addresses.
+rule:
+  title: cidr ipv6
+  logsource: {category: network_connection, product: windows}
+  detection:
+    selection:
+      DestinationIp|cidr: '2001:db8::/32'
+    condition: selection
+events:
+  - {DestinationIp: '2001:db8::1'}
+  - {DestinationIp: '2001:db9::1'}
+  - {DestinationIp: '10.0.0.1'}
+matches: [0]
