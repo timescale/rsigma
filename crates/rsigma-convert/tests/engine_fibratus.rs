@@ -67,7 +67,9 @@ fn pipeline_fields(doc: &yaml_serde::Value) -> BTreeSet<String> {
 
 /// Rename event fields through the pipeline's mapping for the case category
 /// and add the fields its `add_condition` steps require (`evt.name`, ...).
-fn fibratus_events(doc: &yaml_serde::Value, case: &Case) -> Vec<Value> {
+/// A field without a mapping is an error for the case, which it can record as
+/// a known failure.
+fn fibratus_events(doc: &yaml_serde::Value, case: &Case) -> Result<Vec<Value>, String> {
     let category = case
         .logsource_category
         .as_deref()
@@ -105,13 +107,13 @@ fn fibratus_events(doc: &yaml_serde::Value, case: &Case) -> Vec<Value> {
             for (k, v) in e.as_object().unwrap() {
                 let name = mapping
                     .get(k)
-                    .unwrap_or_else(|| panic!("{}: field {k} has no Fibratus mapping", case.name));
+                    .ok_or_else(|| format!("field {k} has no Fibratus mapping"))?;
                 out.insert(name.clone(), v.clone());
             }
             for (k, v) in &added {
                 out.insert(k.clone(), v.clone());
             }
-            Value::Object(out)
+            Ok(Value::Object(out))
         })
         .collect()
 }
@@ -182,6 +184,8 @@ fn fibratus_evaluates_cases() {
     let doc = pipeline_doc();
     let pipeline = resolve_builtin("fibratus_windows").unwrap().unwrap();
     let cases = engines::load_cases();
+    let events: Vec<Result<Vec<Value>, String>> =
+        cases.iter().map(|c| fibratus_events(&doc, c)).collect();
 
     let mut failures = Vec::new();
     for (label, use_macros) in [("fibratus", "true"), ("fibratus-nomacros", "false")] {
@@ -195,14 +199,14 @@ fn fibratus_evaluates_cases() {
             .collect();
         let request_cases: Vec<Value> = cases
             .iter()
-            .zip(&converted)
-            .filter_map(|(c, conv)| {
+            .zip(converted.iter().zip(&events))
+            .filter_map(|(c, (conv, events))| {
                 let queries = conv.as_ref().ok()?;
                 assert_eq!(queries.len(), 1, "{}: expected one filter", c.name);
                 Some(json!({
                     "name": c.name,
                     "expr": queries[0],
-                    "events": fibratus_events(&doc, c),
+                    "events": events.as_ref().ok()?,
                 }))
             })
             .collect();
@@ -218,11 +222,12 @@ fn fibratus_evaluates_cases() {
             .collect();
         let results: Vec<(Case, Result<Outcome, String>)> = cases
             .iter()
-            .zip(converted)
-            .map(|(c, conv)| {
-                let outcome = match conv {
-                    Err(e) => Ok(Outcome::ConversionRejected(e)),
-                    Ok(q) => {
+            .zip(converted.into_iter().zip(&events))
+            .map(|(c, (conv, events))| {
+                let outcome = match (conv, events) {
+                    (Err(e), _) => Ok(Outcome::ConversionRejected(e)),
+                    (Ok(_), Err(e)) => Err(e.clone()),
+                    (Ok(q), Ok(_)) => {
                         let r = by_name[c.name.as_str()];
                         match r.get("error").and_then(|e| e.as_str()) {
                             Some(e) => Err(format!("{e}\n    filter: {}", q[0])),

@@ -451,7 +451,7 @@ Condition semantics follow pySigma:
 | `set_state` | `key`, `val` (`value` alias) | Store typed key-value pairs in pipeline state |
 | `rule_failure` | `message` (default: `"rule failure"`) | Raise an error for matching rules |
 | `detection_item_failure` | `message` (default: `"detection item failure"`) | Raise an error for matching detection items |
-| `hashes_fields` | `valid_hash_algos` (required), `field_prefix` (default: `""`), `drop_algo_prefix` (default: `false`), `field_to_parse` (default: `[Hashes, Hash]`) | Replace hash items with an OR over per-algorithm fields; values are `ALGO=hash`, `ALGO\|hash`, or a bare hash whose algorithm comes from its length |
+| `hashes_fields` | `valid_hash_algos` (required), `field_prefix` (default: `""`), `drop_algo_prefix` (default: `false`), `field_to_parse` (default: `[Hashes, Hash]`) | Replace hash items with an OR over per-algorithm fields; values are `ALGO=hash`, `ALGO\|hash`, or a bare hash whose algorithm comes from its length. `neq`, `all`, and `cased` carry over to the new items, so a negated item excludes every listed hash |
 | `add_field` | `field` | Add a new detection item with a fixed value |
 | `remove_field` | `field` | Remove a field from detection items |
 | `set_field` | `fields: [...]` | Rename the field of a detection item |

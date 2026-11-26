@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### `hashes_fields` keeps `neq`, `all`, and `cased` (#755)
+
+The `hashes_fields` transformation replaced a `Hashes` item with new per-algorithm items that had no modifiers, so a filter such as `Hashes|contains|neq: MD5=...` became a positive match on `FileMD5` and the rule fired only on the hashes it meant to exclude. `all` was dropped the same way, so a rule that required every listed hash matched any one of them, and `cased` was lost. The new items now keep `neq`, `all`, and `cased`, and are joined by De Morgan's laws: a negated item excludes every listed hash, and an `all` item requires each of them. This applied in evaluation and in conversion. pySigma 2.1.0 drops these modifiers too, so a converted negated hashes item now differs from pySigma's, which matches the excluded hashes.
+
 ### PostgreSQL `cidr` on values that are not addresses (#754)
 
 The PostgreSQL backend cast a `cidr` field straight to `inet`, so a single row holding a value that is not an IP address, such as the `-` Windows logs for a missing address, failed the whole query with `invalid input syntax for type inet`. The value is now cast only when its text is an IPv4 or IPv6 address of the network's family, so other values do not match, as in the rsigma engine. In columns mode the address may carry a mask, so an `inet` column still matches. Converted queries change shape: `("field")::inet <<= '10.0.0.0/8'::cidr` becomes `(CASE WHEN ("field")::text ~ '^...$' THEN ("field")::inet END) <<= '10.0.0.0/8'::cidr`.
