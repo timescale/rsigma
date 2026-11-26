@@ -217,6 +217,40 @@ rsigma accepts a few things pySigma rejects, and rejects a few things it cannot 
 - `processing_state` ordered comparisons (`gt`, `gte`, `lt`, `lte`) between values of different types are false instead of an error, and booleans never equal numbers.
 - `regex` is a no-op because rsigma already matches strings case-insensitively, so `method: plain` (case-sensitive matching) is rejected. `field_name_transform` rejects `apply_keyword: true`, since keyword detections have no field name to transform.
 - `\\%name%` in an `|expand` value is a backslash followed by a placeholder, following the Sigma escaping rules; pySigma treats the percent as escaped.
+- Value transformations see a value before its modifiers apply, unless the pipeline sets `apply_modifiers: first`. See [When modifiers apply](#when-modifiers-apply). {{ added "unreleased" }}
+
+## When modifiers apply
+
+rsigma keeps a value's modifiers on its detection item and applies them when it compiles or converts the rule, so a value transformation sees the raw value. pySigma applies them when it parses the rule, so its transformations see the modified value: `*foo*` for `contains: foo`, and `Zm9v` for `base64: foo`. The same rule and pipeline can then match different events: {{ added "unreleased" }}
+
+| Rule | Transformation | rsigma | pySigma |
+|------|----------------|--------|---------|
+| `F\|contains: foo` | `replace_string` with `regex: '^f'` and `replacement: b` | `F` contains `boo` | `F` contains `foo`, since `^f` does not match `*foo*` |
+| `F\|contains: foo` | `set_value` with `value: bar` | `F` contains `bar` | `F` equals `bar` |
+| `F\|base64: foo` | `replace_string` with `regex: Zm` and `replacement: XX` | `F` equals `Zm9v` | `F` equals `XX9v` |
+
+A pipeline that sets `apply_modifiers: first` behaves like pySigma. Before its transformations run, `contains`, `startswith`, and `endswith` become `*` wildcards in the values, and `base64`, `base64offset`, `wide`, `utf16`, `utf16be`, and `windash` encode them. The item keeps `all`, `cased`, and `neq`. The default, `apply_modifiers: last`, leaves the modifiers on the item.
+
+```yaml
+name: Exact image paths
+apply_modifiers: first
+transformations:
+  - type: set_value
+    value: 'C:\Windows\System32\cmd.exe'
+    field_name_conditions:
+      - type: include_fields
+        fields: [Image]
+```
+
+With this pipeline, `Image|endswith: '\cmd.exe'` becomes an exact match on the full path, as it does in pySigma. Without `apply_modifiers: first`, it would match any image path ending in `C:\Windows\System32\cmd.exe`.
+
+The rewrite has these limits:
+
+- It covers every rule the pipeline is applied to, whatever the conditions on its transformations. It can't be undone, so pipelines that run later also see the modified values.
+- Items with any other modifier, such as `re`, `cidr`, `fieldref`, `expand`, `exists`, or a numeric comparison, keep their modifiers and raw values. So do values without a field name: they match anywhere in the event, so `*foo` there is a different match from `endswith: foo`.
+- `base64offset` and `windash` produce several variants of each value, and each variant becomes a separate value that transformations see on its own. pySigma keeps the variants together, and its string transformations skip them. With `all`, each original value becomes its own item, ANDed with the others, because the variants of one value are alternatives. An item that also has `neq` keeps its modifiers, since `neq` negates the whole item and the split would change its meaning.
+- Without transformations that change values, the rewritten rule matches the same events as the original. Converted queries can look different, because backends render a rewritten value as they would a value written with wildcards: LynxDB renders `*foo*` as the anchored regex `^.*foo.*$`, and `contains: foo` as the regex `foo`.
+- pySigma rejects the `apply_modifiers` key, so a pipeline that sets it no longer loads in pySigma.
 
 ## Chaining pipelines
 

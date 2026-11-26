@@ -43,6 +43,10 @@ A value with a wildcard cannot be combined with `base64` or `base64offset`, beca
 
 Backends convert encoding modifiers as pySigma does: each variant becomes a plain string match, and the variants are ORed together. The windash limit applies to conversion too. Without a base64 step, a UTF-16 variant contains NUL characters, which the PostgreSQL and Fibratus backends reject with `UnsupportedValue`. {{ added "0.24.0" }}
 
+## Modifiers in pipelines
+
+Modifiers apply when a rule is compiled or converted, after every processing pipeline has run, so pipeline value transformations such as `replace_string` and `set_value` see the raw value. pySigma applies them when it parses the rule. A pipeline that sets `apply_modifiers: first` applies `contains`, `startswith`, `endswith`, and the encoding modifiers to the values before its transformations run, as pySigma does. See [When modifiers apply](../guide/processing-pipelines.md#when-modifiers-apply). {{ added "unreleased" }}
+
 ## Placeholders and `expand`
 
 With `|expand`, `%name%` in a value is a placeholder. A backslash escapes `%` as well as `*`, `?`, and itself: `100\%` is a literal percent sign, and `C:\Users\\%user%` is a backslash followed by the `user` placeholder. A placeholder name is non-empty and contains no `*`, `?`, or backslash.
