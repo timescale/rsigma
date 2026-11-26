@@ -29,6 +29,7 @@ fuzz_target!(|data: &[u8]| {
         name: "fuzz".to_string(),
         priority: 0,
         vars,
+        apply_modifiers: Default::default(),
         transformations: vec![],
         finalizers: vec![],
         source_refs: vec![],
