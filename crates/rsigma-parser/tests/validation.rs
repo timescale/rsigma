@@ -99,6 +99,40 @@ fn rejects_invalid_values() {
 }
 
 #[test]
+fn rejects_keywords_that_can_never_match() {
+    for (selection, expected) in [
+        (
+            "'|cidr': 10.0.0.0/8",
+            "keyword: |cidr must be applied to a field",
+        ),
+        (
+            "'|cidr|neq': 10.0.0.0/8",
+            "|cidr must be applied to a field",
+        ),
+        ("'|gt': 5", "|gt must be applied to a field"),
+        ("'|lte': 5", "|lte must be applied to a field"),
+        ("'|hour': 5", "|hour must be applied to a field"),
+        ("'|fieldref': User", "|fieldref must be applied to a field"),
+        ("'': null", "keyword: null is not a keyword"),
+        ("'|neq': [a, null]", "null is not a keyword"),
+    ] {
+        let err = parse_error(&rule_with_selection(selection));
+        assert!(err.contains(expected), "{selection}: {err}");
+    }
+    // Inside an array body a field-less value compares the array member.
+    for body in [
+        "ips[any]|cidr: 10.0.0.0/8",
+        "ports[all]|gt: 5",
+        "times[any]|hour: 3",
+        "vals[any]: null",
+    ] {
+        assert_parses(&format!(
+            "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    sel:\n        {body}\n    condition: sel\n"
+        ));
+    }
+}
+
+#[test]
 fn rejects_conflicting_modifiers() {
     for (selection, expected) in [
         (
@@ -210,6 +244,7 @@ fn accepts_valid_neighbors() {
     }
     for detection in [
         "    kw:\n        - foo\n        - 5\n    condition: kw",
+        "    sel:\n        '|contains': foo\n        '|re': 'a.*b'\n        '': 5\n        '|neq': true\n        '|expand': '%x%'\n    condition: sel",
         "    sel:\n        - F: a\n        - G: b\n    condition: sel",
         "    sel_a:\n        F: x\n    _hidden:\n        G: y\n    condition: 1 of sel_* and not 1 of _hid*",
     ] {

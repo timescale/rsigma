@@ -323,18 +323,30 @@ fn describe(value: &SigmaValue) -> String {
     }
 }
 
-/// Check a named detection for empty selections and `null` keywords, and the
-/// conditions of any extended array blocks inside it.
+/// Check a named detection for empty selections, `null` keywords, and
+/// field-less items that can never match the event, and the conditions of any
+/// extended array blocks inside it.
 pub(crate) fn check_detection(name: &str, detection: &Detection) -> Result<()> {
+    check_detection_in(name, detection, false)
+}
+
+/// Check a detection whose field-less items match the event when
+/// `array_member` is false, and an array member inside an array body.
+fn check_detection_in(name: &str, detection: &Detection, array_member: bool) -> Result<()> {
     let invalid = |msg: &str| SigmaParserError::InvalidDetection(format!("'{name}' {msg}"));
     match detection {
         Detection::AllOf(items) if items.is_empty() => Err(invalid("is empty")),
-        Detection::AllOf(_) => Ok(()),
+        Detection::AllOf(_) if array_member => Ok(()),
+        Detection::AllOf(items) => items
+            .iter()
+            .filter(|item| item.field.name.is_none())
+            .try_for_each(check_event_keyword),
         Detection::AnyOf(subs) | Detection::And(subs) => {
             if subs.is_empty() {
                 return Err(invalid("is empty"));
             }
-            subs.iter().try_for_each(|d| check_detection(name, d))
+            subs.iter()
+                .try_for_each(|d| check_detection_in(name, d, array_member))
         }
         Detection::Keywords(values) => {
             if values.is_empty() {
@@ -347,15 +359,40 @@ pub(crate) fn check_detection(name: &str, detection: &Detection) -> Result<()> {
             }
             Ok(())
         }
-        Detection::ArrayMatch { body, .. } => check_detection(name, body),
+        Detection::ArrayMatch { body, .. } => check_detection_in(name, body, true),
         Detection::Conditional { named, condition } => {
             for (sub_name, sub) in named {
-                check_detection(sub_name, sub)?;
+                check_detection_in(sub_name, sub, array_member)?;
             }
             let names: Vec<&str> = named.keys().map(String::as_str).collect();
             check_condition(condition, &names)
         }
     }
+}
+
+/// Check a field-less item that matches the whole event. A keyword is matched
+/// against the text of the event's values, so a modifier that compares a
+/// typed value, or a null check, never matches it.
+fn check_event_keyword(item: &DetectionItem) -> Result<()> {
+    let has = |m: Modifier| item.field.modifiers.contains(&m);
+    let invalid = |msg: String| SigmaParserError::InvalidValue(format!("keyword: {msg}"));
+    if let Some(m) = [Cidr, FieldRef]
+        .into_iter()
+        .chain(NUMERIC_COMPARISONS)
+        .chain(TIMESTAMP_PARTS)
+        .find(|m| has(*m))
+    {
+        return Err(invalid(format!(
+            "|{} must be applied to a field",
+            modifier_str(m)
+        )));
+    }
+    if item.values.iter().any(|v| matches!(v, SigmaValue::Null)) {
+        return Err(invalid(
+            "null is not a keyword; a null check must be bound to a field".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Check that every identifier in a condition names a detection and every

@@ -163,6 +163,30 @@ fn bool_keywords_search_for_the_word() {
 }
 
 #[test]
+fn field_less_bools_search_for_the_word() {
+    let yaml = |key: &str| {
+        format!(
+            "title: Field-less Bool\nlogsource: {{ category: test }}\ndetection:\n    sel:\n        '{key}': true\n    condition: sel\n"
+        )
+    };
+    assert_matches(
+        &yaml(""),
+        &[
+            (json!({"msg": "flag is TRUE now"}), true),
+            (json!({"a": "false"}), false),
+            (json!({"a": true}), false),
+        ],
+    );
+    assert_matches(
+        &yaml("|neq"),
+        &[
+            (json!({"msg": "flag is TRUE now"}), false),
+            (json!({"a": "false"}), true),
+        ],
+    );
+}
+
+#[test]
 fn include_event_attr_captures_event() {
     let yaml = r#"
 title: Include Event
