@@ -303,6 +303,15 @@ enum PipelineCommands {
 }
 
 fn main() {
+    // async-nats builds its rustls ClientConfig from the process-default
+    // CryptoProvider, and every build links aws-lc-rs (jsonschema's reqwest,
+    // ureq) beside async-nats' ring, so rustls cannot choose one. Pin
+    // aws-lc-rs, the provider the daemon's API listener uses, before any NATS
+    // connection: the daemon's, and a dynamic NATS source's (`pipeline
+    // resolve`, `rule validate --source`).
+    #[cfg(feature = "daemon-nats")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // `rsigma --features` has no subcommand, so clap would reject it. Detect
     // that invocation before `get_matches` and print the compile-time list.
     if features::requested(std::env::args().skip(1)) {

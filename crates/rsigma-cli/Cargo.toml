@@ -34,7 +34,7 @@ daemon = [
 # Includes the Streamable HTTP transport (`--http`); TLS for it reuses the
 # `daemon-tls` rustls loader when that feature is also enabled.
 mcp = ["dep:rsigma-mcp", "rsigma-mcp/http", "tokio", "axum"]
-daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time"]
+daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time", "dep:rustls"]
 daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2", "tokio-stream"]
 daemon-tls = [
     "daemon",

@@ -38,6 +38,7 @@ pub async fn resolve_nats_initial(
 ) -> Result<ResolvedValue, SourceError> {
     use futures::StreamExt;
 
+    crate::io::nats_config::ensure_crypto_provider();
     let client = async_nats::connect(url).await.map_err(|e| SourceError {
         source_id: String::new(),
         kind: SourceErrorKind::Fetch(format!("failed to connect to NATS at {url}: {e}")),

@@ -294,6 +294,7 @@ async fn nats_push_loop(
 ) -> Result<(), String> {
     use futures::StreamExt;
 
+    crate::io::nats_config::ensure_crypto_provider();
     let client = async_nats::connect(url)
         .await
         .map_err(|e| format!("NATS connect failed: {e}"))?;
@@ -348,6 +349,7 @@ pub async fn nats_control_loop(
 ) -> Result<(), String> {
     use futures::StreamExt;
 
+    crate::io::nats_config::ensure_crypto_provider();
     let client = async_nats::connect(url)
         .await
         .map_err(|e| format!("NATS control connect failed: {e}"))?;
