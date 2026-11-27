@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### CI runs the test suite with cargo-nextest
+### CI runs the test suite with cargo-nextest (#804)
 
 `cargo test` ran the workspace's 193 test binaries one after another, which took about 4 minutes of the Windows test job and 2.5 minutes on Linux. The `test` matrix and the `coverage` job now run the suite with [cargo-nextest](https://nexte.st/), which runs tests from every binary in parallel, each in its own process. Doc tests and the rstix `interop` and `taxii_interop` suites, which drive their own harness, still run through `cargo test`. The new `.config/nextest.toml` leaves those two suites out, flags tests that run past 60 seconds, and kills a test after five minutes so a hang fails the job instead of holding the runner. Plain `cargo test` still runs everything locally.
 
