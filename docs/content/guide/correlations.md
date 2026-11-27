@@ -66,7 +66,7 @@ The four numeric types read `field` as a number. Integers, floats, and numeric s
 
 ### Counting distinct values
 
-`value_count` fires on breadth rather than volume. This catches one source connecting to more than twenty distinct destination ports within ten minutes:
+`value_count` counts how many different values a field takes. This one fires when a single source connects to more than twenty distinct destination ports within ten minutes:
 
 ```yaml
 title: Port scan from one source
@@ -158,7 +158,7 @@ correlation:
 
 ## Time windows
 
-Correlation windows run on event time, not arrival time. The engine reads the timestamp from the first of `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, and `eventTime` that is present. Put your own field first with `--timestamp-field` or the `rsigma.timestamp_field` custom attribute. When an event has no parseable timestamp, the daemon uses the wall clock by default; pass `--timestamp-fallback skip` when replaying historical data so those events stay out of correlation state. [Input Formats](input-formats.md) lists the timestamp formats the engine recognizes.
+Correlation windows use the time recorded in each event, so a delayed or replayed event lands where it happened. The engine reads the timestamp from the first of `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, and `eventTime` that is present. Put your own field first with `--timestamp-field` or the `rsigma.timestamp_field` custom attribute. When an event has no parseable timestamp, the daemon uses the wall clock by default; pass `--timestamp-fallback skip` when replaying historical data so those events stay out of correlation state. [Input Formats](input-formats.md) lists the timestamp formats the engine recognizes.
 
 By default the window slides: each match is compared against the matches within `timespan` before it, so two events correlate whenever they are close enough together, regardless of clock boundaries. RSigma also offers `tumbling` windows (fixed, boundary-aligned buckets) and `session` windows (open while matches keep arriving within a `gap`, capped at `timespan`), set with `rsigma.window` and `rsigma.gap`:
 
@@ -223,10 +223,10 @@ Here `brute_burst` is the `name` of the first correlation. Only the top of a cha
 
 By default a correlation keeps its window after firing, so the next qualifying match fires again. Two settings change that:
 
-- **Suppression** (`--suppress 5m`, or `rsigma.suppress: 5m` on the rule) drops repeat alerts for the same correlation and group key within the given duration.
-- **Reset** (`--action reset`, or `rsigma.action: reset` on the rule) clears the group's window when the correlation fires, so it has to build up from zero again. The default is `alert`.
+- Suppression drops repeat alerts for the same correlation and group key for the given duration. Set it with `--suppress 5m`, or with `rsigma.suppress: 5m` on the rule.
+- Reset clears the group's window when the correlation fires, so the count starts again from zero. Set it with `--action reset`, or with `rsigma.action: reset` on the rule. The default action is `alert`.
 
-The flags apply to every correlation; a value on the rule overrides the flag for that rule.
+The flags apply to every correlation, and a value on the rule overrides the flag for that rule.
 
 ```yaml
 title: Brute force against one account
@@ -247,17 +247,17 @@ rsigma.action: reset
 
 Correlation state is a window per correlation and group key. In `engine eval` it lives in memory for the length of the run. The daemon keeps it across restarts when you pass `--state-db`, which snapshots state to SQLite periodically and on shutdown (see [State persistence](streaming-detection.md#state-persistence)).
 
-High-cardinality group keys and long windows are what drive memory. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains. [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
+Memory grows with the number of distinct group keys and with window length. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains. [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
 
 When several daemons share a NATS consumer group, each replica keeps its own state, so the events of one group key must reach the same replica to correlate. See [consumer groups](nats-streaming.md#consumer-groups).
 
 ## Testing and debugging correlations
 
-- **Replay events.** Pipe a file through `rsigma engine eval -r rules/` to check that a correlation fires. Add `--dump-correlation-state` to print every group's current value, threshold, and window entries when the run ends, which answers "why didn't it fire?".
-- **Exemplars.** Attach timestamped example events to the rule with `rsigma.exemplars` and run [`rule test`](../cli/rule/test.md); correlation exemplars use an `events` list with relative `offset`s. See [Custom Attributes](../reference/custom-attributes.md).
-- **Backtests.** [`rule backtest`](../cli/rule/backtest.md) resets correlation state per corpus file, so keep the events of one incident in one file.
-- **Linting.** [`rule lint`](linting-rules.md) checks correlation structure, such as a value type without `field`, a non-numeric threshold, or a session window without `gap`. The [lint rule reference](../reference/lint-rules.md#correlation-rules-18) lists them all.
-- **Drafting.** [`rule draft --groups`](rule-drafting.md#drafting-correlations) turns example incidents into the per-step detections plus a `temporal` or `temporal_ordered` correlation, inferring the group-by, order, and window, with an exemplar ready for `rule test`.
+- Pipe a file of events through `rsigma engine eval -r rules/` to check that a correlation fires. If it does not, add `--dump-correlation-state` to print each group's current value, threshold, and window entries at the end of the run.
+- Attach timestamped example events to the rule with `rsigma.exemplars` and run [`rule test`](../cli/rule/test.md). Correlation exemplars use an `events` list with relative `offset`s; see [Custom Attributes](../reference/custom-attributes.md).
+- [`rule backtest`](../cli/rule/backtest.md) resets correlation state for each corpus file, so keep the events of one incident in one file.
+- [`rule lint`](linting-rules.md) checks correlation structure, such as a value type without `field`, a non-numeric threshold, or a session window without `gap`. The [lint rule reference](../reference/lint-rules.md#correlation-rules-18) lists every check.
+- [`rule draft --groups`](rule-drafting.md#drafting-correlations) turns example incidents into per-step detections and a `temporal` or `temporal_ordered` correlation. It infers the group-by, order, and window, and embeds an exemplar that `rule test` can run.
 
 [Troubleshooting](../getting-started/troubleshooting.md#a-correlation-never-fires) collects the common causes of a correlation that never fires.
 
