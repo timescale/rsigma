@@ -177,12 +177,13 @@ struct Classified<'a> {
     ambiguous: bool,
 }
 
-/// Classify an event and look up the logsource its schema implies.
+/// Classify an event and, when `check_ties` is set, look up the logsource its
+/// schema implies.
 ///
-/// Ties are only checked when `check_ties` is set, because only logsource
-/// pruning and partition fallbacks act on them. An ambiguous classification
-/// implies no logsource (fail open), so only the event's own fields can
-/// prune rules.
+/// Only logsource pruning and partition fallbacks act on the implied
+/// logsource and on ties, so both are skipped without `check_ties`. An
+/// ambiguous classification implies no logsource (fail open), so only the
+/// event's own fields can prune rules.
 fn classify_for_routing<'a, E: Event>(
     classifier: &SchemaClassifier,
     plan: &'a RoutingPlan,
@@ -190,11 +191,9 @@ fn classify_for_routing<'a, E: Event>(
     check_ties: bool,
 ) -> Classified<'a> {
     if !check_ties {
-        let schema = classifier.classify(event).map(|m| m.name);
-        let implied = schema.as_deref().and_then(|s| plan.schema_logsource(s));
         return Classified {
-            schema,
-            implied,
+            schema: classifier.classify(event).map(|m| m.name),
+            implied: None,
             ambiguous: false,
         };
     }
@@ -309,17 +308,15 @@ struct RouteCtx<'a, L> {
     fallbacks: &'a [Option<PartitionFallback>],
     extractor: Option<&'a L>,
     ambiguous: &'a AtomicU64,
+    /// Whether logsource pruning or a partition fallback acts on ties.
+    check_ties: bool,
 }
 
 impl<L> RouteCtx<'_, L> {
-    fn check_ties(&self) -> bool {
-        self.extractor.is_some() || self.fallbacks.iter().any(Option::is_some)
-    }
-
     /// Classify `event`, counting an ambiguous classification when it changes
     /// what logsource pruning does.
     fn classify<E: Event>(&self, event: &E) -> Classified<'_> {
-        let classified = classify_for_routing(self.classifier, self.plan, event, self.check_ties());
+        let classified = classify_for_routing(self.classifier, self.plan, event, self.check_ties);
         if classified.ambiguous && self.extractor.is_some() {
             self.ambiguous.fetch_add(1, Ordering::Relaxed);
         }
@@ -589,6 +586,8 @@ impl<L> SchemaRouter<L> {
             fallbacks: &self.fallbacks,
             extractor: self.logsource_extractor.as_ref(),
             ambiguous: &self.logsource_ambiguous,
+            check_ties: self.logsource_extractor.is_some()
+                || self.fallbacks.iter().any(Option::is_some),
         }
     }
 
