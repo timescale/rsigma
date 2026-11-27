@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### CI no longer type-checks the workspace twice
+### CI no longer type-checks the workspace twice (#803)
 
 The `Check` job ran `cargo check --workspace --all-targets --all-features` on the same pinned toolchain, targets, and features that the `Clippy` job compiles with `cargo clippy`, so the step only repeated work. It is removed; `Check` keeps the fuzz crate and the `--no-default-features` builds that no other job covers.
 
