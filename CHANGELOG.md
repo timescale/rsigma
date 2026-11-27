@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### CI builds the CLI once for its smoke and SigmaHQ corpus checks
+### CI builds the CLI once for its smoke and SigmaHQ corpus checks (#805)
 
 The `Sigma Corpus Regression`, `MCP Smoke`, and `Output Format Smoke` jobs each compiled `rsigma` on their own, and the corpus job spent about six minutes on a release build (thin LTO, one codegen unit) to run about ten seconds of checks. They are now one `CLI smoke and Sigma corpus` job that builds an all-features debug binary once and runs the MCP smoke test over stdio and HTTP, the `--output-format` smoke test, and every corpus check: `rule validate`, the `rule fmt` round trip, validation with the dynamic pipelines, and the `pipeline resolve` goldens. The corpus checks take under a minute on the debug binary. The testing guide now lists the `rule fmt` check it was missing.
 
