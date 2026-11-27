@@ -15,6 +15,11 @@ use serde_json::{Value, json};
 /// Build an engine from a multi-document YAML string.
 fn engine_from(yaml: &str) -> Engine {
     let collection = parse_sigma_yaml(yaml).expect("rules parse");
+    assert!(
+        collection.diagnostics.is_empty(),
+        "fixture has parse diagnostics: {:?}",
+        collection.diagnostics
+    );
     let mut engine = Engine::new();
     engine.add_collection(&collection).expect("compile");
     engine

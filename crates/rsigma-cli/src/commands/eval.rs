@@ -698,6 +698,16 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         false,
     );
 
+    let engine_options = EngineOptions {
+        include_event,
+        match_detail,
+        bloom_prefilter,
+        bloom_max_bytes,
+        #[cfg(feature = "daachorse-index")]
+        cross_rule_ac,
+        logsource_extractor,
+    };
+
     if schema_routing {
         let mut router = build_schema_router(
             &collection,
@@ -706,9 +716,10 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
             corr_config,
             include_event,
             match_detail,
-            logsource_extractor,
+            engine_options.logsource_extractor.clone(),
             schema_partition_rules,
         );
+        engine_options.apply_to_router(&mut router);
         let had_matches = cmd_eval_routed(
             event_source,
             &mut renderer,
@@ -725,16 +736,6 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         }
         return had_matches;
     }
-
-    let engine_options = EngineOptions {
-        include_event,
-        match_detail,
-        bloom_prefilter,
-        bloom_max_bytes,
-        #[cfg(feature = "daachorse-index")]
-        cross_rule_ac,
-        logsource_extractor,
-    };
 
     let had_matches = if has_correlations {
         cmd_eval_with_correlations(
@@ -989,7 +990,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         }
         let resolved = crate::ruleset::resolve_or_exit(name, &spec, renderer.ctx());
         let collection = resolved.collection;
-        let router = build_schema_router(
+        let mut router = build_schema_router(
             &collection,
             schema_config.as_deref(),
             on_unknown.as_deref(),
@@ -999,6 +1000,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
             engine_options.logsource_extractor.clone(),
             schema_partition_rules,
         );
+        engine_options.apply_to_router(&mut router);
         let field_set = RuleFieldSet::collect(&collection, &[], true);
         observe_field_set.extend(field_set.clone());
         units.push(RulesetUnit {
@@ -1521,6 +1523,15 @@ impl EngineOptions {
         #[cfg(feature = "daachorse-index")]
         engine.set_cross_rule_ac(self.cross_rule_ac);
         engine.set_logsource_extractor(self.logsource_extractor.clone());
+    }
+
+    fn apply_to_router(&self, router: &mut SchemaRouter) {
+        if let Some(budget) = self.bloom_max_bytes {
+            router.set_bloom_max_bytes(budget);
+        }
+        router.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        router.set_cross_rule_ac(self.cross_rule_ac);
     }
 
     fn apply_to_correlation(&self, engine: &mut CorrelationEngine) {

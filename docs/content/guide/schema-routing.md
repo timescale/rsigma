@@ -174,7 +174,9 @@ It applies conservatively and only where it is safe:
 - A set is partitioned only when every schema that routes to it (direct bindings plus aliases) implies a product; a set reachable by a cross-platform schema such as `ecs` keeps the full ruleset. A set bound only to `sysmon`, `windows_eventlog`, or `ecs_windows`, for example, keeps only Windows and product-less rules.
 - A set whose pipelines rewrite product via `change_logsource` keeps the full ruleset (the pre-pipeline product is not authoritative there).
 
-Caveat, and why it is off by default: partitioning removes rules at compile time based on the schema's implied product, so an event that is classified as one platform but carries an explicit, contradicting `product` field would not see the removed rules (with the full ruleset, per-event conflict pruning would still keep them). The same holds for an [ambiguous classification](#ambiguous-classifications) whose tied schemas route to different pipeline-sets: the event is evaluated against the winner's set only. Validate against your corpus before enabling it in production.
+With [logsource routing](logsource-routing.md) on, partitioning does not change any result. An event whose resolved product falls outside its set's partition, because its own `product` field contradicts the schema or because an [ambiguous classification](#ambiguous-classifications) left it without one, is also evaluated against the rules the partition removed. The router keeps one shared copy of the parsed rules for this and compiles a set's removed rules the first time an event needs them, so the memory saving holds until such an event arrives. {{ added "unreleased" }}
+
+Without logsource routing, partitioning acts as pruning by the schema's implied product: an event classified as `sysmon` is not evaluated against Linux rules, while the full ruleset would evaluate every rule. An ambiguous classification is the exception and is evaluated against the removed rules too. Here the router keeps the parsed rules only for sets whose schemas can win a tie against a schema that implies a different logsource.
 
 ## Cross-schema correlation
 

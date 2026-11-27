@@ -351,6 +351,23 @@ impl SchemaClassifier {
         )
     }
 
+    /// Names of the signatures that `name` can win a tie against: those at
+    /// the same specificity as one of `name`'s signatures that sort after it.
+    /// An event matching both is classified as `name` by the tie-break.
+    pub(crate) fn tie_peers<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
+        self.signatures
+            .iter()
+            .enumerate()
+            .filter(move |(_, s)| s.name == name)
+            .flat_map(move |(pos, sig)| {
+                self.signatures[pos + 1..]
+                    .iter()
+                    .take_while(move |s| s.specificity == sig.specificity)
+                    .filter(move |s| s.name != name)
+                    .map(|s| s.name.as_str())
+            })
+    }
+
     /// The winning signature, plus the lazily evaluated signatures of a
     /// different name that also match at the winning specificity (the ties
     /// the name tie-break decided against).
@@ -1533,22 +1550,7 @@ impl RoutingPlan {
             *first = None;
         }
 
-        // (set index, schema) pairs: direct bindings, plus aliases whose
-        // canonical is bound and which are not themselves directly bound.
-        let mut routes: Vec<(usize, &str)> = self
-            .schema_to_set
-            .iter()
-            .map(|(s, &set)| (set, s.as_str()))
-            .collect();
-        for (alias, canonical) in &self.aliases {
-            if !self.schema_to_set.contains_key(alias)
-                && let Some(&set) = self.schema_to_set.get(canonical)
-            {
-                routes.push((set, alias.as_str()));
-            }
-        }
-
-        for (set, schema) in routes {
+        for (set, schema) in self.routes() {
             if set == 0 {
                 continue;
             }
@@ -1569,6 +1571,25 @@ impl RoutingPlan {
             }
         }
         out
+    }
+
+    /// `(set index, schema)` pairs for every schema that routes to a bound
+    /// set: direct bindings, plus aliases whose canonical is bound and which
+    /// are not themselves directly bound.
+    pub(crate) fn routes(&self) -> Vec<(usize, &str)> {
+        let mut routes: Vec<(usize, &str)> = self
+            .schema_to_set
+            .iter()
+            .map(|(s, &set)| (set, s.as_str()))
+            .collect();
+        for (alias, canonical) in &self.aliases {
+            if !self.schema_to_set.contains_key(alias)
+                && let Some(&set) = self.schema_to_set.get(canonical)
+            {
+                routes.push((set, alias.as_str()));
+            }
+        }
+        routes
     }
 
     /// Decide how to route an event given its classified schema (or `None`
@@ -2101,6 +2122,27 @@ mod tests {
             );
             assert!(!ambiguous, "{event} must not tie");
         }
+    }
+
+    #[test]
+    fn tie_peers_lists_the_names_a_schema_wins_ties_against() {
+        let sig = |name: &str, specificity: u32| SchemaSignature {
+            name: name.to_string(),
+            specificity,
+            predicates: vec![SchemaPredicate::HasAnyField],
+        };
+        let cls = SchemaClassifier::new(vec![
+            sig("bravo", 70),
+            sig("alpha", 70),
+            sig("charlie", 70),
+            sig("alpha", 50),
+            sig("delta", 50),
+        ]);
+        let peers: Vec<&str> = cls.tie_peers("alpha").collect();
+        assert_eq!(peers, vec!["bravo", "charlie", "delta"]);
+        assert_eq!(cls.tie_peers("bravo").collect::<Vec<_>>(), vec!["charlie"]);
+        assert!(cls.tie_peers("charlie").next().is_none());
+        assert!(cls.tie_peers("missing").next().is_none());
     }
 
     #[test]

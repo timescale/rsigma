@@ -215,3 +215,128 @@ routing:
     assert_eq!(router.logsource_ambiguous_total(), 0);
     assert_eq!(router.logsource_pruned_total(), 1);
 }
+
+/// Two tied signatures bound to different pipeline-sets with different
+/// products. `vendor_a` wins the name tie-break; `vendor_b` additionally needs
+/// `vendor.b`, so an event without it classifies as `vendor_a` alone.
+const CROSS_SET_TIE: &str = r#"
+schemas:
+  - name: vendor_a
+    specificity: 70
+    match:
+      - field_present: vendor.marker
+  - name: vendor_b
+    specificity: 70
+    match:
+      - field_present: vendor.marker
+      - field_present: vendor.b
+routing:
+  bindings:
+    - schema: vendor_a
+      pipelines: [noop_a]
+      logsource:
+        product: windows
+    - schema: vendor_b
+      pipelines: [noop_b]
+      logsource:
+        product: linux
+"#;
+
+fn noop_pipeline(name: &str) -> rsigma_eval::Pipeline {
+    rsigma_eval::parse_pipeline(&format!(
+        "name: {name}\npriority: 10\ntransformations:\n  - id: noop\n    type: field_name_mapping\n    mapping:\n      __unused_{name}: __unused_target\n"
+    ))
+    .expect("pipeline parses")
+}
+
+fn cross_set_router(partition: bool, extractor: bool) -> SchemaRouter {
+    let (signatures, routing) = parse_schema_config(CROSS_SET_TIE).expect("schema config parses");
+    let plan = RoutingPlan::from_config(&routing.expect("routing"));
+    let pipeline_sets = plan
+        .pipeline_sets()
+        .iter()
+        .map(|names| names.iter().map(|n| noop_pipeline(n)).collect())
+        .collect();
+    SchemaRouter::build(
+        &parse_sigma_yaml(RULES).unwrap(),
+        SchemaClassifier::with_user_signatures(signatures),
+        plan,
+        pipeline_sets,
+        CorrelationConfig::default(),
+        false,
+        MatchDetailLevel::Off,
+        extractor.then(LogSourceExtractor::new),
+        partition,
+    )
+    .expect("router builds")
+}
+
+fn batch_titles(router: &mut SchemaRouter, event: &Value) -> Vec<String> {
+    let borrowed = [JsonEvent::borrow(event)];
+    let refs: Vec<&JsonEvent> = borrowed.iter().collect();
+    let mut titles: Vec<String> = router.process_batch(&refs)[0]
+        .iter()
+        .map(|r| r.header.rule_title.clone())
+        .collect();
+    titles.sort();
+    titles
+}
+
+/// Partitioning compiles the `vendor_a` set with Windows and product-less
+/// rules only. A tied event is evaluated without a schema-derived product,
+/// so it must still see the Linux rule the partition removed, exactly as it
+/// does without partitioning.
+#[test]
+fn partitioning_keeps_every_rule_for_a_tie_across_pipeline_sets() {
+    let tied = json!({"vendor": {"marker": true, "b": true}, "CommandLine": "whoami"});
+    for extractor in [true, false] {
+        let mut off = cross_set_router(false, extractor);
+        let mut on = cross_set_router(true, extractor);
+        assert_eq!(on.engine_rule_counts(), vec![3, 2, 2]);
+
+        let (schema, expected) = titles(&mut off, &tied);
+        assert_eq!(schema.as_deref(), Some("vendor_a"));
+        assert_eq!(
+            expected,
+            owned(&["Any whoami", "Linux whoami", "Windows whoami"]),
+            "extractor={extractor}"
+        );
+        assert_eq!(
+            titles(&mut on, &tied).1,
+            expected,
+            "route, extractor={extractor}"
+        );
+        assert_eq!(
+            batch_titles(&mut on, &tied),
+            expected,
+            "batch, extractor={extractor}"
+        );
+    }
+}
+
+/// With logsource routing, partitioning must not change any result. An
+/// unambiguous event keeps the schema's product and never needs the removed
+/// rules; an event whose own `product` field contradicts its schema does.
+#[test]
+fn partitioning_agrees_with_the_full_rule_set_under_logsource_routing() {
+    let events = [
+        json!({"vendor": {"marker": true}, "CommandLine": "whoami"}),
+        json!({"vendor": {"marker": true}, "CommandLine": "whoami", "product": "linux"}),
+        json!({"vendor": {"marker": true}, "CommandLine": "whoami", "product": "windows"}),
+        json!({"vendor": {"marker": true, "b": true}, "CommandLine": "whoami", "product": "linux"}),
+        json!({"vendor": {"marker": true, "b": true}, "CommandLine": "whoami"}),
+        json!({"CommandLine": "whoami"}),
+    ];
+    let mut off = cross_set_router(false, true);
+    let mut on = cross_set_router(true, true);
+    for event in &events {
+        let expected = titles(&mut off, event);
+        assert_eq!(titles(&mut on, event), expected, "route: {event}");
+        assert_eq!(batch_titles(&mut on, event), expected.1, "batch: {event}");
+    }
+    assert_eq!(
+        titles(&mut on, &events[1]).1,
+        owned(&["Any whoami", "Linux whoami"]),
+        "an explicit product outside the partition still reaches the removed rules"
+    );
+}

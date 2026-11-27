@@ -795,6 +795,11 @@ fn render_selection(name: &str, items: &[GenItem]) -> String {
         if !seen.insert((*field, *modifier)) {
             continue;
         }
+        // The base64 modifiers reject wildcards, so such an item would make
+        // the parser drop the rule.
+        if modifier.contains("base64") && value.contains(['*', '?']) {
+            continue;
+        }
         match *modifier {
             "|exists" => out.push_str(&format!("        {field}|exists: true\n")),
             "|gte" => {

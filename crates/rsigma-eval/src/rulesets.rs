@@ -331,6 +331,21 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Fields the cross-rule AC index left without an automaton, summed over
+    /// every unit's engines. Available behind the `daachorse-index` Cargo
+    /// feature.
+    #[cfg(feature = "daachorse-index")]
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Detection(engine) => engine.cross_rule_ac_unindexed_fields(),
+                UnitEngine::Correlation(engine) => engine.cross_rule_ac_unindexed_fields(),
+                UnitEngine::Routed(router) => router.cross_rule_ac_unindexed_fields(),
+            })
+            .sum()
+    }
+
     /// Total events evaluated without their schema's implied logsource
     /// because the classification was ambiguous, across routed units.
     pub fn logsource_ambiguous_total(&self) -> u64 {

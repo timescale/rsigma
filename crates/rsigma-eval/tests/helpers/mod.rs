@@ -8,6 +8,11 @@ use serde_json::Value;
 
 pub fn eval(yaml: &str, event_json: Value) -> Vec<EvaluationResult> {
     let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(
+        collection.diagnostics.is_empty(),
+        "fixture has parse diagnostics: {:?}",
+        collection.diagnostics
+    );
     let mut engine = Engine::new();
     engine.add_collection(&collection).unwrap();
     let event = JsonEvent::borrow(&event_json);
@@ -20,6 +25,11 @@ pub fn corr_engine(yaml: &str) -> CorrelationEngine {
 
 pub fn corr_engine_with_config(yaml: &str, config: CorrelationConfig) -> CorrelationEngine {
     let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(
+        collection.diagnostics.is_empty(),
+        "fixture has parse diagnostics: {:?}",
+        collection.diagnostics
+    );
     let mut engine = CorrelationEngine::new(config);
     engine.add_collection(&collection).unwrap();
     engine

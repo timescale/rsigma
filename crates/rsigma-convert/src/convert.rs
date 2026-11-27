@@ -254,6 +254,11 @@ filter:
 
     fn test_queries(yaml: &str, pipelines: &[rsigma_eval::Pipeline]) -> Vec<String> {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let output = convert_collection(
             &TextQueryTestBackend::new(),
             &collection,
@@ -337,9 +342,10 @@ correlation:
         let yaml = FILTERED
             .replace("    rules: [whoami]", "    rules: any")
             .replace(
-                "title: Exclude admins\n",
-                "title: Exclude admins\nlogsource:\n    product: linux\n",
+                "title: Exclude admins\nlogsource:\n    category: process_creation\n    product: windows\n",
+                "title: Exclude admins\nlogsource:\n    category: process_creation\n    product: linux\n",
             );
+        assert!(yaml.contains("product: linux"));
         assert_eq!(
             test_queries(&yaml, &[]),
             [

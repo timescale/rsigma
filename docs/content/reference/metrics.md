@@ -8,7 +8,7 @@ The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
-## Engine core (32 metrics)
+## Engine core (37 metrics)
 
 These always show up. They cover ingest, matches, queue depth, back-pressure, reloads, and resource usage.
 
@@ -21,6 +21,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_detection_rules_loaded` | gauge | none | Number of detection rules currently loaded. |
 | `rsigma_correlation_rules_loaded` | gauge | none | Number of correlation rules currently loaded. |
 | `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "0.26.0" }} |
+| `rsigma_cross_rule_ac_unindexed_fields` | gauge | none | Fields the cross-rule Aho-Corasick prefilter (`--cross-rule-ac`) left without an automaton in the current rule set, because a field had more than 100,000 distinct substring patterns or its automaton failed to build. Rules matching on such a field are always evaluated, so this only means the prefilter is doing less work. Zero without `--cross-rule-ac`. Refreshed on every scrape. {{ added "unreleased" }} |
 | `rsigma_correlation_state_entries` | gauge | none | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
 | `rsigma_reloads_total` | counter | none | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | none | Reload attempts that were refused, for example a compile error, every rule failing to parse, or any parse error under `--strict-rules`. The previous rules stay active. |
@@ -110,7 +111,7 @@ DNS counters are per query, not per enrichment call: an `IP` lookup counts two q
 
 The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
 
-## Alert pipeline (13 metrics)
+## Alert pipeline (14 metrics)
 
 Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_dedup_results_total`, `rsigma_incidents_emitted_total`, and `rsigma_incident_overmerge_total`, plus the `rsigma_dedup_store_entries`, `rsigma_incidents_open`, `rsigma_silences_active`, and `rsigma_inhibit_sources_active` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--alert-pipeline` is passed or any event fires. The `rsigma_inhibited_total{rule}` series appears once a rule first inhibits. See the [Alert Pipeline](../guide/alert-pipeline.md) guide.
 

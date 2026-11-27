@@ -303,6 +303,20 @@ fn parse_known_failure(name: &str, label: &str, value: &yaml_serde::Value) -> Kn
     }
 }
 
+/// Parse a case's rule, failing on any parse diagnostic: a rule the parser
+/// drops would leave nothing to convert or evaluate.
+fn parse_case(case: &Case) -> rsigma_parser::SigmaCollection {
+    let collection = parse_sigma_yaml(&case.rule_yaml)
+        .unwrap_or_else(|e| panic!("{}: rule does not parse: {e}", case.name));
+    assert!(
+        collection.diagnostics.is_empty(),
+        "{}: rule has parse diagnostics: {:?}",
+        case.name,
+        collection.diagnostics
+    );
+    collection
+}
+
 /// Convert a case's rule. `Err` carries the conversion error text.
 pub fn convert(
     backend: &dyn Backend,
@@ -310,8 +324,7 @@ pub fn convert(
     pipelines: &[Pipeline],
     format: &str,
 ) -> Result<Vec<String>, String> {
-    let collection = parse_sigma_yaml(&case.rule_yaml)
-        .unwrap_or_else(|e| panic!("{}: rule does not parse: {e}", case.name));
+    let collection = parse_case(case);
     let mut all_pipelines: Vec<Pipeline> = case.pipeline().into_iter().collect();
     all_pipelines.extend_from_slice(pipelines);
     let output = convert_collection(backend, &collection, &all_pipelines, format)
@@ -328,7 +341,7 @@ pub fn convert(
 
 /// Indices of the case events rsigma's own evaluator matches.
 pub fn eval_matches(case: &Case) -> Vec<usize> {
-    let collection = parse_sigma_yaml(&case.rule_yaml).unwrap();
+    let collection = parse_case(case);
     let mut engine = match case.pipeline() {
         Some(pipeline) => Engine::new_with_pipeline(pipeline),
         None => Engine::new(),

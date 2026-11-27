@@ -248,6 +248,25 @@ impl RuntimeEngine {
         }
     }
 
+    /// Fields the cross-rule AC index left without an automaton across the
+    /// active engine variant (more than 100,000 patterns, or a failed build).
+    /// Always zero without the `daachorse-index` Cargo feature.
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        #[cfg(feature = "daachorse-index")]
+        {
+            match &self.engine {
+                EngineVariant::DetectionOnly(engine) => engine.cross_rule_ac_unindexed_fields(),
+                EngineVariant::WithCorrelations(engine) => engine.cross_rule_ac_unindexed_fields(),
+                EngineVariant::Routed(router) => router.cross_rule_ac_unindexed_fields(),
+                EngineVariant::Rulesets(engines) => engines.cross_rule_ac_unindexed_fields(),
+            }
+        }
+        #[cfg(not(feature = "daachorse-index"))]
+        {
+            0
+        }
+    }
+
     /// Total events evaluated without their schema's implied logsource
     /// because the classification tied between schemas implying different
     /// logsources (fail-open). Non-zero only for routed variants with an
@@ -686,6 +705,12 @@ impl RuntimeEngine {
                 partition_rules,
             )
             .map_err(|e| format!("Error building schema router: {e}"))?;
+            if let Some(budget) = self.bloom_max_bytes {
+                router.set_bloom_max_bytes(budget);
+            }
+            router.set_bloom_prefilter(self.bloom_prefilter);
+            #[cfg(feature = "daachorse-index")]
+            router.set_cross_rule_ac(self.cross_rule_ac);
 
             if let Some(snapshot) = previous_state {
                 router.import_state(snapshot.clone());
