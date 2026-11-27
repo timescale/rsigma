@@ -29,6 +29,8 @@ RSigma understands the full Sigma v2 family:
 
 Loading a directory of YAML files yields one in-memory collection of all three. Evaluation and conversion operate on that collection as a whole.
 
+[Correlation Rules](../guide/correlations.md) covers the eight correlation types, grouping, time windows, and chaining in depth.
+
 ## Selections, modifiers, and conditions
 
 A detection block looks like this:

@@ -107,7 +107,7 @@ A correlation rule's optional `window` attribute controls how its `timespan` is 
 - `tumbling`: fixed, boundary-aligned, non-overlapping buckets of size `timespan`. The per-group state resets when an event lands in a new bucket. Use this when you want calendar-style buckets (for example a per-hour quota), accepting that events on opposite sides of a boundary are not compared.
 - `session`: a dynamic window that stays open while consecutive in-group events are within `gap` of each other, and closes after `gap` of inactivity. It restarts once the total span would exceed `timespan` (the hard cap). This is the only mode that catches a low-and-slow chain whose steps are each close together but whose total span exceeds any fixed `timespan`.
 
-`window` and `gap` are an RSigma extension (a portable-spec version was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace and the bare keys are kept as aliases. Both of these are equivalent:
+`window` and `gap` are an RSigma extension (a [portable-spec version](https://github.com/SigmaHQ/sigma-specification/issues/214) was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace and the bare keys are kept as aliases. Both of these are equivalent:
 
 ```yaml
 # Primary: rsigma.* extension keys (top level, like rsigma.suppress)
