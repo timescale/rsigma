@@ -273,7 +273,16 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --workspace --all-features --locked
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: cargo-nextest
+      # nextest runs tests from every binary in parallel, where `cargo test`
+      # runs the binaries one after another.
+      - run: cargo nextest run --workspace --all-features --locked --profile ci
+      # nextest runs neither doc tests nor the rstix interop suites, which
+      # drive their own harness (see .config/nextest.toml).
+      - run: cargo test --workspace --all-features --locked --doc
+      - run: cargo test -p rstix --all-features --locked --test interop --test taxii_interop
 
   coverage:
     name: Coverage
@@ -291,7 +300,7 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -301,7 +310,10 @@ jobs:
           # SIGKILL instrumented children, which leaves empty/header-corrupt
           # .profraw files; even with graceful SIGINT shutdown, scrub any
           # unreadable profiles so llvm-profdata merge cannot fail the job.
-          cargo llvm-cov --workspace --all-features --locked --no-report
+          # The rstix interop suites drive their own harness, so nextest
+          # skips them and `cargo test` adds their coverage.
+          cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci
+          cargo llvm-cov --no-report -p rstix --all-features --locked --test interop --test taxii_interop
           host="$(rustc -vV | sed -n 's/^host: //p')"
           llvm_profdata="$(rustc --print sysroot)/lib/rustlib/${host}/bin/llvm-profdata"
           find target/llvm-cov-target -name '*.profraw' -print0 |

@@ -12,14 +12,30 @@ The `CI` and `Docs audit` workflows run on every pull request, whatever its base
 
 | Tier | Where it lives | How to run | Gated by |
 |------|----------------|------------|----------|
-| Unit | `src/` modules with `#[cfg(test)] mod tests` | `cargo test --workspace --all-features --locked` | `test` job on Linux, macOS, Windows. |
+| Unit | `src/` modules with `#[cfg(test)] mod tests` | `cargo test --workspace --all-features --locked`, or `cargo nextest run --workspace --all-features --locked` as CI does (see [Test runner](#test-runner)) | `test` job on Linux, macOS, Windows. |
 | Integration (in-process) | `crates/{rsigma-parser,rsigma-eval,rsigma-convert,rsigma-runtime}/tests/*.rs` | Same. | Same. |
 | End-to-end (binary + containers) | `crates/rsigma-cli/tests/cli_*.rs`, `crates/rsigma-runtime/tests/nats_e2e.rs`, `crates/rsigma-convert/tests/postgres_integration.rs` | Same; testcontainers-based tests skip when Docker is unavailable. | Same. |
 | Snapshot/golden | insta snapshots mainly under `crates/rsigma-parser/tests/snapshots/`; convert/runtime/cli goldens under each crate's `tests/golden/` (or fixtures); dynamic-pipeline goldens in `tests/fixtures/dynamic-pipelines/golden/` | `cargo test` plus the SigmaHQ-corpus job for the dynamic-pipelines goldens. | `test` and `sigma-corpus` jobs. |
 | SigmaHQ corpus | `.github/workflows/ci.yml` -> `sigma-corpus` | `cargo build --release --all-features --locked -p rsigma` then `target/release/rsigma rule validate …` against the pinned corpus SHA | `sigma-corpus` job, on every PR. |
 | Docs audit | `scripts/docs-audit/` | `python3 scripts/docs-audit/check_sources.py`; `cargo build --locked -p rsigma --all-features` then `python3 scripts/docs-audit/check_binary.py --bin target/debug/rsigma` | `Docs catalogues` and `Docs contracts` jobs in `docs-audit.yml`, on every PR. |
-| Coverage | `cargo-llvm-cov` (Linux) | CI: `cargo llvm-cov --workspace --all-features --locked --no-report` then `cargo llvm-cov report --lcov …`. Locally a one-shot form is fine; prefer `--locked`. | `coverage` job (advisory, not gating). |
+| Coverage | `cargo-llvm-cov` (Linux) | CI: `cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci`, the rstix interop suites through `cargo llvm-cov --no-report`, then `cargo llvm-cov report --lcov …`. Locally a one-shot form is fine; prefer `--locked`. | `coverage` job (advisory, not gating). |
 | Representative performance | `.github/workflows/performance.yml`, `scripts/perf/` | `scripts/perf/fetch-fixtures.sh` then the offline and daemon harnesses | Coarse same-runner base/PR gate on PRs labeled `performance`; weekly full matrix plus native glibc/static musl scaling on dedicated eight-core amd64/arm64 runners. |
+
+## Test runner
+
+CI runs the suite with [cargo-nextest](https://nexte.st/), configured in `.config/nextest.toml`. `cargo test` runs one test binary at a time, and the workspace has close to two hundred of them; nextest runs tests from every binary in parallel, each in its own process. Plain `cargo test` still works locally and runs the same tests.
+
+The `test` job runs three commands:
+
+```bash
+cargo nextest run --workspace --all-features --locked --profile ci
+cargo test --workspace --all-features --locked --doc
+cargo test -p rstix --all-features --locked --test interop --test taxii_interop
+```
+
+nextest does not run doc tests, so they get their own `cargo test --doc`. The rstix `interop` and `taxii_interop` suites use their own `main` (`harness = false`): they run every case in one process and write the certification report at the end, which nextest's process-per-test model cannot drive. The nextest config's `default-filter` leaves them out, and `cargo test` runs them. The `rstix-interop` and `rstix-taxii-interop` jobs also run them with their certification feature sets and gate the reports.
+
+nextest flags a test that runs past 60 seconds and kills it after five minutes, so a hung daemon or container fails the job instead of holding the runner. The `ci` profile adds `fail-fast = false`, so every failure is reported.
 
 ## Unit tests
 
@@ -192,7 +208,7 @@ When a check fails, fix the docs, or fix the code if the docs describe the inten
 
 ## Coverage
 
-The `coverage` job runs `cargo llvm-cov --workspace --all-features --locked --no-report`, then `cargo llvm-cov report --lcov --output-path lcov.info`, on Linux and uploads `lcov.info`. It is advisory, not gating; there are no per-crate thresholds enforced today. Drops of more than a couple of percentage points warrant a comment on the PR.
+The `coverage` job runs `cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci` and `cargo llvm-cov --no-report -p rstix --all-features --locked --test interop --test taxii_interop`, then `cargo llvm-cov report --lcov --output-path lcov.info`, on Linux and uploads `lcov.info`. It is advisory, not gating; there are no per-crate thresholds enforced today. Drops of more than a couple of percentage points warrant a comment on the PR.
 
 Locally a simpler one-shot form is fine:
 
