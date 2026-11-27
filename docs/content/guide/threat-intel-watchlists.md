@@ -95,9 +95,9 @@ The enricher does not by itself rebuild rules. A watchlist that no pipeline refe
 
 {{ added "0.28.0" }}
 
-A watchlist is the list you push. A STIX source is a list the daemon pulls. Both can feed the same `${source.<id>.…}` expansion and the same lookup enricher. STIX sources need the `stix-source` feature.
+A watchlist is the list you push. A [STIX](https://oasis-open.github.io/cti-documentation/stix/intro) source is a list the daemon pulls. Both can feed the same `${source.<id>.…}` expansion and the same lookup enricher. STIX sources need the `stix-source` feature.
 
-Use a watchlist when an analyst or another system posts values to the daemon and you want them to survive in `--state-db`. Use `type: taxii` when a TAXII 2.1 collection is the authority and the daemon should poll it. Use `format: stix` on a file when the bundle is already on disk and `refresh: watch` should rebuild on each write, or on HTTP when a feed publishes a bundle. Use `taxii sync` plus a `type: stix` enricher when you want a local store, relationship walks, and lookup by STIX id. That path does not expand indicators into a Sigma placeholder.
+Use a watchlist when an analyst or another system posts values to the daemon and you want them to survive in `--state-db`. Use `type: taxii` when a [TAXII 2.1](https://oasis-open.github.io/cti-documentation/taxii/intro) collection is the authority and the daemon should poll it. Use `format: stix` on a file when the bundle is already on disk and `refresh: watch` should rebuild on each write, or on HTTP when a feed publishes a bundle. Use `taxii sync` plus a `type: stix` enricher when you want a local store, relationship walks, and lookup by STIX id. That path does not expand indicators into a Sigma placeholder.
 
 A file bundle:
 

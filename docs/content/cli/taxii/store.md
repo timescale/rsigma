@@ -6,7 +6,7 @@ description: "Reference for rsigma taxii store: import a local STIX 2.1 bundle J
 
 {{ added "0.23.0" }}
 
-Import a local STIX 2.1 bundle JSON file into an on-disk store ([`FsStore`](../../library/rstix.md#rstix-graph-marking-store)).
+Import a local [STIX 2.1](https://oasis-open.github.io/cti-documentation/stix/intro) bundle JSON file into an on-disk store ([`FsStore`](../../library/rstix.md#rstix-graph-marking-store)).
 
 Requires the `taxii-sync` Cargo feature (included in prebuilt release binaries and the GHCR image built with `--all-features`).
 

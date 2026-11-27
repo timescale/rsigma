@@ -6,7 +6,7 @@ description: "Ingest logs into RSigma over OpenTelemetry Protocol (OTLP) via HTT
 
 The daemon can ingest logs over [OpenTelemetry Protocol](https://opentelemetry.io/docs/specs/otlp/) (OTLP). This is the recommended way to wire RSigma into a modern log pipeline: every major agent and SDK speaks OTLP, the daemon flattens LogRecord into the same JSON the engine expects, and the same endpoint accepts both HTTP and gRPC.
 
-This page covers the daemon's OTLP server, the LogRecord mapping, and minimal copy-paste recipes for the four agents we test against: Grafana Alloy, Vector, Fluent Bit, and the OpenTelemetry Collector.
+This page covers the daemon's OTLP server, the [LogRecord](https://opentelemetry.io/docs/specs/otel/logs/data-model/) mapping, and minimal copy-paste recipes for the four agents we test against: Grafana Alloy, Vector, Fluent Bit, and the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/).
 
 ## When OTLP is the right choice
 

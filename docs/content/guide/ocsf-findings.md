@@ -6,7 +6,7 @@ description: "Emit Sigma detections and incidents as OCSF Detection Finding (200
 
 {{ added "0.21.0" }}
 
-The daemon can emit every finding as an [OCSF](https://ocsf.io) **Detection Finding** (class 2004) JSON object instead of RSigma's native NDJSON. OCSF is the finding interchange format Splunk, Elastic, CrowdStrike NG-SIEM, Amazon Security Lake, and Datadog converged on, so a `?format=ocsf` sink drops findings into those pipelines without a transform step of your own.
+The daemon can emit every finding as an [OCSF](https://ocsf.io) **[Detection Finding](https://schema.ocsf.io/1.1.0/classes/detection_finding)** (class 2004) JSON object instead of RSigma's native NDJSON. OCSF is the finding interchange format Splunk, Elastic, CrowdStrike NG-SIEM, Amazon Security Lake, and Datadog converged on, so a `?format=ocsf` sink drops findings into those pipelines without a transform step of your own.
 
 It is a per-sink serialization choice, not a new sink type and not a new config section: append `?format=ocsf` to a line-oriented or OTLP sink spec, or reference the finding from a webhook body.
 
@@ -149,7 +149,7 @@ On an OCSF sink (`?format=ocsf`), each sidecar maps to class 2004 like detection
 
 {{ added "0.28.0" }}
 
-OCSF has a dedicated class for a grouped incident: **Incident Finding** (class 2005), which references the findings it groups instead of describing one detection. Select it per sink with `ocsf_incident_class`:
+OCSF has a dedicated class for a grouped incident: **[Incident Finding](https://schema.ocsf.io/1.1.0/classes/incident_finding)** (class 2005), which references the findings it groups instead of describing one detection. Select it per sink with `ocsf_incident_class`:
 
 ```bash
 rsigma engine daemon -r rules/ --alert-pipeline pipeline.yml \
