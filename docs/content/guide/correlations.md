@@ -239,8 +239,9 @@ correlation:
     timespan: 5m
     condition:
         gte: 5
-rsigma.suppress: 30m
-rsigma.action: reset
+custom_attributes:
+    rsigma.suppress: 30m
+    rsigma.action: reset
 ```
 
 ## State and memory
