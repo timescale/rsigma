@@ -2874,3 +2874,116 @@ detection:
     assert_eq!(promoted.rules.len(), 1);
     assert!(!promoted.has_errors());
 }
+
+#[test]
+fn correlation_condition_rules_are_derived_in_first_appearance_order() {
+    let yaml = r#"
+title: Derived
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 5m
+    condition: b and not a or c
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(
+        collection.diagnostics.is_empty(),
+        "{:?}",
+        collection.diagnostics
+    );
+    assert_eq!(collection.correlations[0].rules, ["b", "a", "c"]);
+}
+
+#[test]
+fn correlation_condition_duplicate_identifiers_are_deduplicated() {
+    let yaml = r#"
+title: Duplicate
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 5m
+    condition: a and a
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(collection.correlations[0].rules, ["a"]);
+}
+
+#[test]
+fn correlation_explicit_empty_rules_is_kept() {
+    let yaml = r#"
+title: Empty
+correlation:
+    type: event_count
+    rules: []
+    group-by: [User]
+    timespan: 5m
+    condition:
+        gte: 1
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(collection.correlations[0].rules.is_empty());
+}
+
+#[test]
+fn correlation_selector_condition_without_rules_is_an_error() {
+    let yaml = r#"
+title: Selector
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 5m
+    condition: 1 of login_*
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(collection.correlations.is_empty());
+    assert!(
+        collection.diagnostics.iter().any(|d| d
+            .message
+            .contains("rules is required when the condition uses a selector")),
+        "{:?}",
+        collection.diagnostics
+    );
+}
+
+#[test]
+fn correlation_condition_identifier_must_be_listed_in_rules() {
+    for condition in ["a and b", "a and not b"] {
+        let yaml = format!(
+            r#"
+title: Missing
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: {condition}
+"#
+        );
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        assert!(collection.correlations.is_empty(), "{condition}");
+        assert!(
+            collection.diagnostics.iter().any(|d| d
+                .message
+                .contains("condition references 'b', which is not in correlation.rules")),
+            "{condition}: {:?}",
+            collection.diagnostics
+        );
+    }
+}
+
+#[test]
+fn correlation_threshold_condition_is_unaffected() {
+    let yaml = r#"
+title: Threshold
+correlation:
+    type: event_count
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition:
+        gte: 3
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(collection.diagnostics.is_empty());
+    assert_eq!(collection.correlations[0].rules, ["a"]);
+}

@@ -1,4 +1,4 @@
-use super::super::{LintRule, LintWarning, err, get_str, info, key};
+use super::super::{LintRule, LintWarning, err, get_str, info, key, reference_list, warning};
 
 /// Valid correlation types.
 const VALID_CORRELATION_TYPES: &[&str] = &[
@@ -93,22 +93,58 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
     }
 
     // ── rules ────────────────────────────────────────────────────────────
-    if let Some(rules) = corr.get(key("rules")) {
-        if let Some(seq) = rules.as_sequence()
-            && seq.is_empty()
-        {
-            warnings.push(super::super::warning(
+    let rules = reference_list(corr.get(key("rules")));
+    let rules_present = corr.contains_key(key("rules"));
+    let condition_is_string = corr
+        .get(key("condition"))
+        .and_then(|v| v.as_str())
+        .is_some();
+    if let Some(rules_val) = corr.get(key("rules")) {
+        if rules_val.as_sequence().is_some_and(|seq| seq.is_empty()) {
+            warnings.push(warning(
                 LintRule::EmptyCorrelationRules,
                 "correlation.rules should not be empty",
                 "/correlation/rules",
             ));
         }
-    } else {
+    } else if !condition_is_string {
         warnings.push(err(
             LintRule::MissingCorrelationRules,
             "missing required field 'correlation.rules'",
             "/correlation/rules",
         ));
+    }
+
+    // ── string condition references ──────────────────────────────────────
+    // A string condition names the rules it aggregates. Every name must be in
+    // `rules:`, and every listed rule should be used. Selectors are skipped:
+    // their identifiers come from the detection set, not the condition.
+    if condition_is_string
+        && rules_present
+        && let Some(cond) = get_str(corr, "condition")
+        && let Ok(expr) = crate::condition::parse_condition(cond)
+        && let Ok(identifiers) = crate::parser::condition_identifiers(&expr)
+    {
+        for name in &identifiers {
+            if !rules.contains(name) {
+                warnings.push(err(
+                    LintRule::ExtendedConditionUndefinedRule,
+                    format!("condition references '{name}', which is not in correlation.rules"),
+                    "/correlation/condition",
+                ));
+            }
+        }
+        for rule in &rules {
+            if !identifiers.iter().any(|name| name == rule) {
+                warnings.push(warning(
+                    LintRule::ExtendedConditionUnreferencedRule,
+                    format!(
+                        "correlation.rules lists '{rule}', which the condition never references"
+                    ),
+                    "/correlation/rules",
+                ));
+            }
+        }
     }
 
     // ── timespan ─────────────────────────────────────────────────────────
@@ -797,5 +833,70 @@ custom_attributes:
         );
         assert!(!has_rule(&w, LintRule::InvalidWindowMode));
         assert!(!has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn extended_condition_undefined_rule_is_an_error() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+    }
+
+    #[test]
+    fn extended_condition_unreferenced_rule_is_a_warning() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ExtendedConditionUnreferencedRule));
+    }
+
+    #[test]
+    fn string_condition_does_not_report_missing_rules() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::MissingCorrelationRules));
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+    }
+
+    #[test]
+    fn selector_condition_skips_identifier_checks() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: a and 1 of login_*
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUnreferencedRule));
     }
 }

@@ -361,3 +361,32 @@ fn validate_ndjson_marks_parse_warning_rows() {
     assert_eq!(rows[0]["status"], "parse_warning");
     assert_eq!(rows[0]["errors"], "invalid status: 'bogus'");
 }
+
+#[test]
+fn validate_rejects_an_undefined_condition_reference() {
+    let rule = temp_file(
+        ".yml",
+        r#"
+title: Missing Reference
+correlation:
+    type: temporal
+    rules: [login]
+    group-by: [User]
+    timespan: 5m
+    condition: login and not mfa
+"#,
+    );
+    rsigma()
+        .args([
+            "rule",
+            "validate",
+            rule.path().to_str().unwrap(),
+            "--verbose",
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("Parse errors:      1"))
+        .stdout(predicate::str::contains(
+            "condition references 'mfa', which is not in correlation.rules",
+        ));
+}

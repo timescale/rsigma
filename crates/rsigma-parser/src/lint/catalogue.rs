@@ -16,7 +16,7 @@
 //! use rsigma_parser::lint::catalogue::catalogue;
 //!
 //! let entries = catalogue();
-//! assert_eq!(entries.len(), 92);
+//! assert_eq!(entries.len(), 94);
 //! let invalid_status = entries.iter().find(|e| e.name == "invalid_status").unwrap();
 //! assert!(invalid_status.fix.is_some()); // has a safe auto-fix
 //! ```
@@ -127,6 +127,8 @@ lint_catalogue! {
     ConditionValueNotNumeric => (Severity::Error, NONE, "The correlation condition value must be numeric."),
     GenerateNotBoolean => (Severity::Error, NONE, "'generate' must be a boolean."),
     CorrelationOnlyReferences => (Severity::Info, NONE, "Referenced rules produce no standalone output unless 'generate' is true."),
+    ExtendedConditionUndefinedRule => (Severity::Error, NONE, "The correlation condition references a rule that is not in 'correlation.rules'."),
+    ExtendedConditionUnreferencedRule => (Severity::Warning, NONE, "'correlation.rules' lists a rule the condition never references."),
 
     // ── Filter rules ─────────────────────────────────────────────────────
     MissingFilter => (Severity::Error, NONE, "Filter rule is missing 'filter'."),
@@ -294,6 +296,14 @@ const LINT_RULE_NAMES: &[(LintRule, &str)] = &[
         LintRule::CorrelationOnlyReferences,
         "correlation_only_references",
     ),
+    (
+        LintRule::ExtendedConditionUndefinedRule,
+        "extended_condition_undefined_rule",
+    ),
+    (
+        LintRule::ExtendedConditionUnreferencedRule,
+        "extended_condition_unreferenced_rule",
+    ),
     (LintRule::MissingFilter, "missing_filter"),
     (LintRule::MissingFilterRules, "missing_filter_rules"),
     (LintRule::EmptyFilterRules, "empty_filter_rules"),
@@ -361,13 +371,13 @@ mod tests {
 
     #[test]
     fn catalogue_covers_every_rule() {
-        // 92 LintRule variants. The exhaustive `describe` match guarantees a
+        // 94 LintRule variants. The exhaustive `describe` match guarantees a
         // metadata entry per variant at compile time; this asserts the count
         // and the `ALL_LINT_RULES`/`LINT_RULE_NAMES` lists stay in sync.
         let entries = catalogue();
-        assert_eq!(entries.len(), 92, "expected 92 catalogue entries");
-        assert_eq!(ALL_LINT_RULES.len(), 92);
-        assert_eq!(LINT_RULE_NAMES.len(), 92);
+        assert_eq!(entries.len(), 94, "expected 94 catalogue entries");
+        assert_eq!(ALL_LINT_RULES.len(), 94);
+        assert_eq!(LINT_RULE_NAMES.len(), 94);
     }
 
     #[test]

@@ -77,6 +77,7 @@ pub(super) fn parse_correlation_rule(
     })?;
 
     // Rules references
+    let rules_present = corr.contains_key(val_key("rules"));
     let rules = match corr.get(val_key("rules")) {
         Some(Value::Sequence(seq)) => seq
             .iter()
@@ -130,6 +131,7 @@ pub(super) fn parse_correlation_rule(
 
     // Condition
     let condition = parse_correlation_condition(corr, correlation_type, &rules)?;
+    let rules = resolve_condition_rules(&condition, rules, rules_present)?;
 
     // Aliases
     let aliases = parse_correlation_aliases(corr);
@@ -377,6 +379,71 @@ fn parse_correlation_condition(
             "Correlation condition must be a mapping or string".into(),
         )),
     }
+}
+
+/// A string condition contains a selector, whose identifiers cannot be
+/// enumerated without the detection set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectorFound;
+
+/// Identifiers a condition references, in order of first appearance.
+///
+/// Iterative, so a tree built through the API cannot overflow the stack.
+pub(crate) fn condition_identifiers(
+    expr: &ConditionExpr,
+) -> std::result::Result<Vec<String>, SelectorFound> {
+    let mut out: Vec<String> = Vec::new();
+    let mut stack: Vec<&ConditionExpr> = vec![expr];
+    while let Some(node) = stack.pop() {
+        match node {
+            ConditionExpr::Identifier(name) => {
+                if !out.iter().any(|seen| seen == name) {
+                    out.push(name.clone());
+                }
+            }
+            ConditionExpr::And(children) | ConditionExpr::Or(children) => {
+                stack.extend(children.iter().rev());
+            }
+            ConditionExpr::Not(child) => stack.push(child),
+            ConditionExpr::Selector { .. } => return Err(SelectorFound),
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve `rules:` against a string condition: derive the references when the
+/// key is absent, and reject an identifier the list does not carry.
+fn resolve_condition_rules(
+    condition: &CorrelationCondition,
+    mut rules: Vec<String>,
+    rules_present: bool,
+) -> Result<Vec<String>> {
+    let CorrelationCondition::Extended(expr) = condition else {
+        return Ok(rules);
+    };
+    let identifiers = match condition_identifiers(expr) {
+        Ok(identifiers) => identifiers,
+        // A selector's identifiers come from the detection set, so only a
+        // condition without `rules:` cannot derive them.
+        Err(SelectorFound) if !rules_present => {
+            return Err(SigmaParserError::InvalidCorrelation(
+                "rules is required when the condition uses a selector".into(),
+            ));
+        }
+        Err(SelectorFound) => return Ok(rules),
+    };
+    if !rules_present {
+        rules = identifiers;
+        return Ok(rules);
+    }
+    for name in identifiers {
+        if !rules.contains(&name) {
+            return Err(SigmaParserError::InvalidCorrelation(format!(
+                "condition references '{name}', which is not in correlation.rules"
+            )));
+        }
+    }
+    Ok(rules)
 }
 
 /// Parse correlation field aliases.

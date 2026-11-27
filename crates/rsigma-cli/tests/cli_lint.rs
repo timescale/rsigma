@@ -546,3 +546,25 @@ fn lint_quiet_still_emits_findings() {
         .assert()
         .stdout(predicate::str::contains("invalid_level"));
 }
+
+#[test]
+fn lint_reports_undefined_condition_reference() {
+    let rule = temp_file(
+        ".yml",
+        r#"
+title: Missing Reference
+correlation:
+    type: temporal
+    rules: [login]
+    group-by: [User]
+    timespan: 5m
+    condition: login and not mfa
+"#,
+    );
+    rsigma()
+        .args(["rule", "lint", rule.path().to_str().unwrap()])
+        .assert()
+        .stdout(predicate::str::contains(
+            "extended_condition_undefined_rule",
+        ));
+}

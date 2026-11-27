@@ -130,6 +130,8 @@ pub enum LintRule {
     ConditionValueNotNumeric,
     GenerateNotBoolean,
     CorrelationOnlyReferences,
+    ExtendedConditionUndefinedRule,
+    ExtendedConditionUnreferencedRule,
 
     // ── Filter rules ─────────────────────────────────────────────────────
     MissingFilter,
@@ -235,6 +237,8 @@ impl fmt::Display for LintRule {
             LintRule::ConditionValueNotNumeric => "condition_value_not_numeric",
             LintRule::GenerateNotBoolean => "generate_not_boolean",
             LintRule::CorrelationOnlyReferences => "correlation_only_references",
+            LintRule::ExtendedConditionUndefinedRule => "extended_condition_undefined_rule",
+            LintRule::ExtendedConditionUnreferencedRule => "extended_condition_unreferenced_rule",
             LintRule::MissingFilter => "missing_filter",
             LintRule::MissingFilterRules => "missing_filter_rules",
             LintRule::EmptyFilterRules => "empty_filter_rules",
