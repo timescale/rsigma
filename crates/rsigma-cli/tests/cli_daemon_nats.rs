@@ -837,3 +837,116 @@ async fn daemon_nats_state_db_migration_stores_position() {
 
     let _ = collect_messages(&mut output_sub, 10, Duration::from_millis(100)).await;
 }
+
+// ---------------------------------------------------------------------------
+// A NATS server that requires TLS: a failed connection, never a panic (#772)
+// ---------------------------------------------------------------------------
+
+/// A NATS server that only greets: its INFO requires TLS, then it closes the
+/// connection, so a client that upgrades fails its handshake. Its port.
+fn tls_required_server() -> u16 {
+    use std::io::Write;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let info = format!(
+                "INFO {{\"server_id\":\"test\",\"version\":\"2.10.0\",\"host\":\"127.0.0.1\",\
+                 \"port\":{port},\"max_payload\":1048576,\"proto\":1,\"tls_required\":true}}\r\n"
+            );
+            let _ = stream.write_all(info.as_bytes());
+        }
+    });
+    port
+}
+
+/// Run the binary until it exits on its own, at most 30 s: its exit code,
+/// stdout and stderr.
+fn run_to_exit(args: &[&str]) -> (Option<i32>, String, String) {
+    let mut child = Command::new(rsigma_bin())
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn rsigma");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("rsigma {args:?} did not exit within 30 s");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child.wait_with_output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn daemon_nats_tls_required_server_exits_without_panicking() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let input = format!("nats://127.0.0.1:{}/events.>", tls_required_server());
+    let (code, _, stderr) = run_to_exit(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "--input",
+        &input,
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_ne!(code, Some(101), "{stderr}");
+}
+
+#[test]
+fn pipeline_resolve_nats_source_tls_required_server_errors_without_panicking() {
+    let pipeline = temp_file(
+        ".yml",
+        r#"
+name: nats-tls
+priority: 10
+vars:
+  iocs:
+    - "${source.live_iocs}"
+transformations:
+  - type: value_placeholders
+"#,
+    );
+    let sources = temp_file(
+        ".yml",
+        &format!(
+            r#"
+sources:
+  - id: live_iocs
+    type: nats
+    url: nats://127.0.0.1:{}
+    subject: rsigma.iocs.current
+    format: json
+    refresh: push
+    required: false
+"#,
+            tls_required_server()
+        ),
+    );
+    let (code, stdout, stderr) = run_to_exit(&[
+        "pipeline",
+        "resolve",
+        "-p",
+        pipeline.path().to_str().unwrap(),
+        "--source-file",
+        sources.path().to_str().unwrap(),
+    ]);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_ne!(code, Some(101), "{stderr}");
+    assert!(
+        stdout.contains("\"error\""),
+        "the failed source is reported: {stdout}"
+    );
+}

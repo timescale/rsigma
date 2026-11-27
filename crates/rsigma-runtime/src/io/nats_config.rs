@@ -61,48 +61,18 @@ impl NatsConnectConfig {
 /// Pin the process-default rustls `CryptoProvider` before async-nats builds its
 /// TLS client config, which it does from the process default whenever the
 /// connection is upgraded: `require_tls`, a `tls://` URL, or a server whose
-/// INFO requires TLS.
+/// INFO requires TLS. Called before every NATS connection in this crate:
+/// [`NatsConnectConfig::connect`] and the dynamic sources' own clients
+/// (`sources::nats`, `sources::refresh`).
 ///
 /// With the `otlp` feature, tonic pulls aws-lc-rs and async-nats pulls ring, so
 /// rustls cannot auto-select a default and the upgrade would panic; pin
 /// aws-lc-rs to match the daemon's other TLS surfaces. Without `otlp` this
-/// crate brings a single provider, so this is a no-op.
-fn ensure_crypto_provider() {
+/// crate brings a single provider, so this is a no-op, and a binary that links
+/// another installs its own default (the CLI does at startup).
+pub(crate) fn ensure_crypto_provider() {
     #[cfg(feature = "otlp")]
     {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::TcpListener;
-
-    /// A server whose INFO requires TLS makes the client upgrade, which builds
-    /// its rustls config. With aws-lc-rs and ring both compiled in, that
-    /// panicked until a default provider was pinned; now the failed handshake
-    /// is returned as an error.
-    #[tokio::test]
-    async fn tls_upgrade_returns_an_error_instead_of_panicking() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let info = format!(
-                "INFO {{\"server_id\":\"test\",\"version\":\"2.10.0\",\"host\":\"127.0.0.1\",\
-                 \"port\":{port},\"max_payload\":1048576,\"proto\":1,\"tls_required\":true}}\r\n"
-            );
-            socket.write_all(info.as_bytes()).await.unwrap();
-            // Not a TLS server: closing the socket ends the client's handshake.
-        });
-        let config = NatsConnectConfig::new(format!("nats://127.0.0.1:{port}"));
-        let result = tokio::time::timeout(Duration::from_secs(10), config.connect())
-            .await
-            .expect("connect did not return");
-        assert!(result.is_err());
-        server.await.unwrap();
     }
 }
