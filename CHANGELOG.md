@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Prefilters and schema-derived pruning no longer skip rules that could match
+### Prefilters and schema-derived pruning no longer skip rules that could match (#799)
 
 Three optimizations could drop a rule that would have matched. The cross-rule Aho-Corasick prefilter (`--cross-rule-ac`) pruned rules on a field that got no automaton, because the field had more than 100,000 patterns or its automaton failed to build, whenever another field kept the index non-empty. It also pruned rules with an empty `|contains`, `|startswith`, or `|endswith` value, which matches every string. A rule is now pruned only when every one of its needles is non-empty and sits in an automaton the build produced, a field left without one is logged as a warning, and `Engine::cross_rule_ac_unindexed_fields` reports how many fields that was.
 
