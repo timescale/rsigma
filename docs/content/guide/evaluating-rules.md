@@ -112,7 +112,7 @@ See [Input Formats](input-formats.md) for the full matrix and flags.
 
 ## Correlation in eval mode
 
-Correlation rules build state in memory for the duration of the run. That state is discarded when eval exits; use the daemon with `--state-db` when windows must survive restarts.
+Correlation rules build state in memory for the duration of the run. That state is discarded when eval exits; use the daemon with `--state-db` when windows must survive restarts. [Correlation Rules](correlations.md) explains the correlation types, windows, and chaining.
 
 ```bash
 rsigma engine eval -r rules/ --suppress 5m < events.ndjson

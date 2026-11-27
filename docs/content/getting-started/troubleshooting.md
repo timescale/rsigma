@@ -109,6 +109,8 @@ When every field is present but the verdict is still `NO MATCH`, the per-item li
 
 ## A correlation never fires
 
+[Correlation Rules](../guide/correlations.md#testing-and-debugging-correlations) covers replaying events with `--dump-correlation-state` and testing correlations with exemplars.
+
 - **Timestamps.** Correlation windows use the event time, read from the first of `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, and `eventTime` that is present. If your events carry time in another field, add `--timestamp-field <FIELD>`. Without any timestamp, the daemon uses the wall clock, which compresses a replay of old events into the moment it runs; use `--timestamp-fallback skip` for replays.
 - **Group keys.** Every event that should count toward one correlation needs the same values in the `group-by` fields, after the pipeline has renamed them.
 - **Backtests.** `rule backtest` resets correlation state per corpus file, so the events of one incident have to be in the same file.

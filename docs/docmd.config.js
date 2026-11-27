@@ -102,6 +102,7 @@ export default {
           collapsible: true,
           children: [
             { title: "Evaluating Rules", path: "/guide/evaluating-rules" },
+            { title: "Correlation Rules", path: "/guide/correlations" },
             { title: "Array Matching", path: "/guide/array-matching" },
             { title: "Drafting Rules from Logs", path: "/guide/rule-drafting" },
             { title: "Rule Tuning", path: "/guide/rule-tuning" },
