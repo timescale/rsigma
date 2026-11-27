@@ -130,8 +130,9 @@ pub use correlation::{
 };
 pub use correlation_engine::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, CorrelationInfo,
-    CorrelationSnapshot, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo, ImportStats,
-    ProcessResult, TenantStateSnapshot, TimestampFallback,
+    CorrelationSnapshot, CorrelationStateSnapshot, DEFAULT_MAX_FUTURE_SKEW_SECS,
+    DEFAULT_MAX_GROUP_ENTRIES, GroupKeyPart, GroupStateInfo, ImportStats, ProcessResult,
+    TenantStateSnapshot, TimestampFallback,
 };
 pub use engine::{Engine, apply_filters};
 pub use error::{EvalError, Result};

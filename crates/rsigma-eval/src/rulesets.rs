@@ -592,6 +592,19 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Events skipped for a future timestamp since the previous call, summed
+    /// across units.
+    pub fn take_future_skipped(&mut self) -> u64 {
+        self.units
+            .iter_mut()
+            .map(|unit| match &mut unit.engine {
+                UnitEngine::Detection(_) => 0,
+                UnitEngine::Correlation(engine) => engine.take_future_skipped(),
+                UnitEngine::Routed(router) => router.take_future_skipped(),
+            })
+            .sum()
+    }
+
     /// Export per-ruleset correlation state in one snapshot.
     pub fn export_state(&self) -> CorrelationSnapshot {
         let mut rulesets = BTreeMap::new();

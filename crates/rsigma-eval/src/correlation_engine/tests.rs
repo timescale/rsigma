@@ -707,32 +707,131 @@ fn test_hard_cap_evicts_the_stalest_groups() {
 }
 
 #[test]
-fn test_long_window_without_group_cap_is_flagged() {
-    let flagged = |window_lines: &str, config: CorrelationConfig| {
-        let collection = parse_sigma_yaml(&window_mode_yaml(window_lines)).unwrap();
-        let mut engine = CorrelationEngine::new(config);
+fn test_default_group_cap_fits_count_thresholds() {
+    let cap = |correlation_type: &str, condition: &str| {
+        let yaml = window_mode_yaml("    timespan: 1h")
+            .replace("type: event_count", &format!("type: {correlation_type}"))
+            .replace("        gte: 3", condition);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
         engine.add_collection(&collection).unwrap();
-        engine.has_unbounded_long_window(&engine.correlations[0])
+        default_group_cap(&engine.correlations[0])
     };
-    assert!(flagged("    timespan: 2h", CorrelationConfig::default()));
-    assert!(!flagged("    timespan: 1h", CorrelationConfig::default()));
-    assert!(!flagged(
-        "    timespan: 2h",
-        CorrelationConfig {
-            max_group_entries: Some(10_000),
-            ..Default::default()
-        }
-    ));
+    assert_eq!(
+        cap("event_count", "        gte: 3"),
+        DEFAULT_MAX_GROUP_ENTRIES
+    );
+    assert_eq!(cap("event_count", "        gte: 20000"), 20_001);
+    assert_eq!(cap("event_count", "        gt: 20000"), 20_001);
+    assert_eq!(cap("event_count", "        lt: 50000"), 50_001);
+    assert_eq!(
+        cap("event_count", "        gte: 100\n        lte: 30000"),
+        30_001
+    );
+    assert_eq!(
+        cap("value_count", "        field: User\n        gte: 15000"),
+        15_001
+    );
+    assert_eq!(
+        cap("value_sum", "        field: Bytes\n        gte: 1000000"),
+        DEFAULT_MAX_GROUP_ENTRIES
+    );
+}
 
-    let yaml = window_mode_yaml("    timespan: 24h").replace(
-        "id: corr-win\n",
-        "id: corr-win\nrsigma.max_group_entries: '10000'\n",
+#[test]
+fn test_suppression_active_window() {
+    assert!(suppression_active(100, 100, 60));
+    assert!(suppression_active(100, 159, 60));
+    assert!(!suppression_active(100, 160, 60));
+    assert!(
+        !suppression_active(100, 99, 60),
+        "negative elapsed is expired"
+    );
+    assert!(!suppression_active(100, 100, 0));
+    assert!(!suppression_active(i64::MAX, i64::MIN, u64::MAX));
+    assert!(suppression_active(0, i64::MAX / 2, u64::MAX));
+}
+
+#[test]
+fn test_evict_all_drops_alerts_ahead_of_now() {
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        suppress: Some(60),
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(&window_mode_yaml("    timespan: 60s")).unwrap())
+        .unwrap();
+    let v = json!({"action": "click", "User": "admin"});
+    for ts in [100, 101, 102] {
+        engine.process_event_at(&JsonEvent::borrow(&v), ts);
+    }
+    let key = engine.last_alert.keys().next().unwrap().clone();
+    engine.last_alert.insert(key.clone(), 10_000);
+    engine.evict_expired(200);
+    assert!(!engine.last_alert.contains_key(&key));
+}
+
+#[test]
+fn test_evict_all_floors_now_at_the_high_water_mark() {
+    let mut engine = CorrelationEngine::new(CorrelationConfig {
+        suppress: Some(600),
+        ..Default::default()
+    });
+    engine
+        .add_collection(&parse_sigma_yaml(&window_mode_yaml("    timespan: 60s")).unwrap())
+        .unwrap();
+    let v = json!({"action": "click", "User": "admin"});
+    for ts in [1000, 1001, 1002] {
+        engine.process_event_at(&JsonEvent::borrow(&v), ts);
+    }
+    assert_eq!(engine.last_alert.len(), 1);
+    // An older "now" keeps the alert: it is not ahead of the newest event.
+    engine.evict_expired(500);
+    assert_eq!(engine.last_alert.len(), 1);
+    // Stale windows still go once the floor is past their timespan.
+    let other = json!({"action": "click", "User": "other"});
+    engine.process_event_at(&JsonEvent::borrow(&other), 2000);
+    engine.evict_expired(0);
+    assert_eq!(engine.state_count(), 1, "admin's window aged out");
+}
+
+#[test]
+fn test_wall_clock_is_read_only_when_an_event_passes_it() {
+    let mut engine = windowed_engine("    timespan: 60s");
+    let v = json!({"action": "click", "User": "admin"});
+    engine.process_event_at(&JsonEvent::borrow(&v), 1000);
+    let first = engine.wall_clock;
+    assert!(first >= Utc::now().timestamp() - 5);
+    engine.wall_clock = 5000;
+    engine.process_event_at(&JsonEvent::borrow(&v), 1001);
+    assert_eq!(
+        engine.wall_clock, 5000,
+        "a past event reuses the cached clock"
+    );
+    engine.process_event_at(&JsonEvent::borrow(&v), 6000);
+    assert!(engine.wall_clock >= first);
+}
+
+#[test]
+fn test_future_skip_counts_only_events_that_feed_a_correlation() {
+    let yaml = format!(
+        "{}---\ntitle: Unrelated\nid: unrelated\nlogsource:\n    category: test\ndetection:\n    selection:\n        action: other\n    condition: selection\n",
+        window_mode_yaml("    timespan: 60s")
     );
     let mut engine = CorrelationEngine::new(CorrelationConfig::default());
     engine
         .add_collection(&parse_sigma_yaml(&yaml).unwrap())
         .unwrap();
-    assert!(!engine.has_unbounded_long_window(&engine.correlations[0]));
+    let far = Utc::now().timestamp() + 86_400;
+    let unrelated = json!({"action": "other", "User": "admin"});
+    let r = engine.process_event_at(&JsonEvent::borrow(&unrelated), far);
+    assert_eq!(r.detection_count(), 1, "detections still fire");
+    assert_eq!(engine.future_skipped(), 0);
+    let click = json!({"action": "click", "User": "admin"});
+    engine.process_event_at(&JsonEvent::borrow(&click), far);
+    assert_eq!(engine.future_skipped(), 1);
+    assert_eq!(engine.state_count(), 0);
+    assert!(engine.high_water < far);
 }
 
 #[test]
