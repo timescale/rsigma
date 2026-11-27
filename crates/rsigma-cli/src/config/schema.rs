@@ -615,9 +615,15 @@ pub(crate) struct CorrelationPartial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_state_entries: Option<usize>,
     /// Cap on retained entries within a single group's window state.
-    /// Unset means unbounded (the historical behavior).
+    /// Unset means 10,000, raised for count conditions with a larger
+    /// threshold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_group_entries: Option<usize>,
+    /// How far an event timestamp may be ahead of the wall clock (e.g. `5m`).
+    /// Events further ahead are skipped for correlation; a smaller lead is
+    /// clamped to the wall clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_future_skew: Option<String>,
     /// Extra event field names for timestamp extraction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp_fields: Option<Vec<String>>,
@@ -642,6 +648,7 @@ impl Merge for CorrelationPartial {
             max_events: over.max_events.or(self.max_events),
             max_state_entries: over.max_state_entries.or(self.max_state_entries),
             max_group_entries: over.max_group_entries.or(self.max_group_entries),
+            max_future_skew: over.max_future_skew.or(self.max_future_skew),
             timestamp_fields: over.timestamp_fields.or(self.timestamp_fields),
             timestamp_fallback: over.timestamp_fallback.or(self.timestamp_fallback),
             // A layer that only sets the legacy inverse key still overrides

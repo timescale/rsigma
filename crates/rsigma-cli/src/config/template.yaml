@@ -168,8 +168,11 @@ daemon:
     # group keys; stalest entries are evicted at the cap.
     max_state_entries: 100000
     # Cap on retained entries within a single group's window state.
-    # Unset = unbounded.
+    # Unset = 10000, raised for count conditions with a larger threshold.
     # max_group_entries: 10000
+    # How far an event timestamp may be ahead of the wall clock. Events
+    # further ahead are skipped for correlation; a smaller lead is clamped.
+    max_future_skew: 5m
     # Extra event field names for timestamp extraction.
     # timestamp_fields: ["@timestamp"]
     # Behavior when no timestamp field is found: wallclock | skip

@@ -15,6 +15,7 @@ pub struct Metrics {
     pub correlation_rules_loaded: IntGauge,
     pub rule_parse_errors: IntGauge,
     pub correlation_state_entries: IntGauge,
+    pub correlation_future_events_skipped: IntCounter,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
     pub api_auth_failures: IntCounterVec,
@@ -187,6 +188,11 @@ impl Metrics {
         let correlation_state_entries = IntGauge::with_opts(Opts::new(
             "rsigma_correlation_state_entries",
             "Active correlation state entries",
+        ))
+        .unwrap();
+        let correlation_future_events_skipped = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_future_events_skipped_total",
+            "Events skipped for correlation because their timestamp was further ahead of the wall clock than max_future_skew",
         ))
         .unwrap();
         let reloads_total = IntCounter::with_opts(Opts::new(
@@ -385,6 +391,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(correlation_state_entries.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_future_events_skipped.clone()))
             .unwrap();
         registry.register(Box::new(reloads_total.clone())).unwrap();
         registry.register(Box::new(reloads_failed.clone())).unwrap();
@@ -1472,6 +1481,7 @@ impl Metrics {
             correlation_rules_loaded,
             rule_parse_errors,
             correlation_state_entries,
+            correlation_future_events_skipped,
             reloads_total,
             reloads_failed,
             api_auth_failures,
@@ -1722,6 +1732,10 @@ impl MetricsHook for Metrics {
         self.tenant_rejected_total
             .with_label_values(&[channel, reason])
             .inc();
+    }
+
+    fn on_correlation_future_skipped(&self, count: u64) {
+        self.correlation_future_events_skipped.inc_by(count);
     }
 
     fn on_tenant_quota_eviction(&self, store: &'static str) {

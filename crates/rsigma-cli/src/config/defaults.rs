@@ -30,6 +30,10 @@ pub(crate) const MAX_CORRELATION_EVENTS: usize = 10;
 /// `CorrelationConfig::default().max_state_entries` in rsigma-eval; a
 /// drift-guard test pins the two together.
 pub(crate) const MAX_STATE_ENTRIES: usize = 100_000;
+/// Default bound on how far an event timestamp may run ahead of the wall
+/// clock. Must parse to `CorrelationConfig::default().max_future_skew` in
+/// rsigma-eval; a drift-guard test pins the two together.
+pub(crate) const MAX_FUTURE_SKEW: &str = "5m";
 pub(crate) const TIMESTAMP_FALLBACK: &str = "wallclock";
 pub(crate) const STATE_SAVE_INTERVAL: u64 = 30;
 pub(crate) const OBSERVE_FIELDS_MAX_KEYS: usize = 10_000;
@@ -184,6 +188,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 max_events: Some(MAX_CORRELATION_EVENTS),
                 max_state_entries: Some(MAX_STATE_ENTRIES),
                 max_group_entries: None,
+                max_future_skew: Some(MAX_FUTURE_SKEW.to_string()),
                 timestamp_fields: None,
                 timestamp_fallback: Some(TIMESTAMP_FALLBACK.to_string()),
                 emit_detections: Some(false),

@@ -166,3 +166,65 @@ fn daemon_chained_correlation_carries_child_events() {
         s["rule"] == "failed_login" && s["via"] == "5b0c6f7e-0000-4000-8000-000000000002"
     }));
 }
+
+fn post_login_at(daemon: &DaemonProcess, user: &str, timestamp: &str) {
+    let body = serde_json::to_string(&serde_json::json!({
+        "EventType": "login",
+        "User": user,
+        "@timestamp": timestamp,
+    }))
+    .unwrap();
+    assert_eq!(http_post(&daemon.url("/api/v1/events"), &body).0, 200);
+}
+
+fn future_skipped_total(daemon: &DaemonProcess) -> Option<u64> {
+    let (_, body) = http_get(&daemon.url("/metrics"));
+    body.lines()
+        .find_map(|l| l.strip_prefix("rsigma_correlation_future_events_skipped_total "))
+        .and_then(|v| v.trim().parse().ok())
+}
+
+#[test]
+fn far_future_events_are_skipped_and_counted() {
+    let rule = temp_file(".yml", CORR_RULE);
+    let daemon = DaemonProcess::spawn_http(rule.path().to_str().unwrap());
+
+    post_login_at(&daemon, "admin", "9999-12-31T23:59:59Z");
+    post_login_at(&daemon, "alice", "2024-01-01T00:00:00Z");
+
+    poll_until(Duration::from_secs(5), || {
+        (future_skipped_total(&daemon) == Some(1)).then_some(())
+    })
+    .expect("one future skip counted within 5s");
+    let (_, body) = http_get(&daemon.url("/api/v1/correlations/state"));
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let groups: Vec<_> = v["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["group_key_display"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(groups, ["User=alice"]);
+}
+
+#[test]
+fn max_future_skew_flag_widens_the_bound() {
+    let rule = temp_file(".yml", CORR_RULE);
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &["--max-future-skew", "3650d"],
+    );
+    let ahead = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+    post_login_at(&daemon, "admin", &ahead);
+
+    let group = poll_until(Duration::from_secs(5), || {
+        let (_, body) = http_get(&daemon.url("/api/v1/correlations/state"));
+        let v: serde_json::Value = serde_json::from_str(&body).ok()?;
+        v["groups"].as_array()?.first().cloned()
+    })
+    .expect("admin group within 5s");
+    // Accepted, and clamped to the wall clock.
+    let latest = group["latest"].as_i64().unwrap();
+    assert!(latest <= chrono::Utc::now().timestamp());
+    assert_eq!(future_skipped_total(&daemon), Some(0));
+}

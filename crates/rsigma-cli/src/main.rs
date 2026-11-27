@@ -864,6 +864,7 @@ pub(crate) fn build_correlation_config(
     max_correlation_events: usize,
     max_state_entries: usize,
     max_group_entries: Option<usize>,
+    max_future_skew: &str,
     extra_timestamp_fields: Vec<String>,
     timestamp_fallback: &str,
 ) -> CorrelationConfig {
@@ -874,6 +875,14 @@ pub(crate) fn build_correlation_config(
             process::exit(exit_code::CONFIG_ERROR);
         }
     });
+
+    let max_future_skew = match rsigma_parser::Timespan::parse(max_future_skew) {
+        Ok(ts) => ts.seconds,
+        Err(e) => {
+            eprintln!("Invalid max-future-skew duration '{max_future_skew}': {e}");
+            process::exit(exit_code::CONFIG_ERROR);
+        }
+    };
 
     let action_on_match = action
         .map(|s| {
@@ -904,6 +913,7 @@ pub(crate) fn build_correlation_config(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        max_future_skew,
         timestamp_fallback: ts_fallback,
         ..Default::default()
     };
@@ -1097,6 +1107,10 @@ mod config_default_drift {
             Some(defaults::TIMESTAMP_FALLBACK)
         );
         assert_eq!(
+            daemon_default("max_future_skew").as_deref(),
+            Some(defaults::MAX_FUTURE_SKEW)
+        );
+        assert_eq!(
             daemon_default("buffer_size"),
             Some(defaults::BUFFER_SIZE.to_string())
         );
@@ -1153,6 +1167,16 @@ mod config_default_drift {
         assert_eq!(
             defaults::MAX_STATE_ENTRIES,
             CorrelationConfig::default().max_state_entries
+        );
+    }
+
+    #[test]
+    fn max_future_skew_matches_engine_default() {
+        assert_eq!(
+            rsigma_parser::Timespan::parse(defaults::MAX_FUTURE_SKEW)
+                .unwrap()
+                .seconds,
+            CorrelationConfig::default().max_future_skew
         );
     }
 }
