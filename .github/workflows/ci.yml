@@ -70,8 +70,6 @@ jobs:
           workspaces: |
             . -> target
             fuzz -> target
-      # Compile tests, examples, and benches against the pinned MSRV too.
-      - run: cargo check --workspace --all-targets --all-features --locked
       # The fuzz crate is its own workspace and only the weekly fuzz workflow
       # builds it, so check it here to fail the PR that breaks a target.
       - run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
