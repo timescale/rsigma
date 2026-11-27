@@ -149,3 +149,61 @@ fn disabling_retention_drops_retained_hir() {
     engine.set_retain_hir(true);
     assert!(engine.save_hir().is_err());
 }
+
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+/// A rule whose detection nests `Conditional` blocks to the HIR depth limit,
+/// encoded by hand into a cache blob.
+fn deepest_hir_blob() -> Vec<u8> {
+    use rsigma_ir::{
+        IrCondition, IrDetection, IrDetectionItem, IrMatcher, IrRule, IrRuleMetadata, MAX_HIR_DEPTH,
+    };
+    let mut detection = IrDetection::AllOf(vec![IrDetectionItem {
+        field: Some("User".into()),
+        matcher: IrMatcher::Exists(true),
+        exists: Some(true),
+    }]);
+    // The `ArrayMatch` around the chain is the last level.
+    for _ in 2..MAX_HIR_DEPTH {
+        detection = IrDetection::Conditional {
+            named: [("x".to_string(), detection)].into(),
+            condition: IrCondition::Detection("x".into()),
+        };
+    }
+    let detection = IrDetection::ArrayMatch {
+        field: "items".into(),
+        quantifier: rsigma_parser::ArrayQuantifier::Any,
+        body: Box::new(detection),
+    };
+    let rule = IrRule {
+        metadata: IrRuleMetadata {
+            title: "Deep".into(),
+            ..Default::default()
+        },
+        logsource: Default::default(),
+        sigma_version: Some(3),
+        detections: [("selection".to_string(), detection)].into(),
+        conditions: vec![IrCondition::Detection("selection".into())],
+    };
+    rsigma_ir::encode_rules(&[rule]).unwrap()
+}
+
+#[test]
+fn deepest_hir_loads_and_evaluates_on_small_stack() {
+    let blob = deepest_hir_blob();
+    let result = on_small_stack(move || {
+        let mut engine = Engine::new();
+        engine.load_hir(&blob).map(|()| {
+            let event = json!({"items": [{"User": "a"}]});
+            engine.evaluate(&JsonEvent::borrow(&event)).len()
+        })
+    });
+    assert_eq!(result.unwrap(), 1);
+}

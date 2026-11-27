@@ -510,23 +510,12 @@ pub(super) fn add_conditions(rule: &mut SigmaRule, added: &AddedCondition<'_>) -
         cond_ref
     };
 
-    rule.detection.conditions = rule
-        .detection
-        .conditions
-        .iter()
-        .map(|existing| {
-            // `prepend` puts the added condition first (`new AND
-            // existing`) so left-to-right short-circuiting engines
-            // evaluate the cheap discriminator before the rule body;
-            // the default appends (`existing AND new`).
-            let parts = if added.prepend {
-                vec![cond_expr.clone(), existing.clone()]
-            } else {
-                vec![existing.clone(), cond_expr.clone()]
-            };
-            ConditionExpr::And(parts)
-        })
-        .collect();
+    // `prepend` puts the added condition first (`new AND existing`) so
+    // left-to-right short-circuiting engines evaluate the cheap discriminator
+    // before the rule body; the default appends (`existing AND new`).
+    for existing in &mut rule.detection.conditions {
+        crate::condition::add_and_operand(existing, &cond_expr, added.prepend);
+    }
     Ok(())
 }
 

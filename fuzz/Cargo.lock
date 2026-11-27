@@ -2968,6 +2968,7 @@ dependencies = [
  "rsigma-parser",
  "serde",
  "serde_json",
+ "stacker",
  "thiserror",
  "yaml_serde",
 ]

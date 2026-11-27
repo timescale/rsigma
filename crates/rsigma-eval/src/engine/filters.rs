@@ -173,6 +173,7 @@ pub(super) fn namespaced_filter_condition(filter: &FilterRule, counter: usize) -
 /// [`Engine::apply_filter`](crate::Engine::apply_filter) does.
 pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
     let mut rules = collection.rules.clone();
+    let mut filtered = vec![false; rules.len()];
     for (counter, filter) in collection.filters.iter().enumerate() {
         if filter.detection.named.is_empty() {
             continue;
@@ -184,7 +185,7 @@ pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
             .collect();
         let stable = stable_references(filter, &identities);
         let condition = namespaced_filter_condition(filter, counter);
-        for rule in &mut rules {
+        for (rule, filtered) in rules.iter_mut().zip(&mut filtered) {
             let target = FilterTarget {
                 id: rule.id.as_deref(),
                 name: rule.name.as_deref(),
@@ -199,19 +200,19 @@ pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
                     .named
                     .insert(filter_detection_key(counter, name), detection.clone());
             }
-            rule.detection.conditions = rule
-                .detection
-                .conditions
-                .iter()
-                .map(|cond| ConditionExpr::And(vec![cond.clone(), condition.clone()]))
-                .collect();
-            rule.detection.condition_strings = rule
-                .detection
-                .conditions
-                .iter()
-                .map(ToString::to_string)
-                .collect();
+            for cond in &mut rule.detection.conditions {
+                crate::condition::add_and_operand(cond, &condition, false);
+            }
+            *filtered = true;
         }
+    }
+    for (rule, _) in rules.iter_mut().zip(filtered).filter(|(_, f)| *f) {
+        rule.detection.condition_strings = rule
+            .detection
+            .conditions
+            .iter()
+            .map(ToString::to_string)
+            .collect();
     }
     rules
 }

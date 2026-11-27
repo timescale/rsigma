@@ -475,6 +475,54 @@ correlation:
         assert_eq!(emitted["summary"]["correlation_matches"], 1);
     }
 
+    #[test]
+    fn evaluate_events_loads_long_correlation_chain_on_small_stack() {
+        // Each correlation references the one after it in the document.
+        let len = 100_000;
+        let mut yaml = String::from(
+            "title: Base\nname: base\nlogsource:\n    category: test\ndetection:\n    selection:\n        EventID: 1\n    condition: selection\n",
+        );
+        for i in (0..len).rev() {
+            let target = if i == 0 {
+                "base".to_string()
+            } else {
+                format!("c{}", i - 1)
+            };
+            yaml.push_str(&format!(
+                "---\ntitle: C{i}\nname: c{i}\ncorrelation:\n    type: event_count\n    rules: [{target}]\n    group-by: [Host]\n    timespan: 1m\n    condition:\n        gte: 1\n"
+            ));
+        }
+        let input = EvaluateInput {
+            yaml: Some(yaml),
+            path: None,
+            ruleset: None,
+            rulesets: None,
+            events: Some(vec![
+                json!({"EventID": 1, "Host": "h1", "timestamp": "2025-01-01T00:00:00Z"}),
+            ]),
+            events_path: None,
+            pipelines: vec![],
+            match_detail: None,
+            timestamp_fields: vec![],
+            emit_detections: false,
+            enrichers: None,
+            enrichers_path: None,
+        };
+        let v = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(handler().run_evaluate_events(input))
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(v["ok"], true, "{v}");
+    }
+
     #[tokio::test]
     async fn evaluate_events_with_template_enricher() {
         let enrichers = r#"

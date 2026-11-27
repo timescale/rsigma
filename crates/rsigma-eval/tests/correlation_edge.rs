@@ -554,3 +554,91 @@ fn custom_attributes_block_window_changes_correlation_window() {
     let mut engine = corr_engine(&yaml);
     assert_eq!(logins_20s_apart(&mut engine), 0);
 }
+
+/// A detection rule and `len` event_count correlations where each one
+/// references the one before it and the first references the detection.
+fn correlation_chain(len: usize, reverse: bool) -> rsigma_parser::SigmaCollection {
+    let mut collection = parse_sigma_yaml(EVENT_COUNT_YAML).unwrap();
+    let template = collection.correlations.pop().unwrap();
+    let mut chain: Vec<_> = (0..len)
+        .map(|i| {
+            let mut corr = template.clone();
+            corr.title = format!("Chain {i}");
+            corr.name = Some(format!("chain-{i}"));
+            corr.rules = vec![if i == 0 {
+                "login-rule".to_string()
+            } else {
+                format!("chain-{}", i - 1)
+            }];
+            corr
+        })
+        .collect();
+    if reverse {
+        chain.reverse();
+    }
+    collection.correlations = chain;
+    collection
+}
+
+fn load_on_small_stack(collection: rsigma_parser::SigmaCollection) -> rsigma_eval::Result<()> {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+            engine.add_collection(&collection)
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn long_acyclic_correlation_chain_loads_on_small_stack() {
+    for reverse in [false, true] {
+        load_on_small_stack(correlation_chain(100_000, reverse))
+            .unwrap_or_else(|e| panic!("reverse={reverse}: {e}"));
+    }
+}
+
+#[test]
+fn cycle_at_the_end_of_a_long_chain_is_reported() {
+    let mut collection = correlation_chain(100_000, true);
+    // The first link now references the last one, closing the chain.
+    let last = collection.correlations.len() - 1;
+    collection.correlations[last].rules = vec!["chain-99999".to_string()];
+    let err = load_on_small_stack(collection).unwrap_err();
+    let rsigma_eval::EvalError::CorrelationCycle(path) = err else {
+        panic!("expected a cycle, got {err}");
+    };
+    assert!(
+        path.starts_with("chain-99999 -> chain-99998 -> "),
+        "{path:.80}"
+    );
+    assert!(path.ends_with(" -> chain-0 -> chain-99999"), "{path:.80}");
+    assert_eq!(path.matches(" -> ").count(), 100_000);
+}
+
+#[test]
+fn correlation_cycle_message_lists_the_cycle() {
+    let mut collection = correlation_chain(4, false);
+    // chain-1 -> chain-0 -> chain-3 -> chain-2 -> chain-1
+    collection.correlations[0].rules = vec!["chain-3".to_string()];
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    let err = engine.add_collection(&collection).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        rsigma_eval::EvalError::CorrelationCycle(
+            "chain-0 -> chain-3 -> chain-2 -> chain-1 -> chain-0".into()
+        )
+        .to_string()
+    );
+
+    let mut collection = correlation_chain(1, false);
+    collection.correlations[0].rules = vec!["chain-0".to_string()];
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    let err = engine.add_collection(&collection).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        rsigma_eval::EvalError::CorrelationCycle("chain-0 -> chain-0".into()).to_string()
+    );
+}

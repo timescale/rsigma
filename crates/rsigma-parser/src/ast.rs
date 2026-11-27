@@ -258,14 +258,17 @@ impl FieldSpec {
 /// `selection and not filter` or `1 of selection_* and not 1 of filter_*`.
 ///
 /// Reference: pySigma conditions.py ConditionItem hierarchy
+///
+/// Deserializing rejects a tree deeper than
+/// [`MAX_CONDITION_TREE_DEPTH`](crate::condition::MAX_CONDITION_TREE_DEPTH).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConditionExpr {
     /// Logical AND of sub-expressions.
-    And(Vec<ConditionExpr>),
+    And(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Vec<ConditionExpr>),
     /// Logical OR of sub-expressions.
-    Or(Vec<ConditionExpr>),
+    Or(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Vec<ConditionExpr>),
     /// Logical NOT of a sub-expression.
-    Not(Box<ConditionExpr>),
+    Not(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Box<ConditionExpr>),
     /// Reference to a named detection identifier.
     Identifier(String),
     /// Quantified selector: `1 of selection_*`, `all of them`, etc.

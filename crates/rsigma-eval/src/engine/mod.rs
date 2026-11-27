@@ -15,9 +15,7 @@ mod tests;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rsigma_parser::{
-    ConditionExpr, FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule,
-};
+use rsigma_parser::{FilterRule, FilterRuleTarget, LogSource, SigmaCollection, SigmaRule};
 
 use rsigma_ir::{IrRule, LowerOptions, lower_rule};
 
@@ -631,11 +629,9 @@ impl<L> Engine<L> {
                 rule.detections
                     .insert(filter_detection_key(fc, name), compiled.clone());
             }
-            rule.conditions = rule
-                .conditions
-                .iter()
-                .map(|cond| ConditionExpr::And(vec![cond.clone(), rewritten_cond.clone()]))
-                .collect();
+            for cond in &mut rule.conditions {
+                crate::condition::add_and_operand(cond, &rewritten_cond, false);
+            }
             matched_any = true;
         }
 

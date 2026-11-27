@@ -57,6 +57,7 @@ The crate is sync-only (no tokio/reqwest).
 - CBOR is the binary format: the HIR embeds `LogSource`, whose `#[serde(flatten)]` custom-key map serializes with an unknown length that fixed-layout encoders reject.
 - `cache::to_json` gives a human-readable debug export of the same header-plus-rules shape.
 - All HIR types derive `serde::{Serialize, Deserialize}`; the embedded `rsigma-parser` types gained `Deserialize` so the HIR round-trips.
+- Deserializing an `IrCondition`, `IrDetection`, or `IrMatcher` fails once the tree is deeper than `MAX_HIR_DEPTH` (256), counting the levels of all three together, so a crafted blob cannot build a tree that later walks overflow the stack on. `decode_rules` allows the CBOR nesting every such tree needs, so the deepest rule the parser accepts round-trips, and it decodes on its own stack so the caller's stack size does not matter. {{ added "unreleased" }}
 
 ## Optimization passes
 

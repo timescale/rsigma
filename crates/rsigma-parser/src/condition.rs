@@ -11,6 +11,7 @@
 use std::num::NonZeroU64;
 
 use pest::Parser;
+use pest::Token;
 use pest::iterators::Pair;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 use pest_derive::Parser;
@@ -32,6 +33,14 @@ struct SigmaConditionParser;
 
 const MAX_CONDITION_LEN: usize = 64 * 1024;
 const MAX_CONDITION_DEPTH: usize = 64;
+
+/// Deepest condition tree a deserializer may build, counting every `and`,
+/// `or`, `not`, and leaf node from the root.
+///
+/// A parsed condition stays well inside it: each of the parser's 64 nesting
+/// levels adds at most an `or` and an `and` node, and the margin leaves room
+/// for the levels that filters add.
+pub const MAX_CONDITION_TREE_DEPTH: usize = 4 * MAX_CONDITION_DEPTH;
 
 /// pest fails with "stack limit reached" when fewer than 64 KiB of stack
 /// remain, and musl reports only the already-touched part of the main
@@ -81,6 +90,7 @@ fn parse_condition_inner(input: &str) -> Result<ConditionExpr> {
         .into_iter()
         .next()
         .ok_or_else(|| SigmaParserError::Condition("empty condition expression".into(), None))?;
+    check_nesting(&condition_pair)?;
     let expr_pair = condition_pair
         .into_inner()
         .find(|p| p.as_rule() == Rule::expr)
@@ -88,6 +98,61 @@ fn parse_condition_inner(input: &str) -> Result<ConditionExpr> {
 
     let depth = std::cell::Cell::new(0usize);
     parse_expr(expr_pair, &pratt, &depth)
+}
+
+/// Rejects conditions nested deeper than [`MAX_CONDITION_DEPTH`] before the
+/// Pratt parser recurses. Each parenthesized group and each `not` in a run of
+/// prefixes adds a level. The grammar reads a `not` run in a loop, so without
+/// this walk a long run would only recurse later, once per `not`.
+fn check_nesting(condition: &Pair<'_, Rule>) -> Result<()> {
+    // One entry per open `expr`: the nesting level at its start and the length
+    // of the current run of `not` prefixes inside it.
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    for token in condition.clone().tokens() {
+        let (rule, pos, is_start) = match token {
+            Token::Start { rule, pos } => (rule, pos, true),
+            Token::End { rule, pos } => (rule, pos, false),
+        };
+        let level = match (rule, is_start) {
+            (Rule::expr, true) => {
+                let level = open.last().map_or(0, |&(base, nots)| base + nots + 1);
+                open.push((level, 0));
+                level
+            }
+            (Rule::expr, false) => {
+                open.pop();
+                if let Some(parent) = open.last_mut() {
+                    parent.1 = 0;
+                }
+                continue;
+            }
+            (Rule::not_op, true) => match open.last_mut() {
+                Some((base, nots)) => {
+                    *nots += 1;
+                    *base + *nots
+                }
+                None => continue,
+            },
+            (Rule::ident | Rule::selector, true) => {
+                if let Some(parent) = open.last_mut() {
+                    parent.1 = 0;
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if level > MAX_CONDITION_DEPTH {
+            let (line, col) = pos.line_col();
+            return Err(SigmaParserError::Condition(
+                format!("condition nesting exceeds maximum depth ({MAX_CONDITION_DEPTH})"),
+                Some(SourceLocation {
+                    line: line as u32,
+                    col: col as u32,
+                }),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn extract_pest_location(err: &pest::error::Error<Rule>) -> Option<SourceLocation> {
@@ -885,5 +950,178 @@ mod tests {
     fn deeply_nested_condition_fails_without_overflow() {
         let input = format!("{}a{}", "(".repeat(30_000), ")".repeat(30_000));
         assert!(parse_condition(&input).is_err());
+    }
+
+    fn assert_depth_error(result: Result<ConditionExpr>) {
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, SigmaParserError::Condition(message, _) if message.contains("maximum depth")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn max_length_not_chain_fails_without_overflow() {
+        let input = format!("{}sel", "not ".repeat((MAX_CONDITION_LEN - 3) / 4));
+        assert!(input.len() <= MAX_CONDITION_LEN);
+        assert_depth_error(on_small_stack(move || parse_condition(&input)));
+    }
+
+    #[test]
+    fn not_chain_counts_toward_depth() {
+        let at_limit = format!("{}sel", "not ".repeat(MAX_CONDITION_DEPTH));
+        let expr = parse_condition(&at_limit).unwrap();
+        let mut nots = 0;
+        let mut node = &expr;
+        while let ConditionExpr::Not(inner) = node {
+            nots += 1;
+            node = inner;
+        }
+        assert_eq!(nots, MAX_CONDITION_DEPTH);
+
+        let over = format!("{}sel", "not ".repeat(MAX_CONDITION_DEPTH + 1));
+        assert_depth_error(parse_condition(&over));
+    }
+
+    #[test]
+    fn not_chains_and_parentheses_share_the_depth_limit() {
+        let half = MAX_CONDITION_DEPTH / 2;
+        let nested = |nots: usize, parens: usize| {
+            format!(
+                "{}{}sel{}",
+                "not (".repeat(parens),
+                "not ".repeat(nots),
+                ")".repeat(parens)
+            )
+        };
+        // Each `not (` adds a `not` level and a parenthesis level.
+        assert!(parse_condition(&nested(0, half)).is_ok());
+        assert_depth_error(parse_condition(&nested(1, half)));
+
+        let parens_then_nots = format!(
+            "{}{}sel{}",
+            "(".repeat(half),
+            "not ".repeat(MAX_CONDITION_DEPTH - half),
+            ")".repeat(half)
+        );
+        assert!(parse_condition(&parens_then_nots).is_ok());
+        let over = format!(
+            "{}{}sel{}",
+            "(".repeat(half),
+            "not ".repeat(MAX_CONDITION_DEPTH - half + 1),
+            ")".repeat(half)
+        );
+        assert_depth_error(parse_condition(&over));
+    }
+
+    #[test]
+    fn not_runs_reset_between_operands() {
+        let run = "not ".repeat(MAX_CONDITION_DEPTH);
+        let input = format!("{run}a and {run}b or {run}1 of sel_*");
+        assert!(parse_condition(&input).is_ok());
+    }
+
+    #[test]
+    fn depth_error_carries_location() {
+        let input = format!("sel and {}a", "not ".repeat(MAX_CONDITION_DEPTH + 1));
+        let err = parse_condition(&input).unwrap_err();
+        let SigmaParserError::Condition(_, Some(location)) = err else {
+            panic!("expected a located condition error, got {err:?}");
+        };
+        let col = "sel and ".len() + 4 * MAX_CONDITION_DEPTH + 1;
+        assert_eq!(
+            location,
+            SourceLocation {
+                line: 1,
+                col: col as u32
+            }
+        );
+    }
+
+    fn nested_not_json(depth: usize) -> String {
+        format!(
+            "{}{{\"Identifier\":\"a\"}}{}",
+            "{\"Not\":".repeat(depth - 1),
+            "}".repeat(depth - 1)
+        )
+    }
+
+    fn deserialize_unbounded(json: &str) -> serde_json::Result<ConditionExpr> {
+        let mut de = serde_json::Deserializer::from_str(json);
+        de.disable_recursion_limit();
+        serde::Deserialize::deserialize(&mut de)
+    }
+
+    fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn deep_condition_tree_is_not_deserializable() {
+        on_small_stack(|| {
+            for depth in [10_000, MAX_CONDITION_TREE_DEPTH + 1] {
+                let err = deserialize_unbounded(&nested_not_json(depth)).unwrap_err();
+                assert!(err.to_string().contains("maximum depth"), "{err}");
+            }
+        });
+    }
+
+    #[test]
+    fn condition_tree_at_depth_limit_deserializes() {
+        on_small_stack(|| {
+            let expr = deserialize_unbounded(&nested_not_json(MAX_CONDITION_TREE_DEPTH)).unwrap();
+            let mut depth = 1;
+            let mut node = &expr;
+            while let ConditionExpr::Not(inner) = node {
+                depth += 1;
+                node = inner;
+            }
+            assert_eq!(depth, MAX_CONDITION_TREE_DEPTH);
+
+            // A rejected tree must not leave the depth counter raised for the
+            // next one deserialized on this thread.
+            assert!(deserialize_unbounded(&nested_not_json(MAX_CONDITION_TREE_DEPTH + 1)).is_err());
+            let siblings = format!(
+                "{{\"And\":[{},{}]}}",
+                nested_not_json(MAX_CONDITION_TREE_DEPTH - 1),
+                nested_not_json(MAX_CONDITION_TREE_DEPTH - 1)
+            );
+            assert!(deserialize_unbounded(&siblings).is_ok());
+        });
+    }
+
+    #[test]
+    fn parsed_condition_round_trips_through_serde() {
+        let half = MAX_CONDITION_DEPTH / 2;
+        let input = format!("{}not sel{}", "a or b and (".repeat(half), ")".repeat(half));
+        let expr = parse_condition(&input).unwrap();
+        let json = serde_json::to_string(&expr).unwrap();
+        let decoded = on_small_stack(move || deserialize_unbounded(&json).unwrap());
+        assert_eq!(decoded, expr);
+    }
+
+    #[test]
+    fn ordinary_not_usage_parses_unchanged() {
+        assert_eq!(
+            parse_condition("not not a").unwrap(),
+            ConditionExpr::Not(Box::new(ConditionExpr::Not(Box::new(
+                ConditionExpr::Identifier("a".into())
+            ))))
+        );
+        assert_eq!(
+            parse_condition("a and not (b or not c)").unwrap(),
+            ConditionExpr::And(vec![
+                ConditionExpr::Identifier("a".into()),
+                ConditionExpr::Not(Box::new(ConditionExpr::Or(vec![
+                    ConditionExpr::Identifier("b".into()),
+                    ConditionExpr::Not(Box::new(ConditionExpr::Identifier("c".into()))),
+                ]))),
+            ])
+        );
     }
 }

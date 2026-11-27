@@ -492,62 +492,23 @@ impl<L> CorrelationEngine<L> {
             }
         }
 
-        // DFS cycle detection with three states: white (unvisited), gray (in stack), black (done)
-        let mut state = vec![0u8; self.correlations.len()]; // 0=white, 1=gray, 2=black
-        let mut path: Vec<usize> = Vec::new();
-
-        for start in 0..self.correlations.len() {
-            if state[start] == 0
-                && let Some(cycle) = Self::dfs_find_cycle(start, &adj, &mut state, &mut path)
-            {
-                let names: Vec<String> = cycle
-                    .iter()
-                    .map(|&i| {
-                        self.correlations[i]
-                            .id
-                            .as_deref()
-                            .or(self.correlations[i].name.as_deref())
-                            .unwrap_or(&self.correlations[i].title)
-                            .to_string()
-                    })
-                    .collect();
-                return Err(crate::error::EvalError::CorrelationCycle(
-                    names.join(" -> "),
-                ));
-            }
+        if let Some(cycle) = find_cycle(&adj) {
+            let names: Vec<String> = cycle
+                .iter()
+                .map(|&i| {
+                    self.correlations[i]
+                        .id
+                        .as_deref()
+                        .or(self.correlations[i].name.as_deref())
+                        .unwrap_or(&self.correlations[i].title)
+                        .to_string()
+                })
+                .collect();
+            return Err(crate::error::EvalError::CorrelationCycle(
+                names.join(" -> "),
+            ));
         }
         Ok(())
-    }
-
-    /// DFS helper that returns the cycle path if a back-edge is found.
-    fn dfs_find_cycle(
-        node: usize,
-        adj: &[Vec<usize>],
-        state: &mut [u8],
-        path: &mut Vec<usize>,
-    ) -> Option<Vec<usize>> {
-        state[node] = 1; // gray
-        path.push(node);
-
-        for &next in &adj[node] {
-            if state[next] == 1 {
-                // Back-edge found — extract cycle from path
-                if let Some(pos) = path.iter().position(|&n| n == next) {
-                    let mut cycle = path[pos..].to_vec();
-                    cycle.push(next); // close the cycle
-                    return Some(cycle);
-                }
-            }
-            if state[next] == 0
-                && let Some(cycle) = Self::dfs_find_cycle(next, adj, state, path)
-            {
-                return Some(cycle);
-            }
-        }
-
-        path.pop();
-        state[node] = 2; // black
-        None
     }
 
     /// Process an event, extracting the timestamp from configured event fields.
@@ -2370,6 +2331,53 @@ impl Default for CorrelationEngine {
 }
 
 /// Retention strength ordering: `full` over `refs` over `none`.
+/// Find a cycle in the graph given by `adj` with a depth-first search that
+/// keeps its path on the heap, so a reference chain of any length cannot
+/// overflow the stack. Returns the nodes of the first cycle found, starting
+/// and ending at the node the back edge points to.
+fn find_cycle(adj: &[Vec<usize>]) -> Option<Vec<usize>> {
+    const WHITE: u8 = 0;
+    const GRAY: u8 = 1;
+    const BLACK: u8 = 2;
+
+    let mut state = vec![WHITE; adj.len()];
+    // The current DFS path: each node with the index of its next edge.
+    let mut path: Vec<(usize, usize)> = Vec::new();
+    for start in 0..adj.len() {
+        if state[start] != WHITE {
+            continue;
+        }
+        state[start] = GRAY;
+        path.push((start, 0));
+        while let Some(top) = path.last_mut() {
+            let (node, edge) = *top;
+            let Some(&next) = adj[node].get(edge) else {
+                state[node] = BLACK;
+                path.pop();
+                continue;
+            };
+            top.1 += 1;
+            match state[next] {
+                WHITE => {
+                    state[next] = GRAY;
+                    path.push((next, 0));
+                }
+                GRAY => {
+                    let pos = path
+                        .iter()
+                        .position(|&(n, _)| n == next)
+                        .expect("gray nodes are on the path");
+                    let mut cycle: Vec<usize> = path[pos..].iter().map(|&(n, _)| n).collect();
+                    cycle.push(next);
+                    return Some(cycle);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn stronger_mode(a: CorrelationEventMode, b: CorrelationEventMode) -> CorrelationEventMode {
     match (a, b) {
         (CorrelationEventMode::Full, _) | (_, CorrelationEventMode::Full) => {

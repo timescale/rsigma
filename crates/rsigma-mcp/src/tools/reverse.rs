@@ -119,6 +119,7 @@ fn parse_meta<T: std::str::FromStr>(
 mod tests {
     use super::*;
     use crate::tools::handler;
+    use rsigma_convert::reverse::MAX_REVERSE_QUERY_LEN;
 
     fn input(query: &str) -> ReverseInput {
         ReverseInput {
@@ -166,6 +167,26 @@ mod tests {
             assert_eq!(v["ok"], false, "envelope: {v}");
             assert!(v["error"].as_str().unwrap().contains("logsource"), "{v}");
         }
+    }
+
+    #[test]
+    fn deeply_nested_query_reports_error_envelope() {
+        let mcp = handler();
+        let deep = format!("{}a:1{}", "(".repeat(30_000), ")".repeat(30_000));
+        for query in [deep, format!("{}a:1", "NOT ".repeat(16_000))] {
+            let v = mcp.run_reverse_convert(input(&query)).unwrap();
+            assert_eq!(v["ok"], false, "envelope: {v}");
+            assert!(
+                v["error"].as_str().unwrap().contains("maximum depth"),
+                "{v}"
+            );
+        }
+        let v = mcp
+            .run_reverse_convert(input(&"x".repeat(MAX_REVERSE_QUERY_LEN + 1)))
+            .unwrap();
+        assert_eq!(v["ok"], false, "envelope: {v}");
+        let v = mcp.run_reverse_convert(input("EventID:1")).unwrap();
+        assert_eq!(v["ok"], true, "envelope: {v}");
     }
 
     #[test]

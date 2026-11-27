@@ -2284,6 +2284,146 @@ fn array_unknown_quantifier_is_error() {
     );
 }
 
+/// Parse a `sigma-version: 3` rule with `detection_body` and return the
+/// diagnostics it produced.
+fn array_rule_diagnostics(detection_body: &str) -> Vec<String> {
+    let yaml = format!(
+        "title: T\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n{detection_body}    condition: selection\n"
+    );
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+    collection
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+fn is_scope_error(diagnostics: &[String]) -> bool {
+    diagnostics
+        .iter()
+        .any(|m| m.contains("array quantifier scopes"))
+}
+
+fn quantified_key(scopes: usize) -> String {
+    (0..scopes).map(|i| format!("a{i}[any].")).collect()
+}
+
+/// `depth` nested `aN[any]:` block keys under `selection`, around `inner`.
+fn nested_array_blocks(depth: usize, inner: &str) -> String {
+    let mut body = String::from("    selection:\n");
+    for level in 0..depth {
+        body.push_str(&format!("{}a{level}[any]:\n", "    ".repeat(level + 2)));
+    }
+    body.push_str(&format!("{}{inner}\n", "    ".repeat(depth + 2)));
+    body
+}
+
+#[test]
+fn array_quantifiers_in_one_key_are_capped() {
+    let at_limit = format!("    selection:\n        {}x: 1\n", quantified_key(8));
+    assert!(array_rule_diagnostics(&at_limit).is_empty());
+
+    let over = format!("    selection:\n        {}x: 1\n", quantified_key(9));
+    assert!(is_scope_error(&array_rule_diagnostics(&over)));
+}
+
+#[test]
+fn nested_array_blocks_count_toward_the_cap() {
+    assert!(array_rule_diagnostics(&nested_array_blocks(8, "x: 1")).is_empty());
+    assert!(is_scope_error(&array_rule_diagnostics(
+        &nested_array_blocks(9, "x: 1")
+    )));
+
+    // Quantifiers in a key inside a block body add to the enclosing blocks.
+    let inner = format!("{}x: 1", quantified_key(2));
+    assert!(array_rule_diagnostics(&nested_array_blocks(6, &inner)).is_empty());
+    assert!(is_scope_error(&array_rule_diagnostics(
+        &nested_array_blocks(7, &inner)
+    )));
+}
+
+#[test]
+fn inherited_array_prefixes_count_toward_the_cap() {
+    // `a0[any]...a6[any]: {b[any]: 1}` expands `b[any]` under the remaining
+    // six quantified segments, so the leaf sits inside eight scopes.
+    let key = quantified_key(7);
+    let at_limit = format!(
+        "    selection:\n        {}:\n            b[any]: 1\n",
+        key.trim_end_matches('.')
+    );
+    assert!(array_rule_diagnostics(&at_limit).is_empty());
+
+    let over = format!(
+        "    selection:\n        {}:\n            b[any].c[any]: 1\n",
+        key.trim_end_matches('.')
+    );
+    assert!(is_scope_error(&array_rule_diagnostics(&over)));
+}
+
+#[test]
+fn thousands_of_array_quantifiers_fail_without_overflow() {
+    // YAML caps implicit keys at 1024 characters, so a longer key is explicit.
+    let body = format!(
+        "    selection:\n        ? {}x\n        : 1\n",
+        quantified_key(5_000)
+    );
+    let diagnostics = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || array_rule_diagnostics(&body))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(is_scope_error(&diagnostics), "{diagnostics:?}");
+}
+
+#[test]
+fn chained_array_quantifiers_nest_in_key_order() {
+    let det = parse_selection("    selection:\n        a[0].b[any].c.d[all].e|contains: x\n");
+    let Detection::ArrayMatch {
+        field,
+        quantifier: ArrayQuantifier::Any,
+        body,
+    } = det
+    else {
+        panic!("expected an outer any block, got {det:?}");
+    };
+    assert_eq!(field, "a[0].b");
+    let Detection::ArrayMatch {
+        field,
+        quantifier: ArrayQuantifier::All,
+        body,
+    } = *body
+    else {
+        panic!("expected an inner all block, got {body:?}");
+    };
+    assert_eq!(field, "c.d");
+    let Detection::AllOf(items) = *body else {
+        panic!("expected a leaf item, got {body:?}");
+    };
+    assert_eq!(items[0].field.name.as_deref(), Some("e"));
+    assert_eq!(items[0].field.modifiers, vec![Modifier::Contains]);
+}
+
+#[test]
+fn chained_array_quantifier_with_map_value_opens_a_block_per_key() {
+    let det = parse_selection(
+        "    selection:\n        a[any].b[any]:\n            x: 1\n            y: 2\n",
+    );
+    let Detection::ArrayMatch { field, body, .. } = det else {
+        panic!("expected an outer block, got {det:?}");
+    };
+    assert_eq!(field, "a");
+    let Detection::And(parts) = *body else {
+        panic!("expected one inner block per key, got {body:?}");
+    };
+    assert_eq!(parts.len(), 2);
+    assert!(
+        parts
+            .iter()
+            .all(|p| matches!(p, Detection::ArrayMatch { field, .. } if field == "b"))
+    );
+}
+
 #[test]
 fn array_positional_index_scalar_is_plain_field() {
     // `args[0]: x` is a plain item whose field path keeps the index marker.

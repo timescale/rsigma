@@ -15,10 +15,18 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 | Single event size | `MAX_LINE_BYTES` | 1 MiB | `engine daemon` HTTP/stdin event ingest | Line rejected with a `413`-equivalent error in HTTP mode; counted in `rsigma_events_parse_errors_total`. |
 | Decompressed OTLP/HTTP body | `OTLP_HTTP_MAX_DECOMPRESSED_BYTES` | 4 MiB | `POST /v1/logs` with `Content-Encoding: gzip` (`daemon-otlp`) | Request rejected with `413` before decoding; counted as `rsigma_otlp_errors_total{reason="body_too_large"}`. The gRPC transport applies the same 4 MiB decoded-message limit. {{ added "0.25.0" }} |
 | Condition expression length | `MAX_CONDITION_LEN` | 64 KiB | Rule parser | Rule rejected at parse time with an `InvalidCondition` error. |
-| Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. |
+| Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. Parentheses and each `not` in a run of `not` operators count toward the same limit. {{ added "unreleased" }} |
+| Condition tree depth | `MAX_CONDITION_TREE_DEPTH` | 256 | Deserializing `ConditionExpr` | Deserialization fails as soon as the tree passes the limit, before the deserializer recurses deeper. {{ added "unreleased" }} |
+| HIR tree depth | `MAX_HIR_DEPTH` | 256 | Deserializing `IrCondition`, `IrDetection`, and `IrMatcher`, including the HIR cache | Same. Condition, detection, and matcher levels count together along any path. {{ added "unreleased" }} |
+| HIR cache nesting | `CBOR_RECURSION_LIMIT` | 784 CBOR containers | `Engine::load_hir` and `decode_rules` | Blob rejected with a decode error. The limit covers every tree within `MAX_HIR_DEPTH` and bounds custom attribute values, and the blob is decoded on its own 16 MiB stack. {{ added "unreleased" }} |
+| Array quantifier scopes | `MAX_ARRAY_SCOPES` | 8 | Rule parser, array matching (`[any]`, `[all]`, `[all_or_empty]`, `[none]`) | Rule rejected at parse time with an `InvalidFieldSpec` error. Quantifiers in the item's key, in the keys of enclosing blocks, and in the path a block body hands down all count. {{ added "unreleased" }} |
+| STIX pattern size and depth | `MAX_PATTERN_BYTES`, `MAX_AST_DEPTH` | 64 KiB, 64 | STIX pattern parser | Pattern rejected with `InputTooLarge` or `DepthExceeded`. Parentheses, `NOT`, nested `IN` lists, and `WITHIN`, `REPEATS`, and `START`/`STOP` qualifiers count toward the depth. {{ added "unreleased" }} |
+| STIX pattern observations and comparisons | `MAX_OBSERVATIONS`, `MAX_COMPARISONS_PER_OBSERVATION` | 256 each | STIX pattern parser | Pattern rejected while it is parsed, as soon as the count passes the limit. {{ added "unreleased" }} |
+| Reverse query length | `MAX_REVERSE_QUERY_LEN` | 64 KiB | `rule reverse` and the MCP `reverse_convert` tool | Query rejected before it is tokenized. {{ added "unreleased" }} |
+| Reverse query depth | `MAX_REVERSE_QUERY_DEPTH` | 64 | Same | Query rejected with a parse error. Parentheses and `NOT`, `!`, and `-` prefixes count toward the limit, and the values of a `field:(...)` group start one level down. {{ added "unreleased" }} |
 | JSON event traversal depth | `MAX_NESTING_DEPTH` | 64 | Keyword search inside nested JSON | Traversal stops; deeper fields are not matched against keyword detections. |
 | Windash expansion | `MAX_WINDASH_DASHES` | 8 | `\|windash` modifier (5^8 variants), in evaluation and conversion | Compile or conversion error if a value contains more than 8 dash characters (`-`, `/`, `–`, `—`, or `―`). {{ added "0.24.0" }} |
-| Correlation chain depth | `MAX_CHAIN_DEPTH` | 10 | Engine | Stops chaining beyond 10 levels; logs at `WARN` (`rsigma_eval::correlation_engine`). |
+| Correlation chain depth | `MAX_CHAIN_DEPTH` | 10 | Engine | Stops chaining beyond 10 levels; logs at `WARN` (`rsigma_eval::correlation_engine`). Cycle detection at load time does not recurse, so a reference chain of any length loads or fails with `CorrelationCycle` instead of crashing. {{ added "unreleased" }} |
 | Correlation state entries | `max_state_entries` | 100,000 | Engine, all correlation rules combined | Hard cap; eviction drops the stalest 10% with a `WARN` log when reached. Watch via `rsigma_correlation_state_entries`. |
 
 These limits are sized so that the engine remains bounded under pathological input (a single rule of unbounded size, a single event of unbounded size, or an attacker-controlled JSON document with multi-megabyte nesting). They were chosen to be larger than every plausible real Sigma rule and well above any legitimate JSON event.
@@ -106,7 +114,9 @@ Every external parser rsigma ships uses panic-free libraries:
 | Component | Library | Notes |
 |-----------|---------|-------|
 | Sigma rule YAML | `yaml_serde` 0.10 | The maintained fork of `serde_yaml`. Resists the recursion and aliasing attacks that plagued legacy `serde-yaml`. |
-| Sigma condition expression | hand-written recursive descent | Bounded by `MAX_CONDITION_LEN` (64 KiB) and `MAX_CONDITION_DEPTH` (64). |
+| Sigma condition expression | `pest` grammar and Pratt parser | Bounded by `MAX_CONDITION_LEN` (64 KiB) and `MAX_CONDITION_DEPTH` (64). The nesting is counted over the token stream before the Pratt parser recurses. {{ added "unreleased" }} |
+| STIX pattern | hand-written recursive descent | Bounded by `MAX_PATTERN_BYTES` (64 KiB), `MAX_AST_DEPTH` (64), and the observation and comparison counts, so every tree it builds is shallow enough for the type checker, printer, and evaluator to walk. {{ added "unreleased" }} |
+| Lucene query (reverse conversion) | hand-written tokenizer and precedence-climbing parser | Bounded by `MAX_REVERSE_QUERY_LEN` (64 KiB) and `MAX_REVERSE_QUERY_DEPTH` (64). {{ added "unreleased" }} |
 | Pipeline YAML | `yaml_serde` 0.10 | Same. |
 | Input event JSON | `serde_json` | Bounded by `MAX_LINE_BYTES` (1 MiB) for streaming sources. |
 | HTTP request bodies | `reqwest` with explicit size limit | Bounded by `MAX_SOURCE_RESPONSE_BYTES` (10 MiB). |

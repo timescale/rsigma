@@ -165,6 +165,8 @@ detection:
     condition: selection
 ```
 
+At most 8 quantifier scopes may enclose one detection item. Quantifiers in the item's own key, in the keys of the blocks around it, and in a dotted key path above a block body all count, so `a[any].b[any]: {c[any]: x}` matches `x` inside three scopes. A rule that nests deeper fails to parse. {{ added "unreleased" }}
+
 A scalar value directly under a quantifier matches the member itself:
 
 ```yaml
