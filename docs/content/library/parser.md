@@ -175,6 +175,8 @@ println!("{ast:#?}");
 
 Bounds: `MAX_CONDITION_LEN = 64 KiB`, `MAX_CONDITION_DEPTH = 64`. See [Security Hardening](../reference/security.md#input-size-and-depth-caps).
 
+Parentheses and each `not` in a run of `not` operators count toward `MAX_CONDITION_DEPTH` together. Deserializing a `ConditionExpr` fails once the tree is deeper than `condition::MAX_CONDITION_TREE_DEPTH` (256 nodes from the root), which leaves room for every condition the parser accepts plus the levels that filters add. {{ added "unreleased" }}
+
 ## Semantic validation
 
 {{ added "0.24.0" }}

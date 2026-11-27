@@ -228,7 +228,7 @@ flowchart LR
 | Component | Role | Status |
 | --------- | ---- | ------ |
 | Lexer | Tokenizer; 64 KiB input cap | Done |
-| Parser | Recursive-descent parser; dict keys, ref-list `[*]`, custom SCO types | Done |
+| Parser | Recursive-descent parser; dict keys, ref-list `[*]`, custom SCO types; 64-level depth (parentheses, `NOT`, `IN` lists, and qualifiers), 256 observations, and 256 comparisons per observation, all enforced while parsing | Done |
 | SCO type checker | Property paths, `extensions.'…'`, `_ref.type`, ISSUBSET on CIDR strings | Done |
 | Evaluator | Level 1-3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Done |
 | Observation context | `ObservationContext`, `TimestampedObservation`, observed-data builder | Done |

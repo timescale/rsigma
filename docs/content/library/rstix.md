@@ -100,7 +100,7 @@ flowchart LR
 | Component | Role | Status |
 | --------- | ---- | ------ |
 | Lexer | Tokenizer; 64 KiB input cap | Done |
-| Parser | Recursive-descent parser | Done |
+| Parser | Recursive-descent parser; 64-level depth (parentheses, `NOT`, `IN` lists, and qualifiers), 256 observations, and 256 comparisons per observation, all enforced while parsing {{ added "unreleased" }} | Done |
 | SCO type checker | SCO schema + extension paths | Done |
 | Evaluator | Level 1-3 evaluation | Done |
 | Observation context | `ObservationContext`, observed-data builder | Done |

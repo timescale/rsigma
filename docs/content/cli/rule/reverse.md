@@ -24,6 +24,8 @@ Field predicates map to idiomatic Sigma: surrounding `*` wildcards become `|cont
 
 A query carries no rule metadata, so the title, id, level, status, and logsource come from flags; the result is a best-effort skeleton to review, not a finished rule. A Sigma rule needs a logsource, so at least one of `--logsource-product`, `--logsource-category`, or `--logsource-service` is required, and the command exits with code `3` without one. {{ added "0.24.0" }} Constructs with no Sigma equivalent are rejected with a clear error rather than emitted as silently-wrong Sigma: term boosting (`^`), fuzzy and proximity (`~`), and non-numeric ranges. The emitted rule is parsed back before it is printed, so a rule that would not round-trip never reaches you.
 
+A query longer than 64 KiB, or nested more than 64 levels deep, is rejected with an error. Each parenthesis and each `NOT`, `!`, or `-` prefix adds a level, and the values inside a `field:(...)` group start one level down. {{ added "unreleased" }}
+
 Explicit `--output-format` is unsupported and warns: output is always Sigma YAML.
 
 ## Flags

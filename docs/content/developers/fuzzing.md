@@ -12,7 +12,7 @@ The workspace ships 39 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | -------- | -------- | --------------------- |
 | `fuzz_parse_yaml` | The Sigma YAML parser (`parse_sigma_yaml`). | 8192 |
 | `fuzz_rule_fmt` | The Sigma formatter (`format_yaml`, `format_yaml_range`): idempotency, value equality, and comment and anchor preservation. | 8192 |
-| `fuzz_condition` | Condition-expression parser only. | 512 |
+| `fuzz_condition` | Condition-expression parser only. Seeds in `fuzz/seeds/fuzz_condition/` include `not` runs and parentheses at and past the 64-level depth limit. {{ added "unreleased" }} | 512 |
 | `fuzz_eval_matching` | Engine evaluation. Feeds parsed rules and constructed JSON events. | 65536 |
 | `fuzz_eval_matcher_diff` | Differential test for the matcher optimizer (`optimize_any_of`): runs the Aho-Corasick fast path against the naive scalar fallback on the same needles and haystacks. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_field_modifiers` | The 30+ Sigma modifiers. | 256 |
@@ -38,8 +38,8 @@ The workspace ships 39 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_capture_spool` | Disposition capture spool documents (`parse_manifest`, `parse_provenance`, `parse_corpus_events`). | 65536 |
 | `fuzz_otlp_logs_decode` | OTLP log ingestion: protobuf decoding of `ExportLogsServiceRequest` (the body of `POST /v1/logs` and the gRPC `LogsService` message) and `logs_request_to_raw_events`, asserting every converted record is valid JSON. Seeds in `fuzz/seeds/fuzz_otlp_logs_decode/` cover every `AnyValue` variant, many attributes, and nesting on both sides of prost's recursion limit. {{ added "0.25.0" }} | 65536 |
 | `fuzz_risk_config` | Risk configuration parsing. Not in the weekly matrix; run manually. | (default) |
-| `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. | (default) |
-| `fuzz_stix_pattern` | STIX pattern parsing. | 4096 |
+| `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. Seeds in `fuzz/seeds/fuzz_lucene_frontend/` cover plain queries, value groups, and nesting past the depth limit. {{ added "unreleased" }} | (default) |
+| `fuzz_stix_pattern` | STIX pattern parsing. Seeds in `fuzz/seeds/fuzz_stix_pattern/` include nested parentheses and `IN` lists, qualifier chains, and observation and comparison chains past their limits. {{ added "unreleased" }} | 4096 |
 | `fuzz_taxii_envelope` | TAXII envelope parsing, including object-count, nesting, and string-length limits. Seeds in `fuzz/seeds/fuzz_taxii_envelope/` cover a valid envelope, a truncated envelope, and an oversized envelope. {{ added "0.28.0" }} | 65536 |
 | `fuzz_stix_source` | `format: stix` bundle build at a fixed clock. A successful build must be an object with every observable key as an array and an `indicators` object. Seeds in `fuzz/seeds/fuzz_stix_source/` cover the source fixtures, a truncated bundle, duplicate ids, a 300-indicator bundle, and each unsupported pattern shape. {{ added "0.28.0" }} | 262144 |
 | `fuzz_stix_draft` | Rule drafting from a STIX bundle. Bytes are parsed as a bundle or one indicator, simple observables are read out, and `draft_rule_from_values` emits YAML that must parse. Seeds in `fuzz/seeds/fuzz_stix_draft/` cover an indicator, a title and a URL that contain YAML metacharacters, and a truncated object. {{ added "0.28.0" }} | 65536 |
