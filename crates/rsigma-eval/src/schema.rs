@@ -424,47 +424,30 @@ impl Default for SchemaClassifier {
 /// Sysmon, and the ArcSight CEF spec.
 fn builtin_signatures() -> Vec<SchemaSignature> {
     vec![
-        // ECS on Windows: ECS plus a Windows marker. More specific than plain
-        // `ecs` so it wins, and it aliases to `ecs` for routing (see
-        // `builtin_schema_aliases`) while carrying an implied `product:
-        // windows` for logsource pruning.
+        // ECS on Windows: ECS plus a Windows marker and no Linux marker. More
+        // specific than plain `ecs` so it wins, and it aliases to `ecs` for
+        // routing (see `builtin_schema_aliases`) while carrying an implied
+        // `product: windows` for logsource pruning.
         SchemaSignature {
             name: "ecs_windows".to_string(),
             specificity: 105,
             predicates: vec![
                 SchemaPredicate::FieldPresent("ecs.version".to_string()),
-                SchemaPredicate::Any(vec![
-                    SchemaPredicate::FieldPresent("winlog.channel".to_string()),
-                    SchemaPredicate::FieldPresent("winlog.event_id".to_string()),
-                    SchemaPredicate::Equals {
-                        field: "host.os.type".to_string(),
-                        value: "windows".to_string(),
-                    },
-                    SchemaPredicate::Equals {
-                        field: "os.type".to_string(),
-                        value: "windows".to_string(),
-                    },
-                ]),
+                ecs_windows_marker(),
+                SchemaPredicate::Not(Box::new(ecs_linux_marker())),
             ],
         },
-        // ECS on Linux: ECS plus a Linux marker. Aliases to `ecs`, implies
-        // `product: linux`.
+        // ECS on Linux: ECS plus a Linux marker and no Windows marker. Aliases
+        // to `ecs`, implies `product: linux`. The two platform signatures
+        // exclude each other, so they never tie at the same specificity, and
+        // an event carrying markers for both stays plain `ecs`.
         SchemaSignature {
             name: "ecs_linux".to_string(),
             specificity: 105,
             predicates: vec![
                 SchemaPredicate::FieldPresent("ecs.version".to_string()),
-                SchemaPredicate::Any(vec![
-                    SchemaPredicate::Equals {
-                        field: "host.os.type".to_string(),
-                        value: "linux".to_string(),
-                    },
-                    SchemaPredicate::Equals {
-                        field: "os.type".to_string(),
-                        value: "linux".to_string(),
-                    },
-                    SchemaPredicate::FieldPresent("host.os.kernel".to_string()),
-                ]),
+                ecs_linux_marker(),
+                SchemaPredicate::Not(Box::new(ecs_windows_marker())),
             ],
         },
         // ECS (Elastic Common Schema): `ecs.version` is the canonical marker.
@@ -746,6 +729,38 @@ fn builtin_signatures() -> Vec<SchemaSignature> {
             predicates: vec![SchemaPredicate::HasAnyField],
         },
     ]
+}
+
+/// A field only an ECS event from a Windows host carries.
+fn ecs_windows_marker() -> SchemaPredicate {
+    SchemaPredicate::Any(vec![
+        SchemaPredicate::Equals {
+            field: "host.os.type".to_string(),
+            value: "windows".to_string(),
+        },
+        SchemaPredicate::Equals {
+            field: "os.type".to_string(),
+            value: "windows".to_string(),
+        },
+        SchemaPredicate::FieldPresent("winlog.channel".to_string()),
+        SchemaPredicate::FieldPresent("winlog.event_id".to_string()),
+        SchemaPredicate::FieldPresent("winlog".to_string()),
+    ])
+}
+
+/// A field only an ECS event from a Linux host carries. `host.os.kernel` is
+/// deliberately absent: Windows and macOS hosts report a kernel version too.
+fn ecs_linux_marker() -> SchemaPredicate {
+    SchemaPredicate::Any(vec![
+        SchemaPredicate::Equals {
+            field: "host.os.type".to_string(),
+            value: "linux".to_string(),
+        },
+        SchemaPredicate::Equals {
+            field: "os.type".to_string(),
+            value: "linux".to_string(),
+        },
+    ])
 }
 
 /// Distinct built-in schema names, ordered by non-increasing specificity
@@ -2024,6 +2039,53 @@ mod tests {
                 .and_then(|l| l.product.as_deref()),
             Some("windows")
         );
+    }
+
+    /// Windows and macOS ECS events carry `host.os.kernel` too, so it must not
+    /// mark an event as Linux, and the two platform signatures must never
+    /// both match one event.
+    #[test]
+    fn ecs_platform_signatures_are_mutually_exclusive() {
+        let cls = SchemaClassifier::builtin();
+        let cases = [
+            (
+                json!({"ecs.version": "8.11.0", "winlog": {"channel": "Security"}, "host": {"os": {"kernel": "10.0.19045"}}}),
+                Some("ecs_windows"),
+            ),
+            (
+                json!({"ecs": {"version": "8.11.0"}, "winlog": {"provider_name": "Microsoft-Windows-Sysmon"}}),
+                Some("ecs_windows"),
+            ),
+            (
+                json!({"ecs.version": "8.11.0", "host.os.type": "linux", "host.os.kernel": "6.5.0"}),
+                Some("ecs_linux"),
+            ),
+            (
+                json!({"ecs.version": "8.11.0", "host.os.kernel": "6.5.0"}),
+                Some("ecs"),
+            ),
+            (
+                json!({"ecs.version": "8.11.0", "host": {"os": {"type": "macos", "kernel": "23.1.0"}}}),
+                Some("ecs"),
+            ),
+            (
+                json!({"ecs.version": "8.11.0", "winlog": {"channel": "Security"}, "host.os.type": "linux"}),
+                Some("ecs"),
+            ),
+            (
+                json!({"ecs.version": "8.11.0", "os.type": "windows", "host.os.type": "linux"}),
+                Some("ecs"),
+            ),
+        ];
+        for (event, expected) in cases {
+            let (matched, ambiguous) = cls.classify_with_ambiguity(&JsonEvent::borrow(&event));
+            assert_eq!(
+                matched.as_ref().map(|m| m.name.as_str()),
+                expected,
+                "classification of {event}"
+            );
+            assert!(!ambiguous, "{event} must not tie");
+        }
     }
 
     #[test]
