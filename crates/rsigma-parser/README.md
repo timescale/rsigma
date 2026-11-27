@@ -284,10 +284,12 @@ Correlation rules accept an optional `window` attribute that controls how `times
 
 This is an rsigma extension (a portable-spec version was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace, with the bare keys kept as aliases:
 
-- Primary: top-level `rsigma.window` / `rsigma.gap` (alongside `rsigma.suppress`, `rsigma.action`).
+- Primary: `rsigma.window` / `rsigma.gap`, either at the top level (alongside `rsigma.suppress`, `rsigma.action`) or inside the `custom_attributes:` block.
 - Alias: nested `correlation.window` / `correlation.gap`.
 
-The `rsigma.*` spelling wins when both are present. Either spelling maps to `CorrelationRule::window` (a `WindowMode` of `Sliding`/`Tumbling`/`Session`) and `CorrelationRule::gap` (an `Option<Timespan>`), so consumers read one place regardless of how the rule was written.
+The `custom_attributes:` block wins over top-level keys, and the `rsigma.*` spelling wins over the alias. Every spelling maps to `CorrelationRule::window` (a `WindowMode` of `Sliding`/`Tumbling`/`Session`) and `CorrelationRule::gap` (an `Option<Timespan>`), so consumers read one place regardless of how the rule was written.
+
+Code that changes `rsigma.window` or `rsigma.gap` in `custom_attributes` after parsing (a pipeline, an overlay, or your own code) calls `CorrelationRule::apply_window_attributes` to update `window` and `gap` from them. Switching to `sliding` or `tumbling` drops the gap; switching to `session` without a gap is an error. `rsigma_eval::apply_pipelines_to_correlation` and ruleset overlays call it for you.
 
 ## Filter Rules
 
