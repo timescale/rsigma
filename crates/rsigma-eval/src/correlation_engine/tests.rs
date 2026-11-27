@@ -5885,3 +5885,70 @@ fn test_no_event_mode_emits_no_sources() {
     assert!(a.event_sources.is_none());
     assert!(fired(&r, "correlation B").unwrap().event_sources.is_some());
 }
+
+#[test]
+fn test_chained_and_direct_correlations_share_suppression_and_reset() {
+    let detection = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+"#;
+    let direct = format!(
+        "{detection}---
+title: Direct
+correlation:
+    type: temporal
+    rules: [login-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule
+rsigma.suppress: 10m
+rsigma.action: reset
+"
+    );
+    let chained = format!(
+        "{detection}---
+title: Child
+name: child
+correlation:
+    type: temporal
+    rules: [login-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule
+---
+title: Parent
+correlation:
+    type: event_count
+    rules: [child]
+    group-by: [User]
+    timespan: 60s
+    condition:
+        gte: 1
+rsigma.suppress: 10m
+rsigma.action: reset
+"
+    );
+
+    fn fires(yaml: &str, title: &str) -> usize {
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+        let mut count = 0;
+        for ts in [100, 110, 120] {
+            let v = json!({"EventType": "login", "User": "alice"});
+            let r = engine.process_event_at(&JsonEvent::borrow(&v), ts);
+            count += r.iter().filter(|m| m.header.rule_title == title).count();
+        }
+        count
+    }
+
+    let direct_fires = fires(&direct, "Direct");
+    assert_eq!(direct_fires, 1);
+    assert_eq!(fires(&chained, "Parent"), direct_fires);
+}

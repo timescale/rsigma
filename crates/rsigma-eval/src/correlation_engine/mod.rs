@@ -84,6 +84,30 @@ struct ReportedEvents {
     event_sources: Option<Vec<EventSource>>,
 }
 
+/// The retained-entry range a firing correlation reports.
+#[derive(Debug, Clone, Copy)]
+enum ReportRange {
+    /// The group's whole window, as the event and chain paths report.
+    Window,
+    /// Only entries whose timestamps fall in `[lo, hi]`.
+    #[allow(dead_code)]
+    Between(i64, i64),
+}
+
+/// What one correlation emission reports, independent of how it fired.
+struct Emission {
+    agg_value: f64,
+    alert_ts: i64,
+    report: ReportRange,
+}
+
+/// A result built by [`CorrelationEngine::emit_fired`].
+struct Fired {
+    result: EvaluationResult,
+    corr_idx: usize,
+    retained: Option<Retained>,
+}
+
 /// Stateful correlation engine.
 ///
 /// Wraps the stateless `Engine` for detection rules and adds time-windowed
@@ -747,17 +771,23 @@ impl<L> CorrelationEngine<L> {
         // correlations that reference them.
         let mut out = self.filter_detections(all_detections, identities);
         out.extend(
-            correlations
-                .into_iter()
-                .zip(fired_indices)
-                .filter(|(_, idx)| {
-                    let corr = &self.correlations[*idx];
-                    let identities = corr.id.as_deref().into_iter().chain(corr.name.as_deref());
-                    !self.is_correlation_only(identities)
-                })
-                .map(|(result, _)| result),
+            self.visible_correlations(correlations.into_iter().zip(fired_indices).collect()),
         );
         out
+    }
+
+    /// Keep only correlation results whose rule is not correlation-only under
+    /// the current `emit_detections` configuration.
+    fn visible_correlations(&self, fired: Vec<(EvaluationResult, usize)>) -> Vec<EvaluationResult> {
+        fired
+            .into_iter()
+            .filter(|(_, idx)| {
+                let corr = &self.correlations[*idx];
+                let identities = corr.id.as_deref().into_iter().chain(corr.name.as_deref());
+                !self.is_correlation_only(identities)
+            })
+            .map(|(result, _)| result)
+            .collect()
     }
 
     /// Number of events skipped by `require_tenant` because they carried no
@@ -1079,11 +1109,6 @@ impl<L> CorrelationEngine<L> {
             timespan,
             window_mode,
             gap_secs,
-            level,
-            suppress_secs,
-            action,
-            event_mode,
-            max_events,
             retention_mode,
             retention_cap,
             max_group_entries,
@@ -1096,15 +1121,6 @@ impl<L> CorrelationEngine<L> {
             let timespan = corr.timespan_secs;
             let window_mode = corr.window_mode;
             let gap_secs = corr.gap_secs;
-            let level = corr.level;
-            let suppress_secs = corr.suppress_secs.or(self.config.suppress);
-            let action = corr.action.unwrap_or(self.config.action_on_match);
-            let event_mode = corr
-                .event_mode
-                .unwrap_or(self.config.correlation_event_mode);
-            let max_events = corr
-                .max_events
-                .unwrap_or(self.config.max_correlation_events);
             let retention_mode = self.retention[corr_idx].mode;
             let retention_cap = self.retention[corr_idx].cap;
             let max_group_entries = corr
@@ -1140,11 +1156,6 @@ impl<L> CorrelationEngine<L> {
                 timespan,
                 window_mode,
                 gap_secs,
-                level,
-                suppress_secs,
-                action,
-                event_mode,
-                max_events,
                 retention_mode,
                 retention_cap,
                 max_group_entries,
@@ -1272,61 +1283,100 @@ impl<L> CorrelationEngine<L> {
         let reference = state.latest_timestamp().map_or(ts, |latest| latest.max(ts));
 
         if let Some(agg_value) = fired {
-            let alert_key = state_key.clone();
-
-            let suppressed = suppress_secs.is_some_and(|suppress| {
-                self.last_alert
-                    .get(&alert_key)
-                    .is_some_and(|&last| suppression_active(last, reference, suppress))
-            });
-
-            if !suppressed {
-                let reported = self.reported_events(&alert_key, event_mode, max_events);
-                let retained = self.capture_retained(&alert_key);
-
-                // Only clone title/id/tags when we actually produce output
-                let corr = &self.correlations[corr_idx];
-                let result = EvaluationResult {
-                    header: RuleHeader {
-                        rule_title: corr.title.clone(),
-                        rule_id: corr.id.clone(),
-                        tenant_id: tenant.cloned(),
-                        level,
-                        tags: corr.tags.clone(),
-                        custom_attributes: corr.custom_attributes.clone(),
-                        enrichments: None,
-                        ruleset: None,
-                    },
-                    body: ResultBody::Correlation(CorrelationBody {
-                        correlation_type: corr_type,
-                        group_key: group_key.to_pairs(&corr.group_by),
-                        aggregated_value: agg_value,
-                        timespan_secs: timespan,
-                        events: reported.events,
-                        event_refs: reported.event_refs,
-                        event_sources: reported.event_sources,
-                    }),
-                };
-                out.push(result);
-
-                self.last_alert.insert(alert_key.clone(), reference);
-
-                // Action on match
-                if action == CorrelationAction::Reset {
-                    if let Some(state) = self.state.get_mut(&alert_key) {
-                        state.clear();
-                    }
-                    if let Some(buf) = self.event_buffers.get_mut(&alert_key) {
-                        buf.clear();
-                    }
-                    if let Some(buf) = self.event_ref_buffers.get_mut(&alert_key) {
-                        buf.clear();
-                    }
-                }
-                return retained;
+            let emission = Emission {
+                agg_value,
+                alert_ts: reference,
+                report: ReportRange::Window,
+            };
+            if let Some(fired) = self.emit_fired(&state_key, emission) {
+                out.push(fired.result);
+                return fired.retained;
             }
         }
         None
+    }
+
+    /// Build one correlation result, record its alert, and apply the action on
+    /// match. Returns `None` when suppression drops it.
+    ///
+    /// This is the single emission path shared by the event, chain, and
+    /// deadline paths, so suppression, retention capture, and reset behave the
+    /// same however a correlation fires.
+    fn emit_fired(&mut self, key: &StateKey, emission: Emission) -> Option<Fired> {
+        let corr_idx = key.corr_idx;
+        let corr = &self.correlations[corr_idx];
+        let suppress_secs = corr.suppress_secs.or(self.config.suppress);
+        let action = corr.action.unwrap_or(self.config.action_on_match);
+        let event_mode = corr
+            .event_mode
+            .unwrap_or(self.config.correlation_event_mode);
+        let max_events = corr
+            .max_events
+            .unwrap_or(self.config.max_correlation_events);
+        let timespan = corr.timespan_secs;
+        let corr_type = corr.correlation_type;
+
+        let suppressed = suppress_secs.is_some_and(|suppress| {
+            self.last_alert
+                .get(key)
+                .is_some_and(|&last| suppression_active(last, emission.alert_ts, suppress))
+        });
+        if suppressed {
+            return None;
+        }
+
+        let reported = match emission.report {
+            ReportRange::Window => self.reported_events(key, event_mode, max_events),
+            ReportRange::Between(lo, hi) => {
+                self.reported_events_between(key, event_mode, max_events, lo, hi)
+            }
+        };
+        let retained = self.capture_retained(key);
+
+        // Only clone title/id/tags when we actually produce output.
+        let corr = &self.correlations[corr_idx];
+        let result = EvaluationResult {
+            header: RuleHeader {
+                rule_title: corr.title.clone(),
+                rule_id: corr.id.clone(),
+                tenant_id: key.tenant.clone(),
+                level: corr.level,
+                tags: corr.tags.clone(),
+                custom_attributes: corr.custom_attributes.clone(),
+                enrichments: None,
+                ruleset: None,
+            },
+            body: ResultBody::Correlation(CorrelationBody {
+                correlation_type: corr_type,
+                group_key: key.group_key.to_pairs(&corr.group_by),
+                aggregated_value: emission.agg_value,
+                timespan_secs: timespan,
+                events: reported.events,
+                event_refs: reported.event_refs,
+                event_sources: reported.event_sources,
+            }),
+        };
+
+        self.last_alert.insert(key.clone(), emission.alert_ts);
+
+        // Action on match
+        if action == CorrelationAction::Reset {
+            if let Some(state) = self.state.get_mut(key) {
+                state.clear();
+            }
+            if let Some(buf) = self.event_buffers.get_mut(key) {
+                buf.clear();
+            }
+            if let Some(buf) = self.event_ref_buffers.get_mut(key) {
+                buf.clear();
+            }
+        }
+
+        Some(Fired {
+            result,
+            corr_idx,
+            retained,
+        })
     }
 
     /// Events or references a correlation reports for one group: the newest
@@ -1356,6 +1406,47 @@ impl<L> CorrelationEngine<L> {
                     buf.newest_refs(cap)
                 } else if let Some(buf) = self.event_buffers.get(key) {
                     buf.newest_refs(cap)
+                } else {
+                    Default::default()
+                };
+                ReportedEvents {
+                    events: None,
+                    event_refs: Some(refs),
+                    event_sources: Some(sources),
+                }
+            }
+            CorrelationEventMode::None => ReportedEvents::default(),
+        }
+    }
+
+    /// Like [`reported_events`](Self::reported_events) but keeps only the
+    /// newest `cap` entries whose timestamps fall in `[lo, hi]`.
+    fn reported_events_between(
+        &self,
+        key: &StateKey,
+        mode: CorrelationEventMode,
+        cap: usize,
+        lo: i64,
+        hi: i64,
+    ) -> ReportedEvents {
+        match mode {
+            CorrelationEventMode::Full => {
+                let (events, sources) = self
+                    .event_buffers
+                    .get(key)
+                    .map(|buf| buf.newest_events_between(cap, lo, hi))
+                    .unwrap_or_default();
+                ReportedEvents {
+                    events: Some(events),
+                    event_refs: None,
+                    event_sources: Some(sources),
+                }
+            }
+            CorrelationEventMode::Refs => {
+                let (refs, sources) = if let Some(buf) = self.event_ref_buffers.get(key) {
+                    buf.newest_refs_between(cap, lo, hi)
+                } else if let Some(buf) = self.event_buffers.get(key) {
+                    buf.newest_refs_between(cap, lo, hi)
                 } else {
                     Default::default()
                 };
@@ -1609,19 +1700,7 @@ impl<L> CorrelationEngine<L> {
             let mut next_pending = Vec::new();
             let mut next_retained = Vec::new();
             for (corr_idx, group_key_pairs, fired_ref, tenant, slot) in work {
-                let (
-                    corr_type,
-                    timespan,
-                    window_mode,
-                    gap_secs,
-                    level,
-                    suppress_secs,
-                    action,
-                    event_mode,
-                    max_events,
-                    max_group_entries,
-                    group_key,
-                ) = {
+                let (corr_type, timespan, window_mode, gap_secs, max_group_entries, group_key) = {
                     let corr = &self.correlations[corr_idx];
                     let Some(group_key) = GroupKey::from_pairs(&group_key_pairs, &corr.group_by)
                     else {
@@ -1632,13 +1711,6 @@ impl<L> CorrelationEngine<L> {
                         corr.timespan_secs,
                         corr.window_mode,
                         corr.gap_secs,
-                        corr.level,
-                        corr.suppress_secs.or(self.config.suppress),
-                        corr.action.unwrap_or(self.config.action_on_match),
-                        corr.event_mode
-                            .unwrap_or(self.config.correlation_event_mode),
-                        corr.max_events
-                            .unwrap_or(self.config.max_correlation_events),
                         corr.max_group_entries
                             .or(self.config.max_group_entries)
                             .unwrap_or_else(|| default_group_cap(corr)),
@@ -1723,61 +1795,22 @@ impl<L> CorrelationEngine<L> {
                 }
 
                 if let Some(agg_value) = fired {
-                    let alert_key = state_key;
-                    let suppressed = suppress_secs.is_some_and(|suppress| {
-                        self.last_alert
-                            .get(&alert_key)
-                            .is_some_and(|&last| suppression_active(last, reference, suppress))
-                    });
-                    if suppressed {
+                    let emission = Emission {
+                        agg_value,
+                        alert_ts: reference,
+                        report: ReportRange::Window,
+                    };
+                    let fired_group_key = group_key.to_pairs(&self.correlations[corr_idx].group_by);
+                    let Some(fired) = self.emit_fired(&state_key, emission) else {
                         continue;
-                    }
-
-                    let reported = self.reported_events(&alert_key, event_mode, max_events);
-                    let next_slot = self.capture_retained(&alert_key).map(|entries| {
+                    };
+                    let next_slot = fired.retained.map(|entries| {
                         next_retained.push((entries, self.retention[corr_idx].stable_id.clone()));
                         next_retained.len() - 1
                     });
-
-                    let corr = &self.correlations[corr_idx];
-                    let fired_group_key = group_key.to_pairs(&corr.group_by);
-                    let result = EvaluationResult {
-                        header: RuleHeader {
-                            rule_title: corr.title.clone(),
-                            rule_id: corr.id.clone(),
-                            tenant_id: tenant.clone(),
-                            level,
-                            tags: corr.tags.clone(),
-                            custom_attributes: corr.custom_attributes.clone(),
-                            enrichments: None,
-                            ruleset: None,
-                        },
-                        body: ResultBody::Correlation(CorrelationBody {
-                            correlation_type: corr_type,
-                            group_key: fired_group_key.clone(),
-                            aggregated_value: agg_value,
-                            timespan_secs: timespan,
-                            events: reported.events,
-                            event_refs: reported.event_refs,
-                            event_sources: reported.event_sources,
-                        }),
-                    };
-                    next_pending.push((corr_idx, fired_group_key, tenant.clone(), next_slot));
-                    out.push(result);
-                    out_indices.push(corr_idx);
-                    self.last_alert.insert(alert_key.clone(), reference);
-
-                    if action == CorrelationAction::Reset {
-                        if let Some(state) = self.state.get_mut(&alert_key) {
-                            state.clear();
-                        }
-                        if let Some(buf) = self.event_buffers.get_mut(&alert_key) {
-                            buf.clear();
-                        }
-                        if let Some(buf) = self.event_ref_buffers.get_mut(&alert_key) {
-                            buf.clear();
-                        }
-                    }
+                    next_pending.push((fired.corr_idx, fired_group_key, tenant.clone(), next_slot));
+                    out.push(fired.result);
+                    out_indices.push(fired.corr_idx);
                 }
             }
 
