@@ -401,6 +401,10 @@ fn apply_to_candidate(
             apply_append(name, origin, &mut meta, patch, &mut appended_keys)?;
         }
     }
+    if let CandidateDoc::Correlation(rule) = &mut candidate.doc {
+        rule.apply_window_attributes()
+            .map_err(|e| overlay_error(name, origin, e))?;
+    }
     validate_touched(name, origin, &candidate.doc, &set_keys, &appended_keys)?;
     Ok((set_keys, appended_keys))
 }
@@ -726,6 +730,7 @@ fn validate_expanded(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WindowMode;
     use crate::ruleset::ResolvedRuleset;
     use crate::ruleset::source::RuleOrigin;
     use crate::ruleset::spec::RuleSelector;
@@ -1278,6 +1283,46 @@ mod tests {
         let error =
             resolve_with("test", &spec, vec![detection("base"), correlation("c")]).unwrap_err();
         assert!(error.to_string().contains("must use 'events'"), "{error}");
+    }
+
+    fn window_patch(attributes: &[(&str, &str)]) -> OverlayPatch {
+        OverlayPatch {
+            custom_attributes: Some(
+                attributes
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+                    .collect(),
+            ),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn window_attributes_set_the_correlation_window() {
+        let patch = window_patch(&[("rsigma.window", "session"), ("rsigma.gap", "1m")]);
+        let spec = spec_with_overlays(vec![inline("c", Some(patch), None)]);
+        let resolved =
+            resolve_with("test", &spec, vec![detection("base"), correlation("c")]).unwrap();
+        let corr = &resolved.collection.correlations[0];
+        assert_eq!(corr.window, WindowMode::Session);
+        assert_eq!(corr.gap.as_ref().map(|g| g.seconds), Some(60));
+
+        let emitted = crate::emit_correlation_yaml(corr);
+        let reparsed = crate::parse_sigma_yaml(&emitted).unwrap();
+        assert_eq!(
+            reparsed.correlations[0].window,
+            WindowMode::Session,
+            "{emitted}"
+        );
+    }
+
+    #[test]
+    fn window_attributes_without_a_session_gap_fail_the_overlay() {
+        let patch = window_patch(&[("rsigma.window", "session")]);
+        let spec = spec_with_overlays(vec![inline("c", Some(patch), None)]);
+        let error =
+            resolve_with("test", &spec, vec![detection("base"), correlation("c")]).unwrap_err();
+        assert!(error.to_string().contains("requires a gap"), "{error}");
     }
 
     #[test]
