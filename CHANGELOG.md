@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Rule partitioning keeps every rule an event can match, and prefilters apply under schema routing
+### Rule partitioning keeps every rule an event can match, and prefilters apply under schema routing (#801)
 
 Per-schema rule partitioning (`--schema-partition-rules`) compiles each platform-locked pipeline-set with only the rules for its schemas' products. An event whose resolved product fell outside that set missed the removed rules, although the full rule set would have evaluated them: an event whose own `product` field contradicts its schema, and an event whose schema tied with one implying a different logsource. Such events are now also evaluated against the removed rules, compiled for that set the first time an event needs them from one shared copy of the parsed rules. With `--logsource-routing`, partitioning no longer changes any result.
 
@@ -21,12 +21,6 @@ Three optimizations could drop a rule that would have matched. The cross-rule Ah
 The bloom prefilter (`--bloom-prefilter`) gave a field it had deliberately left unfiltered (a needle shorter than three bytes, or eviction by the memory budget) a new filter built from only the next rule added with `add_rule`, so earlier rules on that field were short-circuited. Such a field now stays unfiltered until the next full rebuild.
 
 With `--logsource-routing` and schema routing, Windows ECS events that carry `host.os.kernel` tied between `ecs_windows` and `ecs_linux`, and the name tie-break labelled them Linux, pruning every Windows rule. `host.os.kernel` is no longer a Linux marker, and the two signatures exclude each other, so an ECS event with markers for both platforms or for neither (a macOS host, for example) is plain `ecs` and implies no product. More generally, when an event's winning schema ties at its specificity with a schema that implies a different logsource, the router now evaluates it without the schema-derived logsource and counts it in the new `rsigma_events_ambiguous_logsource_total` daemon counter (`SchemaRouter::logsource_ambiguous_total` in the library).
-
-Product partitioning (`--schema-partition-rules`) removed a pipeline set's rules for products none of its schemas imply, which also dropped them for events that carry a contradicting `product` and for ambiguous events whose tie is won by a schema of another set. Each partitioned set now keeps the removed rules aside and compiles them into a second engine the first time such an event arrives, so partitioning no longer changes results under logsource routing and only the ambiguous case pays for it without.
-
-Under schema routing, `--bloom-prefilter`, `--bloom-max-bytes`, and `--cross-rule-ac` were accepted but never applied to the per-schema engines. They now reach every engine the router builds, through the new `SchemaRouter::set_bloom_prefilter`, `set_bloom_max_bytes`, and `set_cross_rule_ac` setters. The number of fields the cross-rule prefilter left without an automaton is exported as the `rsigma_cross_rule_ac_unindexed_fields` daemon gauge.
-
-The bloom prefilter derived its probe positions by double hashing, whose correlated positions gave the small filters most fields get a false-positive rate more than an order of magnitude above the sizing target. Each probe now gets an independent position, which brings the observed rate back to the target without changing which events match.
 
 ### Deeply nested input no longer overflows the stack (#797)
 
