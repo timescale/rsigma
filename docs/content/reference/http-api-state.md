@@ -112,7 +112,7 @@ curl -sS http://127.0.0.1:9090/api/v1/incidents
   "count": 1,
   "incidents": [
     {
-      "incident_id": "f8bcd62a829b1126",
+      "incident_id": "6112491905cfd189ee15d93938676ee0",
       "state": "open",
       "trigger": "snapshot",
       "first_seen": 1719412800,
@@ -141,7 +141,7 @@ Two fields appear only on snapshots, never on emitted incidents:
 One open incident, in the same shape as a list entry. Returns `404` when the id is unknown, which includes an incident that has already resolved and been evicted, and `503` when the alert pipeline has no `group` block.
 
 ```bash
-curl -sS http://127.0.0.1:9090/api/v1/incidents/f8bcd62a829b1126
+curl -sS http://127.0.0.1:9090/api/v1/incidents/6112491905cfd189ee15d93938676ee0
 ```
 
 ### `GET /api/v1/incidents/{id}/bundle`
@@ -153,8 +153,8 @@ A self-contained incident report: the incident joined to the [ADS](../guide/dete
 | `format` | `json`, `markdown` (`md`) | `json` | The rendering. JSON is served as `application/json`, Markdown as `text/markdown; charset=utf-8`. |
 
 ```bash
-curl -sS http://127.0.0.1:9090/api/v1/incidents/f8bcd62a829b1126/bundle
-curl -sS 'http://127.0.0.1:9090/api/v1/incidents/f8bcd62a829b1126/bundle?format=markdown'
+curl -sS http://127.0.0.1:9090/api/v1/incidents/6112491905cfd189ee15d93938676ee0/bundle
+curl -sS 'http://127.0.0.1:9090/api/v1/incidents/6112491905cfd189ee15d93938676ee0/bundle?format=markdown'
 ```
 
 ```json
@@ -162,7 +162,7 @@ curl -sS 'http://127.0.0.1:9090/api/v1/incidents/f8bcd62a829b1126/bundle?format=
   "schema_version": 1,
   "generated_at": "2026-07-26T12:00:00Z",
   "sources": {"rules": true, "risk": true},
-  "incident": { "incident_id": "f8bcd62a829b1126", "...": "as above" },
+  "incident": { "incident_id": "6112491905cfd189ee15d93938676ee0", "...": "as above" },
   "rules": [
     {
       "key": "rule-1",

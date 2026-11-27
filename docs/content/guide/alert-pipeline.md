@@ -94,7 +94,7 @@ With tenancy enabled, dedup, incidents, inhibition, and silences are keyed per t
 
 Deduplication collapses repeated firings of the same logical alert into a single active alert, modeled on Alertmanager's dedup behavior rather than a silent drop.
 
-Each in-scope result is reduced to a **fingerprint**: the rule identity plus the configured selector values. The first fire for a fingerprint passes through unchanged and opens an *active alert*. Subsequent fires within the window **fold** into that alert, incrementing its fire count and `last_seen`, instead of being emitted again. A periodic tick then:
+Each in-scope result is reduced to a **fingerprint**: the tenant, the rule identity, and the configured selector values (see [Alert and incident identity](#alert-and-incident-identity)). The first fire for a fingerprint passes through unchanged and opens an *active alert*. Subsequent fires within the window **fold** into that alert, incrementing its fire count and `last_seen`, instead of being emitted again. A periodic tick then:
 
 - re-emits a still-active alert every `repeat_interval`, carrying the accumulated fire count (set `repeat_interval: 0` for pure suppression with no re-emits), and
 - emits a final `resolved` record once `resolve_timeout` elapses with no further fires, and evicts the alert.
@@ -121,7 +121,7 @@ dedup:
 |-----|---------|-------------|
 | `strip_event` | `false` | Retain the event for selector resolution, then drop raw event payloads (detection `event`, correlation `events`/`event_refs` and their `event_sources`) before sink delivery. {{ added "0.28.0" }} |
 | `scope.rules`/`scope.tags`/`scope.levels` | empty | Restrict which results the layer acts on. Out-of-scope results pass through untouched. Same syntax as the enrichers `scope`. |
-| `dedup.fingerprint` | required | Selectors hashed (with the rule identity) into the fingerprint. At least one is required when `dedup` is set. |
+| `dedup.fingerprint` | required | Selectors that, with the tenant and the rule identity, make up the fingerprint. At least one is required when `dedup` is set. |
 | `dedup.repeat_interval` | `0` | Re-emit cadence for a still-active alert (humantime, e.g. `1h`). `0` means pure suppression. |
 | `dedup.resolve_timeout` | `1h` | Idle timeout after which an active alert resolves and is evicted (humantime). |
 | `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. The `rsigma_dedup_store_entries` gauge plateauing at this value signals saturation. |
@@ -143,7 +143,20 @@ The fingerprint is built from selectors over the `EvaluationResult` namespace:
 | `enrichment.<path>` | a dotted path into `enrichments` (so [enrichers](enrichers.md) can supply fingerprint fields) |
 | `correlation.group_key.<field>` | a group-by value (correlation results only) |
 
-A selector that resolves to nothing contributes an explicit null marker to the fingerprint. A malformed selector rejects the daemon at startup with an error naming the offending selector.
+A selector that resolves to nothing is kept apart from every resolved value, including JSON `null`. A malformed selector rejects the daemon at startup with an error naming the offending selector.
+
+### Alert and incident identity
+
+{{ added "unreleased" }}
+
+A dedup alert and a `group_by` incident each have an exact identity. For an alert it is the tenant, the rule, and the value of every `dedup.fingerprint` selector; for an incident it is the tenant and the value of every `group.by` selector. Two results share an alert or an incident only when every part is equal:
+
+- Values compare by type and content: the string `"123"` and the number `123`, the string `"true"` and `true`, and the string `"null"` and JSON `null` are all different values. Objects compare regardless of key order.
+- A selector that resolves to nothing is different from every value, including JSON `null` and the empty string.
+- A rule with an id is identified by that id, and a rule without one by its title, so a rule id never matches another rule's title.
+- No value can spill into the next selector, whatever characters it contains.
+
+The `dedup_fingerprint` on summary records and the `incident_id` of a `group_by` incident are short display ids derived from that identity: the first 128 bits of its SHA-256 digest, as 32 lowercase hex characters. The same identity gets the same id across restarts and re-emissions. If another active alert or open incident already holds that id, the next candidate is used instead, so an id never names two live alerts or two open incidents. Capture uses the same ids, and a captured incident starts a new generation whenever a different identity arrives under its id.
 
 ### Retained events and `strip_event`
 
@@ -167,9 +180,9 @@ Dedup here is a sink-path stage that applies to detection and correlation result
 
 When the daemon runs with `--state-db <PATH>`, the alert pipeline's state is persisted to the SQLite store alongside the correlation snapshot, in its own `rsigma_alert_pipeline_state` table. The snapshot carries the active dedup alerts, open incidents, the dynamic (API) silences, and the inhibition active-source index; static silences come from config and are re-seeded on boot. It is written periodically (`--state-save-interval`) and on graceful shutdown, and restored on boot.
 
-Restore is window-aware: dedup alerts past `resolve_timeout`, incidents past their `resolve_timeout`, silences past `ends_at`, and inhibition sources past their rule's `duration` are dropped during restore, so stale state never lingers. Deterministic `group_by` incident ids are preserved across the restart.
+Restore is window-aware: dedup alerts past `resolve_timeout`, incidents past their `resolve_timeout`, silences past `ends_at`, and inhibition sources past their rule's `duration` are dropped during restore, so stale state never lingers. Dedup fingerprints and `group_by` incident ids are preserved across the restart. The snapshot stores each alert's and incident's identity; for a snapshot written before identities were stored, restore rebuilds them from the stored selector values, and the restored alerts and incidents keep their earlier 16-character ids until they resolve. {{ added "unreleased" }}
 
-Restore and hot-reload also enforce the configured caps, so lowering one takes effect at once instead of when the excess ages out. {{ added "0.25.0" }} Beyond `dedup.max_active_alerts`, `group.caps.max_open_incidents`, or `max_inhibit_sources`, the least recently seen alerts, incidents, or inhibition sources are evicted (alerts and incidents without a `resolved` record), and each remaining incident is cut to `max_results_per_incident` samples and `max_entities_per_incident` values per selector. The daemon logs a warning with the eviction counts. A snapshot whose version does not match the current build is ignored with a warning (the daemon starts fresh). `--clear-state` skips the restore (and `--keep-state` forces it), matching the correlation-state flags.
+Restore and hot-reload also enforce the configured caps, so lowering one takes effect at once instead of when the excess ages out. {{ added "0.25.0" }} Beyond `dedup.max_active_alerts`, `group.caps.max_open_incidents`, or `max_inhibit_sources`, the least recently seen alerts, incidents, or inhibition sources are evicted (alerts and incidents without a `resolved` record), and each remaining incident is cut to `max_results_per_incident` samples and `max_entities_per_incident` values per selector. The daemon logs a warning with the eviction counts. A snapshot written by a newer release is ignored with a warning (the daemon starts fresh). `--clear-state` skips the restore (and `--keep-state` forces it), matching the correlation-state flags.
 
 ## Grouping
 
@@ -177,8 +190,8 @@ Grouping collapses related results into incidents and emits a higher-level `Inci
 
 Two modes:
 
-- `group_by` (default): group by equality on an ordered selector list. The `incident_id` is a deterministic fingerprint of the `(selector -> value)` pairs, so the same logical incident keeps one id across restarts and re-emissions. The rule identity is deliberately excluded from the key, so an incident can span rules that share the group value.
-- `entity_graph` (opt-in): union-find over `(selector, value)` entity pairs. A result joins (and merges) any open incident that shares an entity value, and the `incident_id` is a surrogate UUID. This mode is prone to the *giant-component* failure, where one common value (a domain controller, a shared service account, an egress NAT IP) transitively merges unrelated incidents. It ships with mandatory guards: a `stop_values` list of non-joinable values and a per-value `max_value_cardinality` ceiling above which a value stops acting as a join key (both surfaced on `rsigma_incident_overmerge_total`).
+- `group_by` (default): group by equality on an ordered selector list. The `incident_id` is derived from the tenant and the `(selector -> value)` pairs (see [Alert and incident identity](#alert-and-incident-identity)), so the same logical incident keeps one id across restarts and re-emissions. The rule identity is deliberately excluded from the key, so an incident can span rules that share the group value.
+- `entity_graph` (opt-in): union-find over `(selector, value)` entity pairs. A result joins (and merges) any open incident that shares an entity value, and the `incident_id` is a surrogate UUID. A selector that resolves to nothing or to JSON `null` contributes no entity. This mode is prone to the *giant-component* failure, where one common value (a domain controller, a shared service account, an egress NAT IP) transitively merges unrelated incidents. It ships with mandatory guards: a `stop_values` list of non-joinable values and a per-value `max_value_cardinality` ceiling above which a value stops acting as a join key (both surfaced on `rsigma_incident_overmerge_total`).
 
 ### Timers
 
@@ -226,7 +239,7 @@ Open incidents are also readable at `GET /api/v1/incidents`, and one at a time a
 An incident names the rules that contributed to it by key and counts them, which is enough to route and dedupe but not enough to act on: nothing in it says what those rules look for, how confident they are, or which entities were already accumulating risk. A **bundle** answers that. It is the incident joined to the [ADS](detection-strategy.md) documentation of every contributing rule and the [risk entities](risk-based-alerting.md) it overlaps, rendered as one self-contained JSON document or Markdown report.
 
 ```bash
-rsigma engine incidents export f8bcd62a829b1126 --bundle-format markdown -o incident.md
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0 --bundle-format markdown -o incident.md
 ```
 
 Because the join happens at read time against the currently loaded rule set, each rule in a bundle also reports how its key resolved: `unique`, `ambiguous` when several loaded rules carry that key with differing documentation, or `missing` when the rule set changed while the incident was open. A rule the bundle could not document is reported with that status instead of being dropped.

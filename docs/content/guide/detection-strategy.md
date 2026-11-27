@@ -106,7 +106,7 @@ It exits 1 when any rule whose status is enforced is below the bar, and `--missi
 ADS content written for review is worth more when it reaches the person handling the alert. An [incident bundle](alert-pipeline.md#incident-bundles) carries the same nine sections for every rule that contributed to an incident, resolved from the rules the daemon currently has loaded, so the response plan and the blind spots arrive with the incident rather than waiting to be looked up:
 
 ```bash
-rsigma engine incidents export f8bcd62a829b1126 --bundle-format markdown
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0 --bundle-format markdown
 ```
 
 Each contributing rule in the bundle reports how its key resolved (`unique`, `ambiguous`, or `missing`) against that loaded set, so a ruleset change while an incident was open does not silently drop documentation.

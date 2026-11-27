@@ -237,7 +237,9 @@ Logical tenancy isolates detections, correlation state, incidents, risk entities
 
 The model fails closed. With tenancy enabled, the daemon refuses to start without bearer-token auth, refuses anonymous requests, and refuses a token that declares neither `tenant` nor `all_tenants: true`. Every pull source must carry a tenant, and an `all_tenants` token cannot ingest because it has no tenant to bind. A shared untenanted correlation bucket cannot form: the engine skips untenanted events and counts them.
 
-Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture identities. Hashes change only for tenanted results; with tenancy off every hash, id, and snapshot entry is exactly what it was before.
+Every stateful key includes the tenant: correlation windows, dedup fingerprints, incident ids and entity join keys, inhibition sources, silences, risk entities, disposition buckets, and capture identities.
+
+Stateful keys compare exact values, not digests. Dedup alerts and `group_by` incidents are keyed on the full tenant, rule, and selector values, and their short ids are SHA-256 display ids that never name two live alerts or incidents; the HTTP enrichment cache keys on the exact request. Composite keys built from several caller-controlled values (inhibition `equal` values, multi-field `value_count` keys, disposition idempotency keys, and capture bundle identities) are encoded so that no value can spill into the next. {{ added "unreleased" }}
 
 API routes have tenancy classes. Tenant tokens get `403` on operator-only routes (`/metrics`, `/api/v1/status`, field and schema observers, dynamic sources, watchlists, STIX sources, reload). A resource id owned by another tenant is `404`, not `403`, so ids do not leak existence.
 

@@ -4,6 +4,18 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Alerts, incidents, and other stateful keys merge only on equal identities
+
+The dedup store, the `group_by` incident store, and the capture ring keyed on a 64-bit FNV-1a digest of a delimiter-joined string. Results merged into one alert, one incident, and one capture generation when their digests collided, and also whenever their strings matched: a selector value containing the separator could shift text into the next selector, an absent selector matched the string `"\u0000null"`, JSON `null` matched `"null"`, and `123` matched `"123"`. A collision could fold away an alert or put two tenants' results in one incident.
+
+Both stores now key on the exact identity: the tenant, the rule (dedup only), and every selector with its typed value. An absent selector, `null`, `"null"`, `123`, and `"123"` are all different values, objects compare regardless of key order, and a rule id never matches another rule's title. `dedup_fingerprint` and the `group_by` `incident_id` become 32-character display ids, the first 128 bits of SHA-256 over the identity; when another live alert or incident holds an id, the next candidate is used, so an id never names two. Capture reuses the ids the stores assign and starts a new generation when a different identity or tenant arrives under a held id.
+
+Alert-pipeline snapshots move to version 3 and store each identity. Snapshots from earlier releases still restore: dedup alerts and `group_by` incidents have their identities rebuilt from their stored values and keep their 16-character ids until they resolve.
+
+Several other keys built from caller-controlled values could also run fields together. An inhibition `equal` value containing the separator could make a target match a source with different values and be muted. A multi-field `value_count` could count two distinct tuples as one. A disposition field could make two different dispositions share an idempotency key, so the second was dropped as a duplicate, or share a capture bundle. These keys now switch to a length-prefixed form when a value contains the separator, and keep their earlier form otherwise, so persisted state still matches. In `entity_graph` grouping, a JSON `null` no longer acts as a join value, so results with a null entity field stop merging into one incident. The HTTP enricher's response cache keyed on 64-bit hashes of the body and headers; it now keys on the exact request.
+
+**Breaking changes:** `group_fingerprint` is replaced by `IdentityKey::group`, `IncidentStore::can_assign` takes an `IdentityKey`, `AdmittedEvent` gains `incident_key`, and `CacheKey` replaces `body_hash` and `headers_hash` with `body` and `headers`. Alert-pipeline snapshots move to version 3, which older releases cannot read.
+
 ### Correlation windows and suppression stay correct with far-future and out-of-order timestamps (#802)
 
 Correlation window state was kept in arrival order and expired only from the front, so one event with a far-future timestamp stopped every later entry from expiring: a sliding window grew without limit and kept firing, a tumbling window treated current events as late, a session stayed open, and an alert fired by such an event suppressed its group until the clock caught up. Any out-of-order arrival had milder versions of the same effects, and a temporal correlation could match hits further apart than its `timespan`.
