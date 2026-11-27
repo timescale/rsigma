@@ -114,11 +114,15 @@ pub fn disposition_identity(
         Some(tenant) => format!("tenant={}\u{1f}", tenant.as_str()),
         None => String::new(),
     };
-    format!(
-        "{prefix}{scope}\u{1}{verdict}\u{1}{}\u{1}{}\u{1}{}",
-        incident_id.unwrap_or(""),
-        fingerprint.unwrap_or(""),
-        rule_id.unwrap_or(""),
+    crate::dispositions::record::join_identity(
+        &prefix,
+        scope,
+        &[
+            verdict,
+            incident_id.unwrap_or(""),
+            fingerprint.unwrap_or(""),
+            rule_id.unwrap_or(""),
+        ],
     )
 }
 
@@ -268,6 +272,33 @@ mod tests {
         assert_eq!(
             parse_corpus_events(b"{\"user\":\"a\"}\n").unwrap(),
             vec![serde_json::json!({"user": "a"})]
+        );
+    }
+
+    #[test]
+    fn disposition_identity_keeps_fields_apart() {
+        assert_eq!(
+            disposition_identity(None, "incident", "true_positive", Some("inc"), None, None),
+            "incident\u{1}true_positive\u{1}inc\u{1}\u{1}",
+            "identities without a separator keep their form, so bundle ids are unchanged"
+        );
+        assert_ne!(
+            disposition_identity(
+                None,
+                "detection",
+                "false_positive",
+                Some("i\u{1}f"),
+                None,
+                Some("r")
+            ),
+            disposition_identity(
+                None,
+                "detection",
+                "false_positive",
+                Some("i"),
+                Some("f"),
+                Some("r")
+            ),
         );
     }
 

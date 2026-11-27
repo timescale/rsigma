@@ -214,18 +214,46 @@ impl Disposition {
             None => String::new(),
         };
         if let Some(id) = self.fingerprint.as_deref().or(self.incident_id.as_deref()) {
-            format!(
-                "{prefix}id\u{1}{id}\u{1}{}\u{1}{rule}",
-                self.verdict.as_str()
-            )
+            join_identity(&prefix, "id", &[id, self.verdict.as_str(), rule])
         } else {
-            format!(
-                "{prefix}rt\u{1}{rule}\u{1}{}\u{1}{}",
-                self.timestamp,
-                self.analyst.as_deref().unwrap_or(""),
+            join_identity(
+                &prefix,
+                "rt",
+                &[
+                    rule,
+                    &self.timestamp.to_string(),
+                    self.analyst.as_deref().unwrap_or(""),
+                ],
             )
         }
     }
+}
+
+/// `prefix`, then `head`, then each field after a `\u{1}`.
+///
+/// When `head` or a field contains `\u{1}`, that join could shift text from
+/// one field into the next, so the result is instead `prefix`, `n + 2`
+/// separators, and `head` and each field as `<byte length>:<part>`. A plain
+/// join holds exactly `n` separators (`prefix` holds none) and a
+/// length-prefixed one at least `n + 3`, so the two forms never meet, and plain
+/// keys already persisted stay valid.
+pub(crate) fn join_identity(prefix: &str, head: &str, fields: &[&str]) -> String {
+    let mut out = String::from(prefix);
+    if head.contains('\u{1}') || fields.iter().any(|f| f.contains('\u{1}')) {
+        out.extend(std::iter::repeat_n('\u{1}', fields.len() + 2));
+        for part in std::iter::once(head).chain(fields.iter().copied()) {
+            out.push_str(&part.len().to_string());
+            out.push(':');
+            out.push_str(part);
+        }
+    } else {
+        out.push_str(head);
+        for field in fields {
+            out.push('\u{1}');
+            out.push_str(field);
+        }
+    }
+    out
 }
 
 /// Parse an RFC 3339 timestamp into epoch seconds.
@@ -412,6 +440,63 @@ mod tests {
             Disposition::from_raw(raw(r#"{"rule_id": "r", "verdict": "false_positive"}"#), 5)
                 .unwrap();
         assert!(no_id.dedup_key().contains("\u{1}5\u{1}"));
+    }
+
+    #[test]
+    fn dedup_keys_without_a_separator_keep_their_persisted_form() {
+        let with_fp = Disposition::from_raw(
+            raw(r#"{"rule_id": "r", "verdict": "false_positive", "fingerprint": "fp1", "tenant": "t"}"#),
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            with_fp.dedup_key(),
+            "tenant=t\u{1f}id\u{1}fp1\u{1}false_positive\u{1}r"
+        );
+        let no_id = Disposition::from_raw(
+            raw(r#"{"rule_id": "r", "verdict": "false_positive", "analyst": "a"}"#),
+            5,
+        )
+        .unwrap();
+        assert_eq!(no_id.dedup_key(), "rt\u{1}r\u{1}5\u{1}a");
+    }
+
+    #[test]
+    fn a_separator_inside_a_field_cannot_shift_dedup_key_fields() {
+        let key = |json: &str| Disposition::from_raw(raw(json), 1).unwrap().dedup_key();
+        assert_ne!(
+            key(
+                r#"{"rule_id": "s", "verdict": "true_positive", "fingerprint": "x\u0001false_positive\u0001r"}"#
+            ),
+            key(
+                r#"{"rule_id": "r\u0001true_positive\u0001s", "verdict": "false_positive", "fingerprint": "x"}"#
+            ),
+        );
+        assert_ne!(
+            key(
+                r#"{"rule_id": "r\u00011\u0001x", "verdict": "true_positive", "timestamp": "1970-01-01T00:00:02Z"}"#
+            ),
+            key(
+                r#"{"rule_id": "r", "verdict": "true_positive", "analyst": "x\u00012\u0001", "timestamp": "1970-01-01T00:00:01Z"}"#
+            ),
+        );
+    }
+
+    #[test]
+    fn join_identity_forms_never_meet() {
+        assert_eq!(join_identity("", "h", &["a", "b"]), "h\u{1}a\u{1}b");
+        assert_eq!(
+            join_identity("", "h", &["a\u{1}", "b"]),
+            "\u{1}\u{1}\u{1}\u{1}1:h2:a\u{1}1:b"
+        );
+        assert_ne!(
+            join_identity("", "h", &["a\u{1}", "b"]),
+            join_identity("", "h", &["a", "\u{1}b"])
+        );
+        assert_ne!(
+            join_identity("", "h\u{1}a", &["b"]),
+            join_identity("", "h", &["a\u{1}b"])
+        );
     }
 
     #[test]
