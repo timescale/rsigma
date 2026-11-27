@@ -36,6 +36,14 @@ use crate::error::{ConvertError, Result};
 
 pub use lucene::{LUCENE_DIALECT, LuceneFrontend};
 
+/// Longest query, in bytes, that [`reverse_collection`] converts.
+pub const MAX_REVERSE_QUERY_LEN: usize = 64 * 1024;
+
+/// Deepest nesting the boolean parser accepts. Each parenthesis and each
+/// `NOT`, `!`, or `-` prefix adds a level, and a `field:(...)` value group
+/// counts as one level for the parser that reads its values.
+pub const MAX_REVERSE_QUERY_DEPTH: usize = 64;
+
 // =============================================================================
 // Dialect
 // =============================================================================
@@ -203,7 +211,7 @@ pub trait Frontend {
     fn parse_query(&self, query: &str, ctx: &ReverseCtx) -> Result<IrRule> {
         let dialect = self.dialect();
         let tokens = tokenize(dialect, query)?;
-        let tree = parse_boolean(dialect, tokens)?;
+        let tree = parse_boolean(dialect, tokens, 0)?;
         let mut expand = |atom: String| self.parse_atom(&atom, ctx);
         let resolved = tree.expand(&mut expand)?;
         assemble_rule(resolved, ctx)
@@ -227,6 +235,12 @@ pub fn reverse_collection(
 }
 
 fn convert_one(frontend: &dyn Frontend, query: &str, ctx: &ReverseCtx) -> Result<ReverseResult> {
+    if query.len() > MAX_REVERSE_QUERY_LEN {
+        return Err(ConvertError::QueryParse(format!(
+            "query is {} bytes; maximum is {MAX_REVERSE_QUERY_LEN}",
+            query.len()
+        )));
+    }
     if [&ctx.category, &ctx.product, &ctx.service]
         .into_iter()
         .all(|value| value.as_deref().is_none_or(str::is_empty))
@@ -474,13 +488,21 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     pos: usize,
     dialect: &'a QueryDialect,
+    depth: usize,
 }
 
-fn parse_boolean(dialect: &QueryDialect, tokens: Vec<Token>) -> Result<QueryExpr<String>> {
+/// Parse `tokens` into a boolean tree. `depth` is the nesting level the
+/// tokens start at.
+fn parse_boolean(
+    dialect: &QueryDialect,
+    tokens: Vec<Token>,
+    depth: usize,
+) -> Result<QueryExpr<String>> {
     let mut parser = Parser {
         tokens,
         pos: 0,
         dialect,
+        depth,
     };
     let expr = parser.parse_or()?;
     if parser.pos != parser.tokens.len() {
@@ -533,10 +555,23 @@ impl Parser<'_> {
         Ok(collapse(QueryExpr::And, nodes))
     }
 
+    fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.depth >= MAX_REVERSE_QUERY_DEPTH {
+            return Err(ConvertError::QueryParse(format!(
+                "query nesting exceeds maximum depth ({MAX_REVERSE_QUERY_DEPTH})"
+            )));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
+    }
+
     fn parse_not(&mut self) -> Result<QueryExpr<String>> {
         if matches!(self.peek(), Some(Token::Not)) {
             self.pos += 1;
-            Ok(QueryExpr::Not(Box::new(self.parse_not()?)))
+            let inner = self.nested(Self::parse_not)?;
+            Ok(QueryExpr::Not(Box::new(inner)))
         } else {
             self.parse_primary()
         }
@@ -546,7 +581,7 @@ impl Parser<'_> {
         match self.peek() {
             Some(Token::LParen) => {
                 self.pos += 1;
-                let inner = self.parse_or()?;
+                let inner = self.nested(Self::parse_or)?;
                 match self.peek() {
                     Some(Token::RParen) => {
                         self.pos += 1;
@@ -895,6 +930,47 @@ mod tests {
         let out = yaml("EventID:1 AND NOT User:SYSTEM");
         assert!(out.contains("filter:"), "{out}");
         assert!(out.contains("condition: selection and not filter"), "{out}");
+    }
+
+    fn is_depth_error(query: &str) -> bool {
+        matches!(
+            convert_one(&LuceneFrontend, query, &ctx()),
+            Err(ConvertError::QueryParse(msg)) if msg.contains("maximum depth")
+        )
+    }
+
+    fn parens(n: usize, inner: &str) -> String {
+        format!("{}{inner}{}", "(".repeat(n), ")".repeat(n))
+    }
+
+    #[test]
+    fn parentheses_and_not_prefixes_share_the_depth_limit() {
+        let max = MAX_REVERSE_QUERY_DEPTH;
+        assert!(!is_depth_error(&parens(max, "a:1")));
+        assert!(is_depth_error(&parens(max + 1, "a:1")));
+        assert!(!is_depth_error(&format!("{}a:1", "NOT ".repeat(max))));
+        assert!(is_depth_error(&format!("{}a:1", "- ".repeat(max + 1))));
+
+        let half = max / 2;
+        let mixed = |nots: usize| parens(half, &format!("{}a:1", "! ".repeat(nots)));
+        assert!(!is_depth_error(&mixed(max - half)));
+        assert!(is_depth_error(&mixed(max - half + 1)));
+    }
+
+    #[test]
+    fn value_group_counts_as_a_level() {
+        let group = |n: usize| format!("a:({})", parens(n, "x"));
+        assert!(!is_depth_error(&group(MAX_REVERSE_QUERY_DEPTH - 1)));
+        assert!(is_depth_error(&group(MAX_REVERSE_QUERY_DEPTH)));
+    }
+
+    #[test]
+    fn query_length_is_capped() {
+        let at_limit = format!("a:{}", "x".repeat(MAX_REVERSE_QUERY_LEN - 2));
+        assert!(convert_one(&LuceneFrontend, &at_limit, &ctx()).is_ok());
+        let over = format!("{at_limit}x");
+        let err = convert_one(&LuceneFrontend, &over, &ctx()).unwrap_err();
+        assert!(err.to_string().contains("maximum is"), "{err}");
     }
 
     #[test]

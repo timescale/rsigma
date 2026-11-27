@@ -91,7 +91,7 @@ fn parse_field(field: &str, value: &str, ctx: &ReverseCtx) -> Result<QueryExpr<Q
 /// over the bare values, all bound to `field`.
 fn parse_value_group(field: &str, inner: &str, _ctx: &ReverseCtx) -> Result<QueryExpr<QueryLeaf>> {
     let tokens = super::tokenize(&LUCENE_DIALECT, inner)?;
-    let tree = super::parse_boolean(&LUCENE_DIALECT, tokens)?;
+    let tree = super::parse_boolean(&LUCENE_DIALECT, tokens, 1)?;
     tree.expand(&mut |atom: String| {
         Ok(QueryExpr::Leaf(field_leaf(
             field.to_string(),
