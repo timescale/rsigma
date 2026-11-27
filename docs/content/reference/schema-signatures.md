@@ -22,7 +22,7 @@ schemas:
 
 ## Specificity
 
-When several signatures match one event, the highest `specificity` wins; ties break by name (ascending) for determinism. A tie between two different-name signatures at the winning specificity is reported as ambiguous by `engine classify` and the `rsigma_events_ambiguous_schema_total` daemon counter, since the name tie-break, not the specificity, decided the result.
+When several signatures match one event, the highest `specificity` wins; ties break by name (ascending) for determinism. A tie between two different-name signatures at the winning specificity is reported as ambiguous by `engine classify` and the `rsigma_events_ambiguous_schema_total` daemon counter, since the name tie-break, not the specificity, decided the result. When the tied schemas imply different logsources, the router also evaluates the event without the schema-derived logsource (see [ambiguous classifications](../guide/schema-routing.md#ambiguous-classifications)).
 
 User signatures default to specificity 50. The built-ins are:
 
@@ -50,7 +50,7 @@ User signatures default to specificity 50. The built-ins are:
 | `azure` (product-only) | 65 |
 | `generic_json` | 0 |
 
-The `ecs_windows` and `ecs_linux` specializations recognize an ECS event that also carries a platform marker, so they win over plain `ecs` and can attach a platform-specific implied logsource. They are aliases of `ecs` for routing (see [schema aliases](../guide/schema-routing.md#schema-aliases)), so an existing `ecs` binding still matches them.
+The `ecs_windows` and `ecs_linux` specializations recognize an ECS event that also carries a platform marker, so they win over plain `ecs` and can attach a platform-specific implied logsource. Each requires the other platform's markers to be absent, so the two never tie: an ECS event with markers for both platforms, or for neither (a macOS host, for example), stays plain `ecs` and implies no product. `host.os.kernel` is not a Linux marker, since Windows and macOS hosts report a kernel version too. They are aliases of `ecs` for routing (see [schema aliases](../guide/schema-routing.md#schema-aliases)), so an existing `ecs` binding still matches them.
 
 `generic_json` is a built-in catch-all for events that have at least one structured field but match no higher-specificity signature. Events with no structured fields (empty objects, raw text) match no signature and are reported as unknown (`schema: null`, or the `rsigma_events_unknown_schema_total` counter). Binding `generic_json` away (or omitting it from a custom classifier) makes ordinary structured events unknown as well.
 

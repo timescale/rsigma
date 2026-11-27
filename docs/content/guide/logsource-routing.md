@@ -110,6 +110,7 @@ The daemon exposes these metrics (see [metrics](../reference/metrics.md)):
 
 - `rsigma_rules_pruned_by_logsource_total`: rules skipped by product conflict, both those the index's product partitioning never offers as candidates and those the residual check drops during evaluation.
 - `rsigma_events_without_logsource_total`: events with no extractable logsource, evaluated against every rule (fail-open visibility).
+- `rsigma_events_ambiguous_logsource_total`: events whose recognized schema tied with a schema implying a different logsource, evaluated without the schema-derived logsource (fail-open visibility, with [schema routing](schema-routing.md#ambiguous-classifications)). {{ added "unreleased" }}
 - `rsigma_schema_rules_eligible{schema}` and `rsigma_schema_rules_pruned{schema}`: per-schema eligible-versus-pruned rule counts, set when [schema routing](schema-routing.md) is also active. `engine eval` prints the same per-schema summary at the end of a run.
 
 ## Guarantees
