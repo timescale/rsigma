@@ -449,12 +449,10 @@ impl IncidentStore {
         let tenant = result.header.tenant_id.clone();
         let mut pairs: Vec<(Option<TenantId>, String, String)> = Vec::new();
         for sel in &cfg.entities {
-            let Some(value) = sel.resolve(result) else {
-                continue;
-            };
-            let value = match value {
-                Value::String(s) => s,
-                other => other.to_string(),
+            let value = match sel.resolve(result) {
+                None | Some(Value::Null) => continue,
+                Some(Value::String(s)) => s,
+                Some(other) => other.to_string(),
             };
             if cfg.stop_values.contains(&value) {
                 on_guard(OvermergeGuard::StopValue);
@@ -1368,6 +1366,31 @@ mod tests {
             .unwrap();
         assert_eq!(store.len(), 1, "the bridge merged the two incidents");
         assert!(c == a || c == b);
+    }
+
+    #[test]
+    fn entity_graph_null_values_do_not_join() {
+        let cfg = entity_cfg();
+        let mut store = IncidentStore::default();
+        let with_null_user = |ip: &str| {
+            let mut r = detection("r", ip, "unused", Level::High);
+            if let ResultBody::Detection(d) = &mut r.body {
+                d.matched_fields[1] = FieldMatch::new("User", Value::Null);
+            }
+            r
+        };
+        let a = store.assign(&cfg, &with_null_user("10.0.0.1"), 0, |_| {});
+        let b = store.assign(&cfg, &with_null_user("10.0.0.2"), 1, |_| {});
+        assert_ne!(a, b, "a shared null is not an entity");
+        let c = store.assign(
+            &cfg,
+            &detection("r", "10.0.0.3", "null", Level::High),
+            2,
+            |_| {},
+        );
+        assert_ne!(c, a, "the string \"null\" does not join a null value");
+        assert_ne!(c, b);
+        assert_eq!(store.len(), 3);
     }
 
     #[test]
