@@ -1445,6 +1445,207 @@ fn test_apply_window_open_session_caps_at_timespan() {
     assert!(state.is_empty());
 }
 
+#[test]
+fn test_pushes_keep_every_deque_ordered() {
+    let mut counts = WindowState::new_for(CorrelationType::EventCount);
+    let mut values = WindowState::new_for(CorrelationType::ValueCount);
+    let mut numeric = WindowState::new_for(CorrelationType::ValueSum);
+    let mut temporal = WindowState::new_for(CorrelationType::Temporal);
+    for ts in [5, 1, 9, 5, 3] {
+        counts.push_event_count(ts);
+        values.push_value_count(ts, format!("v{ts}"));
+        numeric.push_numeric(ts, ts as f64);
+        temporal.push_temporal(ts, "a");
+    }
+    let WindowState::EventCount { timestamps } = &counts else {
+        unreachable!()
+    };
+    assert_eq!(
+        timestamps.iter().copied().collect::<Vec<_>>(),
+        [1, 3, 5, 5, 9]
+    );
+    let WindowState::ValueCount { entries } = &values else {
+        unreachable!()
+    };
+    assert!(entries.iter().map(|(t, _)| t).is_sorted());
+    let WindowState::NumericAgg { entries } = &numeric else {
+        unreachable!()
+    };
+    assert!(entries.iter().map(|(t, _)| t).is_sorted());
+    let WindowState::Temporal { rule_hits } = &temporal else {
+        unreachable!()
+    };
+    assert!(rule_hits["a"].iter().is_sorted());
+    for state in [&counts, &values, &numeric, &temporal] {
+        assert_eq!(state.earliest_timestamp(), Some(1));
+        assert_eq!(state.latest_timestamp(), Some(9));
+    }
+}
+
+#[test]
+fn test_evict_removes_every_entry_before_the_cutoff() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    for ts in [100, 50, 200, 10, 150] {
+        state.push_event_count(ts);
+    }
+    state.evict(120);
+    assert_eq!(state.entry_count(), 2);
+    assert_eq!(state.earliest_timestamp(), Some(150));
+}
+
+#[test]
+fn test_sliding_cutoff_follows_the_newest_entry() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    assert_eq!(sliding_cutoff(&state, 100, 10), 90);
+    state.push_event_count(200);
+    assert_eq!(sliding_cutoff(&state, 100, 10), 190);
+    assert_eq!(sliding_cutoff(&state, 300, 10), 290);
+}
+
+#[test]
+fn test_apply_window_open_sliding_discards_events_before_the_window() {
+    let mut state = WindowState::new_for(CorrelationType::EventCount);
+    state.push_event_count(100);
+    let sliding = rsigma_parser::WindowMode::Sliding;
+    assert_eq!(
+        apply_window_open(&mut state, 95, 10, sliding, None),
+        WindowDecision::Extend
+    );
+    assert_eq!(
+        apply_window_open(&mut state, 89, 10, sliding, None),
+        WindowDecision::Discard
+    );
+    assert_eq!(state.latest_timestamp(), Some(100));
+}
+
+#[test]
+fn test_apply_window_open_session_handles_events_before_the_newest() {
+    let session = rsigma_parser::WindowMode::Session;
+    let session_state = || {
+        let mut state = WindowState::new_for(CorrelationType::EventCount);
+        state.push_event_count(100);
+        state.push_event_count(120);
+        state
+    };
+    // Inside the session.
+    let mut state = session_state();
+    assert_eq!(
+        apply_window_open(&mut state, 110, 60, session, Some(30)),
+        WindowDecision::Extend
+    );
+    // Before the start but within the gap, and the span stays under the cap.
+    let mut state = session_state();
+    assert_eq!(
+        apply_window_open(&mut state, 80, 60, session, Some(30)),
+        WindowDecision::Extend
+    );
+    // Further back than the gap: an earlier, closed session.
+    let mut state = session_state();
+    assert_eq!(
+        apply_window_open(&mut state, 60, 60, session, Some(30)),
+        WindowDecision::Discard
+    );
+    // Within the gap of the start, but the span would pass the cap.
+    let mut state = session_state();
+    assert_eq!(
+        apply_window_open(&mut state, 75, 40, session, Some(30)),
+        WindowDecision::Discard
+    );
+    assert_eq!(state.entry_count(), 2, "a discard leaves the state alone");
+}
+
+#[test]
+fn test_bound_restored_drops_clamps_and_sorts() {
+    let mut state = WindowState::new_for(CorrelationType::Temporal);
+    for (ts, rule) in [(50, "a"), (5_000, "a"), (10, "a"), (1_500, "b"), (900, "c")] {
+        state.push_temporal(ts, rule);
+    }
+    let WindowState::Temporal { rule_hits } = &mut state else {
+        unreachable!()
+    };
+    // Restored state need not be ordered.
+    rule_hits.get_mut("a").unwrap().make_contiguous().reverse();
+    state.bound_restored(1_000, 2_000);
+    let WindowState::Temporal { rule_hits } = &state else {
+        unreachable!()
+    };
+    assert_eq!(rule_hits["a"].iter().copied().collect::<Vec<_>>(), [10, 50]);
+    assert_eq!(rule_hits["b"].iter().copied().collect::<Vec<_>>(), [1_000]);
+    assert_eq!(rule_hits["c"].iter().copied().collect::<Vec<_>>(), [900]);
+
+    let mut state = WindowState::new_for(CorrelationType::ValueSum);
+    state.push_numeric(3_000, 1.0);
+    state.bound_restored(1_000, 2_000);
+    assert!(state.is_empty());
+}
+
+#[test]
+fn test_event_buffers_keep_timestamp_order_and_evict_by_it() {
+    let event = serde_json::json!({"id": "x"});
+    let mut full = EventBuffer::new(10);
+    let mut refs = EventRefBuffer::new(10);
+    for (seq, ts) in [(1, 100), (2, 50), (3, 150), (4, 40)] {
+        full.push_seq(seq, ts, &event, None);
+        refs.push_seq(seq, ts, &event, None);
+    }
+    full.evict(60);
+    refs.evict(60);
+    assert_eq!(
+        full.newest_refs(10)
+            .0
+            .iter()
+            .map(|r| r.timestamp)
+            .collect::<Vec<_>>(),
+        [100, 150]
+    );
+    assert_eq!(
+        refs.refs().iter().map(|r| r.timestamp).collect::<Vec<_>>(),
+        [100, 150]
+    );
+}
+
+#[test]
+fn test_event_buffer_cap_keeps_the_newest_by_timestamp() {
+    let event = serde_json::json!({});
+    let mut refs = EventRefBuffer::new(2);
+    for (seq, ts) in [(1, 100), (2, 200), (3, 50)] {
+        refs.push_seq(seq, ts, &event, None);
+    }
+    assert_eq!(
+        refs.refs().iter().map(|r| r.timestamp).collect::<Vec<_>>(),
+        [100, 200]
+    );
+    let mut zero = EventRefBuffer::new(0);
+    zero.push(1, &event);
+    zero.push(2, &event);
+    assert_eq!(zero.len(), 1, "a zero cap keeps the newest entry");
+}
+
+#[test]
+fn test_event_buffers_bound_restored() {
+    let event = serde_json::json!({});
+    let mut full = EventBuffer::new(10);
+    let mut refs = EventRefBuffer::new(10);
+    for (seq, ts) in [(1, 900), (2, 1_500), (3, 3_000)] {
+        full.push_seq(seq, ts, &event, None);
+        refs.push_seq(seq, ts, &event, None);
+    }
+    full.bound_restored(1_000, 2_000);
+    refs.bound_restored(1_000, 2_000);
+    assert_eq!(
+        full.newest_refs(10)
+            .0
+            .iter()
+            .map(|r| r.timestamp)
+            .collect::<Vec<_>>(),
+        [900, 1_000]
+    );
+    assert_eq!(
+        refs.refs().iter().map(|r| r.timestamp).collect::<Vec<_>>(),
+        [900, 1_000]
+    );
+}
+
 // =============================================================================
 // Per-group entry cap: WindowState::truncate_oldest
 // =============================================================================

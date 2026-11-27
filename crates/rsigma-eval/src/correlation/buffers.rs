@@ -172,16 +172,14 @@ impl EventBuffer {
     ) {
         // Compress the event JSON with deflate
         if let Some(compressed) = compress_event(event) {
-            if self.entries.len() >= self.max_events {
-                self.entries.pop_front();
-            }
-            self.entries.push_back(FullEntry {
+            let entry = FullEntry {
                 seq,
                 ts,
                 data: compressed,
                 rule,
                 via: None,
-            });
+            };
+            insert_capped(&mut self.entries, entry, self.max_events, |e| (e.ts, e.seq));
         }
     }
 
@@ -190,6 +188,19 @@ impl EventBuffer {
         while self.entries.front().is_some_and(|e| e.ts < cutoff) {
             self.entries.pop_front();
         }
+    }
+
+    /// Drop entries after `drop_after`, clamp entries after `clamp_to` down
+    /// to it, and restore `(timestamp, seq)` order, as for
+    /// [`WindowState`](super::WindowState) on restore.
+    pub(crate) fn bound_restored(&mut self, clamp_to: i64, drop_after: i64) {
+        bound_restored(
+            &mut self.entries,
+            clamp_to,
+            drop_after,
+            |e| &mut e.ts,
+            |e| (e.ts, e.seq),
+        );
     }
 
     /// Decompress and return all stored events.
@@ -381,15 +392,15 @@ impl EventRefBuffer {
         event: &serde_json::Value,
         rule: Option<Arc<str>>,
     ) {
-        if self.entries.len() >= self.max_events {
-            self.entries.pop_front();
-        }
         let id = extract_event_id(event);
-        self.entries.push_back(RefEntry {
+        let entry = RefEntry {
             r: EventRef { timestamp: ts, id },
             seq,
             rule,
             via: None,
+        };
+        insert_capped(&mut self.entries, entry, self.max_events, |e| {
+            (e.r.timestamp, e.seq)
         });
     }
 
@@ -398,6 +409,19 @@ impl EventRefBuffer {
         while self.entries.front().is_some_and(|e| e.r.timestamp < cutoff) {
             self.entries.pop_front();
         }
+    }
+
+    /// Drop refs after `drop_after`, clamp refs after `clamp_to` down to it,
+    /// and restore `(timestamp, seq)` order, as for
+    /// [`WindowState`](super::WindowState) on restore.
+    pub(crate) fn bound_restored(&mut self, clamp_to: i64, drop_after: i64) {
+        bound_restored(
+            &mut self.entries,
+            clamp_to,
+            drop_after,
+            |e| &mut e.r.timestamp,
+            |e| (e.r.timestamp, e.seq),
+        );
     }
 
     /// Return cloned refs.
@@ -476,6 +500,45 @@ impl EventRefBuffer {
             }
         }
     }
+}
+
+/// Insert `entry` in `key` order, then drop the oldest entries above `cap`.
+/// A cap of zero still keeps the newest entry.
+fn insert_capped<T>(
+    entries: &mut VecDeque<T>,
+    entry: T,
+    cap: usize,
+    key: impl Fn(&T) -> (i64, u64),
+) {
+    let k = key(&entry);
+    if entries.back().is_none_or(|last| key(last) <= k) {
+        entries.push_back(entry);
+    } else {
+        let pos = entries.partition_point(|e| key(e) <= k);
+        entries.insert(pos, entry);
+    }
+    while entries.len() > cap.max(1) {
+        entries.pop_front();
+    }
+}
+
+/// Shared body of the buffers' `bound_restored`.
+fn bound_restored<T>(
+    entries: &mut VecDeque<T>,
+    clamp_to: i64,
+    drop_after: i64,
+    ts_mut: impl Fn(&mut T) -> &mut i64,
+    key: impl Fn(&T) -> (i64, u64),
+) {
+    entries.retain_mut(|entry| {
+        let ts = ts_mut(entry);
+        if *ts > drop_after {
+            return false;
+        }
+        *ts = (*ts).min(clamp_to);
+        true
+    });
+    entries.make_contiguous().sort_by_key(key);
 }
 
 /// Retained entries captured from a correlation that fired.

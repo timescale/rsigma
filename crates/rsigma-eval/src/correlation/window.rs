@@ -11,7 +11,9 @@ use super::CompiledCondition;
 
 /// Per-group mutable state within a time window.
 ///
-/// Each variant matches the type of aggregation being performed.
+/// Each variant matches the type of aggregation being performed. Every deque
+/// is kept ordered by timestamp whatever the arrival order, so the front holds
+/// the oldest entry and the back the newest.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub enum WindowState {
     /// For `event_count`: timestamps of matching events.
@@ -103,9 +105,7 @@ impl WindowState {
 
     /// Returns the oldest timestamp in this window, or `None` if empty.
     ///
-    /// Entries are appended in arrival order, so the front of each deque holds
-    /// the earliest timestamp. For temporal state the minimum is taken across
-    /// all per-rule deques.
+    /// For temporal state the minimum is taken across all per-rule deques.
     pub fn earliest_timestamp(&self) -> Option<i64> {
         match self {
             WindowState::EventCount { timestamps } => timestamps.front().copied(),
@@ -179,31 +179,74 @@ impl WindowState {
     /// Record an event_count hit.
     pub fn push_event_count(&mut self, ts: i64) {
         if let WindowState::EventCount { timestamps } = self {
-            timestamps.push_back(ts);
+            insert_ordered(timestamps, ts, |&t| t);
         }
     }
 
     /// Record a value_count hit with the field value.
     pub fn push_value_count(&mut self, ts: i64, value: String) {
         if let WindowState::ValueCount { entries } = self {
-            entries.push_back((ts, value));
+            insert_ordered(entries, (ts, value), |(t, _)| *t);
         }
     }
 
     /// Record a temporal hit for a specific rule reference.
     pub fn push_temporal(&mut self, ts: i64, rule_ref: &str) {
         if let WindowState::Temporal { rule_hits } = self {
-            rule_hits
-                .entry(rule_ref.to_string())
-                .or_default()
-                .push_back(ts);
+            let hits = match rule_hits.get_mut(rule_ref) {
+                Some(hits) => hits,
+                None => rule_hits.entry(rule_ref.to_string()).or_default(),
+            };
+            insert_ordered(hits, ts, |&t| t);
         }
     }
 
     /// Record a numeric aggregation value.
     pub fn push_numeric(&mut self, ts: i64, value: f64) {
         if let WindowState::NumericAgg { entries } = self {
-            entries.push_back((ts, value));
+            insert_ordered(entries, (ts, value), |(t, _)| *t);
+        }
+    }
+
+    /// Bring restored state in line with what live processing produces:
+    /// drop entries after `drop_after`, clamp entries after `clamp_to` down to
+    /// it, and order every deque by timestamp. State from an older release or
+    /// another host may break any of these.
+    pub(crate) fn bound_restored(&mut self, clamp_to: i64, drop_after: i64) {
+        fn bound<T>(
+            deque: &mut VecDeque<T>,
+            clamp_to: i64,
+            drop_after: i64,
+            ts_mut: impl Fn(&mut T) -> &mut i64,
+            ts: impl Fn(&T) -> i64,
+        ) {
+            deque.retain_mut(|entry| {
+                let t = ts_mut(entry);
+                if *t > drop_after {
+                    return false;
+                }
+                *t = (*t).min(clamp_to);
+                true
+            });
+            deque.make_contiguous().sort_by_key(ts);
+        }
+
+        match self {
+            WindowState::EventCount { timestamps } => {
+                bound(timestamps, clamp_to, drop_after, |t| t, |&t| t);
+            }
+            WindowState::ValueCount { entries } => {
+                bound(entries, clamp_to, drop_after, |(t, _)| t, |(t, _)| *t);
+            }
+            WindowState::Temporal { rule_hits } => {
+                for hits in rule_hits.values_mut() {
+                    bound(hits, clamp_to, drop_after, |t| t, |&t| t);
+                }
+                rule_hits.retain(|_, hits| !hits.is_empty());
+            }
+            WindowState::NumericAgg { entries } => {
+                bound(entries, clamp_to, drop_after, |(t, _)| t, |(t, _)| *t);
+            }
         }
     }
 
@@ -348,6 +391,28 @@ impl WindowState {
     }
 }
 
+/// Insert `entry` at its timestamp's position, after any entry with the same
+/// timestamp. An in-order arrival appends in O(1).
+fn insert_ordered<T>(deque: &mut VecDeque<T>, entry: T, ts: impl Fn(&T) -> i64) {
+    let t = ts(&entry);
+    if deque.back().is_none_or(|last| ts(last) <= t) {
+        deque.push_back(entry);
+    } else {
+        let pos = deque.partition_point(|e| ts(e) <= t);
+        deque.insert(pos, entry);
+    }
+}
+
+/// Oldest timestamp a sliding window keeps when an event at `ts` arrives.
+///
+/// The window ends at the newer of `ts` and the group's newest entry, so a
+/// late arrival neither stretches the window past `timespan_secs` nor keeps
+/// entries the newest one has already aged out.
+pub fn sliding_cutoff(state: &WindowState, ts: i64, timespan_secs: u64) -> i64 {
+    let end = state.latest_timestamp().map_or(ts, |latest| latest.max(ts));
+    end - timespan_secs as i64
+}
+
 /// Start of the tumbling bucket that contains `ts`, aligned to epoch.
 ///
 /// Uses `rem_euclid` so negative timestamps align to the bucket below them
@@ -365,25 +430,31 @@ pub enum WindowDecision {
     /// the fresh window. Callers must also clear any associated event buffers
     /// so they stay in sync with the state.
     Reset,
-    /// The event predates the current window (a late arrival in an earlier
-    /// tumbling bucket); do not push it and leave the state untouched.
+    /// The event predates the current window (older than a sliding window's
+    /// start, in an earlier tumbling bucket, or in a session that already
+    /// closed); do not push it and leave the state untouched.
     Discard,
 }
 
 /// Apply a correlation window's pre-insert maintenance for a new event at `ts`,
 /// before the event is pushed into `state`.
 ///
-/// - `Sliding` evicts entries older than `ts - timespan` (the existing default)
-///   and always extends.
+/// - `Sliding` evicts entries older than [`sliding_cutoff`] and discards the
+///   event when it is older than that too.
 /// - `Tumbling` resets the window when `ts` falls in a *later*
-///   boundary-aligned bucket than the latest retained entry, and discards
+///   boundary-aligned bucket than the newest retained entry, and discards
 ///   events that fall in an *earlier* bucket (a late arrival must not wipe the
 ///   active bucket's accumulation).
-/// - `Session` resets when `ts` is more than `gap` after the latest entry, or
+/// - `Session` resets when `ts` is more than `gap` after the newest entry, or
 ///   when extending would push the total span past `timespan` (the hard cap).
+///   An event before the session start joins it only when it is within `gap`
+///   of the start and keeps the span under the cap; otherwise it belongs to a
+///   closed session and is discarded.
 ///
-/// Out-of-order arrivals follow the engine's arrival-order contract: decisions
-/// are made relative to the entries currently retained, not a global watermark.
+/// Out-of-order arrivals are decided against the group's retained entries,
+/// whose newest timestamp never moves backwards. The engine bounds event
+/// timestamps by the wall clock before they get here, so no entry is anchored
+/// in the future.
 pub fn apply_window_open(
     state: &mut WindowState,
     ts: i64,
@@ -394,8 +465,13 @@ pub fn apply_window_open(
     let timespan = timespan_secs as i64;
     match window {
         WindowMode::Sliding => {
-            state.evict(ts - timespan);
-            WindowDecision::Extend
+            let cutoff = sliding_cutoff(state, ts, timespan_secs);
+            state.evict(cutoff);
+            if ts < cutoff {
+                WindowDecision::Discard
+            } else {
+                WindowDecision::Extend
+            }
         }
         WindowMode::Tumbling => {
             if timespan <= 0 {
@@ -416,17 +492,24 @@ pub fn apply_window_open(
             // `gap` is required for session windows; fall back to `timespan` if
             // it is somehow absent so the window still has a bound.
             let gap = gap_secs.map(|g| g as i64).unwrap_or(timespan);
-            let reset = match (state.earliest_timestamp(), state.latest_timestamp()) {
-                (Some(start), Some(last)) => {
-                    (ts - last) > gap || (timespan > 0 && (ts - start) > timespan)
+            let capped = |span: i64| timespan > 0 && span > timespan;
+            match (state.earliest_timestamp(), state.latest_timestamp()) {
+                (Some(start), Some(last)) if ts >= last => {
+                    if (ts - last) > gap || capped(ts - start) {
+                        state.clear();
+                        WindowDecision::Reset
+                    } else {
+                        WindowDecision::Extend
+                    }
                 }
-                _ => false,
-            };
-            if reset {
-                state.clear();
-                WindowDecision::Reset
-            } else {
-                WindowDecision::Extend
+                (Some(start), Some(last)) if ts < start => {
+                    if (start - ts) > gap || capped(last - ts) {
+                        WindowDecision::Discard
+                    } else {
+                        WindowDecision::Extend
+                    }
+                }
+                _ => WindowDecision::Extend,
             }
         }
     }
