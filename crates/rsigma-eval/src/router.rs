@@ -831,6 +831,14 @@ impl<L> SchemaRouter<L> {
             .map_or(0, |c| c.take_untenanted_skipped())
     }
 
+    /// Events skipped for a future timestamp since the previous call,
+    /// draining the counter.
+    pub fn take_future_skipped(&mut self) -> u64 {
+        self.correlation
+            .as_mut()
+            .map_or(0, |c| c.take_future_skipped())
+    }
+
     /// Import previously exported correlation state into the shared store.
     /// No-op (returns `true`) when there is no correlation store.
     pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {

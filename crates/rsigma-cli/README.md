@@ -324,6 +324,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--clear-state` | flag | `false` | Clear correlation state on startup (conflicts with `--keep-state`) |
 | `--keep-state` | flag | `false` | Force restore correlation state on startup, even during replay (conflicts with `--clear-state`) |
 | `--timestamp-fallback` | string | `"wallclock"` | `wallclock` (substitute current time) or `skip` (omit from correlation) when events lack parseable timestamps |
+| `--max-future-skew` | duration | **5m** | How far an event timestamp may be ahead of the wall clock; events further ahead skip correlation, a smaller lead is clamped (`daemon.correlation.max_future_skew`) |
 | `--source` | repeatable | `[]` | External source file(s) or directory of source files. Loads dynamic source declarations independently of pipeline files. See [External source files](#external-source-files) |
 | `--allow-remote-include` | flag | `false` | Allow `include` directives in dynamic pipelines to reference remote (HTTP/NATS) sources. Local sources (file/command) are always permitted |
 | `--strict-rules` | flag | `false` | Refuse to load a rule set in which any rule fails to parse. Without it, rules that fail to parse are skipped and only a load in which every rule fails is refused. A refused startup load exits with code 2; a refused reload keeps the current rules |
@@ -515,6 +516,7 @@ The first three triggers all funnel through one debounced reload task that re-re
 | `rsigma_correlation_rules_loaded` | gauge | | Number of correlation rules loaded |
 | `rsigma_rule_parse_errors` | gauge | | Rule documents that failed to parse and were skipped in the loaded rule set |
 | `rsigma_correlation_state_entries` | gauge | | Active correlation state entries |
+| `rsigma_correlation_future_events_skipped_total` | counter | | Events skipped for correlation because their timestamp was further ahead of the wall clock than `max_future_skew` |
 | `rsigma_reloads_total` | counter | | Total rule reload attempts |
 | `rsigma_reloads_failed_total` | counter | | Failed rule reload attempts |
 | `rsigma_event_processing_seconds` | histogram | | Per-event processing latency |

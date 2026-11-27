@@ -101,7 +101,8 @@ pub struct GroupStateInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suppress_secs: Option<u64>,
     /// Seconds remaining in the suppression window after the last alert,
-    /// relative to the latest observed event time.
+    /// relative to the latest observed event time. Zero when that time is
+    /// before the last alert, which the engine treats as expired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suppression_remaining: Option<i64>,
     /// The raw window state (timestamps / values), serialized as-is.
@@ -208,7 +209,11 @@ impl<L> CorrelationEngine<L> {
             let last_alert = self.last_alert.get(key).copied();
             let suppress_secs = corr.suppress_secs.or(self.config.suppress);
             let suppression_remaining = match (last_alert, suppress_secs, latest) {
-                (Some(la), Some(s), Some(l)) => Some((la + s as i64 - l).max(0)),
+                (Some(la), Some(s), Some(l)) => Some(if l < la {
+                    0
+                } else {
+                    (la.saturating_add_unsigned(s) - l).max(0)
+                }),
                 _ => None,
             };
 

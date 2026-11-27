@@ -259,6 +259,7 @@ impl LogProcessor {
         let start = Instant::now();
         let batch_results = engine.process_batch(&event_refs);
         let skipped = engine.take_ruleset_skipped();
+        let future_skipped = engine.take_future_skipped();
         let elapsed = start.elapsed().as_secs_f64();
         let per_event_latency = elapsed / event_refs.len() as f64;
 
@@ -266,6 +267,9 @@ impl LogProcessor {
         let stats = engine.stats();
         self.metrics
             .set_correlation_state_entries(stats.state_entries as u64);
+        if future_skipped > 0 {
+            self.metrics.on_correlation_future_skipped(future_skipped);
+        }
 
         // Phase 3: Merge results per input line and update metrics
         let mut line_results = empty_results(batch.len());
@@ -522,22 +526,31 @@ impl LogProcessor {
         };
 
         let start = Instant::now();
-        let (batch_results, state_entries, skipped, quota_evictions, untenanted) = if concurrent {
-            let engine = engine_guard.read();
-            let results = engine
-                .process_batch_shared_for_tenants(&event_refs, &event_tenants)
-                .expect("concurrent path requires shared detection");
-            let state_entries = engine.stats().state_entries as u64;
-            (results, state_entries, engine.take_ruleset_skipped(), 0, 0)
-        } else {
-            let mut engine = engine_guard.write();
-            let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
-            let state_entries = engine.stats().state_entries as u64;
-            let skipped = engine.take_ruleset_skipped();
-            let quota = engine.take_tenant_quota_evictions();
-            let untenanted = engine.take_untenanted_skipped();
-            (results, state_entries, skipped, quota, untenanted)
-        };
+        let (batch_results, state_entries, skipped, quota_evictions, untenanted, future_skipped) =
+            if concurrent {
+                let engine = engine_guard.read();
+                let results = engine
+                    .process_batch_shared_for_tenants(&event_refs, &event_tenants)
+                    .expect("concurrent path requires shared detection");
+                let state_entries = engine.stats().state_entries as u64;
+                (
+                    results,
+                    state_entries,
+                    engine.take_ruleset_skipped(),
+                    0,
+                    0,
+                    0,
+                )
+            } else {
+                let mut engine = engine_guard.write();
+                let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
+                let state_entries = engine.stats().state_entries as u64;
+                let skipped = engine.take_ruleset_skipped();
+                let quota = engine.take_tenant_quota_evictions();
+                let untenanted = engine.take_untenanted_skipped();
+                let future = engine.take_future_skipped();
+                (results, state_entries, skipped, quota, untenanted, future)
+            };
         let elapsed = start.elapsed().as_secs_f64();
         self.metrics
             .observe_batch_phase_duration("evaluate", elapsed);
@@ -550,6 +563,9 @@ impl LogProcessor {
         for _ in 0..untenanted {
             self.metrics
                 .on_tenant_rejected("engine", "untenanted_event");
+        }
+        if future_skipped > 0 {
+            self.metrics.on_correlation_future_skipped(future_skipped);
         }
 
         // Merge results per input line and update metrics.
@@ -1000,6 +1016,74 @@ correlation:
 "#,
         );
         assert!(!proc.allows_concurrent_detection());
+    }
+
+    #[test]
+    fn future_timestamps_are_reported_to_the_metrics_hook() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        #[derive(Default)]
+        struct FutureMetrics(AtomicU64);
+
+        impl MetricsHook for FutureMetrics {
+            fn on_parse_error(&self) {}
+            fn on_events_processed(&self, _: u64) {}
+            fn on_detection_matches(&self, _: u64) {}
+            fn on_correlation_matches(&self, _: u64) {}
+            fn observe_processing_latency(&self, _: f64) {}
+            fn on_input_queue_depth_change(&self, _: i64) {}
+            fn on_back_pressure(&self) {}
+            fn observe_batch_size(&self, _: u64) {}
+            fn on_output_queue_depth_change(&self, _: i64) {}
+            fn observe_pipeline_latency(&self, _: f64) {}
+            fn set_correlation_state_entries(&self, _: u64) {}
+            fn on_correlation_future_skipped(&self, count: u64) {
+                self.0.fetch_add(count, Ordering::Relaxed);
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rules.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Base
+id: base-rule
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-rule
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 1
+"#,
+        )
+        .unwrap();
+        let mut engine = RuntimeEngine::new(rule_path, vec![], CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        let metrics = Arc::new(FutureMetrics::default());
+        let proc = LogProcessor::new(engine, metrics.clone());
+
+        let future = r#"{"EventID": 1, "User": "a", "@timestamp": "9999-01-01T00:00:00Z"}"#;
+        let current = r#"{"EventID": 1, "User": "a", "@timestamp": "2024-01-01T00:00:00Z"}"#;
+        let results =
+            proc.process_batch_lines(&[future.to_string(), current.to_string()], &identity_filter);
+        assert_eq!(results[0].correlation_count(), 0);
+        assert_eq!(results[1].correlation_count(), 1);
+        assert_eq!(metrics.0.load(Ordering::Relaxed), 1);
+
+        proc.process_batch_with_format(&[future.to_string()], &InputFormat::Json, None);
+        assert_eq!(metrics.0.load(Ordering::Relaxed), 2);
     }
 
     #[test]

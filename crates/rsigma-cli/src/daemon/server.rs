@@ -946,6 +946,12 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                                 "Discarded correlation entries that do not match the tenancy mode"
                             );
                         }
+                        if stats.discarded_future > 0 {
+                            tracing::warn!(
+                                discarded = stats.discarded_future,
+                                "Discarded correlation entries whose timestamps are past max_future_skew"
+                            );
+                        }
                         tracing::info!(
                             state_entries = snapshot.window_entries(),
                             "Correlation state restored from database"

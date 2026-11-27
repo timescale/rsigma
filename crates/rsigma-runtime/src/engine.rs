@@ -374,6 +374,18 @@ impl RuntimeEngine {
         }
     }
 
+    /// Events skipped for correlation because their timestamp was too far
+    /// ahead of the wall clock since the previous call, summed across engine
+    /// variants.
+    pub fn take_future_skipped(&mut self) -> u64 {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.take_future_skipped(),
+            EngineVariant::Routed(router) => router.take_future_skipped(),
+            EngineVariant::Rulesets(engines) => engines.take_future_skipped(),
+        }
+    }
+
     /// Return the current match-detail verbosity. Used by hot-reload to
     /// carry the setting across a `RuntimeEngine` swap.
     pub fn match_detail(&self) -> MatchDetailLevel {

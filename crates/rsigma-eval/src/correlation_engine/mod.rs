@@ -30,7 +30,7 @@ use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule
 
 use crate::correlation::{
     CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, RefEntry, Retained,
-    WindowDecision, WindowState, apply_window_open, compile_correlation,
+    WindowDecision, WindowState, apply_window_open, compile_correlation, sliding_cutoff,
 };
 use crate::engine::{Engine, IdentifiedEvaluation};
 use crate::error::{EvalError, Result};
@@ -57,11 +57,6 @@ pub(crate) const SNAPSHOT_VERSION: u32 = 2;
 /// and emitted through this many hops, then leftover parents are dropped
 /// with a `WARN`.
 const MAX_CHAIN_DEPTH: usize = 10;
-
-/// Timespan above which a correlation without a per-group entry cap is
-/// warned about at load: a busy group's window retains `timespan` x event
-/// rate entries, which `max_state_entries` does not see.
-const LONG_WINDOW_WARN_SECS: u64 = 3600;
 
 /// Event retention a correlation needs for itself and for the chain above it.
 #[derive(Debug, Clone, Default)]
@@ -128,6 +123,18 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     pipelines: Vec<Pipeline>,
     /// Events skipped by `require_tenant` because they carried no tenant.
     untenanted_skipped: u64,
+    /// Events skipped because their timestamp was too far in the future.
+    future_skipped: u64,
+    /// Whether the first future-timestamp skip has been logged.
+    future_skip_logged: bool,
+    /// Latest wall-clock reading in epoch seconds. Read again only when an
+    /// event timestamp passes it, so in-order streams and replays of past
+    /// data rarely touch the clock.
+    wall_clock: i64,
+    /// Newest event timestamp correlation has accepted. Expiry uses it as a
+    /// floor for "now", so a late event cannot make other groups' state look
+    /// newer than it is.
+    high_water: i64,
     /// Live state keys per tenant, kept in step with `state` while a
     /// per-tenant cap is set, so quota checks and eviction touch only that
     /// tenant's entries. Empty when there is no per-tenant cap.
@@ -173,6 +180,10 @@ impl<L> CorrelationEngine<L> {
             config,
             pipelines: Vec::new(),
             untenanted_skipped: 0,
+            future_skipped: 0,
+            future_skip_logged: false,
+            wall_clock: i64::MIN,
+            high_water: i64::MIN,
             tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
             next_event_seq: 1,
@@ -350,15 +361,6 @@ impl<L> CorrelationEngine<L> {
         self.apply_custom_attributes(&effective.custom_attributes);
 
         let compiled = compile_correlation(effective)?;
-        if self.has_unbounded_long_window(&compiled) {
-            log::warn!(
-                "Correlation '{}' has a {}s timespan and no per-group entry cap; \
-                 a busy group retains timespan x event rate entries. \
-                 Set max_group_entries (--max-group-entries) or the rsigma.max_group_entries attribute to bound it.",
-                compiled.id.as_deref().unwrap_or(&compiled.title),
-                compiled.timespan_secs
-            );
-        }
         let idx = self.correlations.len();
 
         // Index by each referenced rule ID/name
@@ -383,16 +385,6 @@ impl<L> CorrelationEngine<L> {
         self.correlations.push(compiled);
         self.retention_dirty = true;
         Ok(())
-    }
-
-    /// Whether `corr` keeps a window longer than [`LONG_WINDOW_WARN_SECS`]
-    /// with no per-group entry cap from the rule or the engine config.
-    fn has_unbounded_long_window(&self, corr: &CompiledCorrelation) -> bool {
-        corr.timespan_secs > LONG_WINDOW_WARN_SECS
-            && corr
-                .max_group_entries
-                .or(self.config.max_group_entries)
-                .is_none()
     }
 
     /// Add all rules and correlations from a parsed collection.
@@ -615,7 +607,8 @@ impl<L> CorrelationEngine<L> {
     /// Process an event with an explicit Unix epoch timestamp (seconds).
     ///
     /// The timestamp is clamped to `[0, i64::MAX / 2]` to prevent overflow
-    /// when adding timespan durations internally.
+    /// when adding timespan durations internally, then bounded by the wall
+    /// clock as described on [`CorrelationConfig::max_future_skew`].
     pub fn process_event_at<E: Event>(&mut self, event: &E, timestamp_secs: i64) -> ProcessResult
     where
         L: ExtractLogSource<E>,
@@ -703,6 +696,11 @@ impl<L> CorrelationEngine<L> {
             return self.filter_detections(all_detections, identities);
         }
 
+        let Some(timestamp_secs) = self.bound_by_wall_clock(timestamp_secs, &identities) else {
+            return self.filter_detections(all_detections, identities);
+        };
+        self.high_water = self.high_water.max(timestamp_secs);
+
         // Memory management — evict before adding new state to enforce limit
         if self.state.len() >= self.config.max_state_entries {
             self.evict_all(timestamp_secs);
@@ -772,6 +770,59 @@ impl<L> CorrelationEngine<L> {
     /// counter.
     pub fn take_untenanted_skipped(&mut self) -> u64 {
         std::mem::take(&mut self.untenanted_skipped)
+    }
+
+    /// Number of events skipped for correlation because their timestamp was
+    /// more than [`CorrelationConfig::max_future_skew`] ahead of the wall
+    /// clock.
+    pub fn future_skipped(&self) -> u64 {
+        self.future_skipped
+    }
+
+    /// Events skipped for a future timestamp since the previous call,
+    /// draining the counter.
+    pub fn take_future_skipped(&mut self) -> u64 {
+        std::mem::take(&mut self.future_skipped)
+    }
+
+    /// Bound an event timestamp by the wall clock: `None` when it is more than
+    /// `max_future_skew` ahead, the wall clock when it is ahead by less, and
+    /// `ts` otherwise. A skip is counted only when the event would have fed a
+    /// correlation.
+    fn bound_by_wall_clock(&mut self, ts: i64, identities: &[RuleIdentity]) -> Option<i64> {
+        if ts <= self.wall_clock {
+            return Some(ts);
+        }
+        self.wall_clock = self.wall_clock.max(Utc::now().timestamp());
+        if ts <= self.wall_clock {
+            return Some(ts);
+        }
+        let lead = ts - self.wall_clock;
+        if lead <= skew_secs(self.config.max_future_skew) {
+            return Some(self.wall_clock);
+        }
+        if self.feeds_correlation(identities) {
+            self.future_skipped += 1;
+            if !self.future_skip_logged {
+                self.future_skip_logged = true;
+                log::warn!(
+                    "Skipping an event for correlation: its timestamp {ts} is {lead}s ahead of \
+                     the wall clock, past max_future_skew ({}s). Later skips are only counted.",
+                    self.config.max_future_skew
+                );
+            }
+        }
+        None
+    }
+
+    /// Whether any of the detections names a rule a correlation references.
+    fn feeds_correlation(&self, identities: &[RuleIdentity]) -> bool {
+        identities.iter().any(|(id, name)| {
+            [id, name]
+                .into_iter()
+                .flatten()
+                .any(|key| self.rule_index.contains_key(key))
+        })
     }
 
     /// Set the per-tenant state cap. `None` leaves only the global cap.
@@ -1056,7 +1107,10 @@ impl<L> CorrelationEngine<L> {
                 .unwrap_or(self.config.max_correlation_events);
             let retention_mode = self.retention[corr_idx].mode;
             let retention_cap = self.retention[corr_idx].cap;
-            let max_group_entries = corr.max_group_entries.or(self.config.max_group_entries);
+            let max_group_entries = corr
+                .max_group_entries
+                .or(self.config.max_group_entries)
+                .unwrap_or_else(|| default_group_cap(corr));
 
             // Determine the rule_ref strings for alias resolution and temporal tracking.
             let mut ref_strs: Vec<&str> = Vec::new();
@@ -1126,11 +1180,11 @@ impl<L> CorrelationEngine<L> {
         let corr = &self.correlations[corr_idx];
 
         // Apply the window's pre-insert maintenance (sliding evict, tumbling
-        // bucket reset/late-event discard, or session gap/cap reset). On
-        // `Reset` the event buffers below are cleared in sync; on `Discard`
-        // (a late arrival in an earlier tumbling bucket) the event is dropped
-        // without touching the state or buffers.
-        let cutoff = ts - timespan as i64;
+        // bucket reset, or session gap/cap reset). On `Reset` the event
+        // buffers below are cleared in sync; on `Discard` (an event older than
+        // the window it would join) the event is dropped without touching the
+        // state or buffers.
+        let cutoff = sliding_cutoff(state, ts, timespan);
         let decision = apply_window_open(state, ts, timespan, window_mode, gap_secs);
         if decision == WindowDecision::Discard {
             return None;
@@ -1169,9 +1223,7 @@ impl<L> CorrelationEngine<L> {
         // Enforce the per-group entry cap. Session windows keep their oldest
         // entry as the span anchor so truncation cannot silently extend the
         // `timespan` cap.
-        if let Some(cap) = max_group_entries {
-            state.truncate_oldest(cap, window_mode == WindowMode::Session);
-        }
+        state.truncate_oldest(max_group_entries, window_mode == WindowMode::Session);
 
         // Push event into the buffer its retention requires, which can be
         // stronger than this correlation's own mode when a parent retains
@@ -1215,20 +1267,18 @@ impl<L> CorrelationEngine<L> {
             &corr.rule_refs,
             corr.extended_expr.as_ref(),
         );
+        // Suppression runs on the group's newest event time, so a late event
+        // neither shortens the window it opens nor reopens one early.
+        let reference = state.latest_timestamp().map_or(ts, |latest| latest.max(ts));
 
         if let Some(agg_value) = fired {
             let alert_key = state_key.clone();
 
-            // Suppression check: skip if we've already alerted within the suppress window
-            let suppressed = if let Some(suppress) = suppress_secs {
-                if let Some(&last_ts) = self.last_alert.get(&alert_key) {
-                    (ts - last_ts) < suppress as i64
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            let suppressed = suppress_secs.is_some_and(|suppress| {
+                self.last_alert
+                    .get(&alert_key)
+                    .is_some_and(|&last| suppression_active(last, reference, suppress))
+            });
 
             if !suppressed {
                 let reported = self.reported_events(&alert_key, event_mode, max_events);
@@ -1259,8 +1309,7 @@ impl<L> CorrelationEngine<L> {
                 };
                 out.push(result);
 
-                // Record alert time for suppression
-                self.last_alert.insert(alert_key.clone(), ts);
+                self.last_alert.insert(alert_key.clone(), reference);
 
                 // Action on match
                 if action == CorrelationAction::Reset {
@@ -1590,7 +1639,9 @@ impl<L> CorrelationEngine<L> {
                             .unwrap_or(self.config.correlation_event_mode),
                         corr.max_events
                             .unwrap_or(self.config.max_correlation_events),
-                        corr.max_group_entries.or(self.config.max_group_entries),
+                        corr.max_group_entries
+                            .or(self.config.max_group_entries)
+                            .unwrap_or_else(|| default_group_cap(corr)),
                         group_key,
                     )
                 };
@@ -1614,9 +1665,10 @@ impl<L> CorrelationEngine<L> {
                     .entry(state_key.clone())
                     .or_insert_with(|| WindowState::new_for(corr_type));
 
-                // Late arrivals in an earlier tumbling bucket are discarded.
-                // A tumbling or session reset clears the parent's buffers in
-                // sync with its window state, as on the direct path.
+                // Arrivals older than the window they would join are
+                // discarded. A tumbling or session reset clears the parent's
+                // buffers in sync with its window state, as on the direct path.
+                let cutoff = sliding_cutoff(state, ts, timespan);
                 let decision = apply_window_open(state, ts, timespan, window_mode, gap_secs);
                 if decision == WindowDecision::Discard {
                     continue;
@@ -1644,9 +1696,7 @@ impl<L> CorrelationEngine<L> {
 
                 // Same per-group cap as the direct path; session windows
                 // keep the span anchor.
-                if let Some(cap) = max_group_entries {
-                    state.truncate_oldest(cap, window_mode == WindowMode::Session);
-                }
+                state.truncate_oldest(max_group_entries, window_mode == WindowMode::Session);
 
                 // `self.state` and `self.correlations` are disjoint fields, so
                 // the mutable state borrow and this read coexist.
@@ -1657,13 +1707,13 @@ impl<L> CorrelationEngine<L> {
                     &corr.rule_refs,
                     corr.extended_expr.as_ref(),
                 );
+                let reference = state.latest_timestamp().map_or(ts, |latest| latest.max(ts));
 
                 if let Some(slot) = slot {
                     let (entries, via) = &retained[slot];
                     self.merge_retained(&state_key, entries, via.as_ref());
                 }
                 if window_mode == WindowMode::Sliding {
-                    let cutoff = ts - timespan as i64;
                     if let Some(buf) = self.event_buffers.get_mut(&state_key) {
                         buf.evict(cutoff);
                     }
@@ -1674,13 +1724,11 @@ impl<L> CorrelationEngine<L> {
 
                 if let Some(agg_value) = fired {
                     let alert_key = state_key;
-                    let suppressed = if let Some(suppress) = suppress_secs {
+                    let suppressed = suppress_secs.is_some_and(|suppress| {
                         self.last_alert
                             .get(&alert_key)
-                            .is_some_and(|&last_ts| (ts - last_ts) < suppress as i64)
-                    } else {
-                        false
-                    };
+                            .is_some_and(|&last| suppression_active(last, reference, suppress))
+                    });
                     if suppressed {
                         continue;
                     }
@@ -1717,7 +1765,7 @@ impl<L> CorrelationEngine<L> {
                     next_pending.push((corr_idx, fired_group_key, tenant.clone(), next_slot));
                     out.push(result);
                     out_indices.push(corr_idx);
-                    self.last_alert.insert(alert_key.clone(), ts);
+                    self.last_alert.insert(alert_key.clone(), reference);
 
                     if action == CorrelationAction::Reset {
                         if let Some(state) = self.state.get_mut(&alert_key) {
@@ -1775,6 +1823,9 @@ impl<L> CorrelationEngine<L> {
     // =========================================================================
 
     /// Manually evict all expired state entries.
+    ///
+    /// `now_secs` is floored at the newest event time correlation has
+    /// accepted, so an earlier value never keeps expired state alive.
     pub fn evict_expired(&mut self, now_secs: i64) {
         self.evict_all(now_secs);
     }
@@ -1904,7 +1955,12 @@ impl<L> CorrelationEngine<L> {
     }
 
     /// Evict expired entries and remove empty states.
+    ///
+    /// `now_secs` is floored at the newest accepted event time, so a late
+    /// event that triggers eviction neither keeps stale state alive nor makes
+    /// recent alerts look like they lie in the future.
     fn evict_all(&mut self, now_secs: i64) {
+        let now_secs = now_secs.max(self.high_water);
         // Phase 1: Time-based eviction — remove entries outside their correlation
         // window. Eviction is window-mode aware:
         //
@@ -2025,8 +2081,9 @@ impl<L> CorrelationEngine<L> {
             }
         }
 
-        // Phase 3: Evict stale last_alert entries — remove if the suppress window
-        // has passed or if the corresponding window state no longer exists.
+        // Phase 3: Evict last_alert entries whose suppress window has passed.
+        // An alert after `now_secs` counts as expired, as in the suppression
+        // check, so it cannot outlive its window.
         self.last_alert.retain(|key, &mut alert_ts| {
             let suppress = if key.corr_idx < self.correlations.len() {
                 self.correlations[key.corr_idx]
@@ -2036,7 +2093,7 @@ impl<L> CorrelationEngine<L> {
             } else {
                 0
             };
-            (now_secs - alert_ts) < suppress as i64
+            suppression_active(alert_ts, now_secs, suppress)
         });
     }
 
@@ -2195,6 +2252,10 @@ impl<L> CorrelationEngine<L> {
         let id_to_idx = self.build_id_to_index_map();
         let require_tenant = self.config.require_tenant;
         let mut stats = ImportStats::default();
+        // Restored timestamps get the same wall-clock bound as live events.
+        self.wall_clock = self.wall_clock.max(Utc::now().timestamp());
+        let clamp_to = self.wall_clock;
+        let drop_after = clamp_to.saturating_add(skew_secs(self.config.max_future_skew));
 
         let mut tenant_states = std::mem::take(&mut snapshot.tenants);
         // The version 1 top-level maps are the untenanted bucket.
@@ -2225,7 +2286,17 @@ impl<L> CorrelationEngine<L> {
 
             for (corr_id, groups) in tenant_state.windows {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
-                    for (gk, ws) in groups {
+                    for (gk, mut ws) in groups {
+                        let had_entries = !ws.is_empty();
+                        ws.bound_restored(clamp_to, drop_after);
+                        match ws.latest_timestamp() {
+                            Some(latest) => self.high_water = self.high_water.max(latest),
+                            None if had_entries => {
+                                stats.discarded_future += 1;
+                                continue;
+                            }
+                            None => {}
+                        }
                         let key = StateKey {
                             tenant: tenant.clone(),
                             corr_idx: idx,
@@ -2242,13 +2313,16 @@ impl<L> CorrelationEngine<L> {
             for (corr_id, groups) in tenant_state.last_alert {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
                     for (gk, ts) in groups {
+                        if ts > drop_after {
+                            continue;
+                        }
                         self.last_alert.insert(
                             StateKey {
                                 tenant: tenant.clone(),
                                 corr_idx: idx,
                                 group_key: gk,
                             },
-                            ts,
+                            ts.min(clamp_to),
                         );
                     }
                 }
@@ -2256,7 +2330,11 @@ impl<L> CorrelationEngine<L> {
 
             for (corr_id, groups) in tenant_state.event_buffers {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
-                    for (gk, buf) in groups {
+                    for (gk, mut buf) in groups {
+                        buf.bound_restored(clamp_to, drop_after);
+                        if buf.is_empty() {
+                            continue;
+                        }
                         self.event_buffers.insert(
                             StateKey {
                                 tenant: tenant.clone(),
@@ -2271,7 +2349,11 @@ impl<L> CorrelationEngine<L> {
 
             for (corr_id, groups) in tenant_state.event_ref_buffers {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
-                    for (gk, buf) in groups {
+                    for (gk, mut buf) in groups {
+                        buf.bound_restored(clamp_to, drop_after);
+                        if buf.is_empty() {
+                            continue;
+                        }
                         self.event_ref_buffers.insert(
                             StateKey {
                                 tenant: tenant.clone(),
@@ -2384,6 +2466,36 @@ fn find_cycle(adj: &[Vec<usize>]) -> Option<Vec<usize>> {
         }
     }
     None
+}
+
+/// `max_future_skew` as a signed duration.
+fn skew_secs(skew: u64) -> i64 {
+    i64::try_from(skew).unwrap_or(i64::MAX)
+}
+
+/// Whether an alert at `reference` falls inside the suppression window opened
+/// by the previous alert at `last_alert`. A reference before the previous
+/// alert counts as expired: the window was cleared since, and treating it as
+/// open would suppress the group until its events catch up.
+fn suppression_active(last_alert: i64, reference: i64, suppress_secs: u64) -> bool {
+    let elapsed = reference.saturating_sub(last_alert);
+    elapsed >= 0 && elapsed < skew_secs(suppress_secs)
+}
+
+/// Entry cap for a correlation that sets none: [`DEFAULT_MAX_GROUP_ENTRIES`],
+/// raised for count types so the cap never saturates below a value the
+/// condition compares against. A count that stops at the cap could then never
+/// meet a `gte` above it, and would always pass an `lt` above it.
+fn default_group_cap(corr: &CompiledCorrelation) -> usize {
+    match corr.correlation_type {
+        CorrelationType::EventCount | CorrelationType::ValueCount => corr
+            .condition
+            .predicates
+            .iter()
+            .map(|&(_, threshold)| (threshold.max(0.0).ceil() as usize).saturating_add(1))
+            .fold(DEFAULT_MAX_GROUP_ENTRIES, usize::max),
+        _ => DEFAULT_MAX_GROUP_ENTRIES,
+    }
 }
 
 fn stronger_mode(a: CorrelationEventMode, b: CorrelationEventMode) -> CorrelationEventMode {

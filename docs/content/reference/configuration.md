@@ -161,7 +161,8 @@ daemon:
     event_mode: none
     max_events: 10
     max_state_entries: 100000   # hard cap across all correlations and groups
-    # max_group_entries: 10000  # per-group window-state cap; unset = unbounded
+    # max_group_entries: 10000  # per-group window-state cap; unset = 10000, raised for larger count thresholds
+    max_future_skew: 5m         # timestamps further ahead of the wall clock skip correlation
     emit_detections: false      # include detection and correlation matches that only feed correlations
   state:
     save_interval: 30

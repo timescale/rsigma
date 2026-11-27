@@ -526,6 +526,54 @@ fn eval_correlation_with_suppress() {
 }
 
 #[test]
+fn eval_correlation_skips_far_future_events() {
+    let rule = temp_file(".yml", CORRELATION_RULES);
+    let events = r#"{"EventType": "login_failure", "User": "admin", "@timestamp": "9999-01-01T00:00:01Z"}
+{"EventType": "login_failure", "User": "admin", "@timestamp": "2025-01-01T00:00:02Z"}
+{"EventType": "login_failure", "User": "admin", "@timestamp": "2025-01-01T00:00:03Z"}
+"#;
+    rsigma()
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
+        .write_stdin(events)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("0 correlation"));
+
+    let current = events.replace("9999-01-01", "2025-01-01");
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--max-future-skew",
+            "1h",
+        ])
+        .write_stdin(current)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Brute Force"));
+}
+
+#[test]
+fn eval_rejects_an_invalid_max_future_skew() {
+    let rule = temp_file(".yml", CORRELATION_RULES);
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--max-future-skew",
+            "soon",
+        ])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid max-future-skew duration"));
+}
+
+#[test]
 fn eval_correlation_action_reset() {
     let rule = temp_file(".yml", CORRELATION_RULES);
     let events = r#"{"EventType": "login_failure", "User": "admin", "@timestamp": "2025-01-01T00:00:01Z"}

@@ -158,10 +158,17 @@ pub(crate) struct EvalArgs {
     /// Cap on retained entries within a single correlation group's window
     /// state (timestamps, value pairs, or per-rule hits). Bounds the
     /// within-window growth of chatty groups; oldest entries are dropped
-    /// (session windows keep their span anchor). Unset = unbounded.
+    /// (session windows keep their span anchor). Unset = 10000, raised for
+    /// count conditions with a larger threshold.
     /// Equivalent to the `rsigma.max_group_entries` custom attribute.
     #[arg(long = "max-group-entries")]
     pub max_group_entries: Option<usize>,
+
+    /// How far an event timestamp may be ahead of the wall clock (e.g. 5m,
+    /// 1h). Events further ahead are skipped for correlation; a smaller lead
+    /// is clamped to the wall clock.
+    #[arg(long = "max-future-skew", default_value = crate::config::defaults::MAX_FUTURE_SKEW)]
+    pub max_future_skew: String,
 
     /// Event field name(s) to use for timestamp extraction in correlations.
     /// Can be specified multiple times; tried in order before built-in
@@ -535,6 +542,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        max_future_skew,
         timestamp_fields,
         input_format,
         syslog_tz,
@@ -634,6 +642,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        &max_future_skew,
         timestamp_fields,
         "wallclock",
     );
@@ -805,6 +814,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        max_future_skew,
         timestamp_fields,
         input_format,
         syslog_tz,
@@ -914,6 +924,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        &max_future_skew,
         timestamp_fields,
         "wallclock",
     );

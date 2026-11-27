@@ -225,6 +225,9 @@ pub trait MetricsHook: Send + Sync {
     /// engine skipped an untenanted event. `channel` is `rest`, `otlp_http`,
     /// `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`.
     fn on_tenant_rejected(&self, _channel: &'static str, _reason: &'static str) {}
+    /// `count` events were skipped for correlation because their timestamp
+    /// was further ahead of the wall clock than `max_future_skew`.
+    fn on_correlation_future_skipped(&self, _count: u64) {}
     /// `tenant` produced a detection or correlation match. Tenants outside the
     /// operator allowlist arrive as `other`.
     fn on_tenant_match(&self, _tenant: &str) {}

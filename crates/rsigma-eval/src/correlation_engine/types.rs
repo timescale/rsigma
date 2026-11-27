@@ -82,6 +82,13 @@ impl std::fmt::Display for CorrelationEventMode {
     }
 }
 
+/// Default for [`CorrelationConfig::max_future_skew`]: five minutes.
+pub const DEFAULT_MAX_FUTURE_SKEW_SECS: u64 = 300;
+
+/// Per-group entry cap applied when neither the correlation nor
+/// [`CorrelationConfig::max_group_entries`] sets one.
+pub const DEFAULT_MAX_GROUP_ENTRIES: usize = 10_000;
+
 /// Behavior when no timestamp field is found or parseable in an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimestampFallback {
@@ -131,8 +138,12 @@ pub struct CorrelationConfig {
     /// oldest entry as the span anchor so truncation cannot silently extend
     /// the `timespan` cap.
     ///
-    /// `None` (default) means unbounded, preserving existing behavior.
-    /// Can be overridden per-correlation via `rsigma.max_group_entries`.
+    /// `None` (default) applies [`DEFAULT_MAX_GROUP_ENTRIES`] (10,000). For
+    /// `event_count` and `value_count` that default rises to one more than
+    /// the largest threshold in the condition, so the count can always reach
+    /// every value the condition compares against. An explicit cap is used
+    /// as given. Can be overridden per-correlation via
+    /// `rsigma.max_group_entries`.
     pub max_group_entries: Option<usize>,
 
     /// Default suppression window in seconds.
@@ -185,6 +196,16 @@ pub struct CorrelationConfig {
     /// Set when tenancy is enabled so a bug that lets an untenanted event
     /// through cannot form a shared `None` bucket. Default: `false`.
     pub require_tenant: bool,
+
+    /// How far, in seconds, an event timestamp may be ahead of the wall
+    /// clock.
+    ///
+    /// An event further ahead is skipped for correlation (detections still
+    /// fire) and counted in [`crate::CorrelationEngine::future_skipped`]. A
+    /// smaller lead is clock skew, so the timestamp is clamped to the wall
+    /// clock. Either way no window, session, or suppression is anchored in
+    /// the future. Default: 300.
+    pub max_future_skew: u64,
 }
 
 /// Key identifying one correlation window: tenant, correlation index, and the
@@ -218,6 +239,7 @@ impl Default for CorrelationConfig {
             max_correlation_events: 10,
             max_state_entries_per_tenant: None,
             require_tenant: false,
+            max_future_skew: DEFAULT_MAX_FUTURE_SKEW_SECS,
         }
     }
 }
@@ -315,6 +337,10 @@ pub struct ImportStats {
     /// Window-state entries discarded because they carried a tenant while
     /// tenancy is disabled.
     pub discarded_tenanted: usize,
+    /// Window-state entries discarded because every retained timestamp was
+    /// more than [`CorrelationConfig::max_future_skew`] ahead of the wall
+    /// clock.
+    pub discarded_future: usize,
 }
 
 impl std::ops::AddAssign for ImportStats {
@@ -322,6 +348,7 @@ impl std::ops::AddAssign for ImportStats {
         self.restored += other.restored;
         self.discarded_untenanted += other.discarded_untenanted;
         self.discarded_tenanted += other.discarded_tenanted;
+        self.discarded_future += other.discarded_future;
     }
 }
 

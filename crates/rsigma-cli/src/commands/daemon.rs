@@ -118,9 +118,17 @@ pub(crate) struct DaemonArgs {
 
     /// Cap on retained entries within a single correlation group's window
     /// state. Bounds within-window growth of chatty groups; oldest entries
-    /// are dropped (session windows keep their span anchor). Unset = unbounded.
+    /// are dropped (session windows keep their span anchor). Unset = 10000,
+    /// raised for count conditions with a larger threshold.
     #[arg(long = "max-group-entries")]
     pub max_group_entries: Option<usize>,
+
+    /// How far an event timestamp may be ahead of the wall clock (e.g. 5m,
+    /// 1h). Events further ahead are skipped for correlation and counted in
+    /// rsigma_correlation_future_events_skipped_total; a smaller lead is
+    /// clamped to the wall clock.
+    #[arg(long = "max-future-skew", default_value = config::defaults::MAX_FUTURE_SKEW)]
+    pub max_future_skew: String,
 
     /// Enable logical multi-tenancy. Startup-only; requires bearer-token auth
     /// and a tenant binding on every input source.
@@ -825,6 +833,7 @@ pub(crate) fn cmd_daemon(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        max_future_skew,
         tenancy: _cli_tenancy,
         max_tenant_state: _cli_max_tenant_state,
         timestamp_fields,
@@ -1040,6 +1049,7 @@ pub(crate) fn cmd_daemon(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        max_future_skew,
         tenancy,
         input_tenant,
         nats_tenants,
@@ -1688,6 +1698,11 @@ fn apply_daemon_config(
         {
             args.max_group_entries = Some(v);
         }
+        if !explicit("max_future_skew")
+            && let Some(v) = correlation.max_future_skew
+        {
+            args.max_future_skew = v;
+        }
         if !explicit("timestamp_fields")
             && let Some(v) = correlation.timestamp_fields
         {
@@ -2074,6 +2089,7 @@ fn run_daemon(
     max_correlation_events: usize,
     max_state_entries: usize,
     max_group_entries: Option<usize>,
+    max_future_skew: String,
     tenancy: daemon::tenancy::TenancySettings,
     input_tenant: Option<rsigma_eval::TenantId>,
     nats_tenants: Vec<daemon::tenancy::NatsTenantBinding>,
@@ -2202,6 +2218,7 @@ fn run_daemon(
         max_correlation_events,
         max_state_entries,
         max_group_entries,
+        &max_future_skew,
         timestamp_fields,
         &timestamp_fallback,
     );

@@ -160,6 +160,8 @@ correlation:
 
 Correlation windows use the time recorded in each event, so a delayed or replayed event lands where it happened. The engine reads the timestamp from the first of `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, and `eventTime` that is present. Put your own field first with `--timestamp-field` or the `rsigma.timestamp_field` custom attribute. When an event has no parseable timestamp, the daemon uses the wall clock by default; pass `--timestamp-fallback skip` when replaying historical data so those events stay out of correlation state. [Input Formats](input-formats.md) lists the timestamp formats the engine recognizes.
 
+An event cannot have happened in the future, so a timestamp ahead of the wall clock is clock skew or bad data. A timestamp more than `--max-future-skew` ahead (default `5m`) keeps the event out of correlation state, while detections still fire; the daemon counts it in `rsigma_correlation_future_events_skipped_total`. A smaller lead is clamped to the wall clock. This keeps one bad timestamp from holding a window, session, or suppression open. {{ added "unreleased" }}
+
 By default the window slides: each match is compared against the matches within `timespan` before it, so two events correlate whenever they are close enough together, regardless of clock boundaries. RSigma also offers `tumbling` windows (fixed, boundary-aligned buckets) and `session` windows (open while matches keep arriving within a `gap`, capped at `timespan`), set with `rsigma.window` and `rsigma.gap`:
 
 ```yaml
@@ -225,7 +227,7 @@ Here `brute_burst` is the `name` of the first correlation. Only the top of a cha
 
 By default a correlation keeps its window after firing, so the next qualifying match fires again. Two settings change that:
 
-- Suppression drops repeat alerts for the same correlation and group key for the given duration. Set it with `--suppress 5m`, or with `rsigma.suppress: 5m` on the rule.
+- Suppression drops repeat alerts for the same correlation and group key for the given duration. Set it with `--suppress 5m`, or with `rsigma.suppress: 5m` on the rule. The duration is measured on the group's newest event time, so a late event cannot shorten it. {{ added "unreleased" }}
 - Reset clears the group's window when the correlation fires, so the count starts again from zero. Set it with `--action reset`, or with `rsigma.action: reset` on the rule. The default action is `alert`.
 
 The flags apply to every correlation, and a value on the rule overrides the flag for that rule.
@@ -250,7 +252,7 @@ custom_attributes:
 
 Correlation state is a window per correlation and group key. In `engine eval` it lives in memory for the length of the run. The daemon keeps it across restarts when you pass `--state-db`, which snapshots state to SQLite periodically and on shutdown (see [State persistence](streaming-detection.md#state-persistence)).
 
-Memory grows with the number of distinct group keys and with window length. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains. [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
+Memory grows with the number of distinct group keys and with window length. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains (default 10,000, raised for an `event_count` or `value_count` condition with a larger threshold). [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
 
 When several daemons share a NATS consumer group, each replica keeps its own state, so the events of one group key must reach the same replica to correlate. See [consumer groups](nats-streaming.md#consumer-groups).
 
