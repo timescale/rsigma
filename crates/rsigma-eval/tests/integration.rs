@@ -687,3 +687,29 @@ fn filters_append_to_the_rule_condition() {
         ]
     );
 }
+
+#[test]
+fn thousands_of_added_conditions_evaluate_on_small_stack() {
+    let count = 10_000;
+    let mut pipeline_yaml = String::from("name: Many conditions\ntransformations:\n");
+    for i in 0..count {
+        pipeline_yaml.push_str(&format!(
+            "  - type: add_condition\n    negated: true\n    prepend: {}\n    conditions:\n      User: user-{i}\n",
+            i % 2 == 0
+        ));
+    }
+    let pipeline = parse_pipeline(&pipeline_yaml).unwrap();
+    let collection = rule_with_filters(0);
+    let (kept, excluded) = on_small_stack(move || {
+        let mut engine = Engine::new_with_pipeline(pipeline);
+        engine.add_collection(&collection).unwrap();
+        let kept = json!({"EventID": 1, "User": "admin"});
+        let excluded = json!({"EventID": 1, "User": format!("user-{}", count - 1)});
+        (
+            engine.evaluate(&JsonEvent::borrow(&kept)).len(),
+            engine.evaluate(&JsonEvent::borrow(&excluded)).len(),
+        )
+    });
+    assert_eq!(kept, 1);
+    assert_eq!(excluded, 0);
+}

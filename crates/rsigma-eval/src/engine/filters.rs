@@ -162,19 +162,6 @@ pub(super) fn namespaced_filter_condition(filter: &FilterRule, counter: usize) -
     }
 }
 
-/// Add `filter` to a rule `condition` as one more AND operand. A condition
-/// that is already an AND takes it as a new child, so applying many filters to
-/// one rule widens the AND instead of nesting it one level per filter.
-pub(super) fn and_filter(condition: &mut ConditionExpr, filter: &ConditionExpr) {
-    match condition {
-        ConditionExpr::And(children) => children.push(filter.clone()),
-        other => {
-            let original = std::mem::replace(other, ConditionExpr::And(Vec::new()));
-            *other = ConditionExpr::And(vec![original, filter.clone()]);
-        }
-    }
-}
-
 /// Merge every filter in `collection` into the detection rules it targets and
 /// return the rules, in collection order.
 ///
@@ -214,7 +201,7 @@ pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
                     .insert(filter_detection_key(counter, name), detection.clone());
             }
             for cond in &mut rule.detection.conditions {
-                and_filter(cond, &condition);
+                crate::condition::add_and_operand(cond, &condition, false);
             }
             *filtered = true;
         }

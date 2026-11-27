@@ -34,8 +34,8 @@ use bloom_index::{BloomCache, BloomLookup, FieldBloomIndex};
 
 pub use filters::apply_filters;
 use filters::{
-    FilterTarget, and_filter, filter_detection_key, filter_targets, logsource_compatible,
-    logsource_matches, namespaced_filter_condition, stable_references,
+    FilterTarget, filter_detection_key, filter_targets, logsource_compatible, logsource_matches,
+    namespaced_filter_condition, stable_references,
 };
 
 #[derive(Debug)]
@@ -630,7 +630,7 @@ impl<L> Engine<L> {
                     .insert(filter_detection_key(fc, name), compiled.clone());
             }
             for cond in &mut rule.conditions {
-                and_filter(cond, &rewritten_cond);
+                crate::condition::add_and_operand(cond, &rewritten_cond, false);
             }
             matched_any = true;
         }

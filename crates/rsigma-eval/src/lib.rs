@@ -92,6 +92,7 @@
 
 mod candidate_index;
 pub mod compiler;
+mod condition;
 pub mod correlation;
 pub mod correlation_engine;
 pub mod engine;
