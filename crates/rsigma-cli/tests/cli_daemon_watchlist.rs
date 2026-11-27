@@ -72,10 +72,44 @@ fn http_delete_body(url: &str, body: &str) -> (u16, String) {
     (status, body)
 }
 
-fn detections(daemon: &DaemonProcess) -> u64 {
+fn status_counter(daemon: &DaemonProcess, field: &str) -> u64 {
     let (_, body) = http_get(&daemon.url("/api/v1/status"));
     let value: serde_json::Value = serde_json::from_str(&body).expect("status json");
-    value["detection_matches"].as_u64().unwrap_or(0)
+    value[field].as_u64().unwrap_or(0)
+}
+
+/// Posts events and reads `detection_matches` only once every posted event
+/// has been evaluated: the HTTP input queues events, so a count read right
+/// after a post can still be missing earlier events.
+struct Events<'a> {
+    daemon: &'a DaemonProcess,
+    posted: u64,
+}
+
+impl<'a> Events<'a> {
+    fn new(daemon: &'a DaemonProcess) -> Self {
+        Self { daemon, posted: 0 }
+    }
+
+    /// Posts `event` and returns the settled detection count.
+    fn send(&mut self, event: &str) -> u64 {
+        let (status, body) = http_post(&self.daemon.url("/api/v1/events"), event);
+        assert_eq!(status, 200, "{body}");
+        self.posted += 1;
+        self.detections()
+    }
+
+    fn detections(&self) -> u64 {
+        let drained = poll_until(Duration::from_secs(10), || {
+            (status_counter(self.daemon, "events_processed") >= self.posted).then_some(())
+        });
+        assert!(
+            drained.is_some(),
+            "the daemon did not process {} events",
+            self.posted
+        );
+        status_counter(self.daemon, "detection_matches")
+    }
 }
 
 fn metric(body: &str, prefix: &str) -> u64 {
@@ -121,15 +155,17 @@ fn push(daemon: &DaemonProcess, body: &str) -> (u16, String) {
     )
 }
 
-fn wait_for_match(daemon: &DaemonProcess, event: &str, target: u64) {
+/// Posts `event` until it matches, so the rebuild triggered by a watchlist
+/// change has landed.
+fn wait_for_match(events: &mut Events, event: &str) {
     let end = Instant::now() + Duration::from_secs(10);
     loop {
-        http_post(&daemon.url("/api/v1/events"), event);
-        if detections(daemon) >= target {
+        let before = events.detections();
+        if events.send(event) > before {
             return;
         }
         if Instant::now() >= end {
-            panic!("detection_matches did not reach {target}");
+            panic!("{event} did not start matching");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -138,16 +174,16 @@ fn wait_for_match(daemon: &DaemonProcess, event: &str, target: u64) {
 #[test]
 fn push_then_delete_and_replace_change_what_matches() {
     let (daemon, _rule, _pipeline, _sources) = spawn_matching();
-    http_post(
-        &daemon.url("/api/v1/events"),
-        r#"{"DestinationIp":"198.51.100.7"}"#,
+    let mut events = Events::new(&daemon);
+    assert_eq!(
+        events.send(r#"{"DestinationIp":"198.51.100.7"}"#),
+        0,
+        "an empty watchlist must not match"
     );
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(detections(&daemon), 0, "an empty watchlist must not match");
 
     let (status, body) = push(&daemon, r#"{"indicators":["198.51.100.7"]}"#);
     assert_eq!(status, 200, "{body}");
-    wait_for_match(&daemon, r#"{"DestinationIp":"198.51.100.7"}"#, 1);
+    wait_for_match(&mut events, r#"{"DestinationIp":"198.51.100.7"}"#);
 
     let (status, body) = http_body(
         "PUT",
@@ -157,15 +193,10 @@ fn push_then_delete_and_replace_change_what_matches() {
     );
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("\"removed\":1"), "{body}");
-    wait_for_match(&daemon, r#"{"DestinationIp":"203.0.113.9"}"#, 2);
-    let after_replace = detections(&daemon);
-    http_post(
-        &daemon.url("/api/v1/events"),
-        r#"{"DestinationIp":"198.51.100.7"}"#,
-    );
-    std::thread::sleep(Duration::from_millis(400));
+    wait_for_match(&mut events, r#"{"DestinationIp":"203.0.113.9"}"#);
+    let after_replace = events.detections();
     assert_eq!(
-        detections(&daemon),
+        events.send(r#"{"DestinationIp":"198.51.100.7"}"#),
         after_replace,
         "the replaced indicator must stop matching"
     );
@@ -178,13 +209,8 @@ fn push_then_delete_and_replace_change_what_matches() {
     let end = Instant::now() + Duration::from_secs(10);
     let mut stable = 0;
     loop {
-        let before = detections(&daemon);
-        http_post(
-            &daemon.url("/api/v1/events"),
-            r#"{"DestinationIp":"203.0.113.9"}"#,
-        );
-        std::thread::sleep(Duration::from_millis(400));
-        if detections(&daemon) == before {
+        let before = events.detections();
+        if events.send(r#"{"DestinationIp":"203.0.113.9"}"#) == before {
             stable += 1;
             if stable >= 3 {
                 break;
@@ -195,6 +221,7 @@ fn push_then_delete_and_replace_change_what_matches() {
         if Instant::now() >= end {
             panic!("deleted indicator kept matching");
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
 
     let metrics = http_get(&daemon.url("/metrics")).1;
@@ -220,22 +247,16 @@ fn short_ttl_stops_matching() {
     let (daemon, _rule, _pipeline, _sources) = spawn_matching();
     let (status, body) = push(&daemon, r#"{"ttl":"2s","indicators":["198.51.100.7"]}"#);
     assert_eq!(status, 200, "{body}");
-    wait_for_match(&daemon, r#"{"DestinationIp":"198.51.100.7"}"#, 1);
+    let mut events = Events::new(&daemon);
+    wait_for_match(&mut events, r#"{"DestinationIp":"198.51.100.7"}"#);
 
     let end = Instant::now() + Duration::from_secs(20);
-    let mut saw_match = true;
     let mut stable = 0;
     loop {
-        let before = detections(&daemon);
-        http_post(
-            &daemon.url("/api/v1/events"),
-            r#"{"DestinationIp":"198.51.100.7"}"#,
-        );
-        std::thread::sleep(Duration::from_millis(400));
-        if detections(&daemon) > before {
-            saw_match = true;
+        let before = events.detections();
+        if events.send(r#"{"DestinationIp":"198.51.100.7"}"#) > before {
             stable = 0;
-        } else if saw_match {
+        } else {
             stable += 1;
             if stable >= 2 {
                 return;
@@ -244,6 +265,7 @@ fn short_ttl_stops_matching() {
         if Instant::now() >= end {
             panic!("indicator still matched after its ttl");
         }
+        std::thread::sleep(Duration::from_millis(400));
     }
 }
 
@@ -284,18 +306,14 @@ sources:
         r#"{"ttl":"4s","indicators":["203.0.113.9"]}"#,
     );
     assert_eq!(status, 200, "{response}");
-    wait_for_match(&daemon, r#"{"DestinationIp":"198.51.100.7"}"#, 1);
+    let mut events = Events::new(&daemon);
+    wait_for_match(&mut events, r#"{"DestinationIp":"198.51.100.7"}"#);
 
     let end = Instant::now() + Duration::from_secs(20);
     let mut stable = 0;
     loop {
-        let before = detections(&daemon);
-        http_post(
-            &daemon.url("/api/v1/events"),
-            r#"{"DestinationIp":"198.51.100.7"}"#,
-        );
-        std::thread::sleep(Duration::from_millis(400));
-        if detections(&daemon) > before {
+        let before = events.detections();
+        if events.send(r#"{"DestinationIp":"198.51.100.7"}"#) > before {
             stable = 0;
         } else {
             stable += 1;
@@ -306,6 +324,7 @@ sources:
         if Instant::now() >= end {
             panic!("expired indicator kept matching after the other watchlist expired");
         }
+        std::thread::sleep(Duration::from_millis(400));
     }
 }
 
