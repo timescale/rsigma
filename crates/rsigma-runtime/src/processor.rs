@@ -866,6 +866,14 @@ impl LogProcessor {
         engine.logsource_absent_total()
     }
 
+    /// Total events evaluated without their schema's implied logsource
+    /// because the classification was ambiguous (fail-open).
+    pub fn logsource_ambiguous_total(&self) -> u64 {
+        let snapshot = self.engine.load();
+        let engine = snapshot.read();
+        engine.logsource_ambiguous_total()
+    }
+
     /// Static per-schema logsource pruning summary on the current engine.
     /// Empty unless schema routing and logsource routing are both enabled.
     pub fn schema_pruning_summary(&self) -> Vec<rsigma_eval::SchemaPruning> {

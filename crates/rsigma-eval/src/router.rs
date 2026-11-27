@@ -22,6 +22,7 @@
 //! configuration), so there is no separate code path for "routing off".
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rsigma_parser::{LogSource, SigmaCollection, SigmaRule};
 
@@ -162,6 +163,50 @@ fn resolve_event_logsource<E: Event, L: ExtractLogSource<E>>(
     ls
 }
 
+/// An event's schema and the logsource it implies for pruning.
+struct Classified<'a> {
+    schema: Option<String>,
+    implied: Option<&'a LogSource>,
+}
+
+/// Classify an event and, when `with_logsource` is set, look up the logsource
+/// its schema implies.
+///
+/// When the winning signature ties at its specificity with a signature of a
+/// different name that implies a different logsource, the name tie-break
+/// cannot tell which platform the event came from. The implied logsource is
+/// then dropped (fail open) and `ambiguous` is incremented, so only the
+/// event's own fields can prune rules.
+fn classify_for_routing<'a, E: Event>(
+    classifier: &SchemaClassifier,
+    plan: &'a RoutingPlan,
+    event: &E,
+    with_logsource: bool,
+    ambiguous: &AtomicU64,
+) -> Classified<'a> {
+    if !with_logsource {
+        return Classified {
+            schema: classifier.classify(event).map(|m| m.name),
+            implied: None,
+        };
+    }
+    let Some((winner, mut ties)) = classifier.winner_and_ties(event) else {
+        return Classified {
+            schema: None,
+            implied: None,
+        };
+    };
+    let mut implied = plan.schema_logsource(&winner.name);
+    if ties.any(|tie| plan.schema_logsource(&tie.name) != implied) {
+        ambiguous.fetch_add(1, Ordering::Relaxed);
+        implied = None;
+    }
+    Classified {
+        schema: Some(winner.name.clone()),
+        implied,
+    }
+}
+
 /// Stateless detection for one event: classify, decide, evaluate. Borrows only
 /// shared state so it can run in parallel across a batch. When a logsource
 /// extractor is configured, the event's logsource is resolved (explicit fields
@@ -171,16 +216,16 @@ fn detect_one<E: Event, L: ExtractLogSource<E>>(
     plan: &RoutingPlan,
     engines: &[Engine],
     extractor: Option<&L>,
+    ambiguous: &AtomicU64,
     event: &E,
 ) -> Routed1 {
-    let schema = classifier.classify(event).map(|m| m.name);
-    match plan.decide(schema.as_deref()) {
+    let classified = classify_for_routing(classifier, plan, event, extractor.is_some(), ambiguous);
+    match plan.decide(classified.schema.as_deref()) {
         RouteDecision::Drop | RouteDecision::Error => Routed1::Skip,
         RouteDecision::Evaluate { set, .. } => {
             let detections = match extractor {
                 Some(ex) => {
-                    let implied = schema.as_deref().and_then(|s| plan.schema_logsource(s));
-                    let ls = resolve_event_logsource(ex, implied, event);
+                    let ls = resolve_event_logsource(ex, classified.implied, event);
                     engines[set].evaluate_pruned_identified(event, &ls)
                 }
                 None => engines[set].evaluate_identified(event),
@@ -210,6 +255,10 @@ pub struct SchemaRouter<L = LogSourceExtractor> {
     /// pruning. Resolution happens per event in the router (extractor value
     /// plus the schema's implied logsource), so it is not set on the engines.
     logsource_extractor: Option<L>,
+    /// Events whose schema implied no logsource because the classification
+    /// tied between schemas implying different ones. Surfaced via
+    /// [`SchemaRouter::logsource_ambiguous_total`].
+    logsource_ambiguous: AtomicU64,
 }
 
 impl SchemaRouter {
@@ -340,6 +389,7 @@ impl<L> SchemaRouter<L> {
             field_maps,
             correlation,
             logsource_extractor,
+            logsource_ambiguous: AtomicU64::new(0),
         })
     }
 
@@ -395,6 +445,16 @@ impl<L> SchemaRouter<L> {
             .iter()
             .map(Engine::logsource_absent_total)
             .sum()
+    }
+
+    /// Total events evaluated without their schema's implied logsource
+    /// because the winning signature tied, at the same specificity, with a
+    /// different-name signature implying a different logsource. Those events
+    /// are pruned only by their own logsource fields, so every rule their
+    /// fields do not rule out is evaluated. Zero unless logsource routing is
+    /// enabled (an extractor is set).
+    pub fn logsource_ambiguous_total(&self) -> u64 {
+        self.logsource_ambiguous.load(Ordering::Relaxed)
     }
 
     /// Static per-schema pruning summary: for each schema with an implied
@@ -537,8 +597,9 @@ impl<L> SchemaRouter<L> {
         let plan = &self.plan;
         let engines = &self.engines;
         let extractor = self.logsource_extractor.as_ref();
+        let ambiguous = &self.logsource_ambiguous;
         let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
-            detect_one(classifier, plan, engines, extractor, *e)
+            detect_one(classifier, plan, engines, extractor, ambiguous, *e)
         });
         phase1
             .into_iter()
@@ -603,8 +664,9 @@ impl<L> SchemaRouter<L> {
         let plan = &self.plan;
         let engines = &self.engines;
         let extractor = self.logsource_extractor.as_ref();
+        let ambiguous = &self.logsource_ambiguous;
         let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
-            detect_one(classifier, plan, engines, extractor, *e)
+            detect_one(classifier, plan, engines, extractor, ambiguous, *e)
         });
 
         // Stateful phase: feed detections into the shared correlation store in
@@ -647,7 +709,13 @@ impl<L> SchemaRouter<L> {
     where
         L: ExtractLogSource<E>,
     {
-        let schema = self.classifier.classify(event).map(|m| m.name);
+        let Classified { schema, implied } = classify_for_routing(
+            &self.classifier,
+            &self.plan,
+            event,
+            self.logsource_extractor.is_some(),
+            &self.logsource_ambiguous,
+        );
         match self.plan.decide(schema.as_deref()) {
             RouteDecision::Drop => RouteResult {
                 results: Vec::new(),
@@ -662,9 +730,6 @@ impl<L> SchemaRouter<L> {
             RouteDecision::Evaluate { set, unknown } => {
                 let detections = match self.logsource_extractor.as_ref() {
                     Some(ex) => {
-                        let implied = schema
-                            .as_deref()
-                            .and_then(|s| self.plan.schema_logsource(s));
                         let ls = resolve_event_logsource(ex, implied, event);
                         self.engines[set].evaluate_pruned_identified(event, &ls)
                     }

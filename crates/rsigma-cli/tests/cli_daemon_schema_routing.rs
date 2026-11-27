@@ -95,6 +95,93 @@ fn routes_ecs_event_through_bound_pipeline() {
     });
 }
 
+/// A Windows ECS event also reports `host.os.kernel`. With logsource routing
+/// it must still be attributed to Windows, so the Windows rule fires.
+#[test]
+fn windows_ecs_event_with_kernel_version_keeps_windows_rules() {
+    let rule = temp_file(".yml", RULE);
+    let schema = temp_file(".yml", SCHEMA_CONFIG);
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--schema-routing",
+            "--schema-config",
+            schema.path().to_str().unwrap(),
+            "--logsource-routing",
+        ],
+    );
+
+    let (status, _body) = http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"ecs.version":"8.11.0","winlog.channel":"Security","host.os.kernel":"10.0.19045","process.command_line":"cmd /c whoami"}"#,
+    );
+    assert_eq!(status, 200);
+
+    poll_status(&daemon, |v| {
+        v["detection_matches"].as_u64().unwrap_or(0) >= 1
+    });
+}
+
+/// Two signatures that tie at the same specificity but imply different
+/// products: the event is evaluated without the schema-derived product, so
+/// the Windows rule fires, and the ambiguity counter records it.
+#[test]
+fn ambiguous_classification_fails_open_and_is_counted() {
+    let rule = temp_file(".yml", RULE);
+    let schema = temp_file(
+        ".yml",
+        r#"
+schemas:
+  - name: vendor_a
+    specificity: 70
+    match:
+      - field_present: vendor_marker
+  - name: vendor_b
+    specificity: 70
+    match:
+      - field_present: vendor_marker
+routing:
+  on_unknown: warn
+  bindings:
+    - schema: vendor_a
+      pipelines: []
+      logsource:
+        product: linux
+    - schema: vendor_b
+      pipelines: []
+      logsource:
+        product: windows
+"#,
+    );
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--schema-routing",
+            "--schema-config",
+            schema.path().to_str().unwrap(),
+            "--logsource-routing",
+        ],
+    );
+
+    let (status, _body) = http_post(
+        &daemon.url("/api/v1/events"),
+        r#"{"vendor_marker":true,"CommandLine":"cmd /c whoami"}"#,
+    );
+    assert_eq!(status, 200);
+
+    poll_status(&daemon, |v| {
+        v["detection_matches"].as_u64().unwrap_or(0) >= 1
+    });
+    let metrics = poll_until(Duration::from_secs(5), || {
+        let (s, body) = http_get(&daemon.url("/metrics"));
+        (s == 200 && body.contains("rsigma_events_ambiguous_logsource_total 1")).then_some(body)
+    });
+    assert!(
+        metrics.is_some(),
+        "expected rsigma_events_ambiguous_logsource_total to reach 1"
+    );
+}
+
 #[test]
 fn cross_schema_correlation_via_daemon() {
     let rule = temp_file(".yml", CORR_RULES);

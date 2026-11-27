@@ -248,6 +248,18 @@ impl RuntimeEngine {
         }
     }
 
+    /// Total events evaluated without their schema's implied logsource
+    /// because the classification tied between schemas implying different
+    /// logsources (fail-open). Non-zero only for routed variants with an
+    /// extractor configured.
+    pub fn logsource_ambiguous_total(&self) -> u64 {
+        match &self.engine {
+            EngineVariant::Routed(router) => router.logsource_ambiguous_total(),
+            EngineVariant::Rulesets(engines) => engines.logsource_ambiguous_total(),
+            EngineVariant::DetectionOnly(_) | EngineVariant::WithCorrelations(_) => 0,
+        }
+    }
+
     /// Static per-schema logsource pruning summary. Non-empty only for the
     /// routed variant with logsource routing enabled.
     pub fn schema_pruning_summary(&self) -> Vec<SchemaPruning> {

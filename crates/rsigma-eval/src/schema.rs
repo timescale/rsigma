@@ -338,16 +338,10 @@ impl SchemaClassifier {
         &self,
         event: &E,
     ) -> (Option<SchemaMatch>, bool) {
-        // Signatures are sorted specificity-descending, so the first match is
-        // the winner and any following match with equal specificity but a
-        // different name is a genuine tie.
-        let mut matching = self.signatures.iter().filter(|s| s.matches(event));
-        let Some(winner) = matching.next() else {
+        let Some((winner, mut ties)) = self.winner_and_ties(event) else {
             return (None, false);
         };
-        let ambiguous = matching
-            .take_while(|s| s.specificity == winner.specificity)
-            .any(|s| s.name != winner.name);
+        let ambiguous = ties.next().is_some();
         (
             Some(SchemaMatch {
                 name: winner.name.clone(),
@@ -355,6 +349,27 @@ impl SchemaClassifier {
             }),
             ambiguous,
         )
+    }
+
+    /// The winning signature, plus the lazily evaluated signatures of a
+    /// different name that also match at the winning specificity (the ties
+    /// the name tie-break decided against).
+    pub(crate) fn winner_and_ties<'a, E: Event + ?Sized>(
+        &'a self,
+        event: &'a E,
+    ) -> Option<(
+        &'a SchemaSignature,
+        impl Iterator<Item = &'a SchemaSignature>,
+    )> {
+        // Signatures are sorted specificity-descending, so the first match is
+        // the winner and only the signatures right after it can tie.
+        let pos = self.signatures.iter().position(|s| s.matches(event))?;
+        let winner = &self.signatures[pos];
+        let ties = self.signatures[pos + 1..]
+            .iter()
+            .take_while(move |s| s.specificity == winner.specificity)
+            .filter(move |s| s.name != winner.name && s.matches(event));
+        Some((winner, ties))
     }
 
     /// All matching schema names for an event, most specific first. Useful for
@@ -2086,6 +2101,33 @@ mod tests {
             );
             assert!(!ambiguous, "{event} must not tie");
         }
+    }
+
+    #[test]
+    fn winner_and_ties_reports_only_different_name_ties_at_the_winning_specificity() {
+        let sig = |name: &str, specificity: u32, field: &str| SchemaSignature {
+            name: name.to_string(),
+            specificity,
+            predicates: vec![SchemaPredicate::FieldPresent(field.to_string())],
+        };
+        let cls = SchemaClassifier::new(vec![
+            sig("alpha", 70, "a"),
+            sig("alpha", 70, "b"),
+            sig("bravo", 70, "a"),
+            sig("charlie", 70, "c"),
+            sig("delta", 60, "a"),
+        ]);
+        let value = json!({"a": 1, "b": 1});
+        let event = JsonEvent::borrow(&value);
+        let (winner, ties) = cls.winner_and_ties(&event).expect("matches");
+        assert_eq!(winner.name, "alpha");
+        let ties: Vec<&str> = ties.map(|s| s.name.as_str()).collect();
+        assert_eq!(ties, vec!["bravo"]);
+
+        assert!(
+            cls.winner_and_ties(&JsonEvent::borrow(&json!({"z": 1})))
+                .is_none()
+        );
     }
 
     #[test]
