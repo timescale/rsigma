@@ -1,0 +1,1 @@
+Image:("a.exe" OR "b.exe") AND Port:[1024 TO 65535]

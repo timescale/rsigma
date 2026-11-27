@@ -137,3 +137,34 @@ level: high
         "error should mention timespan/timeframe, got: {err}"
     );
 }
+
+#[test]
+fn over_deep_rules_are_reported_and_valid_rules_still_load() {
+    let not_chain = format!("{}selection", "not ".repeat(16_000));
+    let quantifiers: String = (0..5_000).map(|i| format!("a{i}[any].")).collect();
+    let yaml = format!(
+        "title: Not chain\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: {not_chain}\n---\n\
+         title: Array scopes\nsigma-version: 3\nlogsource:\n    category: test\ndetection:\n    selection:\n        ? {quantifiers}x\n        : 1\n    condition: selection\n---\n\
+         title: Valid\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection and not selection\n"
+    );
+    let collection = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parse_sigma_yaml(&yaml).unwrap())
+        .unwrap()
+        .join()
+        .unwrap();
+    let titles: Vec<&str> = collection.rules.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(titles, ["Valid"]);
+    let messages: Vec<&str> = collection
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages.iter().any(|m| m.contains("maximum depth")));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("array quantifier scopes"))
+    );
+}
