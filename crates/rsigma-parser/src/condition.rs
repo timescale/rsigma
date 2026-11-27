@@ -42,37 +42,6 @@ const MAX_CONDITION_DEPTH: usize = 64;
 /// for the levels that filters add.
 pub const MAX_CONDITION_TREE_DEPTH: usize = 4 * MAX_CONDITION_DEPTH;
 
-/// Tracks how deeply a recursive condition `Deserialize` impl has nested on
-/// the current thread, failing once it passes [`MAX_CONDITION_TREE_DEPTH`].
-///
-/// A deserializer recurses once per tree level before the outer value is
-/// built, so the limit has to be enforced on the way down rather than by
-/// walking the finished tree. Shared by the condition types of this crate and
-/// `rsigma-ir`.
-#[doc(hidden)]
-pub struct TreeDepthGuard(&'static std::thread::LocalKey<std::cell::Cell<usize>>);
-
-impl TreeDepthGuard {
-    pub fn enter<E: serde::de::Error>(
-        depth: &'static std::thread::LocalKey<std::cell::Cell<usize>>,
-    ) -> std::result::Result<Self, E> {
-        let next = depth.get() + 1;
-        if next > MAX_CONDITION_TREE_DEPTH {
-            return Err(E::custom(format!(
-                "condition tree exceeds maximum depth ({MAX_CONDITION_TREE_DEPTH})"
-            )));
-        }
-        depth.set(next);
-        Ok(TreeDepthGuard(depth))
-    }
-}
-
-impl Drop for TreeDepthGuard {
-    fn drop(&mut self) {
-        self.0.set(self.0.get() - 1);
-    }
-}
-
 /// pest fails with "stack limit reached" when fewer than 64 KiB of stack
 /// remain, and musl reports only the already-touched part of the main
 /// thread's stack, so the reported headroom can be far below the real one.

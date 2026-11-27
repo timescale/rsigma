@@ -81,20 +81,25 @@ pub struct IrRuleMetadata {
 // =============================================================================
 
 /// Detection definition — semantic shape, independent of compiled matchers.
+///
+/// Deserializing rejects a tree deeper than [`MAX_HIR_DEPTH`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrDetection {
     AllOf(Vec<IrDetectionItem>),
-    AnyOf(Vec<IrDetection>),
+    AnyOf(#[serde(deserialize_with = "nested")] Vec<IrDetection>),
     Keywords(IrMatcher),
     ArrayMatch {
         field: String,
         quantifier: ArrayQuantifier,
+        #[serde(deserialize_with = "nested")]
         body: Box<IrDetection>,
     },
     /// Heterogeneous AND of plain items and nested `ArrayMatch` blocks.
-    And(Vec<IrDetection>),
+    And(#[serde(deserialize_with = "nested")] Vec<IrDetection>),
     Conditional {
+        #[serde(deserialize_with = "nested")]
         named: HashMap<String, IrDetection>,
+        #[serde(deserialize_with = "nested")]
         condition: IrCondition,
     },
 }
@@ -191,6 +196,8 @@ pub enum IrEncoding {
 
 /// Resolved match operation. Grow by appending variants and bumping the pack
 /// IR schema major. No `Unknown` catch-all.
+///
+/// Deserializing rejects a tree deeper than [`MAX_HIR_DEPTH`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrMatcher {
     /// Structured string match (equality/substring/prefix/suffix) over a
@@ -253,11 +260,12 @@ pub enum IrMatcher {
     },
     TimestampPart {
         part: IrTimePart,
+        #[serde(deserialize_with = "nested")]
         inner: Box<IrMatcher>,
     },
-    Not(Box<IrMatcher>),
-    AnyOf(Vec<IrMatcher>),
-    AllOf(Vec<IrMatcher>),
+    Not(#[serde(deserialize_with = "nested")] Box<IrMatcher>),
+    AnyOf(#[serde(deserialize_with = "nested")] Vec<IrMatcher>),
+    AllOf(#[serde(deserialize_with = "nested")] Vec<IrMatcher>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -366,53 +374,40 @@ pub enum IrExtractExpr {
 /// match) and avoids the combinatorial blow-up of expanding `N of` into an
 /// `Or` of `And`s.
 ///
-/// Deserializing rejects a tree deeper than
-/// [`MAX_CONDITION_TREE_DEPTH`](rsigma_parser::condition::MAX_CONDITION_TREE_DEPTH).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// Deserializing rejects a tree deeper than [`MAX_HIR_DEPTH`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrCondition {
     Detection(String),
-    And(Vec<IrCondition>),
-    Or(Vec<IrCondition>),
-    Not(Box<IrCondition>),
+    And(#[serde(deserialize_with = "nested")] Vec<IrCondition>),
+    Or(#[serde(deserialize_with = "nested")] Vec<IrCondition>),
+    Not(#[serde(deserialize_with = "nested")] Box<IrCondition>),
     Selector {
         quantifier: Quantifier,
         pattern: SelectorPattern,
     },
 }
 
-impl<'de> Deserialize<'de> for IrCondition {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename = "IrCondition")]
-        enum Repr {
-            Detection(String),
-            And(Vec<IrCondition>),
-            Or(Vec<IrCondition>),
-            Not(Box<IrCondition>),
-            Selector {
-                quantifier: Quantifier,
-                pattern: SelectorPattern,
-            },
-        }
+// =============================================================================
+// Deserialization depth
+// =============================================================================
 
-        thread_local! {
-            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        }
-        let _guard = rsigma_parser::condition::TreeDepthGuard::enter(&DEPTH)?;
-        Ok(match Repr::deserialize(deserializer)? {
-            Repr::Detection(name) => IrCondition::Detection(name),
-            Repr::And(children) => IrCondition::And(children),
-            Repr::Or(children) => IrCondition::Or(children),
-            Repr::Not(inner) => IrCondition::Not(inner),
-            Repr::Selector {
-                quantifier,
-                pattern,
-            } => IrCondition::Selector {
-                quantifier,
-                pattern,
-            },
-        })
-    }
+/// Deepest HIR tree a deserializer may build, counting [`IrCondition`],
+/// [`IrDetection`], and [`IrMatcher`] levels together along any path. The
+/// deepest rule the parser accepts stays well inside it.
+pub const MAX_HIR_DEPTH: usize = rsigma_parser::condition::MAX_CONDITION_TREE_DEPTH;
+
+thread_local! {
+    static HIR_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Deserialize the children of a HIR tree node, one level deeper.
+fn nested<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let _guard = rsigma_parser::de_depth::DepthGuard::enter(&HIR_DEPTH, MAX_HIR_DEPTH, "HIR tree")?;
+    T::deserialize(deserializer)
 }
 
 // =============================================================================
@@ -452,8 +447,8 @@ pub struct IrFilter {
 
 #[cfg(test)]
 mod tests {
-    use super::{IrCondition, NumericLiteral};
-    use rsigma_parser::condition::MAX_CONDITION_TREE_DEPTH;
+    use super::{IrCondition, IrDetection, IrMatcher, MAX_HIR_DEPTH, NumericLiteral};
+    use serde::de::DeserializeOwned;
 
     fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
         std::thread::Builder::new()
@@ -464,18 +459,78 @@ mod tests {
             .unwrap()
     }
 
-    fn nested_not_json(depth: usize) -> String {
+    /// `open` repeated around `leaf` so the tree has `depth` levels.
+    fn nested_json(open: &str, leaf: &str, close: &str, depth: usize) -> String {
         format!(
-            "{}{{\"Detection\":\"a\"}}{}",
-            "{\"Not\":".repeat(depth - 1),
-            "}".repeat(depth - 1)
+            "{}{leaf}{}",
+            open.repeat(depth - 1),
+            close.repeat(depth - 1)
         )
     }
 
-    fn from_json_unbounded(json: &str) -> serde_json::Result<IrCondition> {
+    fn not_condition(depth: usize) -> String {
+        nested_json("{\"Not\":", "{\"Detection\":\"a\"}", "}", depth)
+    }
+
+    fn any_of_detection(depth: usize) -> String {
+        nested_json("{\"AnyOf\":[", "{\"AllOf\":[]}", "]}", depth)
+    }
+
+    fn not_matcher(depth: usize) -> String {
+        nested_json("{\"Not\":", "\"Null\"", "}", depth)
+    }
+
+    fn from_json_unbounded<T: DeserializeOwned>(json: &str) -> serde_json::Result<T> {
         let mut de = serde_json::Deserializer::from_str(json);
         de.disable_recursion_limit();
-        serde::Deserialize::deserialize(&mut de)
+        T::deserialize(&mut de)
+    }
+
+    fn assert_depth_limit<T: DeserializeOwned + std::fmt::Debug>(nested: fn(usize) -> String) {
+        on_small_stack(move || {
+            for depth in [10_000, MAX_HIR_DEPTH + 1] {
+                let err = from_json_unbounded::<T>(&nested(depth)).unwrap_err();
+                assert!(err.to_string().contains("maximum depth"), "{err}");
+            }
+            from_json_unbounded::<T>(&nested(MAX_HIR_DEPTH)).unwrap();
+        });
+    }
+
+    #[test]
+    fn deep_condition_is_rejected_from_json() {
+        assert_depth_limit::<IrCondition>(not_condition);
+    }
+
+    #[test]
+    fn deep_detection_is_rejected_from_json() {
+        assert_depth_limit::<IrDetection>(any_of_detection);
+    }
+
+    #[test]
+    fn deep_matcher_is_rejected_from_json() {
+        assert_depth_limit::<IrMatcher>(not_matcher);
+    }
+
+    #[test]
+    fn nested_hir_types_share_the_depth_limit() {
+        // A detection nested halfway to the limit whose leaf is a Conditional
+        // with a condition that reaches the rest of the way.
+        let half = MAX_HIR_DEPTH / 2;
+        let conditional = |condition_depth: usize| {
+            format!(
+                "{{\"Conditional\":{{\"named\":{{}},\"condition\":{}}}}}",
+                not_condition(condition_depth)
+            )
+        };
+        let detection = move |condition_depth: usize| {
+            nested_json("{\"And\":[", &conditional(condition_depth), "]}", half)
+        };
+        on_small_stack(move || {
+            from_json_unbounded::<IrDetection>(&detection(MAX_HIR_DEPTH - half)).unwrap();
+            let err = from_json_unbounded::<IrDetection>(&detection(MAX_HIR_DEPTH - half + 1))
+                .unwrap_err();
+            assert!(err.to_string().contains("maximum depth"), "{err}");
+        });
     }
 
     /// CBOR for `{"Not": {"Not": ... {"Detection": "a"}}}`, written by hand so
@@ -493,17 +548,6 @@ mod tests {
     }
 
     #[test]
-    fn deep_condition_is_rejected_from_json() {
-        on_small_stack(|| {
-            for depth in [10_000, MAX_CONDITION_TREE_DEPTH + 1] {
-                let err = from_json_unbounded(&nested_not_json(depth)).unwrap_err();
-                assert!(err.to_string().contains("maximum depth"), "{err}");
-            }
-            assert!(from_json_unbounded(&nested_not_json(MAX_CONDITION_TREE_DEPTH)).is_ok());
-        });
-    }
-
-    #[test]
     fn deep_condition_is_rejected_from_cbor() {
         on_small_stack(|| {
             let decode = |depth| {
@@ -514,7 +558,7 @@ mod tests {
             };
             let err = decode(10_000).unwrap_err();
             assert!(err.to_string().contains("maximum depth"), "{err}");
-            assert!(decode(MAX_CONDITION_TREE_DEPTH).is_ok());
+            assert!(decode(MAX_HIR_DEPTH).is_ok());
         });
     }
 

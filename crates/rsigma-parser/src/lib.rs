@@ -59,6 +59,8 @@
 pub mod ads;
 pub mod ast;
 pub mod condition;
+#[doc(hidden)]
+pub mod de_depth;
 pub mod diagnostic;
 pub mod emit;
 pub mod error;

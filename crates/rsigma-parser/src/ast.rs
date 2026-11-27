@@ -261,14 +261,14 @@ impl FieldSpec {
 ///
 /// Deserializing rejects a tree deeper than
 /// [`MAX_CONDITION_TREE_DEPTH`](crate::condition::MAX_CONDITION_TREE_DEPTH).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConditionExpr {
     /// Logical AND of sub-expressions.
-    And(Vec<ConditionExpr>),
+    And(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Vec<ConditionExpr>),
     /// Logical OR of sub-expressions.
-    Or(Vec<ConditionExpr>),
+    Or(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Vec<ConditionExpr>),
     /// Logical NOT of a sub-expression.
-    Not(Box<ConditionExpr>),
+    Not(#[serde(deserialize_with = "crate::de_depth::nested_condition")] Box<ConditionExpr>),
     /// Reference to a named detection identifier.
     Identifier(String),
     /// Quantified selector: `1 of selection_*`, `all of them`, etc.
@@ -276,41 +276,6 @@ pub enum ConditionExpr {
         quantifier: Quantifier,
         pattern: SelectorPattern,
     },
-}
-
-impl<'de> Deserialize<'de> for ConditionExpr {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename = "ConditionExpr")]
-        enum Repr {
-            And(Vec<ConditionExpr>),
-            Or(Vec<ConditionExpr>),
-            Not(Box<ConditionExpr>),
-            Identifier(String),
-            Selector {
-                quantifier: Quantifier,
-                pattern: SelectorPattern,
-            },
-        }
-
-        thread_local! {
-            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        }
-        let _guard = crate::condition::TreeDepthGuard::enter(&DEPTH)?;
-        Ok(match Repr::deserialize(deserializer)? {
-            Repr::And(children) => ConditionExpr::And(children),
-            Repr::Or(children) => ConditionExpr::Or(children),
-            Repr::Not(inner) => ConditionExpr::Not(inner),
-            Repr::Identifier(name) => ConditionExpr::Identifier(name),
-            Repr::Selector {
-                quantifier,
-                pattern,
-            } => ConditionExpr::Selector {
-                quantifier,
-                pattern,
-            },
-        })
-    }
 }
 
 impl fmt::Display for ConditionExpr {
