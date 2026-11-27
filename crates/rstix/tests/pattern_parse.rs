@@ -1,7 +1,7 @@
 //! Pattern Engine parse + type-check tests (STIX Specification §9.8).
 
 use rstix::Pattern;
-use rstix::pattern::{PatternAst, PatternError};
+use rstix::pattern::{MAX_PATTERN_BYTES, PatternAst, PatternError};
 
 fn fixture_lines(name: &str) -> Vec<String> {
     let path = format!("tests/fixtures/pattern/{name}");
@@ -144,4 +144,107 @@ fn type_check_rejects_invalid_property() {
 fn type_check_rejects_invalid_operator_for_type() {
     let err = Pattern::parse("[ipv4-addr:value > 'x']").unwrap_err();
     assert!(matches!(err, PatternError::TypeError { .. }));
+}
+
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+/// `head`, then as many copies of `unit` as fit in [`MAX_PATTERN_BYTES`]
+/// together with `tail`.
+fn fill(head: &str, unit: &str, tail: &str) -> String {
+    let count = (MAX_PATTERN_BYTES - head.len() - tail.len()) / unit.len();
+    format!("{head}{}{tail}", unit.repeat(count))
+}
+
+/// `n` opening parentheses, `inner`, and `n` closing ones, sized to fill the
+/// pattern size limit inside `head` and `tail`.
+fn nested_parens(head: &str, inner: &str, tail: &str) -> String {
+    let n = (MAX_PATTERN_BYTES - head.len() - inner.len() - tail.len()) / 2;
+    format!("{head}{}{inner}{}{tail}", "(".repeat(n), ")".repeat(n))
+}
+
+fn parse_on_small_stack(pattern: String) -> Result<(), PatternError> {
+    assert!(pattern.len() <= MAX_PATTERN_BYTES);
+    on_small_stack(move || Pattern::parse(&pattern).map(drop))
+}
+
+#[test]
+fn max_length_nested_comparison_parens_fail_without_overflow() {
+    let err = parse_on_small_stack(nested_parens("[", "file:name = 'a'", "]")).unwrap_err();
+    assert!(matches!(err, PatternError::DepthExceeded { .. }), "{err}");
+}
+
+#[test]
+fn max_length_nested_list_constants_fail_without_overflow() {
+    let err = parse_on_small_stack(nested_parens("[file:name IN ", "'a'", "]")).unwrap_err();
+    assert!(matches!(err, PatternError::DepthExceeded { .. }), "{err}");
+}
+
+#[test]
+fn max_length_comparison_chain_fails_without_overflow() {
+    let pattern = fill("[file:name = 'a'", " AND file:name = 'a'", "]");
+    let err = parse_on_small_stack(pattern).unwrap_err();
+    assert!(
+        matches!(err, PatternError::ComparisonLimitExceeded { .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn max_length_observation_chain_fails_without_overflow() {
+    let pattern = fill("[file:name = 'a']", " AND [file:name = 'a']", "");
+    let err = parse_on_small_stack(pattern).unwrap_err();
+    assert!(err.to_string().contains("observations"), "{err}");
+}
+
+#[test]
+fn max_length_qualifier_chain_fails_without_overflow() {
+    let pattern = fill("[file:name = 'a']", " WITHIN 5 SECONDS", "");
+    let err = parse_on_small_stack(pattern).unwrap_err();
+    assert!(matches!(err, PatternError::DepthExceeded { .. }), "{err}");
+}
+
+#[test]
+fn qualifiers_on_nested_groups_add_up() {
+    let levels = 40;
+    let pattern = format!(
+        "{}[file:name = 'a']{}",
+        "(".repeat(levels),
+        " WITHIN 5 SECONDS)".repeat(levels)
+    );
+    let err = Pattern::parse(&pattern).unwrap_err();
+    assert!(matches!(err, PatternError::DepthExceeded { .. }), "{err}");
+}
+
+#[test]
+fn deepest_accepted_pattern_walks_on_small_stack() {
+    // The deepest tree the limits allow: left-deep chains of the most
+    // observations and of the most comparisons in the first one, under NOT
+    // and qualifier levels.
+    let comparisons = format!(
+        "{}file:name = 'a'{}",
+        "NOT ".repeat(40),
+        " AND file:name = 'a'".repeat(255)
+    );
+    let pattern = format!(
+        "([{comparisons}]{}){}",
+        " AND [file:name = 'a']".repeat(255),
+        " WITHIN 5 SECONDS".repeat(15)
+    );
+    on_small_stack(move || {
+        let parsed = Pattern::parse(&pattern).expect("parses within the limits");
+        assert_eq!(parsed.ast().observation_count(), 256);
+        rstix::pattern::type_check_ast(parsed.ast()).unwrap();
+        let printed = parsed.to_string();
+        assert!(!parsed.canonical().is_empty());
+        let _ = parsed.simple_observables();
+        drop(parsed);
+        Pattern::parse(&printed).expect("printed pattern parses again");
+    });
 }

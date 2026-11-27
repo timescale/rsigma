@@ -15,13 +15,6 @@ pub fn parse(source: &str) -> Result<PatternAst, PatternError> {
     let mut parser = Parser::new(&tokens);
     let ast = parser.parse_pattern_expression()?;
     parser.expect_eof()?;
-    let count = ast.observation_count();
-    if count > MAX_OBSERVATIONS {
-        return Err(PatternError::ParseError {
-            pos: 0,
-            msg: format!("pattern contains {count} observations; maximum is {MAX_OBSERVATIONS}"),
-        });
-    }
     Ok(ast)
 }
 
@@ -34,10 +27,21 @@ pub fn parse_level1(source: &str) -> Result<PatternAst, PatternError> {
     Ok(PatternAst::Observation(obs))
 }
 
+/// Operator chains (`AND`, `OR`, `FOLLOWEDBY`, qualifiers) are parsed in loops
+/// and nest one tree level per operator. The binary chains are bounded by the
+/// observation and comparison limits, counted as they are parsed, and
+/// qualifier chains by [`MAX_AST_DEPTH`].
 struct Parser<'a> {
     tokens: &'a [SpannedToken],
     pos: usize,
     depth: usize,
+    /// Deepest `depth` reached since the innermost enclosing observation
+    /// expression started.
+    peak: usize,
+    observations: usize,
+    /// Comparisons in the observation being parsed.
+    comparisons: usize,
+    observation_start: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -46,6 +50,10 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             depth: 0,
+            peak: 0,
+            observations: 0,
+            comparisons: 0,
+            observation_start: 0,
         }
     }
 
@@ -85,6 +93,7 @@ impl<'a> Parser<'a> {
             });
         }
         self.depth += 1;
+        self.peak = self.peak.max(self.depth);
         let result = f(self);
         self.depth -= 1;
         result
@@ -157,8 +166,21 @@ impl<'a> Parser<'a> {
 
     /// One observation expression with optional postfix qualifiers (WITHIN / REPEATS / START-STOP).
     fn parse_observation_expression(&mut self) -> Result<PatternAst, PatternError> {
+        let outer_peak = std::mem::replace(&mut self.peak, self.depth);
         let mut node = self.parse_observation_primary()?;
+        // Qualifiers are postfix: each wraps the already parsed primary, so it
+        // adds a level below the deepest one that primary reached.
+        let mut qualifiers = 0;
         loop {
+            if matches!(self.peek(), Token::Within | Token::Repeats | Token::Start) {
+                qualifiers += 1;
+                if self.peak + qualifiers > MAX_AST_DEPTH {
+                    return Err(PatternError::DepthExceeded {
+                        pos: self.current().start,
+                        max: MAX_AST_DEPTH,
+                    });
+                }
+            }
             match self.peek() {
                 Token::Within => {
                     let op_start = self.current().start;
@@ -209,11 +231,19 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
+        self.peak = outer_peak.max(self.peak + qualifiers);
         Ok(node)
     }
 
     fn parse_observation_primary(&mut self) -> Result<PatternAst, PatternError> {
         if matches!(self.peek(), Token::LBracket) {
+            self.observations += 1;
+            if self.observations > MAX_OBSERVATIONS {
+                return Err(parse_error(
+                    self.current().start,
+                    format!("pattern contains more than {MAX_OBSERVATIONS} observations"),
+                ));
+            }
             let obs = self.with_depth(|p| p.parse_bracketed_observation())?;
             return Ok(PatternAst::Observation(obs));
         }
@@ -297,14 +327,9 @@ impl<'a> Parser<'a> {
     fn parse_bracketed_observation(&mut self) -> Result<ObservationExpr, PatternError> {
         let start = self.current().start;
         self.expect(&Token::LBracket)?;
+        self.comparisons = 0;
+        self.observation_start = start;
         let root = self.with_depth(|p| p.parse_prop_test_or())?;
-        let count = root.comparison_count();
-        if count > MAX_COMPARISONS_PER_OBSERVATION {
-            return Err(PatternError::ComparisonLimitExceeded {
-                pos: start,
-                max: MAX_COMPARISONS_PER_OBSERVATION,
-            });
-        }
         let end = self.current().start;
         self.expect(&Token::RBracket)?;
         let object_type = root
@@ -389,7 +414,7 @@ impl<'a> Parser<'a> {
     fn parse_prop_test_primary(&mut self) -> Result<ComparisonTree, PatternError> {
         if matches!(self.peek(), Token::LParen) {
             self.bump();
-            let inner = self.parse_prop_test_or()?;
+            let inner = self.with_depth(|p| p.parse_prop_test_or())?;
             self.expect(&Token::RParen)?;
             return Ok(inner);
         }
@@ -397,6 +422,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison(&mut self, not_modifier: bool) -> Result<ComparisonTree, PatternError> {
+        self.comparisons += 1;
+        if self.comparisons > MAX_COMPARISONS_PER_OBSERVATION {
+            return Err(PatternError::ComparisonLimitExceeded {
+                pos: self.observation_start,
+                max: MAX_COMPARISONS_PER_OBSERVATION,
+            });
+        }
         let start = self.current().start;
         if matches!(self.peek(), Token::Exists) {
             self.bump();
@@ -462,7 +494,7 @@ impl<'a> Parser<'a> {
 
     fn parse_constant(&mut self) -> Result<PatternConstant, PatternError> {
         if matches!(self.peek(), Token::LParen) {
-            return self.parse_list_constant();
+            return self.with_depth(|p| p.parse_list_constant());
         }
         let token = self.current().clone();
         self.bump();
@@ -926,5 +958,87 @@ mod level23 {
         )
         .unwrap_err();
         assert!(matches!(err, PatternError::ParseError { .. }));
+    }
+}
+
+#[cfg(test)]
+mod limits {
+    use super::*;
+
+    const OBS: &str = "[file:name = 'a']";
+
+    fn qualified(qualifiers: usize) -> String {
+        format!("{OBS}{}", " WITHIN 5 SECONDS".repeat(qualifiers))
+    }
+
+    #[test]
+    fn qualifier_chain_shares_the_depth_limit() {
+        // The comparison under one observation sits three levels deep: the
+        // pattern, the observation, and its comparison tree.
+        let allowed = MAX_AST_DEPTH - 3;
+        assert!(parse(&qualified(allowed)).is_ok());
+        let err = parse(&qualified(allowed + 1)).unwrap_err();
+        assert!(matches!(err, PatternError::DepthExceeded { .. }), "{err}");
+    }
+
+    #[test]
+    fn qualifiers_on_a_group_count_its_inner_qualifiers() {
+        let inner = MAX_AST_DEPTH / 2;
+        let outer = MAX_AST_DEPTH - 4 - inner;
+        let group =
+            |outer: usize| format!("({}){}", qualified(inner), " REPEATS 2 TIMES".repeat(outer));
+        assert!(parse(&group(outer)).is_ok());
+        assert!(matches!(
+            parse(&group(outer + 1)).unwrap_err(),
+            PatternError::DepthExceeded { .. }
+        ));
+        // Sibling operands do not add up.
+        let siblings = format!("{} AND {}", qualified(inner), qualified(inner));
+        assert!(parse(&siblings).is_ok());
+    }
+
+    #[test]
+    fn observation_limit_is_enforced_while_parsing() {
+        let chain = |n: usize| vec![OBS; n].join(" FOLLOWEDBY ");
+        assert!(parse(&chain(MAX_OBSERVATIONS)).is_ok());
+        let err = parse(&chain(MAX_OBSERVATIONS + 1)).unwrap_err();
+        let PatternError::ParseError { pos, msg } = err else {
+            panic!("expected a parse error, got {err:?}");
+        };
+        assert!(msg.contains("observations"), "{msg}");
+        assert_eq!(pos, MAX_OBSERVATIONS * (OBS.len() + " FOLLOWEDBY ".len()));
+    }
+
+    #[test]
+    fn comparison_limit_is_enforced_while_parsing() {
+        let observation = |n: usize| {
+            format!(
+                "[a:b = 'x'] AND [{}]",
+                vec!["file:name = 'a'"; n].join(" OR ")
+            )
+        };
+        assert!(parse(&observation(MAX_COMPARISONS_PER_OBSERVATION)).is_ok());
+        assert_eq!(
+            parse(&observation(MAX_COMPARISONS_PER_OBSERVATION + 1)).unwrap_err(),
+            PatternError::ComparisonLimitExceeded {
+                pos: "[a:b = 'x'] AND ".len(),
+                max: MAX_COMPARISONS_PER_OBSERVATION,
+            }
+        );
+    }
+
+    #[test]
+    fn parenthesized_comparisons_and_lists_use_the_depth_limit() {
+        let parens = |n: usize| format!("[{}file:name = 'a'{}]", "(".repeat(n), ")".repeat(n));
+        let lists = |n: usize| format!("[file:name IN {}'a'{}]", "(".repeat(n), ")".repeat(n));
+        // Three levels are taken by the pattern, the observation, and its
+        // comparison tree.
+        for build in [parens, lists] {
+            assert!(parse(&build(MAX_AST_DEPTH - 3)).is_ok());
+            assert!(matches!(
+                parse(&build(MAX_AST_DEPTH - 2)).unwrap_err(),
+                PatternError::DepthExceeded { .. }
+            ));
+        }
     }
 }
