@@ -575,6 +575,11 @@ mod tests {
 
     fn engine_from(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.add_collection(&collection).unwrap();
         engine
@@ -588,6 +593,11 @@ mod tests {
 
     fn engine_with_ac(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.set_cross_rule_ac(true);
         engine.add_collection(&collection).unwrap();
@@ -754,11 +764,13 @@ logsource:
     product: windows
 detection:
     selection:
-        CommandLine|contains|not: 'whoami'
+        CommandLine|contains|neq: 'whoami'
     condition: selection
 "#;
-        let (_, index) = build_index(yaml);
+        let (engine, index) = build_index(yaml);
+        assert_eq!(engine.rule_count(), 1);
         assert!(index.is_empty());
+        assert!(!index.is_prunable(0));
     }
 
     #[test]
@@ -988,6 +1000,9 @@ detection:
         let mut yaml = String::new();
         let n = MAX_PATTERNS_PER_FIELD + 5;
         for i in 0..n {
+            if i > 0 {
+                yaml.push_str("---\n");
+            }
             yaml.push_str(&format!(
                 "title: R{i}\n\
                  id: r-{i:08}\n\
@@ -996,13 +1011,14 @@ detection:
                  detection:\n\
                  \x20   selection:\n\
                  \x20       CommandLine|contains: 'pat-{i:08}'\n\
-                 \x20   condition: selection\n\
-                 ---\n",
+                 \x20   condition: selection\n",
             ));
         }
         let engine = engine_from(&yaml);
         let index = CrossRuleAcIndex::build(engine.rules());
         // Field is dropped, so the index is empty for CommandLine.
         assert!(index.is_empty());
+        assert_eq!(index.unindexed_field_count(), 1);
+        assert!(!index.is_prunable(0));
     }
 }

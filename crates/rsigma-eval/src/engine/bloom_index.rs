@@ -710,6 +710,11 @@ mod tests {
 
     fn engine_from(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.add_collection(&collection).unwrap();
         engine
@@ -850,11 +855,14 @@ logsource:
     product: windows
 detection:
     selection:
-        CommandLine|contains|not: 'whoami'
+        CommandLine|contains|neq: 'whoami'
     condition: selection
 "#;
-        let bloom = bloom_from(yaml);
+        let engine = engine_from(yaml);
+        assert_eq!(engine.rule_count(), 1);
+        let bloom = FieldBloomIndex::build(engine.rules());
         assert_eq!(bloom.field_count(), 0);
+        assert_eq!(bloom.disabled_field_count(), 0);
     }
 
     #[test]
@@ -963,12 +971,15 @@ detection:
     fn cased_uppercase_probe_cannot_be_rejected() {
         let yaml = r#"
 title: Cased
+logsource:
+    product: windows
 detection:
     selection:
         CommandLine|contains|cased: 'CMD.EXE'
     condition: selection
 "#;
         let bloom = bloom_from(yaml);
+        assert_eq!(bloom.field_count(), 1);
         assert_eq!(
             bloom.probe("CommandLine", "CMD.EXE"),
             BloomVerdict::MaybeMatch
@@ -979,6 +990,8 @@ detection:
     fn cased_unicode_needle_disables_field_filter() {
         let yaml = r#"
 title: UnicodeCased
+logsource:
+    product: windows
 detection:
     selection:
         CommandLine|contains|cased: 'AΣ'
@@ -986,6 +999,7 @@ detection:
 "#;
         let bloom = bloom_from(yaml);
         assert_eq!(bloom.field_count(), 0);
+        assert_eq!(bloom.disabled_field_count(), 1);
         assert_eq!(bloom.probe("CommandLine", "AΣX"), BloomVerdict::MaybeMatch);
     }
 

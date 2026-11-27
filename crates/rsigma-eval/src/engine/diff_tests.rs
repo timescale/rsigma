@@ -783,12 +783,18 @@ fn gen_item() -> impl Strategy<Value = GenItem> {
 /// cased; everything else is a single quoted value.
 fn render_selection(name: &str, items: &[GenItem]) -> String {
     let mut out = format!("    {name}:\n");
+    let mut seen = std::collections::HashSet::new();
     for item in items {
         let GenItem {
             field,
             modifier,
             value,
         } = item;
+        // A repeated key would make the YAML invalid and the case would be
+        // skipped instead of tested.
+        if !seen.insert((*field, *modifier)) {
+            continue;
+        }
         match *modifier {
             "|exists" => out.push_str(&format!("        {field}|exists: true\n")),
             "|gte" => {
