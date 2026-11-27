@@ -624,3 +624,66 @@ level: high
         "Recon Burst"
     );
 }
+
+/// One rule and `count` filters that all target it, each excluding one user.
+fn rule_with_filters(count: usize) -> rsigma_parser::SigmaCollection {
+    let mut yaml = String::from(
+        "title: Rule A\nid: rule-a\nlogsource:\n    product: test\ndetection:\n    selection:\n        EventID: 1\n    condition: selection\n",
+    );
+    for i in 0..count {
+        yaml.push_str(&format!(
+            "---\ntitle: Filter {i}\nlogsource:\n    product: test\nfilter:\n    rules:\n        - rule-a\n    selection:\n        User: user-{i}\n    condition: not selection\n"
+        ));
+    }
+    parse_sigma_yaml(&yaml).unwrap()
+}
+
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+const MANY_FILTERS: usize = 10_000;
+
+#[test]
+fn thousands_of_filters_on_one_rule_evaluate_on_small_stack() {
+    let collection = rule_with_filters(MANY_FILTERS);
+    let (kept, filtered) = on_small_stack(move || {
+        let mut engine = Engine::new();
+        engine.add_collection(&collection).unwrap();
+        let kept = json!({"EventID": 1, "User": "admin"});
+        let filtered = json!({"EventID": 1, "User": format!("user-{}", MANY_FILTERS - 1)});
+        (
+            engine.evaluate(&JsonEvent::borrow(&kept)).len(),
+            engine.evaluate(&JsonEvent::borrow(&filtered)).len(),
+        )
+    });
+    assert_eq!(kept, 1);
+    assert_eq!(filtered, 0);
+}
+
+#[test]
+fn thousands_of_filters_on_one_rule_render_on_small_stack() {
+    let collection = rule_with_filters(MANY_FILTERS);
+    let condition = on_small_stack(move || {
+        let rules = rsigma_eval::apply_filters(&collection);
+        assert_eq!(rules.len(), 1);
+        rules[0].detection.condition_strings[0].clone()
+    });
+    assert_eq!(condition.matches(" and not ").count(), MANY_FILTERS);
+}
+
+#[test]
+fn filters_append_to_the_rule_condition() {
+    let rules = rsigma_eval::apply_filters(&rule_with_filters(3));
+    assert_eq!(
+        rules[0].detection.condition_strings,
+        [
+            "(selection and not __filter_0_v_selection and not __filter_1_v_selection and not __filter_2_v_selection)"
+        ]
+    );
+}

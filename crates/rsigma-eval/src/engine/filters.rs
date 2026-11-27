@@ -162,6 +162,19 @@ pub(super) fn namespaced_filter_condition(filter: &FilterRule, counter: usize) -
     }
 }
 
+/// Add `filter` to a rule `condition` as one more AND operand. A condition
+/// that is already an AND takes it as a new child, so applying many filters to
+/// one rule widens the AND instead of nesting it one level per filter.
+pub(super) fn and_filter(condition: &mut ConditionExpr, filter: &ConditionExpr) {
+    match condition {
+        ConditionExpr::And(children) => children.push(filter.clone()),
+        other => {
+            let original = std::mem::replace(other, ConditionExpr::And(Vec::new()));
+            *other = ConditionExpr::And(vec![original, filter.clone()]);
+        }
+    }
+}
+
 /// Merge every filter in `collection` into the detection rules it targets and
 /// return the rules, in collection order.
 ///
@@ -173,6 +186,7 @@ pub(super) fn namespaced_filter_condition(filter: &FilterRule, counter: usize) -
 /// [`Engine::apply_filter`](crate::Engine::apply_filter) does.
 pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
     let mut rules = collection.rules.clone();
+    let mut filtered = vec![false; rules.len()];
     for (counter, filter) in collection.filters.iter().enumerate() {
         if filter.detection.named.is_empty() {
             continue;
@@ -184,7 +198,7 @@ pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
             .collect();
         let stable = stable_references(filter, &identities);
         let condition = namespaced_filter_condition(filter, counter);
-        for rule in &mut rules {
+        for (rule, filtered) in rules.iter_mut().zip(&mut filtered) {
             let target = FilterTarget {
                 id: rule.id.as_deref(),
                 name: rule.name.as_deref(),
@@ -199,19 +213,19 @@ pub fn apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule> {
                     .named
                     .insert(filter_detection_key(counter, name), detection.clone());
             }
-            rule.detection.conditions = rule
-                .detection
-                .conditions
-                .iter()
-                .map(|cond| ConditionExpr::And(vec![cond.clone(), condition.clone()]))
-                .collect();
-            rule.detection.condition_strings = rule
-                .detection
-                .conditions
-                .iter()
-                .map(ToString::to_string)
-                .collect();
+            for cond in &mut rule.detection.conditions {
+                and_filter(cond, &condition);
+            }
+            *filtered = true;
         }
+    }
+    for (rule, _) in rules.iter_mut().zip(filtered).filter(|(_, f)| *f) {
+        rule.detection.condition_strings = rule
+            .detection
+            .conditions
+            .iter()
+            .map(ToString::to_string)
+            .collect();
     }
     rules
 }
