@@ -585,6 +585,7 @@ impl AlertPipeline {
         if !matches!(snap.version, 1..=SNAPSHOT_VERSION) {
             return None;
         }
+        let version = snap.version;
         let mut stats = rsigma_eval::ImportStats::default();
         let keep = |tenant: Option<&rsigma_eval::TenantId>| {
             if tenancy {
@@ -669,7 +670,7 @@ impl AlertPipeline {
             );
         }
         if let Some(icfg) = self.inhibit.as_ref() {
-            state.inhibit.restore(inhibit_sources, icfg, now);
+            state.inhibit.restore(inhibit_sources, icfg, now, version);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
         self.trim_tenants(state, &mut trim);

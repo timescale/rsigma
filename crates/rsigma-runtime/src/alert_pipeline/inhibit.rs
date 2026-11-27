@@ -174,12 +174,22 @@ impl InhibitStore {
             .collect()
     }
 
-    /// Restore active sources, dropping any whose rule no longer exists or that
-    /// are already past their rule's `duration` at `now`.
-    pub(crate) fn restore(&mut self, snaps: Vec<InhibitSourceSnap>, cfg: &InhibitConfig, now: i64) {
+    /// Restore active sources, dropping any whose rule no longer exists, that
+    /// are already past their rule's `duration` at `now`, or whose `equal` key
+    /// does not decode to one value per selector of the rule. Snapshots before
+    /// version 3 only wrote the plain form, so a key in the length-prefixed
+    /// form from one of them is dropped too.
+    pub(crate) fn restore(
+        &mut self,
+        snaps: Vec<InhibitSourceSnap>,
+        cfg: &InhibitConfig,
+        now: i64,
+        version: u32,
+    ) {
         for snap in snaps {
             if let Some(rule) = cfg.rules.iter().find(|r| r.name == snap.rule)
                 && now - snap.last_seen < rule.duration.as_secs() as i64
+                && equal_key_is_valid(&snap.equal_key, rule.equal.len(), version >= 3)
             {
                 self.sources
                     .insert((snap.rule, snap.tenant, snap.equal_key), snap.last_seen);
@@ -250,22 +260,80 @@ impl InhibitStore {
     }
 }
 
-/// The joined `equal` selector values for a result (absent selectors resolve to
-/// the empty string, matching the matcher semantics).
+/// The `equal` selector values of a result as one key (absent selectors
+/// resolve to the empty string, matching the matcher semantics).
+///
+/// Values free of `\u{1f}` are each prefixed with it, as snapshots have always
+/// stored them. When a value contains one, that plain form could shift values
+/// across selectors, so the key is instead `n + 1` separators followed by each
+/// value as `<byte length>:<value>`. A plain key holds exactly `n` separators
+/// and a length-prefixed key at least `n + 2`, so the two forms never meet.
 fn equal_key(equal: &[Selector], result: &EvaluationResult) -> String {
+    let values: Vec<String> = equal
+        .iter()
+        .map(|sel| {
+            sel.resolve(result)
+                .map(|v| match v {
+                    Value::String(s) => s,
+                    other => other.to_string(),
+                })
+                .unwrap_or_default()
+        })
+        .collect();
     let mut buf = String::new();
-    for sel in equal {
-        let value = sel
-            .resolve(result)
-            .map(|v| match v {
-                Value::String(s) => s,
-                other => other.to_string(),
-            })
-            .unwrap_or_default();
-        buf.push('\u{1f}');
-        buf.push_str(&value);
+    if values.iter().any(|v| v.contains('\u{1f}')) {
+        buf.extend(std::iter::repeat_n('\u{1f}', values.len() + 1));
+        for value in &values {
+            buf.push_str(&value.len().to_string());
+            buf.push(':');
+            buf.push_str(value);
+        }
+    } else {
+        for value in &values {
+            buf.push('\u{1f}');
+            buf.push_str(value);
+        }
     }
     buf
+}
+
+/// True when `key` is an [`equal_key`] of `n` values, in the plain form or,
+/// when `prefixed` is allowed, the length-prefixed form.
+fn equal_key_is_valid(key: &str, n: usize, prefixed: bool) -> bool {
+    let separators = key.matches('\u{1f}').count();
+    if separators == n {
+        return if n == 0 {
+            key.is_empty()
+        } else {
+            key.starts_with('\u{1f}')
+        };
+    }
+    if !prefixed {
+        return false;
+    }
+    let Some(mut rest) = key.strip_prefix(&"\u{1f}".repeat(n + 1)) else {
+        return false;
+    };
+    let mut any_separator = false;
+    for _ in 0..n {
+        let Some((digits, tail)) = rest.split_once(':') else {
+            return false;
+        };
+        let canonical = !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && (digits == "0" || !digits.starts_with('0'));
+        let Some(value) = digits
+            .parse::<usize>()
+            .ok()
+            .filter(|_| canonical)
+            .and_then(|len| tail.get(..len))
+        else {
+            return false;
+        };
+        any_separator |= value.contains('\u{1f}');
+        rest = &tail[value.len()..];
+    }
+    rest.is_empty() && any_separator
 }
 
 #[cfg(test)]
@@ -541,5 +609,116 @@ mod tests {
 
         assert_eq!(store.enforce_tenant_cap(1), 1);
         assert_eq!(store.active_count(&cfg, 12), 2);
+    }
+
+    fn two_field_detection(a: &str, b: &str, level: Level) -> EvaluationResult {
+        let mut r = detection("10.0.0.1", level);
+        if let ResultBody::Detection(d) = &mut r.body {
+            d.matched_fields = vec![
+                FieldMatch::new("A", serde_json::json!(a)),
+                FieldMatch::new("B", serde_json::json!(b)),
+            ];
+        }
+        r
+    }
+
+    fn two_field_cfg() -> InhibitConfig {
+        InhibitConfig {
+            rules: vec![InhibitRule {
+                equal: vec![
+                    Selector::parse("match.A").unwrap(),
+                    Selector::parse("match.B").unwrap(),
+                ],
+                ..cfg().rules.remove(0)
+            }],
+            max_sources: 100,
+        }
+    }
+
+    #[test]
+    fn a_separator_inside_a_value_cannot_shift_equal_values() {
+        let cfg = two_field_cfg();
+        let mut store = InhibitStore::default();
+        store.evaluate(
+            &cfg,
+            &two_field_detection("x\u{1f}y", "z", Level::Critical),
+            0,
+            None,
+            |_| {},
+        );
+        assert_eq!(
+            store.evaluate(
+                &cfg,
+                &two_field_detection("x", "y\u{1f}z", Level::High),
+                1,
+                None,
+                |_| {}
+            ),
+            None,
+            "different equal values must not inhibit"
+        );
+        assert!(
+            store
+                .evaluate(
+                    &cfg,
+                    &two_field_detection("x\u{1f}y", "z", Level::High),
+                    2,
+                    None,
+                    |_| {}
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn plain_equal_keys_are_unchanged_and_restore_from_old_snapshots() {
+        let cfg = two_field_cfg();
+        let target = two_field_detection("x", "y", Level::High);
+        assert_eq!(
+            equal_key(&cfg.rules[0].equal, &target),
+            "\u{1f}x\u{1f}y",
+            "keys without a separator keep the form older snapshots stored"
+        );
+        let mut store = InhibitStore::default();
+        store.restore(
+            vec![InhibitSourceSnap {
+                rule: "critical-inhibits-high".to_string(),
+                equal_key: "\u{1f}x\u{1f}y".to_string(),
+                last_seen: 0,
+                tenant: None,
+            }],
+            &cfg,
+            1,
+            2,
+        );
+        assert!(store.evaluate(&cfg, &target, 1, None, |_| {}).is_some());
+    }
+
+    #[test]
+    fn restore_drops_equal_keys_that_do_not_decode_for_the_rule() {
+        let cfg = two_field_cfg();
+        let snap = |equal_key: &str| InhibitSourceSnap {
+            rule: "critical-inhibits-high".to_string(),
+            equal_key: equal_key.to_string(),
+            last_seen: 0,
+            tenant: None,
+        };
+        let shifted = equal_key(
+            &cfg.rules[0].equal,
+            &two_field_detection("x\u{1f}y", "z", Level::Critical),
+        );
+        for (key, version, kept) in [
+            ("\u{1f}x\u{1f}y\u{1f}z", 2, false),
+            ("\u{1f}x", 2, false),
+            ("x\u{1f}y", 2, false),
+            (shifted.as_str(), 2, false),
+            (shifted.as_str(), 3, true),
+            ("\u{1f}\u{1f}\u{1f}01:x1:y", 3, false),
+            ("\u{1f}\u{1f}\u{1f}1:x1:y", 3, false),
+        ] {
+            let mut store = InhibitStore::default();
+            store.restore(vec![snap(key)], &cfg, 1, version);
+            assert_eq!(!store.is_empty(), kept, "{key:?} at version {version}");
+        }
     }
 }
