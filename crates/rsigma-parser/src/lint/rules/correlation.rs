@@ -131,26 +131,28 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
     }
 
     // ── window + gap ──────────────────────────────────────────────────────
-    // Accept both spellings: the `rsigma.*` extension namespace (top-level
-    // `rsigma.window` / `rsigma.gap`) is primary, and the first-class
-    // `correlation.window` / `correlation.gap` keys are aliases. The `rsigma.*`
-    // spelling wins when both are present, and the diagnostic points at it.
+    // Accept every spelling the parser reads: the `rsigma.*` custom
+    // attributes, in the `custom_attributes:` block or at the top level, and
+    // the first-class `correlation.window` / `correlation.gap` keys. The
+    // parser's precedence applies (block, then top level, then
+    // `correlation.*`), and the diagnostic points at the winning key.
     // Presence is checked before type so a key set to a non-string value (e.g.
     // an unquoted `gap: 300`) is reported as invalid instead of missing.
-    let (window, window_present, window_ptr) = match m.get(key("rsigma.window")) {
-        Some(v) => (v.as_str(), true, "/rsigma.window"),
-        None => match corr.get(key("window")) {
-            Some(v) => (v.as_str(), true, "/correlation/window"),
-            None => (None, false, "/correlation/window"),
-        },
+    let block = m.get(key("custom_attributes")).and_then(|v| v.as_mapping());
+    let spelling = |attribute: &str, first_class: &str| {
+        if let Some(v) = block.and_then(|b| b.get(key(attribute))) {
+            (v.as_str(), true, format!("/custom_attributes/{attribute}"))
+        } else if let Some(v) = m.get(key(attribute)) {
+            (v.as_str(), true, format!("/{attribute}"))
+        } else if let Some(v) = corr.get(key(first_class)) {
+            (v.as_str(), true, format!("/correlation/{first_class}"))
+        } else {
+            (None, false, format!("/correlation/{first_class}"))
+        }
     };
-    let (gap, gap_present, gap_ptr) = match m.get(key("rsigma.gap")) {
-        Some(v) => (v.as_str(), true, "/rsigma.gap"),
-        None => match corr.get(key("gap")) {
-            Some(v) => (v.as_str(), true, "/correlation/gap"),
-            None => (None, false, "/correlation/gap"),
-        },
-    };
+    let (window, window_present, window_ptr) = spelling("rsigma.window", "window");
+    let (gap, gap_present, gap_ptr) = spelling("rsigma.gap", "gap");
+    let (window_ptr, gap_ptr) = (window_ptr.as_str(), gap_ptr.as_str());
 
     let window_known = match (window_present, window) {
         (false, _) => true,
@@ -726,5 +728,74 @@ rsigma.gap: 5m
         assert!(!has_rule(&w, LintRule::MissingSessionGap));
         assert!(!has_rule(&w, LintRule::GapWithoutSession));
         assert!(!has_rule(&w, LintRule::InvalidGapFormat));
+    }
+
+    #[test]
+    fn custom_attributes_block_window_is_checked() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+custom_attributes:
+    rsigma.window: hopping
+"#,
+        );
+        let invalid = w
+            .iter()
+            .find(|w| w.rule == LintRule::InvalidWindowMode)
+            .expect("invalid window mode in the block");
+        assert_eq!(invalid.path, "/custom_attributes/rsigma.window");
+    }
+
+    #[test]
+    fn custom_attributes_block_session_missing_gap() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+custom_attributes:
+    rsigma.window: session
+"#,
+        );
+        assert!(has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn custom_attributes_block_wins_over_top_level() {
+        // The block's valid session window and gap win over an invalid
+        // top-level mode, as in the parser.
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules:
+        - a
+        - b
+    group-by:
+        - User
+    timespan: 2h
+rsigma.window: hopping
+custom_attributes:
+    rsigma.window: session
+    rsigma.gap: 5m
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::InvalidWindowMode));
+        assert!(!has_rule(&w, LintRule::MissingSessionGap));
     }
 }
