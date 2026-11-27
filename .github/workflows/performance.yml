@@ -1,37 +1,10 @@
 name: Performance
 
 on:
+  # The PR gate is opt-in: it runs only on PRs labeled `performance`.
   pull_request:
     branches: [main]
-    paths:
-      - ".github/actions/setup-rust/**"
-      - ".github/workflows/performance.yml"
-      - ".cargo/**"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/rsigma-parser/Cargo.toml"
-      - "crates/rsigma-parser/src/**"
-      - "crates/rsigma-ir/Cargo.toml"
-      - "crates/rsigma-ir/src/**"
-      - "crates/rsigma-eval/Cargo.toml"
-      - "crates/rsigma-eval/src/**"
-      - "crates/rsigma-runtime/Cargo.toml"
-      - "crates/rsigma-runtime/src/input/**"
-      - "crates/rsigma-runtime/src/io/**"
-      - "crates/rsigma-runtime/src/lib.rs"
-      - "crates/rsigma-runtime/src/processor.rs"
-      - "crates/rsigma-cli/Cargo.toml"
-      - "crates/rsigma-cli/src/main.rs"
-      - "crates/rsigma-cli/src/config/**"
-      - "crates/rsigma-cli/src/daemon/**"
-      - "crates/rsigma-cli/src/commands/daemon.rs"
-      - "crates/rsigma-cli/src/logsource_opts.rs"
-      - "crates/rsigma-cli/src/output/**"
-      - "crates/rsigma-cli/src/commands/eval.rs"
-      - "crates/rsigma-cli/src/commands/eval_stream.rs"
-      - "crates/rsigma-cli/src/commands/mod.rs"
-      - "rust-toolchain.toml"
-      - "scripts/perf/**"
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "0 4 * * 1" # Weekly on Monday at 04:00 UTC
   workflow_dispatch:
@@ -39,7 +12,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: performance-${{ github.ref }}
+  # Adding an unrelated label gets its own group so it cannot cancel a running gate.
+  group: performance-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'performance' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 env:
@@ -49,7 +23,10 @@ env:
 jobs:
   regression:
     name: Coarse regression gate
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'performance')
+      && (github.event.action != 'labeled' || github.event.label.name == 'performance')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout the PR and its base revision
