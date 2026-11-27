@@ -4135,6 +4135,9 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     );
     state
         .metrics
+        .update_cross_rule_ac_metrics(state.processor.cross_rule_ac_unindexed_fields());
+    state
+        .metrics
         .update_schema_pruning_metrics(&state.processor.schema_pruning_summary());
 
     (

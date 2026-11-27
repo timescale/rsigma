@@ -866,6 +866,14 @@ impl LogProcessor {
         engine.logsource_absent_total()
     }
 
+    /// Fields the cross-rule AC index left without an automaton on the
+    /// current engine. Always zero without the `daachorse-index` feature.
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        let snapshot = self.engine.load();
+        let engine = snapshot.read();
+        engine.cross_rule_ac_unindexed_fields()
+    }
+
     /// Total events evaluated without their schema's implied logsource
     /// because the classification was ambiguous (fail-open).
     pub fn logsource_ambiguous_total(&self) -> u64 {

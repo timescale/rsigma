@@ -232,9 +232,34 @@ struct PartitionFallback {
     /// Lowercased products the set's own engine keeps.
     kept_products: HashSet<String>,
     pipelines: Vec<Pipeline>,
+    /// Settings for the engine when it is compiled; kept in step with the
+    /// router's per-schema engines by the router's setters.
+    settings: EngineSettings,
+    engine: OnceLock<Engine>,
+}
+
+/// Per-engine settings the router applies to every per-schema engine.
+#[derive(Debug, Clone, Copy)]
+struct EngineSettings {
     include_event: bool,
     match_detail: MatchDetailLevel,
-    engine: OnceLock<Engine>,
+    bloom_prefilter: bool,
+    bloom_max_bytes: Option<usize>,
+    #[cfg(feature = "daachorse-index")]
+    cross_rule_ac: bool,
+}
+
+impl EngineSettings {
+    fn apply(&self, engine: &mut Engine) {
+        engine.set_include_event(self.include_event);
+        engine.set_match_detail(self.match_detail);
+        if let Some(budget) = self.bloom_max_bytes {
+            engine.set_bloom_max_bytes(budget);
+        }
+        engine.set_bloom_prefilter(self.bloom_prefilter);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(self.cross_rule_ac);
+    }
 }
 
 impl PartitionFallback {
@@ -247,8 +272,7 @@ impl PartitionFallback {
     fn engine(&self) -> &Engine {
         self.engine.get_or_init(|| {
             let mut engine = Engine::new();
-            engine.set_include_event(self.include_event);
-            engine.set_match_detail(self.match_detail);
+            self.settings.apply(&mut engine);
             for pipeline in &self.pipelines {
                 engine.add_pipeline(pipeline.clone());
             }
@@ -513,8 +537,14 @@ impl<L> SchemaRouter<L> {
                             collection: Arc::clone(shared),
                             kept_products: products.clone(),
                             pipelines: set.clone(),
-                            include_event,
-                            match_detail,
+                            settings: EngineSettings {
+                                include_event,
+                                match_detail,
+                                bloom_prefilter: false,
+                                bloom_max_bytes: None,
+                                #[cfg(feature = "daachorse-index")]
+                                cross_rule_ac: false,
+                            },
                             engine: OnceLock::new(),
                         });
                     }
@@ -568,14 +598,66 @@ impl<L> SchemaRouter<L> {
         for engine in &mut self.engines {
             engine.set_include_event(include);
         }
-        for fallback in self.fallbacks.iter_mut().flatten() {
-            fallback.include_event = include;
-            if let Some(engine) = fallback.engine.get_mut() {
-                engine.set_include_event(include);
-            }
-        }
+        self.update_fallbacks(|settings| settings.include_event = include);
         if let Some(correlation) = &mut self.correlation {
             correlation.set_include_event(include);
+        }
+    }
+
+    /// Enable or disable bloom pre-filtering on every per-schema engine (see
+    /// [`Engine::set_bloom_prefilter`]). Off by default.
+    pub fn set_bloom_prefilter(&mut self, enabled: bool) {
+        for engine in &mut self.engines {
+            engine.set_bloom_prefilter(enabled);
+        }
+        self.update_fallbacks(|settings| settings.bloom_prefilter = enabled);
+    }
+
+    /// Set the bloom memory budget of every per-schema engine (see
+    /// [`Engine::set_bloom_max_bytes`]).
+    pub fn set_bloom_max_bytes(&mut self, max_bytes: usize) {
+        for engine in &mut self.engines {
+            engine.set_bloom_max_bytes(max_bytes);
+        }
+        self.update_fallbacks(|settings| settings.bloom_max_bytes = Some(max_bytes));
+    }
+
+    /// Enable or disable the cross-rule Aho-Corasick pre-filter on every
+    /// per-schema engine (see [`Engine::set_cross_rule_ac`]). Off by default.
+    /// Available behind the `daachorse-index` Cargo feature.
+    #[cfg(feature = "daachorse-index")]
+    pub fn set_cross_rule_ac(&mut self, enabled: bool) {
+        for engine in &mut self.engines {
+            engine.set_cross_rule_ac(enabled);
+        }
+        self.update_fallbacks(|settings| settings.cross_rule_ac = enabled);
+    }
+
+    /// Fields the cross-rule AC index left without an automaton, summed over
+    /// every per-schema engine (see [`Engine::cross_rule_ac_unindexed_fields`]).
+    /// Available behind the `daachorse-index` Cargo feature.
+    #[cfg(feature = "daachorse-index")]
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        let fallbacks = self
+            .fallbacks
+            .iter()
+            .flatten()
+            .filter_map(|f| f.engine.get());
+        self.engines
+            .iter()
+            .chain(fallbacks)
+            .map(Engine::cross_rule_ac_unindexed_fields)
+            .sum()
+    }
+
+    /// Change the settings partition fallbacks compile with, and apply them
+    /// to any fallback engine already compiled.
+    fn update_fallbacks(&mut self, change: impl Fn(&mut EngineSettings)) {
+        for fallback in self.fallbacks.iter_mut().flatten() {
+            change(&mut fallback.settings);
+            if let Some(engine) = fallback.engine.get_mut() {
+                fallback.settings.apply(engine);
+            }
         }
     }
 

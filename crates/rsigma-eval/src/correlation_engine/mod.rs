@@ -238,6 +238,14 @@ impl<L> CorrelationEngine<L> {
         self.engine.set_cross_rule_ac(enabled);
     }
 
+    /// Forward to [`crate::Engine::cross_rule_ac_unindexed_fields`] on the
+    /// inner detection engine. Available behind the `daachorse-index` Cargo
+    /// feature.
+    #[cfg(feature = "daachorse-index")]
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        self.engine.cross_rule_ac_unindexed_fields()
+    }
+
     /// Set the global correlation event mode.
     ///
     /// - `None`: no event storage (default)

@@ -86,6 +86,7 @@ pub struct Metrics {
     pub rules_pruned_by_logsource: IntCounter,
     pub events_without_logsource: IntCounter,
     pub events_ambiguous_logsource: IntCounter,
+    pub cross_rule_ac_unindexed_fields: IntGauge,
     pub schema_rules_eligible: IntGaugeVec,
     pub schema_rules_pruned: IntGaugeVec,
     pub unknown_schema_clusters: IntGauge,
@@ -865,6 +866,14 @@ impl Metrics {
             "Events with no extractable logsource, evaluated against every rule (fail-open)",
         ))
         .unwrap();
+        let cross_rule_ac_unindexed_fields = IntGauge::with_opts(Opts::new(
+            "rsigma_cross_rule_ac_unindexed_fields",
+            "Fields the cross-rule Aho-Corasick prefilter left without an automaton (over 100,000 patterns or a failed build); rules on them are always evaluated (--cross-rule-ac)",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(cross_rule_ac_unindexed_fields.clone()))
+            .unwrap();
         let events_ambiguous_logsource = IntCounter::with_opts(Opts::new(
             "rsigma_events_ambiguous_logsource_total",
             "Events whose schema tied with a schema implying a different logsource, evaluated without the schema-derived logsource (fail-open)",
@@ -1537,6 +1546,7 @@ impl Metrics {
             rules_pruned_by_logsource,
             events_without_logsource,
             events_ambiguous_logsource,
+            cross_rule_ac_unindexed_fields,
             tap_sessions_total,
             tap_active_sessions,
             tap_events_streamed_total,
@@ -1690,6 +1700,11 @@ impl Metrics {
             self.events_ambiguous_logsource
                 .inc_by(ambiguous_total - ambiguous_prev);
         }
+    }
+
+    pub fn update_cross_rule_ac_metrics(&self, unindexed_fields: usize) {
+        self.cross_rule_ac_unindexed_fields
+            .set(i64::try_from(unindexed_fields).unwrap_or(i64::MAX));
     }
 
     pub fn encode(&self) -> String {

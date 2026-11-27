@@ -344,3 +344,78 @@ detection:
     });
     assert_same_results(&off, &on, &events, "bloom and cross-rule AC");
 }
+
+/// The router's prefilter setters reach every per-schema engine, and turning
+/// the prefilters on changes no routed result.
+#[cfg(feature = "daachorse-index")]
+#[test]
+fn schema_router_applies_prefilters_to_every_engine() {
+    use rsigma_eval::schema::{RoutingConfig, RoutingPlan, SchemaBinding, SchemaClassifier};
+    use rsigma_eval::{CorrelationConfig, MatchDetailLevel, SchemaRouter, parse_pipeline};
+
+    let mut collection = parse_sigma_yaml(&over_cap_rules()).expect("rules parse");
+    collection
+        .rules
+        .extend(rules(&format!("{SHORT_NEEDLE}---\n{LONG_NEEDLE}")));
+    let config = RoutingConfig {
+        bindings: vec![SchemaBinding {
+            schema: "ecs".to_string(),
+            pipelines: vec!["noop".to_string()],
+            logsource: None,
+        }],
+        ..RoutingConfig::default()
+    };
+    let noop = parse_pipeline(
+        "name: noop\npriority: 10\ntransformations:\n  - id: noop\n    type: field_name_mapping\n    mapping:\n      __unused_a: __unused_b\n",
+    )
+    .expect("pipeline parses");
+    let build = |prefilters: bool| {
+        let mut router = SchemaRouter::build(
+            &collection,
+            SchemaClassifier::builtin(),
+            RoutingPlan::from_config(&config),
+            vec![vec![], vec![noop.clone()]],
+            CorrelationConfig::default(),
+            false,
+            MatchDetailLevel::Off,
+            None,
+            false,
+        )
+        .expect("router builds");
+        router.set_bloom_prefilter(prefilters);
+        router.set_cross_rule_ac(prefilters);
+        router
+    };
+    let off = build(false);
+    let on = build(true);
+    assert_eq!(off.cross_rule_ac_unindexed_fields(), 0);
+    assert_eq!(
+        on.cross_rule_ac_unindexed_fields(),
+        2,
+        "both per-schema engines index the rules and skip the over-cap field"
+    );
+
+    let mut events = short_needle_events();
+    events.extend([
+        json!({"CommandLine": "run needle-alpha now"}),
+        json!({"ecs.version": "8.0.0", "CommandLine": "run needle-alpha now"}),
+        json!({"ecs.version": "8.0.0", "CommandLine": "cmd /c dir && del x"}),
+    ]);
+    let titles = |router: &SchemaRouter| -> Vec<Vec<String>> {
+        events
+            .iter()
+            .map(|event| {
+                let event = JsonEvent::borrow(event);
+                let mut titles: Vec<String> = router.detect_batch(&[&event])[0]
+                    .iter()
+                    .map(|r| r.header.rule_title.clone())
+                    .collect();
+                titles.sort();
+                titles
+            })
+            .collect()
+    };
+    let expected = titles(&off);
+    assert!(expected.iter().any(|t| !t.is_empty()));
+    assert_eq!(titles(&on), expected);
+}
