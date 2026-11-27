@@ -25,7 +25,7 @@
       }
     ],
     "title": "SSH brute force",
-    "uid": "dedup-29457ad1668add34-1000"
+    "uid": "dedup-0f8dee73d93675a44df10d0bfbd46870-1000"
   },
   "message": "SSH brute force",
   "metadata": {
@@ -59,7 +59,7 @@
       "dedup_fields": {
         "rule": "corr-1"
       },
-      "dedup_fingerprint": "29457ad1668add34",
+      "dedup_fingerprint": "0f8dee73d93675a44df10d0bfbd46870",
       "dedup_state": "repeat"
     },
     "group_key": [

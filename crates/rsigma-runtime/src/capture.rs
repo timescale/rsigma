@@ -36,13 +36,19 @@ use sha2::{Digest, Sha256};
 use rsigma_eval::TenantId;
 
 use crate::MetricsHook;
+use crate::alert_pipeline::IdentityKey;
 
 /// One source-event payload admitted for a `group_by` incident, with every
 /// detection that matched it in the same processing call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdmittedEvent {
-    /// Deterministic `group_by` incident id.
+    /// The `group_by` incident id.
     pub incident_id: String,
+    /// The exact group identity behind `incident_id`. When set, an admission
+    /// whose identity differs from the one held under the same id starts a
+    /// new generation instead of joining it. The alert pipeline always sets
+    /// it.
+    pub incident_key: Option<IdentityKey>,
     /// Tenant that owns this incident, when tenancy is enabled.
     pub tenant: Option<TenantId>,
     /// True when this incident id is not currently open in the incident store.
@@ -141,6 +147,7 @@ pub trait CaptureSink {
 /// ring.admit(
 ///     AdmittedEvent {
 ///         incident_id: "inc-1".into(),
+///         incident_key: None,
 ///         tenant: None,
 ///         is_fresh_generation: true,
 ///         event: serde_json::json!({"user": "alice"}),
@@ -293,6 +300,7 @@ pub struct CaptureStats {
 
 #[derive(Debug)]
 struct RingIncident {
+    key: Option<IdentityKey>,
     tenant: Option<TenantId>,
     first_seen: i64,
     last_seen: i64,
@@ -382,7 +390,12 @@ impl CaptureRing {
             return;
         }
 
-        if event.is_fresh_generation && self.incidents.contains_key(&event.incident_id) {
+        let stale = self.incidents.get(&event.incident_id).is_some_and(|held| {
+            event.is_fresh_generation
+                || held.tenant != event.tenant
+                || (event.incident_key.is_some() && held.key != event.incident_key)
+        });
+        if stale {
             self.remove_incident(&event.incident_id);
         }
 
@@ -454,6 +467,7 @@ impl CaptureRing {
             self.incidents.insert(
                 event.incident_id.clone(),
                 RingIncident {
+                    key: event.incident_key,
                     tenant: event.tenant.clone(),
                     first_seen: now,
                     last_seen: now,
@@ -580,6 +594,7 @@ fn index_matches(
 /// Internal pending admit used by the pipeline before coalescing.
 pub(crate) struct PendingAdmit {
     pub incident_id: String,
+    pub incident_key: IdentityKey,
     pub tenant: Option<TenantId>,
     pub is_fresh_generation: bool,
     pub event: Value,
@@ -604,14 +619,18 @@ pub(crate) fn flush_pending(pending: Vec<PendingCapture>, sink: &mut dyn Capture
     }
 }
 
-/// Collapse equal event payloads that share an incident id into one admit
-/// with a combined matches array, preserving first-seen order.
+/// Collapse equal event payloads that share an incident identity into one
+/// admit with a combined matches array, preserving first-seen order.
 fn coalesce_admits(pending: Vec<PendingAdmit>) -> Vec<AdmittedEvent> {
     let mut order = Vec::new();
-    let mut map: HashMap<(String, Vec<u8>), AdmittedEvent> = HashMap::new();
+    let mut map: HashMap<(String, IdentityKey, Vec<u8>), AdmittedEvent> = HashMap::new();
     for item in pending {
         let key_bytes = serde_json::to_vec(&item.event).unwrap_or_default();
-        let key = (item.incident_id.clone(), key_bytes);
+        let key = (
+            item.incident_id.clone(),
+            item.incident_key.clone(),
+            key_bytes,
+        );
         if let Some(existing) = map.get_mut(&key) {
             existing.matches.push(item.match_);
             existing.is_fresh_generation |= item.is_fresh_generation;
@@ -621,6 +640,7 @@ fn coalesce_admits(pending: Vec<PendingAdmit>) -> Vec<AdmittedEvent> {
                 key,
                 AdmittedEvent {
                     incident_id: item.incident_id,
+                    incident_key: Some(item.incident_key),
                     tenant: item.tenant,
                     is_fresh_generation: item.is_fresh_generation,
                     event: item.event,
@@ -642,6 +662,7 @@ mod tests {
     fn admit(incident: &str, event: Value, rule: &str) -> PendingAdmit {
         PendingAdmit {
             incident_id: incident.to_string(),
+            incident_key: IdentityKey::test_group(None, incident),
             tenant: None,
             is_fresh_generation: true,
             event,
@@ -679,6 +700,7 @@ mod tests {
     fn event(id: &str, n: u8) -> AdmittedEvent {
         AdmittedEvent {
             incident_id: id.to_string(),
+            incident_key: Some(IdentityKey::test_group(None, id)),
             tenant: None,
             is_fresh_generation: false,
             event: serde_json::json!({"n": n}),
@@ -838,5 +860,63 @@ mod tests {
         assert!(ring.snapshot_incident(Some(&b), "inc-b").is_some());
         assert!(ring.snapshot_incident(Some(&a), "inc-b").is_none());
         assert!(ring.snapshot_incident(None, "inc-b").is_none());
+    }
+
+    #[test]
+    fn coalesce_keeps_distinct_identities_under_one_id() {
+        let event = serde_json::json!({"user": "alice"});
+        let mut other = admit("inc-1", event.clone(), "r2");
+        other.incident_key = IdentityKey::test_group(None, "other");
+        let out = coalesce_admits(vec![admit("inc-1", event, "r1"), other]);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn the_same_identity_joins_its_generation() {
+        let mut ring = CaptureRing::new(tiny_config());
+        let mut first = event("a", 1);
+        first.is_fresh_generation = true;
+        ring.admit(first, 0, &crate::NoopMetrics);
+        ring.admit(event("a", 2), 1, &crate::NoopMetrics);
+        assert_eq!(ring.snapshot_incident(None, "a").unwrap().events.len(), 2);
+    }
+
+    #[test]
+    fn a_different_identity_under_the_same_id_starts_a_new_generation() {
+        let mut ring = CaptureRing::new(tiny_config());
+        let mut first = event("a", 1);
+        first.is_fresh_generation = true;
+        ring.admit(first, 0, &crate::NoopMetrics);
+        let mut other = event("a", 2);
+        other.incident_key = Some(IdentityKey::test_group(None, "b"));
+        ring.admit(other, 5, &crate::NoopMetrics);
+
+        let snap = ring.snapshot_incident(None, "a").unwrap();
+        assert_eq!(
+            snap.events.len(),
+            1,
+            "the two identities never share events"
+        );
+        assert_eq!(snap.events[0].event["n"], 2);
+        assert_eq!(snap.first_seen, 5);
+        assert_eq!(ring.stats().incidents, 1);
+    }
+
+    #[test]
+    fn another_tenant_under_the_same_id_starts_a_new_generation() {
+        let b = TenantId::new("b").unwrap();
+        let mut ring = CaptureRing::new(tiny_config());
+        let mut first = event("a", 1);
+        first.is_fresh_generation = true;
+        ring.admit(first, 0, &crate::NoopMetrics);
+        let mut other = event("a", 2);
+        other.tenant = Some(b.clone());
+        ring.admit(other, 1, &crate::NoopMetrics);
+
+        assert!(ring.snapshot_incident(None, "a").is_none());
+        assert_eq!(
+            ring.snapshot_incident(Some(&b), "a").unwrap().events.len(),
+            1
+        );
     }
 }

@@ -50,7 +50,7 @@ fn dedup_repeat_and_resolved_wire_shape() {
     // Expected wire shape, compared as a parsed value so the assertion is
     // robust to JSON object key ordering (serde_json's `preserve_order`
     // feature flips map order under feature unification). The fingerprint is a
-    // deterministic FNV digest, so it is pinned exactly.
+    // deterministic SHA-256 display id, so it is pinned exactly.
     let expected = |state: &str| {
         serde_json::json!({
             "rule_title": "Malware execution",
@@ -59,7 +59,7 @@ fn dedup_repeat_and_resolved_wire_shape() {
             "tags": ["attack.t1059"],
             "enrichments": {
                 "dedup_state": state,
-                "dedup_fingerprint": "13bf5ab591909123",
+                "dedup_fingerprint": "5ba0a3578eb33b46c5884eef27001ebb",
                 "dedup_fire_count": 2,
                 "dedup_first_seen": 1000,
                 "dedup_last_seen": 1005,
@@ -103,7 +103,7 @@ fn incident_wire_shape() {
     assert_eq!(
         value,
         serde_json::json!({
-            "incident_id": "f8bcd62a829b1126",
+            "incident_id": "6112491905cfd189ee15d93938676ee0",
             "state": "open",
             "trigger": "group_wait",
             "first_seen": 1000,
@@ -140,7 +140,7 @@ fn tenanted_incident_wire_shape() {
     assert_eq!(
         value,
         serde_json::json!({
-            "incident_id": "9e88f4a53c5a5640",
+            "incident_id": "24a6ab2de82e2bfd560f927cc716a445",
             "tenant_id": "tenant-a",
             "state": "open",
             "trigger": "group_wait",

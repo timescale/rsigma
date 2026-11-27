@@ -7,23 +7,25 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::dedup::ActiveAlert;
+use super::dedup::DedupSnap;
 use super::grouping::Incident;
 use super::inhibit::InhibitSourceSnap;
 use super::silence::SilenceSnap;
 
-/// Bumped when the snapshot layout changes incompatibly; a mismatch on load
-/// logs a warning and the daemon starts with fresh state.
-pub const SNAPSHOT_VERSION: u32 = 2;
+/// Bumped when the snapshot layout changes. Restore reads every version up to
+/// this one; a newer version logs a warning and the daemon starts with fresh
+/// state.
+pub const SNAPSHOT_VERSION: u32 = 3;
 
 /// A point-in-time snapshot of the alert pipeline's mutable state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertPipelineSnapshot {
     /// Snapshot layout version.
     pub version: u32,
-    /// Active dedup alerts as `(fingerprint, alert)` pairs.
+    /// Active dedup alerts with their identity keys and display ids (bare
+    /// `(fingerprint, alert)` pairs before version 3).
     #[serde(default)]
-    pub(crate) dedup: Vec<(String, ActiveAlert)>,
+    pub(crate) dedup: Vec<DedupSnap>,
     /// Open incidents.
     #[serde(default)]
     pub(crate) incidents: Vec<Incident>,

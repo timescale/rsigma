@@ -3,8 +3,9 @@
 //! Two modes:
 //!
 //! - `group_by` (default): group results by equality on an ordered selector
-//!   list. The incident identity is a deterministic fingerprint of the
-//!   `(selector -> value)` pairs, stable across restarts and re-emissions.
+//!   list. The incident identity is the exact [`IdentityKey`] (tenant plus
+//!   `(selector -> value)` pairs), and its `incident_id` is a display id
+//!   derived from that key, stable across restarts and re-emissions.
 //! - `entity_graph` (opt-in): union-find over `(selector, value)` entity pairs.
 //!   A result joins (and merges) any open incident sharing an entity value.
 //!   Guarded against the giant-component failure by a `stop_values` list and a
@@ -26,7 +27,7 @@ use rsigma_parser::Level;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::dedup::fnv1a64;
+use super::identity::{self, IdentityKey};
 use super::strip_event_payloads;
 use crate::selector::Selector;
 
@@ -107,8 +108,8 @@ pub struct IncidentRef {
 /// disambiguated downstream by the presence of `incident_id`.
 #[derive(Debug, Clone, Serialize)]
 pub struct IncidentResult {
-    /// Deterministic group fingerprint (group_by) or surrogate UUIDv4
-    /// (entity_graph). Stable across restarts in group_by mode.
+    /// Display id derived from the group identity (group_by) or surrogate
+    /// UUIDv4 (entity_graph). Stable across restarts in group_by mode.
     pub incident_id: String,
     /// Tenant that owns this incident, when tenancy is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,6 +180,10 @@ pub enum SampleMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Incident {
     id: String,
+    /// Exact group identity (group_by mode). Snapshots before version 3 lack
+    /// it; restore rebuilds it from `group_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key: Option<IdentityKey>,
     pub(crate) tenant: Option<TenantId>,
     first_seen: i64,
     last_seen: i64,
@@ -215,6 +220,8 @@ pub(crate) struct IncidentEmission {
 #[derive(Debug, Default)]
 pub struct IncidentStore {
     incidents: HashMap<String, Incident>,
+    /// group_by: exact group identity -> incident id.
+    group_ids: HashMap<IdentityKey, String>,
     /// entity_graph: `(tenant, selector, value)` -> incident id.
     entity_index: HashMap<(Option<TenantId>, String, String), String>,
     /// entity_graph: per-value occurrence count for the cardinality guard.
@@ -265,10 +272,22 @@ impl IncidentStore {
         self.incidents.contains_key(id)
     }
 
-    /// True when `assign` would accept a result for this deterministic
-    /// group id: the incident is already open, or the store still has room.
-    pub fn can_assign(&self, id: &str, max_open_incidents: usize) -> bool {
-        self.incidents.contains_key(id) || self.incidents.len() < max_open_incidents
+    /// The id of the open `group_by` incident for `key`, if any.
+    pub fn incident_id_for(&self, key: &IdentityKey) -> Option<&str> {
+        self.group_ids.get(key).map(String::as_str)
+    }
+
+    /// The id a new `group_by` incident for `key` would take: its natural
+    /// display id, or the next candidate when another incident holds that
+    /// one.
+    pub(crate) fn allocate_id(&self, key: &IdentityKey) -> String {
+        key.allocate_id(|id| self.incidents.contains_key(id))
+    }
+
+    /// True when `assign` would accept a result for this group identity: its
+    /// incident is already open, or the store still has room.
+    pub fn can_assign(&self, key: &IdentityKey, max_open_incidents: usize) -> bool {
+        self.group_ids.contains_key(key) || self.incidents.len() < max_open_incidents
     }
 
     /// A snapshot of every open incident, for the admin API.
@@ -296,15 +315,26 @@ impl IncidentStore {
         now: i64,
         mut on_guard: impl FnMut(OvermergeGuard),
     ) -> Option<String> {
-        self.assign_with_finding_uid(cfg, result, None, now, &mut on_guard, TenantCap::none())
+        self.assign_with_finding_uid(
+            cfg,
+            result,
+            None,
+            None,
+            now,
+            &mut on_guard,
+            TenantCap::none(),
+        )
     }
 
     /// [`Self::assign`], recording the result's OCSF finding uid on the
-    /// retained sample.
+    /// retained sample. In `group_by` mode, `slot` carries the result's group
+    /// identity when the caller already computed it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn assign_with_finding_uid(
         &mut self,
         cfg: &GroupConfig,
         result: &EvaluationResult,
+        slot: Option<GroupSlot>,
         finding_uid: Option<&str>,
         now: i64,
         mut on_guard: impl FnMut(OvermergeGuard),
@@ -312,7 +342,11 @@ impl IncidentStore {
     ) -> Option<String> {
         match cfg.mode {
             GroupMode::GroupBy => {
-                self.assign_group_by(cfg, result, finding_uid, now, &mut tenant_cap)
+                let slot = slot.unwrap_or_else(|| GroupSlot {
+                    key: IdentityKey::group(&cfg.by, result),
+                    id: None,
+                });
+                self.assign_group_by(cfg, slot, result, finding_uid, now, &mut tenant_cap)
             }
             GroupMode::EntityGraph => self.assign_entity_graph(
                 cfg,
@@ -341,11 +375,19 @@ impl IncidentStore {
             .entry(incident.tenant.clone())
             .or_default()
             .insert(incident.id.clone());
+        if let Some(key) = &incident.key {
+            self.group_ids.insert(key.clone(), incident.id.clone());
+        }
         self.incidents.insert(incident.id.clone(), incident);
     }
 
     fn remove_incident(&mut self, id: &str) -> Option<Incident> {
         let incident = self.incidents.remove(id)?;
+        if let Some(key) = &incident.key
+            && self.group_ids.get(key).is_some_and(|held| held == id)
+        {
+            self.group_ids.remove(key);
+        }
         if let Some(ids) = self.tenant_ids.get_mut(&incident.tenant) {
             ids.remove(id);
             if ids.is_empty() {
@@ -358,20 +400,35 @@ impl IncidentStore {
     fn assign_group_by(
         &mut self,
         cfg: &GroupConfig,
+        slot: GroupSlot,
         result: &EvaluationResult,
         finding_uid: Option<&str>,
         now: i64,
         tenant_cap: &mut TenantCap<impl FnMut()>,
     ) -> Option<String> {
-        let (id, key) = group_fingerprint(&cfg.by, result);
-        let tenant = result.header.tenant_id.clone();
-        if !self.incidents.contains_key(&id) {
-            self.make_tenant_room(tenant.as_ref(), tenant_cap);
-            if self.incidents.len() >= cfg.caps.max_open_incidents {
-                return None;
+        let id = match self.group_ids.get(&slot.key) {
+            Some(id) => id.clone(),
+            None => {
+                let tenant = slot.key.tenant().cloned();
+                self.make_tenant_room(tenant.as_ref(), tenant_cap);
+                if self.incidents.len() >= cfg.caps.max_open_incidents {
+                    return None;
+                }
+                let id = match slot.id {
+                    Some(id) if !self.incidents.contains_key(&id) => id,
+                    _ => self.allocate_id(&slot.key),
+                };
+                let mut incident = Incident::new(
+                    id.clone(),
+                    tenant,
+                    now,
+                    identity::display_values(&cfg.by, result),
+                );
+                incident.key = Some(slot.key);
+                self.insert_incident(incident);
+                id
             }
-            self.insert_incident(Incident::new(id.clone(), tenant, now, key));
-        }
+        };
         let incident = self.incidents.get_mut(&id)?;
         incident.absorb(result, finding_uid, now, cfg);
         Some(id)
@@ -602,10 +659,29 @@ impl IncidentStore {
         resolve_secs: i64,
         caps: &Caps,
     ) -> usize {
-        for inc in incidents {
-            if now - inc.last_seen < resolve_secs {
-                self.insert_incident(inc);
+        for mut inc in incidents {
+            if now - inc.last_seen >= resolve_secs || self.incidents.contains_key(&inc.id) {
+                continue;
             }
+            if inc.key.is_none() {
+                inc.key = identity::rebuild_group_key(&inc.id, inc.tenant.as_ref(), &inc.group_by);
+            }
+            // Two incidents restored under one identity: the most recently
+            // seen keeps it, and the other resolves on its own.
+            if let Some(key) = &inc.key
+                && let Some(held) = self.group_ids.get(key).cloned()
+            {
+                let held_newer = self
+                    .incidents
+                    .get(&held)
+                    .is_some_and(|other| other.last_seen >= inc.last_seen);
+                if held_newer {
+                    inc.key = None;
+                } else if let Some(other) = self.incidents.get_mut(&held) {
+                    other.key = None;
+                }
+            }
+            self.insert_incident(inc);
         }
         let evicted = self.enforce_caps(caps);
         self.entity_index.clear();
@@ -741,6 +817,7 @@ impl Incident {
     fn new(id: String, tenant: Option<TenantId>, now: i64, group_by: Vec<(String, Value)>) -> Self {
         Incident {
             id,
+            key: None,
             tenant,
             first_seen: now,
             last_seen: now,
@@ -879,32 +956,11 @@ impl Incident {
     }
 }
 
-/// The deterministic group fingerprint and the resolved key values for a
-/// `group_by`-mode result. The rule identity is deliberately excluded so an
-/// incident can span rules that share the group key.
-pub fn group_fingerprint(
-    selectors: &[Selector],
-    result: &EvaluationResult,
-) -> (String, Vec<(String, Value)>) {
-    let mut buf = String::with_capacity(64);
-    let mut key = Vec::with_capacity(selectors.len());
-    if let Some(tenant) = &result.header.tenant_id {
-        buf.push_str("tenant=");
-        buf.push_str(tenant.as_str());
-        buf.push('\u{1f}');
-    }
-    for sel in selectors {
-        let value = sel.resolve(result).unwrap_or(Value::Null);
-        buf.push('\u{1f}');
-        buf.push_str(&sel.as_str());
-        buf.push('=');
-        match &value {
-            Value::String(s) => buf.push_str(s),
-            other => buf.push_str(&other.to_string()),
-        }
-        key.push((sel.as_str(), value));
-    }
-    (format!("{:016x}", fnv1a64(buf.as_bytes())), key)
+/// A `group_by` result's identity, with the incident id the caller already
+/// resolved for it (see [`IncidentStore::allocate_id`]).
+pub(crate) struct GroupSlot {
+    pub key: IdentityKey,
+    pub id: Option<String>,
 }
 
 /// Rank for severity comparison (`Level` is not `Ord`).
@@ -1126,14 +1182,23 @@ mod tests {
         let mut store = IncidentStore::default();
         let r1 = detection("r1", "10.0.0.1", "alice", Level::High);
         let id = store
-            .assign_with_finding_uid(&refs_cfg, &r1, Some("uid-1"), 0, |_| {}, TenantCap::none())
+            .assign_with_finding_uid(
+                &refs_cfg,
+                &r1,
+                None,
+                Some("uid-1"),
+                0,
+                |_| {},
+                TenantCap::none(),
+            )
             .unwrap();
         let r2 = detection("r2", "10.0.0.1", "bob", Level::Low);
-        store.assign_with_finding_uid(&results_cfg, &r2, None, 1, |_| {}, TenantCap::none());
+        store.assign_with_finding_uid(&results_cfg, &r2, None, None, 1, |_| {}, TenantCap::none());
         let r3 = detection("r3", "10.0.0.1", "carol", Level::Low);
         store.assign_with_finding_uid(
             &results_cfg,
             &r3,
+            None,
             Some("uid-3"),
             2,
             |_| {},
@@ -1165,13 +1230,13 @@ mod tests {
         };
         let mut store = IncidentStore::default();
         let a = detection("r", "10.0.0.1", "alice", Level::High);
-        store.assign_with_finding_uid(&cfg, &a, Some("uid-a"), 0, |_| {}, TenantCap::none());
+        store.assign_with_finding_uid(&cfg, &a, None, Some("uid-a"), 0, |_| {}, TenantCap::none());
         let b = detection("r", "10.0.0.2", "bob", Level::High);
-        store.assign_with_finding_uid(&cfg, &b, None, 1, |_| {}, TenantCap::none());
+        store.assign_with_finding_uid(&cfg, &b, None, None, 1, |_| {}, TenantCap::none());
         // Bridges both incidents.
         let c = detection("r", "10.0.0.2", "alice", Level::High);
         let id = store
-            .assign_with_finding_uid(&cfg, &c, Some("uid-c"), 2, |_| {}, TenantCap::none())
+            .assign_with_finding_uid(&cfg, &c, None, Some("uid-c"), 2, |_| {}, TenantCap::none())
             .unwrap();
         assert_eq!(store.len(), 1);
 
@@ -1303,6 +1368,116 @@ mod tests {
             .unwrap();
         assert_eq!(store.len(), 1, "the bridge merged the two incidents");
         assert!(c == a || c == b);
+    }
+
+    #[test]
+    fn colliding_display_ids_keep_group_incidents_apart() {
+        let _forced = identity::force_display_id(identity::colliding_display_id);
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        let a = store
+            .assign(
+                &cfg,
+                &detection("r", "10.0.0.1", "x", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+        let b = store
+            .assign(
+                &cfg,
+                &detection("r", "10.0.0.2", "x", Level::Low),
+                1,
+                |_| {},
+            )
+            .unwrap();
+        assert_ne!(a, b);
+        assert_eq!(store.len(), 2);
+        let again = store
+            .assign(
+                &cfg,
+                &detection("r", "10.0.0.2", "y", Level::Low),
+                2,
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(again, b, "the second identity keeps its own id");
+        assert_eq!(store.incidents[&a].result_count, 1);
+        assert_eq!(store.incidents[&b].result_count, 2);
+
+        // Once the first incident resolves, the id it held is free again,
+        // and the second incident keeps the one it was given.
+        store.tick(&cfg, 30);
+        store
+            .assign(
+                &cfg,
+                &detection("r", "10.0.0.2", "z", Level::Low),
+                3000,
+                |_| {},
+            )
+            .unwrap();
+        store.tick(&cfg, 3601);
+        assert_eq!(store.len(), 1);
+        assert_eq!(
+            store
+                .assign(
+                    &cfg,
+                    &detection("r", "10.0.0.2", "z", Level::Low),
+                    3602,
+                    |_| {}
+                )
+                .unwrap(),
+            b
+        );
+        let reopened = store
+            .assign(
+                &cfg,
+                &detection("r", "10.0.0.1", "z", Level::Low),
+                3603,
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(reopened, a, "a free natural id is reused for its identity");
+    }
+
+    #[test]
+    fn a_legacy_group_incident_restores_under_its_old_id() {
+        let cfg = group_by_cfg();
+        let legacy: Incident = serde_json::from_value(serde_json::json!({
+            "id": "b82bac56bc57e729",
+            "tenant": null,
+            "first_seen": 0,
+            "last_seen": 0,
+            "last_emitted": 0,
+            "emitted_count": 0,
+            "opened": false,
+            "dirty": true,
+            "group_by": [["match.SourceIp", "10.0.0.1"], ["match.User", null]],
+            "entities": {},
+            "max_level": "high",
+            "rule_counts": {"r": 1},
+            "result_count": 1,
+            "refs": [],
+            "results": []
+        }))
+        .unwrap();
+        let cfg = GroupConfig {
+            by: vec![
+                Selector::parse("match.SourceIp").unwrap(),
+                Selector::parse("match.User").unwrap(),
+            ],
+            ..cfg
+        };
+        let mut store = IncidentStore::default();
+        assert_eq!(store.restore(vec![legacy], 1, 3600, &cfg.caps), 0);
+        let mut absent_user = detection("r", "10.0.0.1", "x", Level::High);
+        if let ResultBody::Detection(d) = &mut absent_user.body {
+            d.matched_fields.truncate(1);
+        }
+        assert_eq!(
+            store.assign(&cfg, &absent_user, 2, |_| {}).as_deref(),
+            Some("b82bac56bc57e729")
+        );
     }
 
     #[test]

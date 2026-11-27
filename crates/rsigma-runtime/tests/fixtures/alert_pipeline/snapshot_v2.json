@@ -1,0 +1,221 @@
+{
+  "version": 2,
+  "dedup": [
+    [
+      "13b096b86bd3bb8c",
+      {
+        "first_seen": 1000,
+        "last_seen": 1000,
+        "last_emitted": 1000,
+        "fire_count": 1,
+        "emitted_count": 1,
+        "sample": {
+          "level": "high",
+          "matched_fields": [
+            {
+              "field": "SourceIp",
+              "value": "10.0.0.1"
+            }
+          ],
+          "matched_selections": [],
+          "rule_id": "rule-1",
+          "rule_title": "Brute force",
+          "tags": []
+        },
+        "fields": [
+          [
+            "match.SourceIp",
+            "10.0.0.1"
+          ],
+          [
+            "match.User",
+            null
+          ]
+        ]
+      }
+    ],
+    [
+      "7db2119922efb67f",
+      {
+        "first_seen": 1000,
+        "last_seen": 1000,
+        "last_emitted": 1000,
+        "fire_count": 1,
+        "emitted_count": 1,
+        "sample": {
+          "level": "high",
+          "matched_fields": [
+            {
+              "field": "SourceIp",
+              "value": "10.0.0.2"
+            },
+            {
+              "field": "User",
+              "value": null
+            }
+          ],
+          "matched_selections": [],
+          "rule_id": "rule-1",
+          "rule_title": "Brute force",
+          "tags": []
+        },
+        "fields": [
+          [
+            "match.SourceIp",
+            "10.0.0.2"
+          ],
+          [
+            "match.User",
+            null
+          ]
+        ]
+      }
+    ],
+    [
+      "a253ec4733a4bc37",
+      {
+        "first_seen": 1000,
+        "last_seen": 1000,
+        "last_emitted": 1000,
+        "fire_count": 1,
+        "emitted_count": 1,
+        "sample": {
+          "level": "critical",
+          "matched_fields": [
+            {
+              "field": "SourceIp",
+              "value": "10.0.0.3"
+            },
+            {
+              "field": "User",
+              "value": "alice"
+            }
+          ],
+          "matched_selections": [],
+          "rule_id": "rule-1",
+          "rule_title": "Brute force",
+          "tags": []
+        },
+        "fields": [
+          [
+            "match.SourceIp",
+            "10.0.0.3"
+          ],
+          [
+            "match.User",
+            "alice"
+          ]
+        ]
+      }
+    ]
+  ],
+  "incidents": [
+    {
+      "id": "28eb97f73dc10a30",
+      "tenant": null,
+      "first_seen": 1000,
+      "last_seen": 1000,
+      "last_emitted": 1000,
+      "emitted_count": 0,
+      "opened": false,
+      "dirty": true,
+      "group_by": [
+        [
+          "match.SourceIp",
+          "10.0.0.2"
+        ],
+        [
+          "match.User",
+          null
+        ]
+      ],
+      "entities": {},
+      "max_level": "high",
+      "rule_counts": {
+        "rule-1": 1
+      },
+      "result_count": 1,
+      "refs": [
+        {
+          "rule": "rule-1",
+          "level": "high"
+        }
+      ],
+      "results": []
+    },
+    {
+      "id": "4b73a8fad6e406ca",
+      "tenant": null,
+      "first_seen": 1000,
+      "last_seen": 1000,
+      "last_emitted": 1000,
+      "emitted_count": 0,
+      "opened": false,
+      "dirty": true,
+      "group_by": [
+        [
+          "match.SourceIp",
+          "10.0.0.3"
+        ],
+        [
+          "match.User",
+          "alice"
+        ]
+      ],
+      "entities": {},
+      "max_level": "critical",
+      "rule_counts": {
+        "rule-1": 1
+      },
+      "result_count": 1,
+      "refs": [
+        {
+          "rule": "rule-1",
+          "level": "critical"
+        }
+      ],
+      "results": []
+    },
+    {
+      "id": "b82bac56bc57e729",
+      "tenant": null,
+      "first_seen": 1000,
+      "last_seen": 1000,
+      "last_emitted": 1000,
+      "emitted_count": 0,
+      "opened": false,
+      "dirty": true,
+      "group_by": [
+        [
+          "match.SourceIp",
+          "10.0.0.1"
+        ],
+        [
+          "match.User",
+          null
+        ]
+      ],
+      "entities": {},
+      "max_level": "high",
+      "rule_counts": {
+        "rule-1": 1
+      },
+      "result_count": 1,
+      "refs": [
+        {
+          "rule": "rule-1",
+          "level": "high"
+        }
+      ],
+      "results": []
+    }
+  ],
+  "silences": [],
+  "inhibit_sources": [
+    {
+      "rule": "critical-inhibits-high",
+      "equal_key": "\u001f10.0.0.3",
+      "last_seen": 1000
+    }
+  ]
+}
