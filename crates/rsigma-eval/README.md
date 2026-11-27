@@ -69,6 +69,7 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 | `process_with_detections(event, detections, ts)` | Feed pre-computed detections into correlation state. Rules without an `id` are matched by title, so name-only rules need unique titles here; `process_event_at` and `process_batch` keep the compiled identity |
 | `process_batch(events: &[&Event])` | Parallel detection + sequential correlation for a batch of events |
 | `evict_expired(now)` | Manually evict expired state entries |
+| `future_skipped()` / `take_future_skipped()` | Events skipped for correlation because their timestamp was more than `max_future_skew` ahead of the wall clock |
 | `introspect()` / `introspect_filtered(id, group)` | Read-only `CorrelationStateSnapshot`: per correlation and group, the current aggregate vs threshold, window contents, last alert and remaining suppression, and seconds to eviction |
 | `state_count()` | Number of active correlation state entries |
 | `event_buffer_count()` | Total events stored across all buffers |
@@ -260,7 +261,8 @@ Stateful processing with sliding time windows, group-by aggregation, and all 8 c
 | `timestamp_fields` | `Vec<String>` | `["@timestamp", "timestamp", "EventTime", "TimeCreated", "eventTime"]` | Field names to try for timestamp extraction, in priority order |
 | `timestamp_fallback` | `TimestampFallback` | `WallClock` | `WallClock` (use `Utc::now()`) or `Skip` (skip event from correlation) |
 | `max_state_entries` | `usize` | `100,000` | Hard cap across all correlations and group keys |
-| `max_group_entries` | `Option<usize>` | `None` | Cap on retained entries within a single group's window state; `None` = unbounded. Oldest entries dropped on overflow (session windows keep their span anchor) |
+| `max_group_entries` | `Option<usize>` | `None` | Cap on retained entries within a single group's window state. `None` applies `DEFAULT_MAX_GROUP_ENTRIES` (10,000), raised to one more than the largest threshold of an `event_count` or `value_count` condition. Oldest entries dropped on overflow (session windows keep their span anchor) |
+| `max_future_skew` | `u64` | `300` | Seconds an event timestamp may be ahead of the wall clock. An event further ahead is skipped for correlation and counted in `future_skipped()`; a smaller lead is clamped to the wall clock. Restored state gets the same bound |
 | `suppress` | `Option<u64>` | `None` | Default suppression window in seconds |
 | `action_on_match` | `CorrelationAction` | `Alert` | `Alert` (keep state) or `Reset` (clear window state) |
 | `emit_detections` | `bool` | `false` | Whether to emit matches for correlation-only rules, including correlations referenced by another correlation |

@@ -99,6 +99,8 @@ rsigma engine daemon -r rules/ --timestamp-field time --timestamp-field _ts
 
 When an event has no parseable timestamp, the daemon falls back to the wall clock by default. Pass `--timestamp-fallback skip` to instead drop the event from correlation state (detections still fire). This is what you want for forensic replay of historical data.
 
+A timestamp more than `--max-future-skew` (default `5m`, config key `daemon.correlation.max_future_skew`) ahead of the wall clock also keeps the event out of correlation state, counted in `rsigma_correlation_future_events_skipped_total`, and a smaller lead is clamped to the wall clock. State restored from `--state-db` gets the same bound. {{ added "unreleased" }}
+
 ### Window modes
 
 A correlation rule's optional `window` attribute controls how its `timespan` is anchored to the stream, and the engine evaluates each mode directly:
@@ -131,7 +133,7 @@ correlation:
 
 The `custom_attributes:` block wins over a top-level `rsigma.*` key, and either wins over the `correlation` keys. {{ added "unreleased" }} A pipeline's `set_custom_attribute` and a ruleset overlay can also set `rsigma.window` and `rsigma.gap`. An override that switches to `sliding` or `tumbling` drops the gap, and one that switches to `session` needs a gap. The engine reads the resolved value either way.
 
-Window decisions follow arrival order, the same contract as the existing sliding window: the engine reasons about the events currently retained per group, not a global watermark. One asymmetry is deliberate: a tumbling window discards a late event that belongs to an earlier, already-passed bucket rather than letting it reset the active bucket, so out-of-order stragglers cannot wipe an accumulating count. Window bookkeeping is derived from the per-group timestamps already tracked, so persisted state (`--state-db`) stays compatible and survives upgrades.
+Window decisions are made per group against the events it retains, not a global watermark, and the retained events stay ordered by timestamp whatever order they arrive in. A late event joins the window it belongs to, and is discarded when that window has already passed: a sliding window ends at the newer of the event and the group's newest entry, so an event older than that window is dropped; a tumbling window drops an event from an earlier bucket rather than letting it reset the active one; and a session window drops an event from a session that already closed rather than restarting or extending the current one. An older event never moves a group's newest timestamp back, so it cannot make an active session look idle. {{ added "unreleased" }} Window bookkeeping is derived from the per-group timestamps already tracked, so persisted state (`--state-db`) stays compatible and survives upgrades.
 
 All three modes have the same per-event cost (the window decision is O(1)), so choosing `session` over `sliding` is free at evaluation time; what differs is how long state is retained per group. See [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) for the memory characteristics and the [Benchmarks](../benchmarks.md#window-mode-memory-stress) page for measured numbers under high-cardinality and long-lived-session stress.
 

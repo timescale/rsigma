@@ -161,7 +161,8 @@ When a tumbling or session parent window resets, the parent clears its events, b
 | `--correlation-event-mode <none,full,refs>` | Include contributing events: `none` (zero overhead), `full` (deflate-compressed bodies), `refs` (timestamp + ID only). Chained parents carry the events their child correlations retained, with `event_sources`. {{ added "0.28.0" }} |
 | `--max-correlation-events N` | Cap events stored per correlation window. Default 10. A chained parent applies its own cap to the events it receives. {{ added "0.28.0" }} |
 | `--max-state-entries N` | Hard cap on correlation state entries across all correlations and group keys. Default 100,000. |
-| `--max-group-entries N` | Cap retained entries within a single group's window. Unset = unbounded. |
+| `--max-group-entries N` | Cap retained entries within a single group's window. Unset = 10,000, raised for an `event_count` or `value_count` condition with a larger threshold. {{ added "unreleased" }} |
+| `--max-future-skew DURATION` | How far an event timestamp may be ahead of the wall clock before the event is skipped for correlation. Default `5m`; a smaller lead is clamped to the wall clock. {{ added "unreleased" }} |
 | `--timestamp-field FIELD` | Prepend a field name to the timestamp extraction list (default `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`). |
 
 For continuous correlation, see [streaming detection](streaming-detection.md).
