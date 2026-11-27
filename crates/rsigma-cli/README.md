@@ -341,7 +341,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--nats-user` | string | none | Username (requires `--nats-password`, env: `NATS_USER`) |
 | `--nats-password` | string | none | Password (requires `--nats-user`, env: `NATS_PASSWORD`) |
 | `--nats-nkey` | string | none | NKey seed (env: `NATS_NKEY`) |
-| `--nats-tls-cert` | path | none | Client certificate for mutual TLS (requires `--nats-tls-key`) |
+| `--nats-tls-cert` | path | none | Client certificate for mutual TLS (requires `--nats-tls-key`); also requires TLS on NATS connections |
 | `--nats-tls-key` | path | none | Client private key for mutual TLS (requires `--nats-tls-cert`) |
 | `--nats-require-tls` | flag | `false` | Require TLS on NATS connections |
 
