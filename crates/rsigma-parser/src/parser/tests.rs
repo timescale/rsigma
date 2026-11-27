@@ -418,6 +418,145 @@ rsigma.window: session
 }
 
 #[test]
+fn test_correlation_window_in_custom_attributes_block() {
+    let yaml = r#"
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-1
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+custom_attributes:
+    rsigma.window: session
+    rsigma.gap: 1m
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let corr = &collection.correlations[0];
+    assert_eq!(corr.window, WindowMode::Session);
+    assert_eq!(corr.gap.as_ref().unwrap().seconds, 60);
+}
+
+#[test]
+fn test_correlation_window_block_overrides_top_level() {
+    // The block wins over a top-level key, as for every custom attribute.
+    let yaml = r#"
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-1
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+rsigma.window: sliding
+custom_attributes:
+    rsigma.window: tumbling
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert_eq!(collection.correlations[0].window, WindowMode::Tumbling);
+}
+
+#[test]
+fn test_correlation_window_block_errors_match_top_level() {
+    for (attrs, needle) in [
+        ("    rsigma.window: 5\n", "must be a string"),
+        ("    rsigma.window: hopping\n", "Unknown window mode"),
+        ("    rsigma.window: session\n", "requires a gap"),
+        ("    rsigma.gap: 5m\n", "only valid with window: session"),
+    ] {
+        let yaml = format!(
+            "title: Corr\ncorrelation:\n    type: event_count\n    rules:\n        - base-1\n    group-by:\n        - User\n    timespan: 1h\n    condition:\n        gte: 3\ncustom_attributes:\n{attrs}"
+        );
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        assert!(collection.correlations.is_empty(), "{attrs}");
+        assert!(
+            collection
+                .diagnostics
+                .iter()
+                .any(|e| e.message.contains(needle)),
+            "{attrs}: {:?}",
+            collection.diagnostics
+        );
+    }
+}
+
+#[test]
+fn test_apply_window_attributes_follows_changed_attributes() {
+    let yaml = r#"
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-1
+    group-by:
+        - User
+    timespan: 1h
+    window: session
+    gap: 5m
+    condition:
+        gte: 3
+"#;
+    let mut corr = parse_sigma_yaml(yaml).unwrap().correlations.remove(0);
+
+    // Switching a session rule away from session drops the gap.
+    corr.custom_attributes.insert(
+        "rsigma.window".into(),
+        yaml_serde::Value::String("tumbling".into()),
+    );
+    corr.apply_window_attributes().unwrap();
+    assert_eq!(corr.window, WindowMode::Tumbling);
+    assert!(corr.gap.is_none());
+
+    // The emitted rule parses back to the same window.
+    let emitted = crate::emit_correlation_yaml(&corr);
+    let reparsed = parse_sigma_yaml(&emitted).unwrap();
+    assert_eq!(
+        reparsed.correlations[0].window,
+        WindowMode::Tumbling,
+        "{emitted}"
+    );
+    assert!(reparsed.correlations[0].gap.is_none(), "{emitted}");
+
+    // Back to session, with a gap from the attributes.
+    corr.custom_attributes.insert(
+        "rsigma.window".into(),
+        yaml_serde::Value::String("session".into()),
+    );
+    corr.custom_attributes
+        .insert("rsigma.gap".into(), yaml_serde::Value::String("2m".into()));
+    corr.apply_window_attributes().unwrap();
+    assert_eq!(corr.window, WindowMode::Session);
+    assert_eq!(corr.gap.as_ref().unwrap().seconds, 120);
+}
+
+#[test]
+fn test_apply_window_attributes_without_attributes_is_a_no_op() {
+    let yaml = r#"
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-1
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+"#;
+    let mut corr = parse_sigma_yaml(yaml).unwrap().correlations.remove(0);
+    corr.gap = Some(crate::Timespan::parse("5m").unwrap());
+    corr.apply_window_attributes().unwrap();
+    assert_eq!(corr.window, WindowMode::Sliding);
+    assert!(corr.gap.is_some());
+}
+
+#[test]
 fn test_parse_correlation_rule_custom_attributes() {
     let yaml = r#"
 title: Login

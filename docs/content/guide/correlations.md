@@ -177,6 +177,8 @@ rsigma.window: session
 rsigma.gap: 10m
 ```
 
+The two attributes can sit at the top level, as here, or inside the `custom_attributes:` block, which wins when both appear. {{ added "unreleased" }} `correlation.window` and `correlation.gap` are accepted as aliases. Because the window is a custom attribute, a pipeline's `set_custom_attribute` or a [ruleset overlay](rulesets.md#overlays) can change it without editing the rule file. When such an override switches a session window to `sliding` or `tumbling`, the rule's gap is dropped. Switching to `session` needs a gap, so set `rsigma.gap` alongside `rsigma.window` unless the rule already has one.
+
 Window modes are an RSigma extension. A [proposal to add them to the Sigma specification](https://github.com/SigmaHQ/sigma-specification/issues/214) was declined because the specification deliberately leaves the windowing strategy to each backend, so rules that use them are not portable to other Sigma tools. [Streaming Detection](streaming-detection.md#window-modes) describes each mode's semantics and out-of-order handling. For conversion, the PostgreSQL backend renders each mode and also lets you pick the strategy per conversion with `-O correlation_method=`, following pySigma's model (see [Rule Conversion](rule-conversion.md#correlation-window-modes)).
 
 ## What a correlation emits

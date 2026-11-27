@@ -3,7 +3,7 @@ mod helpers;
 use helpers::{corr_engine, corr_engine_with_config, process};
 use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEngine, JsonEvent, ProcessResultExt,
-    TimestampFallback,
+    TimestampFallback, parse_pipeline,
 };
 use rsigma_parser::parse_sigma_yaml;
 use serde_json::json;
@@ -509,4 +509,48 @@ level: high
             ("SourceIP".to_string(), "10.0.0.1".to_string()),
         ]
     );
+}
+
+const SESSION_PIPELINE_YAML: &str = r#"
+name: session windows
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.window
+    value: session
+  - type: set_custom_attribute
+    attribute: rsigma.gap
+    value: 10s
+"#;
+
+fn logins_20s_apart(engine: &mut CorrelationEngine) -> usize {
+    (0..3)
+        .map(|i| process(engine, login_event("admin"), 1000 + i * 20).correlation_count())
+        .sum()
+}
+
+#[test]
+fn pipeline_window_attributes_change_correlation_window() {
+    let mut sliding = corr_engine(EVENT_COUNT_YAML);
+    assert_eq!(logins_20s_apart(&mut sliding), 1);
+
+    let mut session = CorrelationEngine::new(CorrelationConfig::default());
+    session.add_pipeline(parse_pipeline(SESSION_PIPELINE_YAML).unwrap());
+    session
+        .add_collection(&parse_sigma_yaml(EVENT_COUNT_YAML).unwrap())
+        .unwrap();
+    assert_eq!(
+        logins_20s_apart(&mut session),
+        0,
+        "a 20s pause exceeds the 10s session gap, so no session reaches 3 logins"
+    );
+}
+
+#[test]
+fn custom_attributes_block_window_changes_correlation_window() {
+    let yaml = EVENT_COUNT_YAML.replace(
+        "level: high",
+        "custom_attributes:\n    rsigma.window: session\n    rsigma.gap: 10s\nlevel: high",
+    );
+    let mut engine = corr_engine(&yaml);
+    assert_eq!(logins_20s_apart(&mut engine), 0);
 }

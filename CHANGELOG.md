@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Correlation window attributes work in `custom_attributes`, pipelines, and overlays (#795)
+
+`rsigma.window` and `rsigma.gap` were read only as top-level keys. Inside a `custom_attributes:` block they were silently ignored, so a session window ran as a sliding one, and lint did not check them there. A pipeline's `set_custom_attribute` changed the attribute but not the window the engine and backends used, and ruleset overlays rejected both keys. All three now set the window. The `custom_attributes:` block wins over a top-level key, which wins over `correlation.window` and `correlation.gap`, and lint checks whichever spelling is in effect. Parsing stays strict, but an override that switches a session window to `sliding` or `tumbling` drops the gap rather than failing; switching to `session` still needs a gap. An overlay cannot remove these attributes with `null`. Library users who change the attributes after parsing call the new `CorrelationRule::apply_window_attributes`; `apply_pipelines_to_correlation` and overlays call it for them.
+
 ### Correlation rules guide (#794)
 
 The docs have a new [Correlation Rules](docs/content/guide/correlations.md) guide. It covers all eight correlation types with examples, group-by and aliases, time windows and window modes, chaining, suppression and reset, state and memory, and how to test and debug a correlation. Core Concepts, Evaluating Rules, and Troubleshooting link to it.

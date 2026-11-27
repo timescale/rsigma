@@ -107,12 +107,19 @@ A correlation rule's optional `window` attribute controls how its `timespan` is 
 - `tumbling`: fixed, boundary-aligned, non-overlapping buckets of size `timespan`. The per-group state resets when an event lands in a new bucket. Use this when you want calendar-style buckets (for example a per-hour quota), accepting that events on opposite sides of a boundary are not compared.
 - `session`: a dynamic window that stays open while consecutive in-group events are within `gap` of each other, and closes after `gap` of inactivity. It restarts once the total span would exceed `timespan` (the hard cap). This is the only mode that catches a low-and-slow chain whose steps are each close together but whose total span exceeds any fixed `timespan`.
 
-`window` and `gap` are an RSigma extension (a [portable-spec version](https://github.com/SigmaHQ/sigma-specification/issues/214) was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace and the bare keys are kept as aliases. Both of these are equivalent:
+`window` and `gap` are an RSigma extension (a [portable-spec version](https://github.com/SigmaHQ/sigma-specification/issues/214) was declined upstream), so the primary spelling is the `rsigma.*` engine-extension namespace and the bare keys are kept as aliases. All of these are equivalent:
 
 ```yaml
 # Primary: rsigma.* extension keys (top level, like rsigma.suppress)
 rsigma.window: session
 rsigma.gap: 5m
+```
+
+```yaml
+# The same keys inside the custom_attributes block
+custom_attributes:
+    rsigma.window: session
+    rsigma.gap: 5m
 ```
 
 ```yaml
@@ -122,7 +129,7 @@ correlation:
     gap: 5m
 ```
 
-The `rsigma.*` spelling wins if both appear. The engine reads the resolved value either way.
+The `custom_attributes:` block wins over a top-level `rsigma.*` key, and either wins over the `correlation` keys. {{ added "unreleased" }} A pipeline's `set_custom_attribute` and a ruleset overlay can also set `rsigma.window` and `rsigma.gap`. An override that switches to `sliding` or `tumbling` drops the gap, and one that switches to `session` needs a gap. The engine reads the resolved value either way.
 
 Window decisions follow arrival order, the same contract as the existing sliding window: the engine reasons about the events currently retained per group, not a global watermark. One asymmetry is deliberate: a tumbling window discards a late event that belongs to an earlier, already-passed bucket rather than letting it reset the active bucket, so out-of-order stragglers cannot wipe an accumulating count. Window bookkeeping is derived from the per-group timestamps already tracked, so persisted state (`--state-db`) stays compatible and survives upgrades.
 

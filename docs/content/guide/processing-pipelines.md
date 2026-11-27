@@ -329,6 +329,8 @@ Transformations can write per-rule attributes that the engine and backends read.
 | `rsigma.timestamp_field` | `engine daemon`, `engine eval` | Prepend a field name to the timestamp extraction priority list. |
 | `rsigma.suppress` | correlation engine | Per-rule suppression window override. |
 | `rsigma.action` | correlation engine | `alert` or `reset` after a correlation fires. |
+| `rsigma.window` | correlation engine, backends | `sliding`, `tumbling`, or `session` window for one correlation. {{ added "unreleased" }} |
+| `rsigma.gap` | correlation engine, backends | Session gap for one correlation, set alongside `rsigma.window: session`. {{ added "unreleased" }} |
 | `rsigma.include_event` | detection engine | Embed the full event JSON in detection output for this rule. |
 | `rsigma.correlation_event_mode` | correlation engine | `none`, `full`, `refs` for one rule. |
 | `rsigma.max_correlation_events` | correlation engine | Per-window event cap for one rule. |

@@ -835,6 +835,108 @@ transformations:
 }
 
 #[test]
+fn test_correlation_pipeline_sets_window_attributes() {
+    // The mode and the gap come from separate items, so the window is only
+    // consistent once every pipeline has run.
+    let yaml = r#"
+name: Sessionize
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.window
+    value: session
+  - type: set_custom_attribute
+    attribute: rsigma.gap
+    value: 5m
+"#;
+    let pipeline = parse_pipeline(yaml).unwrap();
+    let mut corr = make_test_correlation();
+    assert_eq!(corr.window, rsigma_parser::WindowMode::Sliding);
+
+    apply_pipelines_to_correlation(&[pipeline], &mut corr).unwrap();
+
+    assert_eq!(corr.window, rsigma_parser::WindowMode::Session);
+    assert_eq!(corr.gap.as_ref().map(|g| g.seconds), Some(300));
+}
+
+#[test]
+fn test_correlation_pipeline_window_override_drops_session_gap() {
+    let rule = r#"
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - rule_a
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 3
+rsigma.window: session
+rsigma.gap: 5m
+"#;
+    let pipeline = parse_pipeline(
+        r#"
+name: Force sliding
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.window
+    value: sliding
+"#,
+    )
+    .unwrap();
+    let mut corr = rsigma_parser::parse_sigma_yaml(rule)
+        .unwrap()
+        .correlations
+        .remove(0);
+
+    apply_pipelines_to_correlation(&[pipeline], &mut corr).unwrap();
+
+    assert_eq!(corr.window, rsigma_parser::WindowMode::Sliding);
+    assert!(corr.gap.is_none());
+    assert!(!corr.custom_attributes.contains_key("rsigma.gap"));
+}
+
+#[test]
+fn test_correlation_pipeline_session_without_gap_is_error() {
+    let pipeline = parse_pipeline(
+        r#"
+name: Sessionize without gap
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.window
+    value: session
+"#,
+    )
+    .unwrap();
+    let mut corr = make_test_correlation();
+
+    let err = apply_pipelines_to_correlation(&[pipeline], &mut corr)
+        .expect_err("a session window needs a gap");
+    let msg = err.to_string();
+    assert!(msg.contains("requires a gap"), "{msg}");
+    assert!(msg.contains(&corr.title), "{msg}");
+}
+
+#[test]
+fn test_correlation_pipeline_invalid_window_value_is_error() {
+    let pipeline = parse_pipeline(
+        r#"
+name: Bad window
+transformations:
+  - type: set_custom_attribute
+    attribute: rsigma.window
+    value: hopping
+"#,
+    )
+    .unwrap();
+    let mut corr = make_test_correlation();
+
+    let err = apply_pipelines_to_correlation(&[pipeline], &mut corr)
+        .expect_err("an unknown window mode must error");
+    assert!(err.to_string().contains("Unknown window mode"), "{err}");
+}
+
+#[test]
 fn test_correlation_field_mapping_threshold_field_rejects_one_to_many() {
     let yaml = r#"
 name: Threshold conflict

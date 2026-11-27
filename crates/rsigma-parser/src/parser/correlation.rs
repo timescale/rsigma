@@ -107,63 +107,18 @@ pub(super) fn parse_correlation_rule(
         ));
     }
 
-    // Window mode (optional, defaults to sliding) and the session `gap`.
-    //
-    // Two spellings are accepted. The `rsigma.*` engine-extension namespace
-    // (top-level `rsigma.window` / `rsigma.gap`, alongside `rsigma.suppress`
-    // and friends) is the primary form; the first-class `correlation.window` /
-    // `correlation.gap` keys are accepted as aliases. The `rsigma.*` spelling
-    // wins when both are present. Presence is checked before type so a key set
-    // to a non-string value (e.g. an unquoted `gap: 300`) errors instead of
-    // being silently treated as absent.
-    let window_val = m
-        .get(val_key("rsigma.window"))
-        .map(|v| ("rsigma.window", v))
-        .or_else(|| corr.get(val_key("window")).map(|v| ("window", v)));
-    let window = match window_val {
-        Some((key_name, v)) => {
-            let w = v.as_str().ok_or_else(|| {
-                SigmaParserError::InvalidCorrelation(format!(
-                    "'{key_name}' must be a string: sliding, tumbling, or session"
-                ))
-            })?;
-            w.parse::<WindowMode>().map_err(|_| {
-                SigmaParserError::InvalidCorrelation(format!(
-                    "Unknown window mode: {w} (expected sliding, tumbling, or session)"
-                ))
-            })?
-        }
+    // Window mode (optional, defaults to sliding) and the session `gap` from
+    // the first-class `correlation.window` / `correlation.gap` keys. The
+    // `rsigma.window` / `rsigma.gap` custom attributes override them below,
+    // once the custom attributes are collected.
+    let window = match corr.get(val_key("window")) {
+        Some(v) => parse_window_value("window", v)?,
         None => WindowMode::default(),
     };
-    let gap_val = m
-        .get(val_key("rsigma.gap"))
-        .map(|v| ("rsigma.gap", v))
-        .or_else(|| corr.get(val_key("gap")).map(|v| ("gap", v)));
-    let gap = match gap_val {
-        Some((key_name, v)) => {
-            let g = v.as_str().ok_or_else(|| {
-                SigmaParserError::InvalidCorrelation(format!(
-                    "'{key_name}' must be a string duration like \"5m\" (quote numeric values)"
-                ))
-            })?;
-            Some(Timespan::parse(g)?)
-        }
-        None => None,
-    };
-    match window {
-        WindowMode::Session if gap.is_none() => {
-            return Err(SigmaParserError::InvalidCorrelation(
-                "window: session requires a gap (gap: or rsigma.gap:, e.g. 5m)".into(),
-            ));
-        }
-        WindowMode::Sliding | WindowMode::Tumbling if gap.is_some() => {
-            return Err(SigmaParserError::InvalidCorrelation(format!(
-                "'gap' is only valid with window: session, not window: {}",
-                window.as_str()
-            )));
-        }
-        _ => {}
-    }
+    let gap = corr
+        .get(val_key("gap"))
+        .map(|v| parse_gap_value("gap", v))
+        .transpose()?;
 
     // Generate flag - Sigma correlation schema defines `generate` at document root.
     // Nested `correlation.generate` is accepted for backward compatibility.
@@ -181,7 +136,7 @@ pub(super) fn parse_correlation_rule(
 
     let custom_attributes = collect_custom_attributes(m, STANDARD_CORRELATION_KEYS);
 
-    Ok(CorrelationRule {
+    let mut rule = CorrelationRule {
         title,
         sigma_version: parse_sigma_version(m, warnings),
         id: get_str(m, "id").map(|s| s.to_string()),
@@ -210,7 +165,95 @@ pub(super) fn parse_correlation_rule(
         aliases,
         generate,
         custom_attributes,
+    };
+    rule.resolve_window_attributes(true)?;
+    Ok(rule)
+}
+
+/// Custom attribute that sets a correlation's window mode, overriding
+/// `correlation.window`.
+pub(crate) const WINDOW_ATTRIBUTE: &str = "rsigma.window";
+
+/// Custom attribute that sets a session window's gap, overriding
+/// `correlation.gap`.
+pub(crate) const GAP_ATTRIBUTE: &str = "rsigma.gap";
+
+impl CorrelationRule {
+    /// Set `window` and `gap` from the `rsigma.window` and `rsigma.gap`
+    /// custom attributes after the attributes change, for example after
+    /// processing pipelines or ruleset overlays.
+    ///
+    /// The attributes override `correlation.window` and `correlation.gap`.
+    /// A resulting window other than `session` drops the gap, field and
+    /// attribute both, since only session windows use one; this lets an
+    /// override switch a session rule to `sliding` or `tumbling`. A `session`
+    /// window without a gap is an error. Without either attribute, the rule
+    /// is left as it is.
+    ///
+    /// The parser already resolves the attributes, more strictly: a rule
+    /// that sets a gap on a non-session window does not parse.
+    pub fn apply_window_attributes(&mut self) -> Result<()> {
+        if !self.custom_attributes.contains_key(WINDOW_ATTRIBUTE)
+            && !self.custom_attributes.contains_key(GAP_ATTRIBUTE)
+        {
+            return Ok(());
+        }
+        self.resolve_window_attributes(false)
+    }
+
+    /// Resolve the window attributes. `strict` rejects a gap on a
+    /// non-session window instead of dropping it.
+    pub(crate) fn resolve_window_attributes(&mut self, strict: bool) -> Result<()> {
+        if let Some(v) = self.custom_attributes.get(WINDOW_ATTRIBUTE) {
+            self.window = parse_window_value(WINDOW_ATTRIBUTE, v)?;
+        }
+        if let Some(v) = self.custom_attributes.get(GAP_ATTRIBUTE) {
+            self.gap = Some(parse_gap_value(GAP_ATTRIBUTE, v)?);
+        }
+        match self.window {
+            WindowMode::Session if self.gap.is_none() => Err(SigmaParserError::InvalidCorrelation(
+                "window: session requires a gap (gap: or rsigma.gap:, e.g. 5m)".into(),
+            )),
+            WindowMode::Sliding | WindowMode::Tumbling if self.gap.is_some() => {
+                if strict {
+                    return Err(SigmaParserError::InvalidCorrelation(format!(
+                        "'gap' is only valid with window: session, not window: {}",
+                        self.window.as_str()
+                    )));
+                }
+                self.gap = None;
+                self.custom_attributes.remove(GAP_ATTRIBUTE);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Parse a window mode value. A non-string value (an unquoted number, say)
+/// is a type error rather than an absent key.
+fn parse_window_value(key: &str, v: &Value) -> Result<WindowMode> {
+    let w = v.as_str().ok_or_else(|| {
+        SigmaParserError::InvalidCorrelation(format!(
+            "'{key}' must be a string: sliding, tumbling, or session"
+        ))
+    })?;
+    w.parse::<WindowMode>().map_err(|_| {
+        SigmaParserError::InvalidCorrelation(format!(
+            "Unknown window mode: {w} (expected sliding, tumbling, or session)"
+        ))
     })
+}
+
+/// Parse a session gap value. An unquoted number is a type error with a hint
+/// rather than an absent key.
+fn parse_gap_value(key: &str, v: &Value) -> Result<Timespan> {
+    let g = v.as_str().ok_or_else(|| {
+        SigmaParserError::InvalidCorrelation(format!(
+            "'{key}' must be a string duration like \"5m\" (quote numeric values)"
+        ))
+    })?;
+    Timespan::parse(g)
 }
 
 /// Parse a correlation condition (either threshold dict or extended string).

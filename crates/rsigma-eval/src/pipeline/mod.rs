@@ -185,6 +185,10 @@ impl Pipeline {
     ///
     /// Detection-specific transforms (value replacements, detection item
     /// manipulation, etc.) are silently skipped.
+    ///
+    /// This does not resolve `rsigma.window` or `rsigma.gap` attributes into
+    /// the rule's window; [`apply_pipelines_to_correlation`] does, or call
+    /// [`CorrelationRule::apply_window_attributes`] once every pipeline has run.
     pub fn apply_to_correlation(
         &self,
         corr: &mut CorrelationRule,
@@ -612,6 +616,10 @@ pub fn transform_collection(
 ///
 /// As with [`apply_pipelines`], sort with [`merge_pipelines`] first to run them
 /// by `priority`.
+///
+/// A `set_custom_attribute` of `rsigma.window` or `rsigma.gap` changes the
+/// rule's window. The window is resolved once all pipelines have run, so one
+/// item can set the mode and a later one the gap.
 pub fn apply_pipelines_to_correlation(
     pipelines: &[Pipeline],
     corr: &mut CorrelationRule,
@@ -626,5 +634,7 @@ pub fn apply_pipelines_to_correlation(
         merged.applied_items.extend(state.applied_items);
         merged.vars.extend(state.vars);
     }
+    corr.apply_window_attributes()
+        .map_err(|e| EvalError::Pipeline(format!("{e} (correlation: {})", corr.title)))?;
     Ok(merged)
 }

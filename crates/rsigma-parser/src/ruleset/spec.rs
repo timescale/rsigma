@@ -532,9 +532,13 @@ fn validate_overlay_entry(
     }
 }
 
-/// Engine keys read from a correlation's top level, which the emitter would
-/// write next to the parsed `window` and `gap`.
-const ENGINE_CORRELATION_KEYS: &[&str] = &["rsigma.window", "rsigma.gap"];
+/// Window attributes an overlay can set but not remove: the window they set
+/// replaces `correlation.window` and `correlation.gap`, so there is nothing to
+/// fall back to.
+const WINDOW_ATTRIBUTES: &[&str] = &[
+    crate::parser::WINDOW_ATTRIBUTE,
+    crate::parser::GAP_ATTRIBUTE,
+];
 
 /// Check one `set` or `append` patch: unknown keys, an empty patch, and
 /// custom attributes that would shadow a standard key. The emitter flattens
@@ -570,18 +574,22 @@ pub(crate) fn validate_patch(
     if empty {
         problems.push(format!("ruleset '{ruleset}': {at}.{form} is empty"));
     }
-    for key in patch.custom_attributes.iter().flat_map(BTreeMap::keys) {
+    for (key, value) in patch.custom_attributes.iter().flatten() {
         let reserved = [
             crate::parser::STANDARD_RULE_KEYS,
             crate::parser::STANDARD_CORRELATION_KEYS,
             crate::parser::STANDARD_FILTER_KEYS,
-            ENGINE_CORRELATION_KEYS,
         ]
         .iter()
         .any(|keys| keys.contains(&key.as_str()));
         if reserved {
             problems.push(format!(
-                "ruleset '{ruleset}': {at}.{form}.custom_attributes cannot set '{key}', a standard Sigma or engine key"
+                "ruleset '{ruleset}': {at}.{form}.custom_attributes cannot set '{key}', a standard Sigma key"
+            ));
+        }
+        if value.is_null() && WINDOW_ATTRIBUTES.contains(&key.as_str()) {
+            problems.push(format!(
+                "ruleset '{ruleset}': {at}.{form}.custom_attributes cannot remove '{key}'; set the window mode instead, such as rsigma.window: sliding"
             ));
         }
     }
@@ -776,8 +784,6 @@ mod tests {
             "correlation",
             "filter",
             "custom_attributes",
-            "rsigma.window",
-            "rsigma.gap",
         ] {
             let spec: RulesetSpec = yaml_serde::from_str(&format!(
                 "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        {key}: v\n  - id: y\n    append:\n      custom_attributes:\n        {key}: [v]\n"
@@ -792,9 +798,26 @@ mod tests {
         }
 
         let spec: RulesetSpec = yaml_serde::from_str(
-            "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        rsigma.suppress: 5m\n        team: blue\n",
+            "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        rsigma.suppress: 5m\n        rsigma.window: session\n        rsigma.gap: 5m\n        team: blue\n",
         )
         .unwrap();
         assert!(validate_spec("test", &spec).is_empty());
+    }
+
+    #[test]
+    fn rejects_removing_window_attributes() {
+        for key in ["rsigma.window", "rsigma.gap"] {
+            let spec: RulesetSpec = yaml_serde::from_str(&format!(
+                "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        {key}: null\n"
+            ))
+            .unwrap();
+            let problems = validate_spec("test", &spec);
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| p.contains(&format!("cannot remove '{key}'"))),
+                "{key}: {problems:?}"
+            );
+        }
     }
 }
