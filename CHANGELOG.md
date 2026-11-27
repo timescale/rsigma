@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Correlation windows and suppression stay correct with far-future and out-of-order timestamps
+### Correlation windows and suppression stay correct with far-future and out-of-order timestamps (#802)
 
 Correlation window state was kept in arrival order and expired only from the front, so one event with a far-future timestamp stopped every later entry from expiring: a sliding window grew without limit and kept firing, a tumbling window treated current events as late, a session stayed open, and an alert fired by such an event suppressed its group until the clock caught up. Any out-of-order arrival had milder versions of the same effects, and a temporal correlation could match hits further apart than its `timespan`.
 
