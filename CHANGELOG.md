@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Performance regression gate runs only on labeled PRs
+### Performance regression gate runs only on labeled PRs (#796)
 
 The coarse performance regression gate no longer runs on every pull request that touches the evaluator, daemon intake, dependencies, or the toolchain. It runs only on PRs labeled `performance`, starting when the label is added and again on each push while it stays. The gate spent about 20 minutes per run, mostly on two cold release builds, and its only failures were noise from the shared runner on dependency updates. Weekly and manually dispatched measurements still run the full performance matrix.
 
