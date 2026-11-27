@@ -15,6 +15,7 @@ rsigma-parser = { path = "../rsigma-parser", version = "0.28.0", default-feature
 ciborium = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+stacker = "0.1.25"
 thiserror = "2"
 yaml_serde = "0.10"
 

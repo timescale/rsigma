@@ -18,11 +18,22 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::hir::IrRule;
+use crate::hir::{IrRule, MAX_HIR_DEPTH};
 
 /// Schema version of the serialized HIR. Bump on any breaking change to the
 /// HIR types or the embedded `rsigma-parser` types they contain.
 pub const HIR_SCHEMA_VERSION: u32 = 4;
+
+/// CBOR nesting [`decode_rules`] allows. Every HIR level takes at most three
+/// CBOR containers, so this admits every tree [`MAX_HIR_DEPTH`] does, and it
+/// still bounds custom attribute values, which have no depth limit of their
+/// own.
+const CBOR_RECURSION_LIMIT: usize = 3 * MAX_HIR_DEPTH + 16;
+
+/// Stack the rules are decoded on. Decoding recurses once per CBOR container,
+/// up to [`CBOR_RECURSION_LIMIT`] deep, and an unoptimized build needs more
+/// stack for that than a 2 MiB thread has.
+const DECODE_STACK_SIZE: usize = 16 * 1024 * 1024;
 
 /// Header prefixed to a serialized HIR blob.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +96,10 @@ pub fn decode_rules(bytes: &[u8]) -> Result<Vec<IrRule>, CacheError> {
             found: header.ir_schema_version,
         });
     }
-    ciborium::from_reader(&mut cursor).map_err(|e| CacheError::Decode(e.to_string()))
+    stacker::grow(DECODE_STACK_SIZE, || {
+        ciborium::de::from_reader_with_recursion_limit(&mut cursor, CBOR_RECURSION_LIMIT)
+            .map_err(|e| CacheError::Decode(e.to_string()))
+    })
 }
 
 /// Human-readable JSON debug export of the cache (header + rules), pretty-printed.
@@ -100,7 +114,7 @@ pub fn to_json(rules: &[IrRule]) -> Result<String, CacheError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::{IrRule, IrRuleMetadata};
+    use crate::hir::{IrCondition, IrDetection, IrRule, IrRuleMetadata};
     use rsigma_parser::LogSource;
 
     fn sample_rule(title: &str) -> IrRule {
@@ -143,6 +157,61 @@ mod tests {
             }
             other => panic!("expected schema mismatch, got {other:?}"),
         }
+    }
+
+    fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    /// A rule whose one detection nests `depth` levels of `Conditional`, the
+    /// HIR shape that takes the most CBOR containers per level.
+    fn rule_with_conditional_chain(depth: usize) -> IrRule {
+        let mut detection = IrDetection::AllOf(Vec::new());
+        for _ in 1..depth {
+            detection = IrDetection::Conditional {
+                named: [("x".to_string(), detection)].into(),
+                condition: IrCondition::Detection("x".into()),
+            };
+        }
+        let mut rule = sample_rule("deep");
+        rule.detections.insert("selection".into(), detection);
+        rule
+    }
+
+    #[test]
+    fn deepest_hir_tree_round_trips() {
+        on_small_stack(|| {
+            let rules = vec![rule_with_conditional_chain(MAX_HIR_DEPTH)];
+            let blob = encode_rules(&rules).unwrap();
+            assert_eq!(decode_rules(&blob).unwrap(), rules);
+
+            let blob = encode_rules(&[rule_with_conditional_chain(MAX_HIR_DEPTH + 1)]).unwrap();
+            let err = decode_rules(&blob).unwrap_err();
+            assert!(err.to_string().contains("maximum depth"), "{err}");
+        });
+    }
+
+    #[test]
+    fn deep_custom_attribute_fails_without_overflow() {
+        let nested = |depth: usize| {
+            let mut value = serde_json::Value::Null;
+            for _ in 0..depth {
+                value = serde_json::Value::Array(vec![value]);
+            }
+            let mut rule = sample_rule("attribute");
+            rule.metadata.custom_attributes.insert("deep".into(), value);
+            encode_rules(&[rule]).unwrap()
+        };
+        on_small_stack(move || {
+            assert!(decode_rules(&nested(CBOR_RECURSION_LIMIT - 8)).is_ok());
+            let err = decode_rules(&nested(CBOR_RECURSION_LIMIT)).unwrap_err();
+            assert!(matches!(err, CacheError::Decode(_)), "{err}");
+        });
     }
 
     #[test]
