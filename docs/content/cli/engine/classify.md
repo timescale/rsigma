@@ -37,8 +37,8 @@ Host and endpoint shapes:
 
 | Schema | Recognized by |
 |--------|---------------|
-| `ecs_windows` | `ecs.version` present plus a Windows marker (`winlog.*`, `host.os.type: windows`). Implies `product: windows`; routes as `ecs`. |
-| `ecs_linux` | `ecs.version` present plus a Linux marker (`host.os.type: linux`, `host.os.kernel`). Implies `product: linux`; routes as `ecs`. |
+| `ecs_windows` | `ecs.version` present plus a Windows marker (`winlog.*`, `host.os.type: windows`, `os.type: windows`) and no Linux marker. Implies `product: windows`; routes as `ecs`. |
+| `ecs_linux` | `ecs.version` present plus a Linux marker (`host.os.type: linux`, `os.type: linux`) and no Windows marker. Implies `product: linux`; routes as `ecs`. |
 | `ecs` | `ecs.version` present |
 | `ocsf` | `class_uid` and `metadata.version` present |
 | `windows_eventlog` | `Event.System.EventID` or `Event.System.Provider` present (rendered EVTX JSON) |

@@ -85,6 +85,7 @@ pub struct Metrics {
     pub events_ambiguous_schema: IntCounter,
     pub rules_pruned_by_logsource: IntCounter,
     pub events_without_logsource: IntCounter,
+    pub events_ambiguous_logsource: IntCounter,
     pub schema_rules_eligible: IntGaugeVec,
     pub schema_rules_pruned: IntGaugeVec,
     pub unknown_schema_clusters: IntGauge,
@@ -864,6 +865,11 @@ impl Metrics {
             "Events with no extractable logsource, evaluated against every rule (fail-open)",
         ))
         .unwrap();
+        let events_ambiguous_logsource = IntCounter::with_opts(Opts::new(
+            "rsigma_events_ambiguous_logsource_total",
+            "Events whose schema tied with a schema implying a different logsource, evaluated without the schema-derived logsource (fail-open)",
+        ))
+        .unwrap();
         let schema_rules_eligible = IntGaugeVec::new(
             Opts::new(
                 "rsigma_schema_rules_eligible",
@@ -900,6 +906,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(events_without_logsource.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(events_ambiguous_logsource.clone()))
             .unwrap();
 
         let tap_sessions_total = IntCounter::with_opts(Opts::new(
@@ -1527,6 +1536,7 @@ impl Metrics {
             events_unknown_schema,
             rules_pruned_by_logsource,
             events_without_logsource,
+            events_ambiguous_logsource,
             tap_sessions_total,
             tap_active_sessions,
             tap_events_streamed_total,
@@ -1659,7 +1669,12 @@ impl Metrics {
 
     /// Refresh the logsource-pruning Prometheus counters from the engine's
     /// monotonic totals. Both are monotonic sources bridged via `inc_by(delta)`.
-    pub fn update_logsource_metrics(&self, pruned_total: u64, absent_total: u64) {
+    pub fn update_logsource_metrics(
+        &self,
+        pruned_total: u64,
+        absent_total: u64,
+        ambiguous_total: u64,
+    ) {
         let pruned_prev = self.rules_pruned_by_logsource.get();
         if pruned_total > pruned_prev {
             self.rules_pruned_by_logsource
@@ -1669,6 +1684,11 @@ impl Metrics {
         if absent_total > absent_prev {
             self.events_without_logsource
                 .inc_by(absent_total - absent_prev);
+        }
+        let ambiguous_prev = self.events_ambiguous_logsource.get();
+        if ambiguous_total > ambiguous_prev {
+            self.events_ambiguous_logsource
+                .inc_by(ambiguous_total - ambiguous_prev);
         }
     }
 

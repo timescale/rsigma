@@ -36,6 +36,7 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 | `bloom_max_bytes()` | Configured bloom memory budget, or `None` if using the default |
 | `set_cross_rule_ac(enabled: bool)` | Enable opt-in cross-rule Aho-Corasick pre-filter (requires `daachorse-index` feature; see [Cross-Rule AC Index](#cross-rule-aho-corasick-index-opt-in-feature-gated)) |
 | `cross_rule_ac_enabled()` | Whether the cross-rule AC pre-filter is currently enabled (`daachorse-index` only) |
+| `cross_rule_ac_unindexed_fields()` | Fields the cross-rule AC index left without an automaton in its last build (over the 100K pattern cap, or a failed build); rules on them are always evaluated (`daachorse-index` only) |
 | `set_retain_hir(enabled: bool)` | Keep each loaded rule's HIR for `save_hir` (off by default; enable before loading rules) |
 | `retain_hir_enabled()` | Whether loaded rules keep their HIR |
 | `save_hir()` / `load_hir(bytes)` | Write the retained HIR as a versioned restart cache, and load rules from one; `save_hir` errors unless retention was on for every rule loaded from parsed Sigma |
@@ -178,7 +179,7 @@ Contrasts false-positive events with required true-positive exemplars and emits 
 - **Witness-based candidate index**: every rule is analyzed into witnesses, necessary conditions of which at least one holds on any event the rule can match, drawn from exact values, substring needles, keywords, mandatory regex literals, and field presence. The index inverts that relation over a per-field presence list and exact-value map, one Aho-Corasick automaton per field for substring needles, and one keyword automaton scanned against every string value. Rules with no sound witness, chiefly those whose only required branch is negated, are evaluated against every event. Candidates come back in ascending rule order.
 - **Compiled matchers**: optimized matching for all 30 modifier combinations: exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash expansion (5 replacement characters), field references, placeholder expansion, timestamp part extraction
 - **Logsource-aware evaluation**: opt-in `LogSourceExtractor` plus conflict-based pruning (`set_logsource_extractor`) skips rules whose `product`/`service`/`category` (and custom dimensions) conflict with the event's logsource, backed by a product-partitioned rule index; off by default and fail-open. Implement the `ExtractLogSource` trait to read the logsource from your own event type, such as metadata beside the payload; `Engine`, `CorrelationEngine`, and `SchemaRouter` are generic over the extractor and default to `LogSourceExtractor`
-- **Schema classification and routing**: `SchemaClassifier` recognizes an event's schema from declarative field predicates (`explain`/`classify_with_ambiguity` for tuning), and `SchemaRouter` routes each event to its schema's pipeline engine, derives the event's logsource from the recognized schema for pruning, and feeds one shared correlation store
+- **Schema classification and routing**: `SchemaClassifier` recognizes an event's schema from declarative field predicates (`explain`/`classify_with_ambiguity` for tuning), and `SchemaRouter` routes each event to its schema's pipeline engine, derives the event's logsource from the recognized schema for pruning, and feeds one shared correlation store. When the winning schema ties with a schema implying a different logsource, the router drops the schema-derived logsource for that event and counts it in `logsource_ambiguous_total`
 - **Condition tree evaluation**: short-circuit boolean logic, selector patterns with quantifiers (`1 of selection_*`, `all of them`)
 - **Filter application**: runtime injection of filter rules as `AND NOT` conditions on referenced rules
 
@@ -568,6 +569,8 @@ CLI equivalents on `rsigma engine eval` and `rsigma engine daemon`:
 --bloom-max-bytes <BYTES>      # override 1 MB default
 ```
 
+A field the filter cannot cover soundly (a needle shorter than three bytes, a non-ASCII `|cased` needle, or a field evicted by the memory budget) is left unfiltered, and rules added one at a time with `add_rule` keep it unfiltered until the next full rebuild.
+
 Always benchmark against representative events before flipping it on; the `eval_bloom_rejection` Criterion group in `crates/rsigma-eval/benches/eval.rs` reports throughput with both default-off and bloom-on engines so you can size the win on your corpus.
 
 ## Cross-Rule Aho-Corasick Index (Opt-In, Feature-Gated)
@@ -577,12 +580,13 @@ For deployments with very large rule sets (> ~5K rules) and many shared substrin
 A rule is AC-prunable when:
 
 - It has at least one positive substring detection item, AND
-- Every detection consists exclusively of positive substring matchers (`Contains` / `StartsWith` / `EndsWith` / `AhoCorasickSet`, possibly nested under `AnyOf`/`AllOf`/`CaseInsensitiveGroup`), AND
-- No condition expression contains `Not`.
+- Every detection consists exclusively of positive substring matchers (`Contains` / `StartsWith` / `EndsWith` / `AhoCorasickSet`, possibly nested under `AnyOf`/`AllOf`/`CaseInsensitiveGroup`) with non-empty needles, AND
+- No condition expression contains `Not`, AND
+- Every field its needles sit on got an automaton in the last build.
 
 These rules can be safely pruned because their firing requires at least one substring to match. Rules with `Exact`, `Regex`, `Numeric`, `Cidr`, etc. matchers, or with `not` selectors in their conditions, are kept in the candidate set unfiltered.
 
-**Off by default.** For smaller rule sets the per-rule [`AhoCorasickSet`] matcher is already optimal; the cross-rule index only adds build time and lookup overhead. Pattern count per field is capped at 100K (rules referencing fields above that cap are kept unfiltered). Build time scales linearly with total pattern count.
+**Off by default.** For smaller rule sets the per-rule [`AhoCorasickSet`] matcher is already optimal; the cross-rule index only adds build time and lookup overhead. Pattern count per field is capped at 100K: a field above the cap (or whose automaton fails to build) gets no automaton, rules with a needle on it are kept unfiltered, the build logs a warning, and `cross_rule_ac_unindexed_fields()` reports the count. Build time scales linearly with total pattern count.
 
 Enable via the `daachorse-index` Cargo feature:
 

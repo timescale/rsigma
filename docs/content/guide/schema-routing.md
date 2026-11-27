@@ -122,7 +122,7 @@ Off-taxonomy sources use the `logsource.custom` dimension rather than inserting 
 
 Plain cross-platform schemas (`ecs`, `ocsf`, `cef`, `generic_json`) imply nothing, because they carry events from many platforms.
 
-An ECS event that also carries a platform marker (`winlog.*`, `host.os.type`) classifies as `ecs_windows`/`ecs_linux` and gets the platform for pruning automatically. These specializations are aliases of `ecs` (see below), so an existing `ecs` binding still matches them without a config change. For a source ECS routes without a marker, point the logsource extractor at the event's own OS field instead (`--logsource-field-map product=host.os.type`).
+An ECS event that carries a Windows marker (`winlog.*`, `host.os.type: windows`) and no Linux marker classifies as `ecs_windows`, and one that carries a Linux marker (`host.os.type: linux`) and no Windows marker classifies as `ecs_linux`; either gets the platform for pruning automatically. An ECS event with markers for both platforms, or for neither (a macOS host, for example), stays plain `ecs` and implies no product. These specializations are aliases of `ecs` (see below), so an existing `ecs` binding still matches them without a config change. For a source ECS routes without a marker, point the logsource extractor at the event's own OS field instead (`--logsource-field-map product=host.os.type`).
 
 ### Schema aliases
 
@@ -158,6 +158,12 @@ routing:
 
 Resolution per event is explicit event field, then the static `--event-logsource` (or the EVTX-only format default when no product is set), then the schema-derived logsource for any dimension still unset, then unset (fail-open). This prunes only at product/service granularity; category-level pruning inside one product (for example `process_creation` versus `ps_script`) still needs the event to assert a category or a pipeline to derive it.
 
+### Ambiguous classifications
+
+{{ added "unreleased" }}
+
+When an event's winning signature ties at the same specificity with a different-name signature, the name tie-break picks the winner. If the two schemas imply different logsources, the tie-break cannot say which platform the event came from, so the router evaluates that event without the schema-derived logsource: only the event's own fields and the static `--event-logsource` prune rules. The daemon counts these events in `rsigma_events_ambiguous_logsource_total`. Ties between schemas that imply the same logsource prune as usual. Resolve a recurring tie by giving one signature a distinguishing predicate or a higher `specificity`.
+
 ## Per-schema rule partitioning
 
 By default every per-schema engine compiles the full ruleset (N copies for N pipeline-sets). `--schema-partition-rules` (or `schema.partition_rules: true`) is a gated, opt-in optimization that compiles each platform-locked per-schema engine with only the rules whose product can apply, cutting that memory cost.
@@ -168,7 +174,7 @@ It applies conservatively and only where it is safe:
 - A set is partitioned only when every schema that routes to it (direct bindings plus aliases) implies a product; a set reachable by a cross-platform schema such as `ecs` keeps the full ruleset. A set bound only to `sysmon`, `windows_eventlog`, or `ecs_windows`, for example, keeps only Windows and product-less rules.
 - A set whose pipelines rewrite product via `change_logsource` keeps the full ruleset (the pre-pipeline product is not authoritative there).
 
-Caveat, and why it is off by default: partitioning removes rules at compile time based on the schema's implied product, so an event that is classified as one platform but carries an explicit, contradicting `product` field would not see the removed rules (with the full ruleset, per-event conflict pruning would still keep them). Validate against your corpus before enabling it in production.
+Caveat, and why it is off by default: partitioning removes rules at compile time based on the schema's implied product, so an event that is classified as one platform but carries an explicit, contradicting `product` field would not see the removed rules (with the full ruleset, per-event conflict pruning would still keep them). The same holds for an [ambiguous classification](#ambiguous-classifications) whose tied schemas route to different pipeline-sets: the event is evaluated against the winner's set only. Validate against your corpus before enabling it in production.
 
 ## Cross-schema correlation
 

@@ -7,10 +7,12 @@
 //! iff at least one of the rule's positive substring patterns matched
 //! somewhere on the event.
 //!
-//! When a rule is **AC-prunable** (see [`rule_is_ac_prunable`]), the engine
-//! drops it from the candidate set when its bit in the hit vector is `false`.
-//! AC-prunable rules are exactly those whose firing requires at least one
-//! positive substring match, so dropping on "no hit" is provably safe.
+//! When a rule is **AC-prunable**, the engine drops it from the candidate set
+//! when its bit in the hit vector is `false`. A rule is AC-prunable when its
+//! firing requires at least one positive substring match (see
+//! [`rule_is_ac_prunable`]) and every one of its needles sits in an
+//! automaton that was actually built, so dropping on "no hit" is provably
+//! safe.
 //!
 //! # Why daachorse
 //!
@@ -56,10 +58,17 @@ struct FieldAc {
 /// Cross-rule Aho-Corasick index. Built from a slice of compiled rules,
 /// holds at most one automaton per indexed field. Fields without any
 /// positive substring item across the whole rule set are absent from the
-/// map.
+/// map, and so are fields whose automaton was not built.
 pub(crate) struct CrossRuleAcIndex {
     per_field: HashMap<String, FieldAc>,
     rule_count: usize,
+    /// Per-rule flag: `true` iff the rule may be dropped on "no AC hit".
+    /// Computed by the same build that produced `per_field`, so a rule whose
+    /// needles landed on a field without an automaton is never prunable.
+    prunable: Vec<bool>,
+    /// Fields that had needles but no automaton (over the pattern cap, or
+    /// the automaton build failed).
+    unindexed_fields: usize,
 }
 
 impl CrossRuleAcIndex {
@@ -67,6 +76,8 @@ impl CrossRuleAcIndex {
         Self {
             per_field: HashMap::new(),
             rule_count: 0,
+            prunable: Vec::new(),
+            unindexed_fields: 0,
         }
     }
 
@@ -86,6 +97,10 @@ impl CrossRuleAcIndex {
     /// rules referencing such fields are not pruned by the index but still
     /// evaluated normally.
     pub(crate) fn build(rules: &[CompiledRule]) -> Self {
+        Self::build_with_cap(rules, MAX_PATTERNS_PER_FIELD)
+    }
+
+    fn build_with_cap(rules: &[CompiledRule], max_patterns_per_field: usize) -> Self {
         // (field, needle) → rule indices that own this pattern on that
         // field. The pattern strings are pre-lowered (Sigma is case-
         // insensitive by default; we lower up-front because daachorse has
@@ -99,6 +114,19 @@ impl CrossRuleAcIndex {
             }
         }
 
+        // Rules with at least one needle on a field that ends up without an
+        // automaton. Their hit bit can never be set for that needle, so they
+        // must not be pruned.
+        let mut uncovered = vec![false; rules.len()];
+        let mut mark_uncovered = |rule_ids: &mut dyn Iterator<Item = &u32>| {
+            for &rid in rule_ids {
+                if let Some(slot) = uncovered.get_mut(rid as usize) {
+                    *slot = true;
+                }
+            }
+        };
+        let mut skipped: Vec<String> = Vec::new();
+
         // Build one automaton per field with patterns in stable order. The
         // build order assigns pattern ids 0..n_patterns; we keep
         // `pattern_to_rules` aligned to that order.
@@ -107,11 +135,12 @@ impl CrossRuleAcIndex {
             if needle_to_rules.is_empty() {
                 continue;
             }
-            if needle_to_rules.len() > MAX_PATTERNS_PER_FIELD {
-                log::debug!(
-                    "cross-rule AC: field '{field}' has {} patterns (> {MAX_PATTERNS_PER_FIELD}); falling back",
+            if needle_to_rules.len() > max_patterns_per_field {
+                skipped.push(format!(
+                    "'{field}' has {} patterns, over the cap of {max_patterns_per_field}",
                     needle_to_rules.len()
-                );
+                ));
+                mark_uncovered(&mut needle_to_rules.values().flatten());
                 continue;
             }
 
@@ -140,18 +169,48 @@ impl CrossRuleAcIndex {
                     );
                 }
                 Err(e) => {
-                    log::warn!(
-                        "cross-rule AC: failed to build automaton for field '{field}' ({} patterns): {e}",
+                    skipped.push(format!(
+                        "'{field}' failed to build ({} patterns): {e}",
                         patterns.len()
-                    );
+                    ));
+                    mark_uncovered(&mut pattern_to_rules.iter().flatten());
                 }
             }
         }
 
+        if !skipped.is_empty() {
+            skipped.sort();
+            log::warn!(
+                "cross-rule AC: {} field(s) left without an automaton; rules matching on them are always evaluated: {}",
+                skipped.len(),
+                skipped.join("; ")
+            );
+        }
+
+        let prunable = rules
+            .iter()
+            .zip(&uncovered)
+            .map(|(rule, &uncovered)| !uncovered && rule_is_ac_prunable(rule))
+            .collect();
+
         Self {
             per_field: built,
             rule_count: rules.len(),
+            prunable,
+            unindexed_fields: skipped.len(),
         }
+    }
+
+    /// Whether the rule at `idx` may be dropped when none of its patterns
+    /// hit the event.
+    pub(crate) fn is_prunable(&self, idx: usize) -> bool {
+        self.prunable.get(idx).copied().unwrap_or(false)
+    }
+
+    /// Number of fields that carried needles but got no automaton in the
+    /// most recent build.
+    pub(crate) fn unindexed_field_count(&self) -> usize {
+        self.unindexed_fields
     }
 
     /// Number of fields with active automatons. Used for diagnostics and
@@ -339,14 +398,17 @@ fn push_needle(
 /// 1. It has at least one positive substring detection item somewhere.
 /// 2. Every detection in the rule is built exclusively from positive
 ///    substring matchers (Contains/StartsWith/EndsWith/AhoCorasickSet,
-///    optionally nested under AnyOf/AllOf/CaseInsensitiveGroup). No Exact,
+///    optionally nested under AnyOf/AllOf/CaseInsensitiveGroup) whose
+///    needles the index can witness (see [`needle_is_indexable`]). No Exact,
 ///    Regex, Numeric, FieldRef, Cidr, Expand, Not, etc.
 /// 3. No condition expression contains `Not`, `not 1 of`, etc. (Negated
 ///    selectors invert match polarity, so "no substring hits" no longer
 ///    implies "rule cannot fire".)
 ///
 /// Under these constraints, the rule fires iff some substring matches some
-/// field, so a `false` AC verdict provably implies the rule cannot fire.
+/// field, so a `false` AC verdict provably implies the rule cannot fire,
+/// provided every field the rule's needles sit on got an automaton.
+/// [`CrossRuleAcIndex::build`] checks that last part.
 pub(crate) fn rule_is_ac_prunable(rule: &CompiledRule) -> bool {
     if rule.detections.is_empty() {
         return false;
@@ -433,7 +495,7 @@ fn matcher_is_pure_positive_substring(
             value,
             case_insensitive,
         } => {
-            if !cased_needle_is_indexable(value, *case_insensitive) {
+            if !needle_is_indexable(value, *case_insensitive) {
                 return false;
             }
             *found_positive_substring = true;
@@ -446,7 +508,7 @@ fn matcher_is_pure_positive_substring(
         } => {
             if !needles
                 .iter()
-                .all(|n| cased_needle_is_indexable(n, *case_insensitive))
+                .all(|n| needle_is_indexable(n, *case_insensitive))
             {
                 return false;
             }
@@ -472,8 +534,10 @@ fn matcher_is_pure_positive_substring(
     }
 }
 
-/// Whether a needle survives the index's lowering faithfully enough to prune
-/// on.
+/// Whether the index can witness a needle faithfully enough to prune on.
+///
+/// An empty needle matches every string but is never inserted (an automaton
+/// cannot report a zero-length match), so it disqualifies its rule.
 ///
 /// Case-insensitive needles are stored already lowered by the same
 /// `to_lowercase` the haystack goes through, so they are exact. A `|cased`
@@ -483,8 +547,8 @@ fn matcher_is_pure_positive_substring(
 /// word, which can break a non-ASCII needle's contiguity in the lowered
 /// haystack and lose a match. Non-ASCII cased needles therefore disqualify
 /// their rule from pruning instead of being indexed unsoundly.
-fn cased_needle_is_indexable(needle: &str, case_insensitive: bool) -> bool {
-    case_insensitive || needle.is_ascii()
+fn needle_is_indexable(needle: &str, case_insensitive: bool) -> bool {
+    !needle.is_empty() && (case_insensitive || needle.is_ascii())
 }
 
 fn condition_is_negation_free(cond: &ConditionExpr) -> bool {
@@ -511,6 +575,11 @@ mod tests {
 
     fn engine_from(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.add_collection(&collection).unwrap();
         engine
@@ -524,6 +593,11 @@ mod tests {
 
     fn engine_with_ac(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.set_cross_rule_ac(true);
         engine.add_collection(&collection).unwrap();
@@ -690,11 +764,13 @@ logsource:
     product: windows
 detection:
     selection:
-        CommandLine|contains|not: 'whoami'
+        CommandLine|contains|neq: 'whoami'
     condition: selection
 "#;
-        let (_, index) = build_index(yaml);
+        let (engine, index) = build_index(yaml);
+        assert_eq!(engine.rule_count(), 1);
         assert!(index.is_empty());
+        assert!(!index.is_prunable(0));
     }
 
     #[test]
@@ -831,6 +907,91 @@ detection:
         assert!(rule_is_ac_prunable(&engine.rules()[0]));
     }
 
+    /// A field over the pattern cap gets no automaton, so the hit bit of a
+    /// rule matching on it can never be set. Such rules must not be prunable
+    /// even while another field keeps the index non-empty.
+    #[test]
+    fn rules_on_a_field_without_an_automaton_are_not_prunable() {
+        let yaml = r#"
+title: Over Cap A
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'alpha'
+    condition: selection
+---
+title: Over Cap B
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'bravo'
+    condition: selection
+---
+title: Indexed
+logsource:
+    product: windows
+detection:
+    selection:
+        Image|contains: 'charlie'
+    condition: selection
+---
+title: Spans Both Fields
+logsource:
+    product: windows
+detection:
+    selection:
+        - CommandLine|contains: 'delta'
+        - Image|contains: 'echo'
+    condition: selection
+"#;
+        let engine = engine_from(yaml);
+        let index = CrossRuleAcIndex::build_with_cap(engine.rules(), 2);
+        assert_eq!(index.field_count(), 1, "only Image fits under the cap");
+        assert_eq!(index.unindexed_field_count(), 1);
+        assert!(!index.is_prunable(0));
+        assert!(!index.is_prunable(1));
+        assert!(index.is_prunable(2));
+        assert!(
+            !index.is_prunable(3),
+            "one needle on the unindexed field is enough to keep the rule"
+        );
+
+        // With room for every field, all four rules are prunable again.
+        let index = CrossRuleAcIndex::build_with_cap(engine.rules(), MAX_PATTERNS_PER_FIELD);
+        assert_eq!(index.unindexed_field_count(), 0);
+        assert!((0..4).all(|idx| index.is_prunable(idx)));
+    }
+
+    /// An empty needle matches every value but is never inserted, so the
+    /// automaton cannot witness it.
+    #[test]
+    fn empty_needle_is_not_prunable() {
+        let yaml = r#"
+title: Empty
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: ''
+    condition: selection
+---
+title: Empty Among Others
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|endswith:
+            - ''
+            - '.exe'
+    condition: selection
+"#;
+        let engine = engine_from(yaml);
+        assert!(!rule_is_ac_prunable(&engine.rules()[0]));
+        assert!(!rule_is_ac_prunable(&engine.rules()[1]));
+    }
+
     #[test]
     fn cap_drops_overflowing_field() {
         // Build a synthetic rule set with > MAX_PATTERNS_PER_FIELD distinct
@@ -839,6 +1000,9 @@ detection:
         let mut yaml = String::new();
         let n = MAX_PATTERNS_PER_FIELD + 5;
         for i in 0..n {
+            if i > 0 {
+                yaml.push_str("---\n");
+            }
             yaml.push_str(&format!(
                 "title: R{i}\n\
                  id: r-{i:08}\n\
@@ -847,13 +1011,14 @@ detection:
                  detection:\n\
                  \x20   selection:\n\
                  \x20       CommandLine|contains: 'pat-{i:08}'\n\
-                 \x20   condition: selection\n\
-                 ---\n",
+                 \x20   condition: selection\n",
             ));
         }
         let engine = engine_from(&yaml);
         let index = CrossRuleAcIndex::build(engine.rules());
         // Field is dropped, so the index is empty for CommandLine.
         assert!(index.is_empty());
+        assert_eq!(index.unindexed_field_count(), 1);
+        assert!(!index.is_prunable(0));
     }
 }

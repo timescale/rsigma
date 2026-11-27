@@ -60,27 +60,54 @@ fn assert_agrees(engine: &Engine, event_json: &Value, context: &str) {
     );
 }
 
+/// Parse `yaml`, failing on any diagnostic. A rule the parser drops (for
+/// example one missing its `logsource`) would otherwise leave the engine
+/// empty, and an empty engine agrees with the full scan trivially.
+#[track_caller]
+fn parse_clean(yaml: &str, context: &str) -> rsigma_parser::SigmaCollection {
+    let collection = match parse_sigma_yaml(yaml) {
+        Ok(c) => c,
+        Err(e) => panic!("battery rule failed to parse ({context}): {e}"),
+    };
+    assert!(
+        collection.diagnostics.is_empty(),
+        "battery rule has parse diagnostics ({context}): {:?}",
+        collection.diagnostics
+    );
+    assert!(
+        !collection.rules.is_empty(),
+        "battery yaml has no rules ({context})"
+    );
+    collection
+}
+
+/// The (bloom, cross-rule AC) combinations every differential runs under.
+const PREFILTER_COMBINATIONS: [(bool, bool); 4] =
+    [(false, false), (true, false), (false, true), (true, true)];
+
+fn engine_with_prefilters(bloom: bool, ac: bool) -> Engine {
+    let mut engine = Engine::new();
+    engine.set_bloom_prefilter(bloom);
+    #[cfg(feature = "daachorse-index")]
+    engine.set_cross_rule_ac(ac);
+    #[cfg(not(feature = "daachorse-index"))]
+    let _ = ac;
+    engine
+}
+
 /// Assert agreement with every pre-filter combination the engine exposes,
 /// so a rule set is checked against the index alone, the bloom, the
 /// cross-rule AC, and their composition.
 #[track_caller]
 fn assert_agrees_all_prefilters(yaml: &str, events: &[Value], context: &str) {
-    let collection = match parse_sigma_yaml(yaml) {
-        Ok(c) => c,
-        Err(e) => panic!("battery rule failed to parse ({context}): {e}"),
-    };
+    let collection = parse_clean(yaml, context);
 
-    // (bloom, cross-rule AC)
-    for (bloom, ac) in [(false, false), (true, false), (false, true), (true, true)] {
-        let mut engine = Engine::new();
-        engine.set_bloom_prefilter(bloom);
-        #[cfg(feature = "daachorse-index")]
-        engine.set_cross_rule_ac(ac);
-        #[cfg(not(feature = "daachorse-index"))]
-        let _ = ac;
+    for (bloom, ac) in PREFILTER_COMBINATIONS {
+        let mut engine = engine_with_prefilters(bloom, ac);
         if let Err(e) = engine.add_collection(&collection) {
             panic!("battery rule failed to compile ({context}): {e}");
         }
+        assert_eq!(engine.rule_count(), collection.rules.len());
         for event in events {
             assert_agrees(
                 &engine,
@@ -114,6 +141,8 @@ detection:
         "contains",
         r#"
 title: Contains
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|contains: 'whoami'
@@ -124,6 +153,8 @@ detection:
         "startswith-endswith",
         r#"
 title: Anchored
+logsource:
+    category: test
 detection:
     selection:
         Image|startswith: 'C:\Users'
@@ -135,6 +166,8 @@ detection:
         "contains-all",
         r#"
 title: ContainsAll
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|contains|all:
@@ -147,6 +180,8 @@ detection:
         "many-contains-collapses-to-aho-corasick",
         r#"
 title: ManyContains
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|contains:
@@ -167,6 +202,8 @@ detection:
         "keywords",
         r#"
 title: Keywords
+logsource:
+    category: test
 detection:
     keywords:
         - 'vssadmin delete shadows'
@@ -178,6 +215,8 @@ detection:
         "wildcard-literal",
         r#"
 title: Wildcard
+logsource:
+    category: test
 detection:
     selection:
         CommandLine: '*sekurlsa*logonpasswords*'
@@ -188,6 +227,8 @@ detection:
         "regex-mandatory-literal",
         r#"
 title: RegexLiteral
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|re: 'certutil.*(urlcache|verifyctl)'
@@ -198,6 +239,8 @@ detection:
         "regex-opaque-fail-open",
         r#"
 title: RegexOpaque
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|re: '^.{200,}$'
@@ -208,6 +251,8 @@ detection:
         "base64-encoded",
         r#"
 title: Base64
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|base64offset|contains: 'IEX (New-Object'
@@ -218,6 +263,8 @@ detection:
         "windash",
         r#"
 title: Windash
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|windash|contains: '-NoProfile'
@@ -228,6 +275,8 @@ detection:
         "numeric-eq-presence-only",
         r#"
 title: NumericEq
+logsource:
+    category: test
 detection:
     selection:
         EventID: 4688
@@ -238,6 +287,8 @@ detection:
         "numeric-range-presence-only",
         r#"
 title: NumericRange
+logsource:
+    category: test
 detection:
     selection:
         EventID|gte: 4000
@@ -248,6 +299,8 @@ detection:
         "cidr-presence-only",
         r#"
 title: Cidr
+logsource:
+    category: test
 detection:
     selection:
         DestinationIp|cidr: '10.0.0.0/8'
@@ -258,6 +311,8 @@ detection:
         "exists-true-presence",
         r#"
 title: ExistsTrue
+logsource:
+    category: test
 detection:
     selection:
         TargetFilename|exists: true
@@ -268,6 +323,8 @@ detection:
         "exists-false-fail-open",
         r#"
 title: ExistsFalse
+logsource:
+    category: test
 detection:
     selection:
         TargetFilename|exists: false
@@ -278,6 +335,8 @@ detection:
         "null-fail-open",
         r#"
 title: NullMatch
+logsource:
+    category: test
 detection:
     selection:
         User: null
@@ -288,6 +347,8 @@ detection:
         "condition-negation-fail-open",
         r#"
 title: AndNot
+logsource:
+    category: test
 detection:
     selection:
         Image|endswith: '\cmd.exe'
@@ -300,6 +361,8 @@ detection:
         "or-with-negated-branch-fail-open",
         r#"
 title: OrNot
+logsource:
+    category: test
 detection:
     selection:
         Image|endswith: '\cmd.exe'
@@ -312,6 +375,8 @@ detection:
         "matcher-negation-fail-open",
         r#"
 title: FieldNeq
+logsource:
+    category: test
 detection:
     selection:
         Image|endswith: '\cmd.exe'
@@ -327,6 +392,8 @@ detection:
         "one-of-selector",
         r#"
 title: OneOf
+logsource:
+    category: test
 detection:
     selection_a:
         Image|endswith: '\powershell.exe'
@@ -339,6 +406,8 @@ detection:
         "all-of-selector",
         r#"
 title: AllOf
+logsource:
+    category: test
 detection:
     selection_img:
         Image|endswith: '\rundll32.exe'
@@ -351,6 +420,8 @@ detection:
         "anyof-list-of-maps",
         r#"
 title: AnyOfMaps
+logsource:
+    category: test
 detection:
     selection:
         - Image|endswith: '\wmic.exe'
@@ -362,6 +433,8 @@ detection:
         "mixed-exact-and-contains",
         r#"
 title: MixedExactContains
+logsource:
+    category: test
 detection:
     selection:
         EventID: '1'
@@ -373,6 +446,8 @@ detection:
         "fieldref-fail-open",
         r#"
 title: FieldRef
+logsource:
+    category: test
 detection:
     selection:
         Image|fieldref: 'ParentImage'
@@ -383,6 +458,8 @@ detection:
         "nested-field-path",
         r#"
 title: NestedPath
+logsource:
+    category: test
 detection:
     selection:
         process.executable|endswith: '\curl.exe'
@@ -393,6 +470,8 @@ detection:
         "cased-modifier",
         r#"
 title: Cased
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|contains|cased: 'PowerShell'
@@ -403,6 +482,8 @@ detection:
         "all-uppercase-cased-modifier",
         r#"
 title: AllUppercaseCased
+logsource:
+    category: test
 detection:
     selection:
         CommandLine|contains|cased: 'CMD.EXE'
@@ -410,9 +491,35 @@ detection:
 "#,
     ),
     (
+        "empty-needle",
+        r#"
+title: EmptyNeedle
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: ''
+    condition: selection
+"#,
+    ),
+    (
+        "sub-trigram-needle",
+        r#"
+title: SubTrigram
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: '&&'
+    condition: selection
+"#,
+    ),
+    (
         "unicode-values",
         r#"
 title: Unicode
+logsource:
+    category: test
 detection:
     selection:
         User|contains: 'Ärzte'
@@ -432,6 +539,7 @@ fn battery_events() -> Vec<Value> {
         json!({"Image": r"c:\windows\system32\CMD.EXE", "product": "windows"}),
         json!({"Image": r"C:\Windows\System32\cmd.exe.bak"}),
         json!({"CommandLine": "cmd /c whoami /priv"}),
+        json!({"CommandLine": "cmd /c dir && del x"}),
         json!({"CommandLine": "WHOAMI"}),
         json!({"CommandLine": "powershell -nop -w hidden -enc SQBFAFgA"}),
         json!({"CommandLine": "powershell -NoProfile", "Image": r"C:\pwsh.exe"}),
@@ -498,6 +606,37 @@ fn witness_battery_agrees_as_one_rule_set() {
 }
 
 #[test]
+fn witness_battery_agrees_when_loaded_one_rule_at_a_time() {
+    // `add_rule` folds each rule into the indexes incrementally instead of
+    // rebuilding them, so it reaches index states a batch build never does.
+    // Forward and reverse order put each rule both before and after the rest.
+    let rules: Vec<_> = WITNESS_BATTERY
+        .iter()
+        .flat_map(|(name, yaml)| parse_clean(yaml, name).rules)
+        .collect();
+    let events = battery_events();
+    for reversed in [false, true] {
+        let mut order: Vec<_> = rules.iter().collect();
+        if reversed {
+            order.reverse();
+        }
+        for (bloom, ac) in PREFILTER_COMBINATIONS {
+            let mut engine = engine_with_prefilters(bloom, ac);
+            for rule in &order {
+                engine.add_rule(rule).expect("battery rule compiles");
+            }
+            for event in &events {
+                assert_agrees(
+                    &engine,
+                    event,
+                    &format!("incremental, reversed={reversed}, bloom={bloom}, cross_rule_ac={ac}"),
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn logsource_paths_agree_with_full_scan() {
     let yaml = r#"
 title: Windows Product
@@ -518,14 +657,17 @@ detection:
     condition: selection
 ---
 title: Product Less
+logsource:
+    category: process_creation
 detection:
     keywords:
         - 'cmd.exe'
     condition: keywords
 "#;
-    let collection = parse_sigma_yaml(yaml).unwrap();
+    let collection = parse_clean(yaml, "logsource paths");
     let mut engine = Engine::new();
     engine.add_collection(&collection).unwrap();
+    assert_eq!(engine.rule_count(), 3);
 
     let events = vec![
         json!({"Image": r"C:\cmd.exe", "product": "windows", "category": "process_creation"}),
@@ -600,6 +742,7 @@ const GEN_VALUES: &[&str] = &[
     "a.b",
     "Ärzte",
     "σ",
+    "",
 ];
 
 const GEN_CONDITIONS: &[&str] = &[
@@ -640,12 +783,18 @@ fn gen_item() -> impl Strategy<Value = GenItem> {
 /// cased; everything else is a single quoted value.
 fn render_selection(name: &str, items: &[GenItem]) -> String {
     let mut out = format!("    {name}:\n");
+    let mut seen = std::collections::HashSet::new();
     for item in items {
         let GenItem {
             field,
             modifier,
             value,
         } = item;
+        // A repeated key would make the YAML invalid and the case would be
+        // skipped instead of tested.
+        if !seen.insert((*field, *modifier)) {
+            continue;
+        }
         match *modifier {
             "|exists" => out.push_str(&format!("        {field}|exists: true\n")),
             "|gte" => {
@@ -696,9 +845,9 @@ fn gen_rule() -> impl Strategy<Value = String> {
         prop::option::of(prop::sample::select(&["windows", "linux"][..])),
     )
         .prop_map(|(a, b, c, condition, product)| {
-            let mut yaml = String::from("title: Generated\n");
+            let mut yaml = String::from("title: Generated\nlogsource:\n    category: test\n");
             if let Some(p) = product {
-                yaml.push_str(&format!("logsource:\n    product: {p}\n"));
+                yaml.push_str(&format!("    product: {p}\n"));
             }
             yaml.push_str("detection:\n");
             yaml.push_str(&render_selection("sel_a", &a));
@@ -751,7 +900,7 @@ proptest! {
         // modifier that rejects its value); those are not interesting here.
         let Ok(collection) = parse_sigma_yaml(&yaml) else { return Ok(()); };
         let mut engine = Engine::new();
-        if engine.add_collection(&collection).is_err() {
+        if engine.add_collection(&collection).is_err() || engine.rule_count() == 0 {
             return Ok(());
         }
         let event = JsonEvent::borrow(&event_json);
@@ -776,15 +925,45 @@ proptest! {
         #[cfg(feature = "daachorse-index")]
         engine.set_cross_rule_ac(true);
 
-        let mut loaded = 0;
         for yaml in &rules {
-            if let Ok(collection) = parse_sigma_yaml(yaml)
-                && engine.add_collection(&collection).is_ok()
-            {
-                loaded += 1;
+            if let Ok(collection) = parse_sigma_yaml(yaml) {
+                let _ = engine.add_collection(&collection);
             }
         }
-        if loaded == 0 {
+        if engine.rule_count() == 0 {
+            return Ok(());
+        }
+
+        let event = JsonEvent::borrow(&event_json);
+        prop_assert_eq!(
+            fingerprint(&engine.evaluate(&event)),
+            fingerprint(&engine.evaluate_full_scan(&event)),
+            "diverged\nrules:\n{}\nevent: {}",
+            rules.join("\n---\n"),
+            event_json
+        );
+    }
+
+    /// The same rule sets loaded through `add_rule`, which folds each rule
+    /// into the indexes incrementally instead of rebuilding them.
+    #[test]
+    fn generated_rule_sets_agree_when_loaded_incrementally(
+        rules in prop::collection::vec(gen_rule(), 2..=6),
+        event_json in gen_event(),
+    ) {
+        let mut engine = Engine::new();
+        engine.set_bloom_prefilter(true);
+        #[cfg(feature = "daachorse-index")]
+        engine.set_cross_rule_ac(true);
+
+        for yaml in &rules {
+            if let Ok(collection) = parse_sigma_yaml(yaml) {
+                for rule in &collection.rules {
+                    let _ = engine.add_rule(rule);
+                }
+            }
+        }
+        if engine.rule_count() == 0 {
             return Ok(());
         }
 

@@ -46,7 +46,7 @@ Concrete numbers from the `rule_load` Criterion group on an Apple M4 Pro (releas
 
 Reproduce with `cargo bench -p rsigma-eval --bench eval -- rule_load`. Loading the pinned SigmaHQ corpus (~3,132 rules) costs about 0.3 s in the representative harness.
 
-**How the bloom rebuild is amortized.** The per-field bloom uses a doubling watermark with a 64-rule floor. A full bloom rebuild only fires when the rule count has at least doubled past the last rebuild, capping false-positive-rate drift while keeping the amortized per-rule cost flat. Rules that introduce a brand-new indexed field get a fresh bloom on the fly. The differential test `append_rule_matches_build_verdicts` pins the property that incremental and batched indexes accept the same haystacks (with the documented MaybeMatch tolerance between rebuilds).
+**How the bloom rebuild is amortized.** The per-field bloom uses a doubling watermark with a 64-rule floor. A full bloom rebuild only fires when the rule count has at least doubled past the last rebuild, capping false-positive-rate drift while keeping the amortized per-rule cost flat. Rules that introduce a brand-new indexed field get a fresh bloom on the fly. A field the bloom left unfiltered (a needle shorter than three bytes, or eviction by the memory budget) stays unfiltered until the next full rebuild, since a bloom built from later rules alone would not cover the earlier ones. The differential test `append_rule_matches_build_verdicts` pins the property that incremental and batched indexes accept the same haystacks (with the documented MaybeMatch tolerance between rebuilds).
 
 **Caveat: the cross-rule Aho-Corasick index falls back to a full rebuild on `add_rule`.** The daachorse automaton has no incremental update story, so if you enable `--cross-rule-ac` and then call `add_rule` in a loop, each call rebuilds the cross-rule AC. The batched loaders (`add_collection`, `add_rules`, `extend_compiled_rules`) keep the single-rebuild-at-end fast path. For very large rule sets with cross-rule AC on, always batch.
 
@@ -115,7 +115,7 @@ The published benchmark (`eval_cross_rule_ac` group, 200 non-matching events aga
 
 Those numbers predate witness-based candidate indexing, which closed most of the gap the AC pass existed to close. On the measured SigmaHQ lanes, `--cross-rule-ac` now loses to `--logsource-routing` alone on every lane, and adding it on top of routing costs 27-35%. Treat it as a knob to benchmark on pure-substring corpora at 5,000+ rules rather than one to enable by default, and measure it against routing rather than against the bare default.
 
-The pattern-count cap per field is 100,000; rules referencing fields above that cap are kept unfiltered.
+The pattern-count cap per field is 100,000; a field above that cap gets no automaton, rules with a needle on it are kept unfiltered, and the rule load logs a warning naming the field. Rules with an empty substring value are kept unfiltered too.
 
 ## Daemon throughput knobs
 

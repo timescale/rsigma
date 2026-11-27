@@ -143,12 +143,11 @@ pub struct Engine<L = LogSourceExtractor> {
     logsource_absent: AtomicU64,
     /// Cross-rule Aho-Corasick index for substring patterns, gated on the
     /// `daachorse-index` feature. Built only when [`cross_rule_ac_enabled`]
-    /// is `true`; [`cross_rule_ac_prunable`] is the conservative per-rule
-    /// flag computed at the same time so the `evaluate` hot path can drop
+    /// is `true`. The index carries the conservative per-rule prunability
+    /// flag computed by the same build, so the `evaluate` hot path can drop
     /// rules safely.
     ///
     /// [`cross_rule_ac_enabled`]: Self::cross_rule_ac_enabled
-    /// [`cross_rule_ac_prunable`]: Self::cross_rule_ac_prunable
     #[cfg(feature = "daachorse-index")]
     cross_rule_ac_index: cross_rule_ac::CrossRuleAcIndex,
     /// Toggle for the cross-rule AC pre-filter. Off by default; the index
@@ -156,12 +155,6 @@ pub struct Engine<L = LogSourceExtractor> {
     /// patterns. See [`Engine::set_cross_rule_ac`].
     #[cfg(feature = "daachorse-index")]
     cross_rule_ac_enabled: bool,
-    /// Per-rule conservative AC-prunability flag. `true` iff the rule's
-    /// firing requires at least one positive substring match (no `Exact`,
-    /// `Regex`, `Numeric`, `Not`, etc.), so dropping the rule on a
-    /// "no AC hit" verdict is provably correct.
-    #[cfg(feature = "daachorse-index")]
-    cross_rule_ac_prunable: Vec<bool>,
 }
 
 impl Engine {
@@ -207,8 +200,6 @@ impl<L> Engine<L> {
             cross_rule_ac_index: cross_rule_ac::CrossRuleAcIndex::empty(),
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac_enabled: false,
-            #[cfg(feature = "daachorse-index")]
-            cross_rule_ac_prunable: Vec::new(),
         }
     }
 
@@ -345,6 +336,18 @@ impl<L> Engine<L> {
     #[cfg(feature = "daachorse-index")]
     pub fn cross_rule_ac_enabled(&self) -> bool {
         self.cross_rule_ac_enabled
+    }
+
+    /// Number of fields the cross-rule AC index could not cover in its most
+    /// recent build: the field had more than 100,000 distinct substring
+    /// patterns, or its automaton failed to build. Rules matching on such a
+    /// field are always evaluated, so a non-zero value means the pre-filter
+    /// is doing less work than it could, never that it drops matches. Zero
+    /// while the pre-filter is disabled. Available behind the
+    /// `daachorse-index` Cargo feature.
+    #[cfg(feature = "daachorse-index")]
+    pub fn cross_rule_ac_unindexed_fields(&self) -> usize {
+        self.cross_rule_ac_index.unindexed_field_count()
     }
 
     /// Enable or disable retention of each loaded rule's HIR for
@@ -686,17 +689,11 @@ impl<L> Engine<L> {
         };
         #[cfg(feature = "daachorse-index")]
         {
-            if self.cross_rule_ac_enabled {
-                self.cross_rule_ac_index = cross_rule_ac::CrossRuleAcIndex::build(&self.rules);
-                self.cross_rule_ac_prunable = self
-                    .rules
-                    .iter()
-                    .map(cross_rule_ac::rule_is_ac_prunable)
-                    .collect();
+            self.cross_rule_ac_index = if self.cross_rule_ac_enabled {
+                cross_rule_ac::CrossRuleAcIndex::build(&self.rules)
             } else {
-                self.cross_rule_ac_index = cross_rule_ac::CrossRuleAcIndex::empty();
-                self.cross_rule_ac_prunable.clear();
-            }
+                cross_rule_ac::CrossRuleAcIndex::empty()
+            };
         }
     }
 
@@ -819,15 +816,10 @@ impl<L> Engine<L> {
         }
         let mut hits = vec![false; self.rules.len()];
         self.cross_rule_ac_index.mark_hits(event, &mut hits);
-        // Compose: keep = !ac_prunable OR ac_hit. The prunable vector and
-        // the rule slice are kept aligned by `rebuild_index`.
+        // Compose: keep = !ac_prunable OR ac_hit. The index and the rule
+        // slice are kept aligned by `rebuild_index`.
         for (idx, slot) in hits.iter_mut().enumerate() {
-            if !self
-                .cross_rule_ac_prunable
-                .get(idx)
-                .copied()
-                .unwrap_or(false)
-            {
+            if !self.cross_rule_ac_index.is_prunable(idx) {
                 *slot = true;
             }
         }

@@ -38,6 +38,16 @@
 //! Total bloom memory is capped at [`DEFAULT_MAX_TOTAL_BYTES`]. When the
 //! computed size exceeds the budget, fields with the lowest bits-per-pattern
 //! density are disabled until the total fits.
+//!
+//! # Disabled fields
+//!
+//! A field the index decided not to filter (a sub-trigram needle, a filter
+//! that would be too small to help, or budget eviction) is recorded as
+//! [`FieldFilter::Disabled`] rather than left out of the map. An absent field
+//! means no loaded rule has a positive substring needle on it, so the
+//! incremental append path may start a filter there from the new rule alone.
+//! A disabled field stays disabled until the next full rebuild, because a
+//! filter built from later rules would not cover the earlier ones.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
@@ -225,13 +235,22 @@ impl FieldBloom {
 /// rebuild on almost every add.
 pub(crate) const INCREMENTAL_REBUILD_FLOOR: usize = 64;
 
+/// The index's state for one field that carries positive substring needles.
+enum FieldFilter {
+    /// Every needle on the field is represented in this bloom.
+    Filtered(FieldBloom),
+    /// The field is deliberately unfiltered: probes answer `MaybeMatch`.
+    Disabled,
+}
+
 /// Per-field bloom filters built from the union of every positive substring
 /// needle across all compiled rules.
 pub(crate) struct FieldBloomIndex {
-    /// `field_name → bloom`. Fields without any positive substring needles
-    /// (or that exceeded the memory budget) are absent from the map; probes
-    /// against them return `MaybeMatch` and the engine evaluates as usual.
-    filters: HashMap<String, FieldBloom>,
+    /// `field_name → filter state`. Fields without any positive substring
+    /// needles are absent from the map. Probes against absent and
+    /// [`FieldFilter::Disabled`] fields return `MaybeMatch` and the engine
+    /// evaluates as usual.
+    filters: HashMap<String, FieldFilter>,
     /// Rule count at the most recent full rebuild. `should_rebuild` uses
     /// this to schedule the next rebuild via a doubling watermark, so the
     /// amortized append cost stays O(1) per rule.
@@ -267,33 +286,23 @@ impl FieldBloomIndex {
             n_patterns: usize,
         }
 
-        let mut built: Vec<Built> = field_needles
-            .into_iter()
-            .filter_map(|(field, mut needles)| {
-                // Deduplicate so the bit count reflects unique pattern strings.
-                needles.sort();
-                needles.dedup();
-
-                if !needles_are_representable(&needles) {
-                    return None;
-                }
-
-                // Size the bloom against the distinct trigram count, not
-                // the pattern count, or the filter saturates as soon as
-                // any needle longer than NGRAM_SIZE+1 bytes is inserted.
-                let n_trigrams = count_unique_trigrams(&needles);
-
-                let mut bloom = FieldBloom::new_with_capacity(n_trigrams)?;
-                for needle in &needles {
-                    insert_needle_trigrams(&mut bloom, needle);
-                }
-                Some(Built {
+        let mut filters: HashMap<String, FieldFilter> = HashMap::new();
+        let mut built: Vec<Built> = Vec::new();
+        for (field, mut needles) in field_needles {
+            // Deduplicate so the bit count reflects unique pattern strings.
+            needles.sort();
+            needles.dedup();
+            match build_field_bloom(&needles) {
+                Some(bloom) => built.push(Built {
                     field,
                     bloom,
                     n_patterns: needles.len(),
-                })
-            })
-            .collect();
+                }),
+                None => {
+                    filters.insert(field, FieldFilter::Disabled);
+                }
+            }
+        }
 
         // Total budget enforcement: drop the lowest-density filters first.
         let mut total: usize = built.iter().map(|b| b.bloom.byte_size()).sum();
@@ -307,16 +316,18 @@ impl FieldBloomIndex {
             while total > max_total_bytes {
                 if let Some(victim) = built.pop() {
                     total = total.saturating_sub(victim.bloom.byte_size());
+                    filters.insert(victim.field, FieldFilter::Disabled);
                 } else {
                     break;
                 }
             }
         }
 
-        let filters = built
-            .into_iter()
-            .map(|b| (b.field, b.bloom))
-            .collect::<HashMap<_, _>>();
+        filters.extend(
+            built
+                .into_iter()
+                .map(|b| (b.field, FieldFilter::Filtered(b.bloom))),
+        );
         Self {
             filters,
             rebuild_baseline: rules.len(),
@@ -328,18 +339,20 @@ impl FieldBloomIndex {
     ///
     /// Cost is bounded by the rule's detection tree size, not by the total
     /// rule count. Trigrams from the rule are inserted into each affected
-    /// field's existing bloom; new fields get a freshly sized bloom built
-    /// against just this rule's trigram count. The global memory budget
-    /// is **not** re-enforced here: each append can push total usage past
-    /// the configured cap, which the next full rebuild (scheduled by
-    /// `should_rebuild`) restores. Treat the budget as an amortized soft
-    /// target, not a hard real-time ceiling.
+    /// field's existing bloom; fields no earlier rule had needles on get a
+    /// freshly sized bloom built against just this rule's trigram count.
+    /// The global memory budget is **not** re-enforced here: each append
+    /// can push total usage past the configured cap, which the next full
+    /// rebuild (scheduled by `should_rebuild`) restores. Treat the budget as
+    /// an amortized soft target, not a hard real-time ceiling.
     ///
     /// Probe semantics are preserved on every step. A `DefinitelyNoMatch`
     /// verdict from this index after `append_rule` is still correct: the
     /// new rule's trigrams are present in the relevant filter immediately,
     /// so any haystack containing one of those trigrams answers
-    /// `MaybeMatch` and the engine evaluates the rule as usual.
+    /// `MaybeMatch` and the engine evaluates the rule as usual. A
+    /// [`FieldFilter::Disabled`] field is left alone, since earlier rules'
+    /// needles on it are in no filter.
     pub(crate) fn append_rule(&mut self, rule: &CompiledRule) {
         let mut field_needles: HashMap<String, Vec<String>> = HashMap::new();
         for detection in rule.detections.values() {
@@ -352,29 +365,29 @@ impl FieldBloomIndex {
             if needles.is_empty() {
                 continue;
             }
-            if !needles_are_representable(&needles) {
-                // This rule made the field unrepresentable, so any existing
-                // filter for it must go: keeping it would let the probe
-                // answer `DefinitelyNoMatch` for a haystack that contains
-                // the sub-trigram needle.
-                self.filters.remove(&field);
-                continue;
-            }
-            if let Some(bloom) = self.filters.get_mut(&field) {
-                for needle in &needles {
-                    insert_needle_trigrams(bloom, needle);
+            match self.filters.get_mut(&field) {
+                Some(FieldFilter::Disabled) => {}
+                Some(filter) if !needles_are_representable(&needles) => {
+                    // Keeping the filter would let the probe answer
+                    // `DefinitelyNoMatch` for a haystack that contains this
+                    // rule's sub-trigram needle.
+                    *filter = FieldFilter::Disabled;
                 }
-                continue;
-            }
-            // No filter exists for this field yet. Size a tight bloom against
-            // this rule's trigram count; the next full rebuild will resize it
-            // against the aggregate corpus.
-            let trigram_count = count_unique_trigrams(&needles);
-            if let Some(mut bloom) = FieldBloom::new_with_capacity(trigram_count) {
-                for needle in &needles {
-                    insert_needle_trigrams(&mut bloom, needle);
+                Some(FieldFilter::Filtered(bloom)) => {
+                    for needle in &needles {
+                        insert_needle_trigrams(bloom, needle);
+                    }
                 }
-                self.filters.insert(field, bloom);
+                None => {
+                    // No loaded rule had needles on this field, so a filter
+                    // over this rule's needles covers the field. The next
+                    // full rebuild resizes it against the aggregate corpus.
+                    let filter = match build_field_bloom(&needles) {
+                        Some(bloom) => FieldFilter::Filtered(bloom),
+                        None => FieldFilter::Disabled,
+                    };
+                    self.filters.insert(field, filter);
+                }
             }
         }
     }
@@ -399,20 +412,37 @@ impl FieldBloomIndex {
     /// tests; not on the hot path.
     #[cfg(test)]
     pub(crate) fn field_count(&self) -> usize {
-        self.filters.len()
+        self.active_filters().count()
+    }
+
+    /// Number of fields carrying needles that are deliberately unfiltered.
+    #[cfg(test)]
+    pub(crate) fn disabled_field_count(&self) -> usize {
+        self.filters
+            .values()
+            .filter(|f| matches!(f, FieldFilter::Disabled))
+            .count()
     }
 
     /// Total bytes consumed across every field's bloom filter.
     #[cfg(test)]
     pub(crate) fn total_bytes(&self) -> usize {
-        self.filters.values().map(FieldBloom::byte_size).sum()
+        self.active_filters().map(FieldBloom::byte_size).sum()
+    }
+
+    #[cfg(test)]
+    fn active_filters(&self) -> impl Iterator<Item = &FieldBloom> {
+        self.filters.values().filter_map(|f| match f {
+            FieldFilter::Filtered(bloom) => Some(bloom),
+            FieldFilter::Disabled => None,
+        })
     }
 
     /// Probe the bloom for `field` against `value`. Returns the verdict the
     /// engine should use to decide whether to short-circuit positive
     /// substring matchers on this field.
     pub(crate) fn probe(&self, field: &str, value: &str) -> BloomVerdict {
-        let Some(bloom) = self.filters.get(field) else {
+        let Some(FieldFilter::Filtered(bloom)) = self.filters.get(field) else {
             return BloomVerdict::MaybeMatch;
         };
         if value.len() < NGRAM_SIZE {
@@ -624,6 +654,24 @@ fn needles_are_representable(needles: &[String]) -> bool {
     needles.iter().all(|n| n.len() >= NGRAM_SIZE)
 }
 
+/// Build a bloom covering every needle in a field's deduplicated set, or
+/// `None` when the field should stay unfiltered: a needle is not
+/// representable as trigrams, or the filter would be too small to help.
+///
+/// The bloom is sized against the distinct trigram count, not the pattern
+/// count, or the filter saturates as soon as any needle longer than
+/// `NGRAM_SIZE + 1` bytes is inserted.
+fn build_field_bloom(needles: &[String]) -> Option<FieldBloom> {
+    if !needles_are_representable(needles) {
+        return None;
+    }
+    let mut bloom = FieldBloom::new_with_capacity(count_unique_trigrams(needles))?;
+    for needle in needles {
+        insert_needle_trigrams(&mut bloom, needle);
+    }
+    Some(bloom)
+}
+
 fn insert_needle_trigrams(bloom: &mut FieldBloom, needle: &str) {
     let bytes = needle.as_bytes();
     if bytes.len() < NGRAM_SIZE {
@@ -662,6 +710,11 @@ mod tests {
 
     fn engine_from(yaml: &str) -> Engine {
         let collection = parse_sigma_yaml(yaml).unwrap();
+        assert!(
+            collection.diagnostics.is_empty(),
+            "{:?}",
+            collection.diagnostics
+        );
         let mut engine = Engine::new();
         engine.add_collection(&collection).unwrap();
         engine
@@ -802,11 +855,14 @@ logsource:
     product: windows
 detection:
     selection:
-        CommandLine|contains|not: 'whoami'
+        CommandLine|contains|neq: 'whoami'
     condition: selection
 "#;
-        let bloom = bloom_from(yaml);
+        let engine = engine_from(yaml);
+        assert_eq!(engine.rule_count(), 1);
+        let bloom = FieldBloomIndex::build(engine.rules());
         assert_eq!(bloom.field_count(), 0);
+        assert_eq!(bloom.disabled_field_count(), 0);
     }
 
     #[test]
@@ -915,12 +971,15 @@ detection:
     fn cased_uppercase_probe_cannot_be_rejected() {
         let yaml = r#"
 title: Cased
+logsource:
+    product: windows
 detection:
     selection:
         CommandLine|contains|cased: 'CMD.EXE'
     condition: selection
 "#;
         let bloom = bloom_from(yaml);
+        assert_eq!(bloom.field_count(), 1);
         assert_eq!(
             bloom.probe("CommandLine", "CMD.EXE"),
             BloomVerdict::MaybeMatch
@@ -931,6 +990,8 @@ detection:
     fn cased_unicode_needle_disables_field_filter() {
         let yaml = r#"
 title: UnicodeCased
+logsource:
+    product: windows
 detection:
     selection:
         CommandLine|contains|cased: 'AΣ'
@@ -938,6 +999,7 @@ detection:
 "#;
         let bloom = bloom_from(yaml);
         assert_eq!(bloom.field_count(), 0);
+        assert_eq!(bloom.disabled_field_count(), 1);
         assert_eq!(bloom.probe("CommandLine", "AΣX"), BloomVerdict::MaybeMatch);
     }
 
@@ -1107,6 +1169,103 @@ detection:
             index.probe("Image", "C:\\powershell.exe"),
             BloomVerdict::MaybeMatch
         );
+    }
+
+    /// A field left unfiltered because of a sub-trigram needle must not get a
+    /// filter from a later rule's needles: the short needle would be in no
+    /// filter, so probes could reject haystacks that contain it.
+    #[test]
+    fn append_keeps_a_sub_trigram_field_disabled() {
+        let yaml = r#"
+title: Short Needle
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: '&&'
+    condition: selection
+---
+title: Long Needle
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'mimikatz'
+    condition: selection
+"#;
+        let engine = engine_from(yaml);
+        let rules = engine.rules();
+
+        let mut index = FieldBloomIndex::empty();
+        index.append_rule(&rules[0]);
+        assert_eq!(index.field_count(), 0);
+        assert_eq!(index.disabled_field_count(), 1);
+
+        index.append_rule(&rules[1]);
+        assert_eq!(index.field_count(), 0);
+        assert_eq!(index.disabled_field_count(), 1);
+        assert_eq!(
+            index.probe("CommandLine", "dir && del"),
+            BloomVerdict::MaybeMatch
+        );
+
+        // The batch build reaches the same state.
+        let batched = FieldBloomIndex::build(rules);
+        assert_eq!(batched.field_count(), 0);
+        assert_eq!(batched.disabled_field_count(), 1);
+    }
+
+    /// A field the batch build evicted for the memory budget stays
+    /// unfiltered on append, while a field no rule touched before still
+    /// gets a filter. A full rebuild with room for it restores the filter.
+    #[test]
+    fn append_keeps_a_budget_evicted_field_disabled() {
+        let yaml = r#"
+title: Evicted
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'mimikatz'
+    condition: selection
+---
+title: Same Field
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: 'sekurlsa'
+    condition: selection
+---
+title: New Field
+logsource:
+    product: windows
+detection:
+    selection:
+        Image|endswith: 'rundll32.exe'
+    condition: selection
+"#;
+        let engine = engine_from(yaml);
+        let rules = engine.rules();
+
+        let mut index = FieldBloomIndex::build_with_budget(&rules[..1], 0);
+        assert_eq!(index.field_count(), 0);
+        assert_eq!(index.disabled_field_count(), 1);
+
+        index.append_rule(&rules[1]);
+        assert_eq!(index.field_count(), 0, "the evicted field stays disabled");
+        assert_eq!(
+            index.probe("CommandLine", "mimikatz"),
+            BloomVerdict::MaybeMatch
+        );
+
+        index.append_rule(&rules[2]);
+        assert_eq!(index.field_count(), 1, "an untouched field gets a filter");
+        assert_eq!(index.disabled_field_count(), 1);
+
+        let rebuilt = FieldBloomIndex::build(rules);
+        assert_eq!(rebuilt.field_count(), 2);
+        assert_eq!(rebuilt.disabled_field_count(), 0);
     }
 
     /// `should_rebuild` returns `true` once the rule count has at least

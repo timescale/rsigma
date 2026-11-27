@@ -331,6 +331,18 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Total events evaluated without their schema's implied logsource
+    /// because the classification was ambiguous, across routed units.
+    pub fn logsource_ambiguous_total(&self) -> u64 {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Routed(router) => router.logsource_ambiguous_total(),
+                UnitEngine::Detection(_) | UnitEngine::Correlation(_) => 0,
+            })
+            .sum()
+    }
+
     /// Whether any unit carries correlation state.
     pub fn has_correlations(&self) -> bool {
         self.units.iter().any(|unit| match &unit.engine {
