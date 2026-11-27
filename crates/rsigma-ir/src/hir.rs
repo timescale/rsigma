@@ -365,7 +365,10 @@ pub enum IrExtractExpr {
 /// count-based semantics (evaluate every matching detection, report all that
 /// match) and avoids the combinatorial blow-up of expanding `N of` into an
 /// `Or` of `And`s.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Deserializing rejects a tree deeper than
+/// [`MAX_CONDITION_TREE_DEPTH`](rsigma_parser::condition::MAX_CONDITION_TREE_DEPTH).
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum IrCondition {
     Detection(String),
     And(Vec<IrCondition>),
@@ -375,6 +378,41 @@ pub enum IrCondition {
         quantifier: Quantifier,
         pattern: SelectorPattern,
     },
+}
+
+impl<'de> Deserialize<'de> for IrCondition {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "IrCondition")]
+        enum Repr {
+            Detection(String),
+            And(Vec<IrCondition>),
+            Or(Vec<IrCondition>),
+            Not(Box<IrCondition>),
+            Selector {
+                quantifier: Quantifier,
+                pattern: SelectorPattern,
+            },
+        }
+
+        thread_local! {
+            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        let _guard = rsigma_parser::condition::TreeDepthGuard::enter(&DEPTH)?;
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Detection(name) => IrCondition::Detection(name),
+            Repr::And(children) => IrCondition::And(children),
+            Repr::Or(children) => IrCondition::Or(children),
+            Repr::Not(inner) => IrCondition::Not(inner),
+            Repr::Selector {
+                quantifier,
+                pattern,
+            } => IrCondition::Selector {
+                quantifier,
+                pattern,
+            },
+        })
+    }
 }
 
 // =============================================================================
@@ -414,7 +452,71 @@ pub struct IrFilter {
 
 #[cfg(test)]
 mod tests {
-    use super::NumericLiteral;
+    use super::{IrCondition, NumericLiteral};
+    use rsigma_parser::condition::MAX_CONDITION_TREE_DEPTH;
+
+    fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    fn nested_not_json(depth: usize) -> String {
+        format!(
+            "{}{{\"Detection\":\"a\"}}{}",
+            "{\"Not\":".repeat(depth - 1),
+            "}".repeat(depth - 1)
+        )
+    }
+
+    fn from_json_unbounded(json: &str) -> serde_json::Result<IrCondition> {
+        let mut de = serde_json::Deserializer::from_str(json);
+        de.disable_recursion_limit();
+        serde::Deserialize::deserialize(&mut de)
+    }
+
+    /// CBOR for `{"Not": {"Not": ... {"Detection": "a"}}}`, written by hand so
+    /// building the input does not recurse.
+    fn nested_not_cbor(depth: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for _ in 1..depth {
+            bytes.extend_from_slice(&[0xa1, 0x63]);
+            bytes.extend_from_slice(b"Not");
+        }
+        bytes.extend_from_slice(&[0xa1, 0x69]);
+        bytes.extend_from_slice(b"Detection");
+        bytes.extend_from_slice(&[0x61, b'a']);
+        bytes
+    }
+
+    #[test]
+    fn deep_condition_is_rejected_from_json() {
+        on_small_stack(|| {
+            for depth in [10_000, MAX_CONDITION_TREE_DEPTH + 1] {
+                let err = from_json_unbounded(&nested_not_json(depth)).unwrap_err();
+                assert!(err.to_string().contains("maximum depth"), "{err}");
+            }
+            assert!(from_json_unbounded(&nested_not_json(MAX_CONDITION_TREE_DEPTH)).is_ok());
+        });
+    }
+
+    #[test]
+    fn deep_condition_is_rejected_from_cbor() {
+        on_small_stack(|| {
+            let decode = |depth| {
+                ciborium::de::from_reader_with_recursion_limit::<IrCondition, _>(
+                    nested_not_cbor(depth).as_slice(),
+                    usize::MAX,
+                )
+            };
+            let err = decode(10_000).unwrap_err();
+            assert!(err.to_string().contains("maximum depth"), "{err}");
+            assert!(decode(MAX_CONDITION_TREE_DEPTH).is_ok());
+        });
+    }
 
     #[test]
     fn numeric_literal_keeps_integers_exact() {

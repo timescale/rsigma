@@ -258,7 +258,10 @@ impl FieldSpec {
 /// `selection and not filter` or `1 of selection_* and not 1 of filter_*`.
 ///
 /// Reference: pySigma conditions.py ConditionItem hierarchy
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Deserializing rejects a tree deeper than
+/// [`MAX_CONDITION_TREE_DEPTH`](crate::condition::MAX_CONDITION_TREE_DEPTH).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ConditionExpr {
     /// Logical AND of sub-expressions.
     And(Vec<ConditionExpr>),
@@ -273,6 +276,41 @@ pub enum ConditionExpr {
         quantifier: Quantifier,
         pattern: SelectorPattern,
     },
+}
+
+impl<'de> Deserialize<'de> for ConditionExpr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "ConditionExpr")]
+        enum Repr {
+            And(Vec<ConditionExpr>),
+            Or(Vec<ConditionExpr>),
+            Not(Box<ConditionExpr>),
+            Identifier(String),
+            Selector {
+                quantifier: Quantifier,
+                pattern: SelectorPattern,
+            },
+        }
+
+        thread_local! {
+            static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        let _guard = crate::condition::TreeDepthGuard::enter(&DEPTH)?;
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::And(children) => ConditionExpr::And(children),
+            Repr::Or(children) => ConditionExpr::Or(children),
+            Repr::Not(inner) => ConditionExpr::Not(inner),
+            Repr::Identifier(name) => ConditionExpr::Identifier(name),
+            Repr::Selector {
+                quantifier,
+                pattern,
+            } => ConditionExpr::Selector {
+                quantifier,
+                pattern,
+            },
+        })
+    }
 }
 
 impl fmt::Display for ConditionExpr {
