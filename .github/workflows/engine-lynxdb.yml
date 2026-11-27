@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo for checkout
-    # Same pinned SigmaHQ commit as the corpus regression job in ci.yml.
+    # Same pinned SigmaHQ commit as the `cli-smoke` job in ci.yml.
     env:
       SIGMA_CORPUS_SHA: "994da16651194500b607a3007186c29779e1f961"
     steps:

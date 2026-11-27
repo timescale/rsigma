@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### CI builds the CLI once for its smoke and SigmaHQ corpus checks
+
+The `Sigma Corpus Regression`, `MCP Smoke`, and `Output Format Smoke` jobs each compiled `rsigma` on their own, and the corpus job spent about six minutes on a release build (thin LTO, one codegen unit) to run about ten seconds of checks. They are now one `CLI smoke and Sigma corpus` job that builds an all-features debug binary once and runs the MCP smoke test over stdio and HTTP, the `--output-format` smoke test, and every corpus check: `rule validate`, the `rule fmt` round trip, validation with the dynamic pipelines, and the `pipeline resolve` goldens. The corpus checks take under a minute on the debug binary. The testing guide now lists the `rule fmt` check it was missing.
+
 ### CI runs the test suite with cargo-nextest (#804)
 
 `cargo test` ran the workspace's 193 test binaries one after another, which took about 4 minutes of the Windows test job and 2.5 minutes on Linux. The `test` matrix and the `coverage` job now run the suite with [cargo-nextest](https://nexte.st/), which runs tests from every binary in parallel, each in its own process. Doc tests and the rstix `interop` and `taxii_interop` suites, which drive their own harness, still run through `cargo test`. The new `.config/nextest.toml` leaves those two suites out, flags tests that run past 60 seconds, and kills a test after five minutes so a hang fails the job instead of holding the runner. Plain `cargo test` still runs everything locally.
