@@ -211,8 +211,8 @@ impl<L> Engine<L> {
     /// alone or wrapped in `CaseInsensitiveGroup`) whose field cannot
     /// possibly contain a needle trigram.
     ///
-    /// Disabled by default. The per-event probe (trigram extraction +
-    /// double hashing) costs ~1 µs on a typical CommandLine field, which
+    /// Disabled by default. The per-event probe (trigram extraction and
+    /// hashing) costs ~1 µs on a typical CommandLine field, which
     /// outweighs the savings on rule sets where most events overlap with
     /// at least one needle. Enable for workloads that pair many substring
     /// rules with mostly-non-matching events; benchmark with

@@ -552,7 +552,7 @@ transformations:
 
 The engine can build a per-field bloom filter at rule-load time over every positive substring needle (`Contains` / `StartsWith` / `EndsWith` / `AhoCorasickSet`). When enabled, `Engine::evaluate` short-circuits any positive substring detection item whose field value cannot possibly contain a needle trigram, skipping the matcher entirely.
 
-**Off by default.** The per-event probe (trigram extraction + double hashing) costs ~1 µs on a typical CommandLine field. On rule sets where most events overlap with at least one needle, the probe is pure overhead. The bloom only pays off on substring-heavy rule sets paired with mostly-non-matching events (e.g. high-volume telemetry against an active threat-intel ruleset).
+**Off by default.** The per-event probe (trigram extraction and hashing) costs ~1 µs on a typical CommandLine field. On rule sets where most events overlap with at least one needle, the probe is pure overhead. The bloom only pays off on substring-heavy rule sets paired with mostly-non-matching events (e.g. high-volume telemetry against an active threat-intel ruleset).
 
 ```rust
 let mut engine = Engine::new();

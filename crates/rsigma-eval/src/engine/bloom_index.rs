@@ -146,9 +146,9 @@ fn bloom_hasher() -> ahash::RandomState {
     )
 }
 
-/// Bit-array bloom filter using FNV-style double hashing over the AHash
-/// output of each input. `k` hash functions are simulated by `h1 + i*h2`
-/// where `h1`, `h2` are the low and high words of a 128-bit AHash digest.
+/// Bit-array bloom filter over trigrams. Each trigram is hashed once with
+/// AHash, and its `k` bit positions are the outputs of a SplitMix64 stream
+/// seeded with that hash (see [`probe_position`]).
 struct FieldBloom {
     bits: Vec<u64>,
     num_bits: usize,
@@ -195,17 +195,17 @@ impl FieldBloom {
     }
 
     fn insert_trigram(&mut self, trigram: &[u8]) {
-        let (h1, h2) = self.hash_pair(trigram);
-        for i in 0..self.num_hashes as u64 {
-            let pos = (h1.wrapping_add(i.wrapping_mul(h2))) as usize % self.num_bits;
+        let hash = self.hash(trigram);
+        for i in 0..u64::from(self.num_hashes) {
+            let pos = probe_position(hash, i, self.num_bits);
             self.bits[pos / 64] |= 1 << (pos % 64);
         }
     }
 
     fn contains_trigram(&self, trigram: &[u8]) -> bool {
-        let (h1, h2) = self.hash_pair(trigram);
-        for i in 0..self.num_hashes as u64 {
-            let pos = (h1.wrapping_add(i.wrapping_mul(h2))) as usize % self.num_bits;
+        let hash = self.hash(trigram);
+        for i in 0..u64::from(self.num_hashes) {
+            let pos = probe_position(hash, i, self.num_bits);
             if self.bits[pos / 64] & (1 << (pos % 64)) == 0 {
                 return false;
             }
@@ -213,19 +213,31 @@ impl FieldBloom {
         true
     }
 
-    /// Produce two independent 64-bit hashes from a single AHash digest by
-    /// feeding the trigram twice with different prefixes. Cheap and gives
-    /// the double-hashing scheme enough independence to behave like two
-    /// distinct functions.
-    fn hash_pair(&self, trigram: &[u8]) -> (u64, u64) {
-        let mut h1 = self.hasher_factory.build_hasher();
-        h1.write_u8(0xA1);
-        h1.write(trigram);
-        let mut h2 = self.hasher_factory.build_hasher();
-        h2.write_u8(0xB2);
-        h2.write(trigram);
-        (h1.finish(), h2.finish())
+    fn hash(&self, trigram: &[u8]) -> u64 {
+        let mut hasher = self.hasher_factory.build_hasher();
+        hasher.write(trigram);
+        hasher.finish()
     }
+}
+
+/// The `i`-th bit position of a trigram with hash `hash` in a filter of
+/// `num_bits` bits.
+///
+/// Positions are the SplitMix64 outputs of a stream seeded with `hash`, so
+/// the `k` probes of one trigram are effectively independent. Classic double
+/// hashing (`h1 + i * h2`) puts them on an arithmetic progression instead:
+/// with `num_bits` a multiple of 64, an even `h2` revisits a few positions,
+/// and progressions of different trigrams overlap far more than random sets
+/// do. On the 64- and 128-bit filters most fields get, that raised the
+/// false-positive rate by more than an order of magnitude above the sizing
+/// target.
+#[inline]
+fn probe_position(hash: u64, i: u64, num_bits: usize) -> usize {
+    let mut z = hash.wrapping_add(i.wrapping_add(1).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^= z >> 31;
+    (z % num_bits as u64) as usize
 }
 
 /// Minimum rule-count growth before the doubling watermark trips a full
@@ -1266,6 +1278,50 @@ detection:
         let rebuilt = FieldBloomIndex::build(rules);
         assert_eq!(rebuilt.field_count(), 2);
         assert_eq!(rebuilt.disabled_field_count(), 0);
+    }
+
+    /// The observed false-positive rate of a filter sized by
+    /// `new_with_capacity` must stay close to the textbook rate
+    /// `(1 - e^(-k*n/m))^k` for its bit count `m`, hash count `k`, and `n`
+    /// inserted trigrams. Correlated probe positions push it far above that
+    /// on the small filters most fields get.
+    #[test]
+    fn false_positive_rate_stays_near_the_sizing_target() {
+        const TRIALS: u32 = 40;
+        const QUERIES_PER_TRIAL: u32 = 5_000;
+        // Inserted trigrams have the high bit set on their first byte and
+        // queried ones do not, so every positive probe is a false positive.
+        fn trigram(v: u32, high: bool) -> [u8; NGRAM_SIZE] {
+            let first = ((v >> 14) & 0x7f) as u8 | if high { 0x80 } else { 0 };
+            [first, ((v >> 7) & 0x7f) as u8, (v & 0x7f) as u8]
+        }
+        for n in [4usize, 8, 32, 128, 1024] {
+            let mut false_positives = 0u64;
+            let mut expected = 0.0f64;
+            for trial in 0..TRIALS {
+                let mut bloom = FieldBloom::new_with_capacity(n).expect("sized");
+                let base = trial * 2_000;
+                for i in 0..n as u32 {
+                    bloom.insert_trigram(&trigram(base + i, true));
+                }
+                for q in 0..QUERIES_PER_TRIAL {
+                    if bloom.contains_trigram(&trigram(trial * QUERIES_PER_TRIAL + q, false)) {
+                        false_positives += 1;
+                    }
+                }
+                let k = f64::from(bloom.num_hashes);
+                let m = bloom.num_bits as f64;
+                expected +=
+                    (1.0 - (-k * n as f64 / m).exp()).powf(k) * f64::from(QUERIES_PER_TRIAL);
+            }
+            // Twice the expectation plus a Poisson-sized margin keeps the
+            // check stable while still failing on an order-of-magnitude drift.
+            let bound = 2.0 * expected + 4.0 * expected.sqrt() + 4.0;
+            assert!(
+                (false_positives as f64) <= bound,
+                "n={n}: {false_positives} false positives, expected about {expected:.1} (bound {bound:.1})"
+            );
+        }
     }
 
     /// `should_rebuild` returns `true` once the rule count has at least
