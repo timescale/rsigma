@@ -22,7 +22,9 @@
 //! configuration), so there is no separate code path for "routing off".
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use rsigma_parser::{LogSource, SigmaCollection, SigmaRule};
 
@@ -166,44 +168,173 @@ fn resolve_event_logsource<E: Event, L: ExtractLogSource<E>>(
 /// An event's schema and the logsource it implies for pruning.
 struct Classified<'a> {
     schema: Option<String>,
+    /// The schema's implied logsource, or `None` when the classification is
+    /// ambiguous.
     implied: Option<&'a LogSource>,
+    /// The winning signature tied at its specificity with a different-name
+    /// signature that implies a different logsource, so the name tie-break
+    /// cannot tell which platform the event came from.
+    ambiguous: bool,
 }
 
-/// Classify an event and, when `with_logsource` is set, look up the logsource
-/// its schema implies.
+/// Classify an event and look up the logsource its schema implies.
 ///
-/// When the winning signature ties at its specificity with a signature of a
-/// different name that implies a different logsource, the name tie-break
-/// cannot tell which platform the event came from. The implied logsource is
-/// then dropped (fail open) and `ambiguous` is incremented, so only the
-/// event's own fields can prune rules.
+/// Ties are only checked when `check_ties` is set, because only logsource
+/// pruning and partition fallbacks act on them. An ambiguous classification
+/// implies no logsource (fail open), so only the event's own fields can
+/// prune rules.
 fn classify_for_routing<'a, E: Event>(
     classifier: &SchemaClassifier,
     plan: &'a RoutingPlan,
     event: &E,
-    with_logsource: bool,
-    ambiguous: &AtomicU64,
+    check_ties: bool,
 ) -> Classified<'a> {
-    if !with_logsource {
+    if !check_ties {
+        let schema = classifier.classify(event).map(|m| m.name);
+        let implied = schema.as_deref().and_then(|s| plan.schema_logsource(s));
         return Classified {
-            schema: classifier.classify(event).map(|m| m.name),
-            implied: None,
+            schema,
+            implied,
+            ambiguous: false,
         };
     }
     let Some((winner, mut ties)) = classifier.winner_and_ties(event) else {
         return Classified {
             schema: None,
             implied: None,
+            ambiguous: false,
         };
     };
-    let mut implied = plan.schema_logsource(&winner.name);
-    if ties.any(|tie| plan.schema_logsource(&tie.name) != implied) {
-        ambiguous.fetch_add(1, Ordering::Relaxed);
-        implied = None;
-    }
+    let implied = plan.schema_logsource(&winner.name);
+    let ambiguous = ties.any(|tie| plan.schema_logsource(&tie.name) != implied);
     Classified {
         schema: Some(winner.name.clone()),
-        implied,
+        implied: if ambiguous { None } else { implied },
+        ambiguous,
+    }
+}
+
+/// The rules per-schema partitioning left out of one pipeline-set's engine,
+/// for events that may still need them.
+///
+/// With the full rule set, an event is checked against every rule its
+/// resolved logsource does not rule out. A partitioned set only holds the
+/// rules for its schemas' products, so an event whose resolved product falls
+/// outside them (an explicit `product` field that contradicts the schema, or
+/// no product at all because the classification is ambiguous) is also
+/// evaluated against the removed rules. Without logsource routing only an
+/// ambiguous event needs them. The removed rules' engine is compiled on the
+/// first event that needs it, so a deployment that never sees such an event
+/// pays only for one shared copy of the parsed rules.
+struct PartitionFallback {
+    /// The whole parsed collection, shared by every set's fallback.
+    collection: Arc<SigmaCollection>,
+    /// Lowercased products the set's own engine keeps.
+    kept_products: HashSet<String>,
+    pipelines: Vec<Pipeline>,
+    include_event: bool,
+    match_detail: MatchDetailLevel,
+    engine: OnceLock<Engine>,
+}
+
+impl PartitionFallback {
+    /// Whether the set's own engine holds every rule an event with resolved
+    /// product `product` can match.
+    fn covers(&self, product: Option<&str>) -> bool {
+        product.is_some_and(|p| self.kept_products.contains(&p.to_ascii_lowercase()))
+    }
+
+    fn engine(&self) -> &Engine {
+        self.engine.get_or_init(|| {
+            let mut engine = Engine::new();
+            engine.set_include_event(self.include_event);
+            engine.set_match_detail(self.match_detail);
+            for pipeline in &self.pipelines {
+                engine.add_pipeline(pipeline.clone());
+            }
+            let removed: Vec<&SigmaRule> = self
+                .collection
+                .rules
+                .iter()
+                .filter(|r| !rule_product_kept(r, &self.kept_products))
+                .collect();
+            for (idx, error) in engine.add_rules(removed.iter().copied()) {
+                log::warn!(
+                    "schema routing: rule '{}' left out by partitioning failed to compile: {error}",
+                    removed[idx].title
+                );
+            }
+            for filter in &self.collection.filters {
+                if let Err(error) = engine.apply_filter(filter) {
+                    log::warn!(
+                        "schema routing: filter '{}' failed to apply to the rules left out by partitioning: {error}",
+                        filter.title
+                    );
+                }
+            }
+            engine
+        })
+    }
+}
+
+/// Shared, read-only routing state for one event.
+struct RouteCtx<'a, L> {
+    classifier: &'a SchemaClassifier,
+    plan: &'a RoutingPlan,
+    engines: &'a [Engine],
+    fallbacks: &'a [Option<PartitionFallback>],
+    extractor: Option<&'a L>,
+    ambiguous: &'a AtomicU64,
+}
+
+impl<L> RouteCtx<'_, L> {
+    fn check_ties(&self) -> bool {
+        self.extractor.is_some() || self.fallbacks.iter().any(Option::is_some)
+    }
+
+    /// Classify `event`, counting an ambiguous classification when it changes
+    /// what logsource pruning does.
+    fn classify<E: Event>(&self, event: &E) -> Classified<'_> {
+        let classified = classify_for_routing(self.classifier, self.plan, event, self.check_ties());
+        if classified.ambiguous && self.extractor.is_some() {
+            self.ambiguous.fetch_add(1, Ordering::Relaxed);
+        }
+        classified
+    }
+
+    /// Evaluate `event` on set `set`, adding the partition fallback's rules
+    /// when the set's own engine may lack a rule the event can match.
+    fn evaluate<E: Event>(
+        &self,
+        set: usize,
+        classified: &Classified<'_>,
+        event: &E,
+    ) -> Vec<IdentifiedEvaluation>
+    where
+        L: ExtractLogSource<E>,
+    {
+        let fallback = self.fallbacks.get(set).and_then(Option::as_ref);
+        match self.extractor {
+            Some(ex) => {
+                let ls = resolve_event_logsource(ex, classified.implied, event);
+                let mut detections = self.engines[set].evaluate_pruned_identified(event, &ls);
+                if let Some(fallback) = fallback
+                    && !fallback.covers(ls.product.as_deref())
+                {
+                    detections.extend(fallback.engine().evaluate_pruned_identified(event, &ls));
+                }
+                detections
+            }
+            None => {
+                let mut detections = self.engines[set].evaluate_identified(event);
+                if classified.ambiguous
+                    && let Some(fallback) = fallback
+                {
+                    detections.extend(fallback.engine().evaluate_identified(event));
+                }
+                detections
+            }
+        }
     }
 }
 
@@ -211,27 +342,14 @@ fn classify_for_routing<'a, E: Event>(
 /// shared state so it can run in parallel across a batch. When a logsource
 /// extractor is configured, the event's logsource is resolved (explicit fields
 /// plus the schema's implied logsource) and fed into conflict-based pruning.
-fn detect_one<E: Event, L: ExtractLogSource<E>>(
-    classifier: &SchemaClassifier,
-    plan: &RoutingPlan,
-    engines: &[Engine],
-    extractor: Option<&L>,
-    ambiguous: &AtomicU64,
-    event: &E,
-) -> Routed1 {
-    let classified = classify_for_routing(classifier, plan, event, extractor.is_some(), ambiguous);
-    match plan.decide(classified.schema.as_deref()) {
+fn detect_one<E: Event, L: ExtractLogSource<E>>(ctx: &RouteCtx<'_, L>, event: &E) -> Routed1 {
+    let classified = ctx.classify(event);
+    match ctx.plan.decide(classified.schema.as_deref()) {
         RouteDecision::Drop | RouteDecision::Error => Routed1::Skip,
-        RouteDecision::Evaluate { set, .. } => {
-            let detections = match extractor {
-                Some(ex) => {
-                    let ls = resolve_event_logsource(ex, classified.implied, event);
-                    engines[set].evaluate_pruned_identified(event, &ls)
-                }
-                None => engines[set].evaluate_identified(event),
-            };
-            Routed1::Eval { set, detections }
-        }
+        RouteDecision::Evaluate { set, .. } => Routed1::Eval {
+            set,
+            detections: ctx.evaluate(set, &classified, event),
+        },
     }
 }
 
@@ -259,6 +377,11 @@ pub struct SchemaRouter<L = LogSourceExtractor> {
     /// tied between schemas implying different ones. Surfaced via
     /// [`SchemaRouter::logsource_ambiguous_total`].
     logsource_ambiguous: AtomicU64,
+    /// Per pipeline-set (index = set index): the rules partitioning removed,
+    /// for events whose resolved product the set does not cover. `None` for
+    /// unpartitioned sets, and without logsource routing also for sets whose
+    /// schemas cannot win a tie against a schema implying another logsource.
+    fallbacks: Vec<Option<PartitionFallback>>,
 }
 
 impl SchemaRouter {
@@ -342,8 +465,25 @@ impl<L> SchemaRouter<L> {
             vec![None; pipeline_sets.len()]
         };
 
+        // Sets an ambiguous event can land on: a schema routed there can win
+        // a tie against a schema that implies a different logsource.
+        let routes = plan.routes();
+        let can_win_ambiguous_tie = |set_idx: usize| {
+            routes
+                .iter()
+                .filter(|(set, _)| *set == set_idx)
+                .any(|(_, schema)| {
+                    let implied = plan.schema_logsource(schema);
+                    classifier
+                        .tie_peers(schema)
+                        .any(|peer| plan.schema_logsource(peer) != implied)
+                })
+        };
+
+        let mut shared_collection: Option<Arc<SigmaCollection>> = None;
         let mut engines = Vec::with_capacity(pipeline_sets.len());
         let mut field_maps = Vec::with_capacity(pipeline_sets.len());
+        let mut fallbacks = Vec::with_capacity(pipeline_sets.len());
         for (idx, set) in pipeline_sets.iter().enumerate() {
             let mut engine = Engine::new();
             engine.set_include_event(include_event);
@@ -357,15 +497,32 @@ impl<L> SchemaRouter<L> {
                 .get(idx)
                 .and_then(|o| o.as_ref())
                 .filter(|_| !set.iter().any(pipeline_changes_product));
+            let mut fallback = None;
             match partitioned {
                 Some(products) => {
                     let mut filtered = collection.clone();
                     filtered.rules.retain(|r| rule_product_kept(r, products));
                     engine.add_collection(&filtered)?;
+                    let removes_rules = filtered.rules.len() < collection.rules.len();
+                    if removes_rules
+                        && (logsource_extractor.is_some() || can_win_ambiguous_tie(idx))
+                    {
+                        let shared =
+                            shared_collection.get_or_insert_with(|| Arc::new(collection.clone()));
+                        fallback = Some(PartitionFallback {
+                            collection: Arc::clone(shared),
+                            kept_products: products.clone(),
+                            pipelines: set.clone(),
+                            include_event,
+                            match_detail,
+                            engine: OnceLock::new(),
+                        });
+                    }
                 }
                 None => engine.add_collection(collection)?,
             }
             engines.push(engine);
+            fallbacks.push(fallback);
             field_maps.push(collect_field_map(set));
         }
 
@@ -390,7 +547,19 @@ impl<L> SchemaRouter<L> {
             correlation,
             logsource_extractor,
             logsource_ambiguous: AtomicU64::new(0),
+            fallbacks,
         })
+    }
+
+    fn route_ctx(&self) -> RouteCtx<'_, L> {
+        RouteCtx {
+            classifier: &self.classifier,
+            plan: &self.plan,
+            engines: &self.engines,
+            fallbacks: &self.fallbacks,
+            extractor: self.logsource_extractor.as_ref(),
+            ambiguous: &self.logsource_ambiguous,
+        }
     }
 
     /// Set global `include_event` on every per-schema engine and the shared
@@ -398,6 +567,12 @@ impl<L> SchemaRouter<L> {
     pub fn set_include_event(&mut self, include: bool) {
         for engine in &mut self.engines {
             engine.set_include_event(include);
+        }
+        for fallback in self.fallbacks.iter_mut().flatten() {
+            fallback.include_event = include;
+            if let Some(engine) = fallback.engine.get_mut() {
+                engine.set_include_event(include);
+            }
         }
         if let Some(correlation) = &mut self.correlation {
             correlation.set_include_event(include);
@@ -432,8 +607,14 @@ impl<L> SchemaRouter<L> {
     /// Total rule candidates pruned by logsource across every per-schema
     /// engine (each event routes to exactly one engine).
     pub fn logsource_pruned_total(&self) -> u64 {
+        let fallbacks = self
+            .fallbacks
+            .iter()
+            .flatten()
+            .filter_map(|f| f.engine.get());
         self.engines
             .iter()
+            .chain(fallbacks)
             .map(Engine::logsource_pruned_total)
             .sum()
     }
@@ -593,14 +774,8 @@ impl<L> SchemaRouter<L> {
     where
         L: ExtractLogSource<E> + Sync,
     {
-        let classifier = &self.classifier;
-        let plan = &self.plan;
-        let engines = &self.engines;
-        let extractor = self.logsource_extractor.as_ref();
-        let ambiguous = &self.logsource_ambiguous;
-        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
-            detect_one(classifier, plan, engines, extractor, ambiguous, *e)
-        });
+        let ctx = self.route_ctx();
+        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| detect_one(&ctx, *e));
         phase1
             .into_iter()
             .map(|routed| match routed {
@@ -660,14 +835,8 @@ impl<L> SchemaRouter<L> {
 
         // Stateless phase: classify + route + detect. Borrows only `&self`
         // fields, so it parallelizes; correlation state is untouched here.
-        let classifier = &self.classifier;
-        let plan = &self.plan;
-        let engines = &self.engines;
-        let extractor = self.logsource_extractor.as_ref();
-        let ambiguous = &self.logsource_ambiguous;
-        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| {
-            detect_one(classifier, plan, engines, extractor, ambiguous, *e)
-        });
+        let ctx = self.route_ctx();
+        let phase1: Vec<Routed1> = crate::parallel::map_ordered(events, |e| detect_one(&ctx, *e));
 
         // Stateful phase: feed detections into the shared correlation store in
         // event order. Disjoint field borrows let the field maps and the
@@ -709,14 +878,15 @@ impl<L> SchemaRouter<L> {
     where
         L: ExtractLogSource<E>,
     {
-        let Classified { schema, implied } = classify_for_routing(
-            &self.classifier,
-            &self.plan,
-            event,
-            self.logsource_extractor.is_some(),
-            &self.logsource_ambiguous,
-        );
-        match self.plan.decide(schema.as_deref()) {
+        let ctx = self.route_ctx();
+        let classified = ctx.classify(event);
+        let decision = self.plan.decide(classified.schema.as_deref());
+        let detections = match decision {
+            RouteDecision::Evaluate { set, .. } => ctx.evaluate(set, &classified, event),
+            RouteDecision::Drop | RouteDecision::Error => Vec::new(),
+        };
+        let schema = classified.schema;
+        match decision {
             RouteDecision::Drop => RouteResult {
                 results: Vec::new(),
                 schema,
@@ -728,13 +898,6 @@ impl<L> SchemaRouter<L> {
                 outcome: RouteOutcome::Errored,
             },
             RouteDecision::Evaluate { set, unknown } => {
-                let detections = match self.logsource_extractor.as_ref() {
-                    Some(ex) => {
-                        let ls = resolve_event_logsource(ex, implied, event);
-                        self.engines[set].evaluate_pruned_identified(event, &ls)
-                    }
-                    None => self.engines[set].evaluate_identified(event),
-                };
                 let results = match &mut self.correlation {
                     Some(ce) => {
                         let mapped = MappedEvent::new(event, &self.field_maps[set]);
@@ -1127,6 +1290,136 @@ level: high
         // Default set keeps all 3; the sysmon set drops the Linux rule and
         // keeps the Windows and product-less rules.
         assert_eq!(router.engine_rule_counts(), vec![3, 2]);
+    }
+
+    /// Only a partitioned set whose schema can win a tie against a schema
+    /// with another logsource keeps the removed rules, and their engine is
+    /// compiled on the first ambiguous event rather than at build time.
+    #[test]
+    fn partition_fallback_is_kept_only_where_a_tie_can_land_and_built_lazily() {
+        let rules = r#"
+title: Win whoami
+logsource:
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+---
+title: Linux whoami
+logsource:
+    product: linux
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+"#;
+        let config = r#"
+schemas:
+  - name: vendor_a
+    specificity: 70
+    match:
+      - field_present: vendor_marker
+  - name: vendor_b
+    specificity: 70
+    match:
+      - field_present: vendor_marker
+routing:
+  bindings:
+    - schema: vendor_a
+      pipelines: [noop_a]
+      logsource:
+        product: windows
+    - schema: vendor_b
+      pipelines: [noop_b]
+      logsource:
+        product: linux
+    - schema: sysmon
+      pipelines: [noop_c]
+"#;
+        let (signatures, routing) = crate::schema::parse_schema_config(config).unwrap();
+        let plan = RoutingPlan::from_config(&routing.unwrap());
+        let pipeline_sets: Vec<Vec<Pipeline>> = plan
+            .pipeline_sets()
+            .iter()
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|n| {
+                        parse_pipeline(&format!(
+                            "name: {n}\npriority: 10\ntransformations:\n  - id: noop\n    type: field_name_mapping\n    mapping:\n      __unused_{n}: __unused_b\n"
+                        ))
+                        .unwrap()
+                    })
+                    .collect()
+            })
+            .collect();
+        let set_of = |schema: &str| match plan.decide(Some(schema)) {
+            RouteDecision::Evaluate { set, .. } => set,
+            other => panic!("unexpected {other:?}"),
+        };
+        let (a, b, sysmon) = (set_of("vendor_a"), set_of("vendor_b"), set_of("sysmon"));
+        let build = |extractor: Option<LogSourceExtractor>| {
+            SchemaRouter::build(
+                &parse_sigma_yaml(rules).unwrap(),
+                SchemaClassifier::with_user_signatures(signatures.clone()),
+                plan.clone(),
+                pipeline_sets.clone(),
+                CorrelationConfig::default(),
+                false,
+                MatchDetailLevel::Off,
+                extractor,
+                true,
+            )
+            .unwrap()
+        };
+
+        // Without logsource routing only an ambiguous event needs the removed
+        // rules. vendor_a wins its tie against vendor_b, which implies linux;
+        // vendor_b never wins it, and sysmon has no tie peer that sorts after
+        // it.
+        let router = build(None);
+        assert!(router.fallbacks[a].is_some());
+        assert!(router.fallbacks[b].is_none());
+        assert!(router.fallbacks[sysmon].is_none());
+        assert!(
+            router.fallbacks[0].is_none(),
+            "the default set is never partitioned"
+        );
+
+        // With it, an explicit product field can contradict any schema, so
+        // every set that removed rules keeps them.
+        let mut router = build(Some(LogSourceExtractor::new()));
+        assert!(router.fallbacks[a].is_some());
+        assert!(router.fallbacks[b].is_some());
+        assert!(router.fallbacks[sysmon].is_some());
+        assert!(router.fallbacks[0].is_none());
+        assert!(
+            Arc::ptr_eq(
+                &router.fallbacks[a].as_ref().unwrap().collection,
+                &router.fallbacks[b].as_ref().unwrap().collection
+            ),
+            "fallbacks share one copy of the parsed rules"
+        );
+
+        let fallback = router.fallbacks[a].as_ref().unwrap();
+        assert!(
+            fallback.engine.get().is_none(),
+            "compiled on first use only"
+        );
+
+        router.set_include_event(true);
+        let value = json!({"vendor_marker": true, "CommandLine": "whoami"});
+        let r = router.route(&JsonEvent::borrow(&value));
+        assert_eq!(r.results.len(), 2);
+        assert!(
+            r.results
+                .iter()
+                .all(|m| m.as_detection().is_some_and(|d| d.event.is_some())),
+            "the fallback engine inherits include_event"
+        );
+        let fallback = router.fallbacks[a].as_ref().unwrap();
+        assert_eq!(fallback.engine.get().map(Engine::rule_count), Some(1));
     }
 
     #[test]
