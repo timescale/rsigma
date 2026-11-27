@@ -4,6 +4,16 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Rule partitioning keeps every rule an event can match, and prefilters apply under schema routing
+
+Per-schema rule partitioning (`--schema-partition-rules`) compiles each platform-locked pipeline-set with only the rules for its schemas' products. An event whose resolved product fell outside that set missed the removed rules, although the full rule set would have evaluated them: an event whose own `product` field contradicts its schema, and an event whose schema tied with one implying a different logsource. Such events are now also evaluated against the removed rules, compiled for that set the first time an event needs them from one shared copy of the parsed rules. With `--logsource-routing`, partitioning no longer changes any result.
+
+`--bloom-prefilter`, `--bloom-max-bytes`, and `--cross-rule-ac` had no effect with `--schema-routing`, in both `engine daemon` and `engine eval`, because the per-schema engines never received them. They now apply to every per-schema engine, through the new `SchemaRouter::set_bloom_prefilter`, `set_bloom_max_bytes`, and `set_cross_rule_ac`.
+
+The bloom prefilter's small filters let through up to about 50 times more non-matching haystacks than their sizing target, because each trigram's bit positions formed an arithmetic progression that overlapped heavily with other trigrams'. Each position now comes from an independent hash, and measured false-positive rates match the target. Matching results are unchanged.
+
+The daemon exposes `rsigma_cross_rule_ac_unindexed_fields`, the number of fields the cross-rule Aho-Corasick prefilter left without an automaton in the loaded rule set.
+
 ### Prefilters and schema-derived pruning no longer skip rules that could match (#799)
 
 Three optimizations could drop a rule that would have matched. The cross-rule Aho-Corasick prefilter (`--cross-rule-ac`) pruned rules on a field that got no automaton, because the field had more than 100,000 patterns or its automaton failed to build, whenever another field kept the index non-empty. It also pruned rules with an empty `|contains`, `|startswith`, or `|endswith` value, which matches every string. A rule is now pruned only when every one of its needles is non-empty and sits in an automaton the build produced, a field left without one is logged as a warning, and `Engine::cross_rule_ac_unindexed_fields` reports how many fields that was.
