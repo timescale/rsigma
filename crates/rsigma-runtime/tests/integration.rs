@@ -249,3 +249,37 @@ fn reload_keeps_strict_rules() {
     assert!(err.contains("strict rule loading"), "{err}");
     assert_eq!(proc.stats().detection_rules, 1);
 }
+
+#[test]
+fn reload_handles_long_correlation_chain_on_small_stack() {
+    // Each correlation references the one after it in the document.
+    let len = 100_000;
+    let mut chain = String::from(
+        "title: Base\nname: base\nlogsource:\n    category: test\ndetection:\n    selection:\n        EventID: 1\n    condition: selection\n",
+    );
+    for i in (0..len).rev() {
+        let target = if i == 0 {
+            "base".to_string()
+        } else {
+            format!("c{}", i - 1)
+        };
+        chain.push_str(&format!(
+            "---\ntitle: C{i}\nname: c{i}\ncorrelation:\n    type: event_count\n    rules: [{target}]\n    group-by: [Host]\n    timespan: 1m\n    condition:\n        gte: 1\n"
+        ));
+    }
+    let stats = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let dir = rules_dir(&[("rules.yml", GOOD_RULE)]);
+            let mut engine = engine_for(&dir);
+            engine.load_rules().unwrap();
+            let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+            std::fs::write(dir.path().join("rules.yml"), chain).unwrap();
+            proc.reload_rules().unwrap();
+            proc.stats()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(stats.correlation_rules, len);
+}
