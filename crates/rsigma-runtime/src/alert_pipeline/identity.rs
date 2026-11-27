@@ -35,16 +35,16 @@ pub(crate) enum KeyValue {
 }
 
 impl KeyValue {
-    fn of(value: Option<&Value>) -> Self {
+    fn of(value: Option<Value>) -> Self {
         match value {
             None => KeyValue::Absent,
             Some(Value::Null) => KeyValue::Null,
-            Some(Value::Bool(b)) => KeyValue::Bool(*b),
+            Some(Value::Bool(b)) => KeyValue::Bool(b),
             Some(Value::Number(n)) => KeyValue::Number(n.to_string()),
-            Some(Value::String(s)) => KeyValue::String(s.clone()),
+            Some(Value::String(s)) => KeyValue::String(s),
             Some(other) => {
                 let mut out = String::new();
-                canonical_json(other, &mut out);
+                canonical_json(&other, &mut out);
                 KeyValue::Json(out)
             }
         }
@@ -143,7 +143,7 @@ impl IdentityKey {
             rule,
             selectors: selectors
                 .iter()
-                .map(|sel| (sel.as_str(), KeyValue::of(sel.resolve(result).as_ref())))
+                .map(|sel| (sel.as_str(), KeyValue::of(sel.resolve(result))))
                 .collect(),
         }
     }
@@ -297,7 +297,7 @@ pub(crate) fn rebuild_dedup_key(
             .iter()
             .zip(&absent)
             .map(|((name, value), &absent)| {
-                let value = (!(absent && value.is_null())).then_some(value);
+                let value = (!(absent && value.is_null())).then(|| value.clone());
                 (name.clone(), KeyValue::of(value))
             })
             .collect(),
@@ -324,7 +324,7 @@ pub(crate) fn rebuild_group_key(
             .map(|(name, value)| {
                 (
                     name.clone(),
-                    KeyValue::of(Some(value).filter(|v| !v.is_null())),
+                    KeyValue::of(Some(value.clone()).filter(|v| !v.is_null())),
                 )
             })
             .collect(),

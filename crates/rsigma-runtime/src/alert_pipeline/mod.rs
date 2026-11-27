@@ -327,10 +327,12 @@ impl AlertPipeline {
                 .dedup
                 .as_ref()
                 .map(|cfg| IdentityKey::dedup(&cfg.fingerprint, &result));
+            // Capture needs the group identity before dedup; otherwise grouping
+            // computes it only for results that survive dedup.
             let mut group_slot = self
                 .group
                 .as_ref()
-                .filter(|g| g.mode == GroupMode::GroupBy)
+                .filter(|g| capturing && g.mode == GroupMode::GroupBy)
                 .map(|g| grouping::GroupSlot {
                     key: IdentityKey::group(&g.by, &result),
                     id: None,
@@ -1427,7 +1429,12 @@ mod tests {
         assert_eq!((st.dedup.len(), st.incidents.len()), (2, 2));
         let ids: Vec<String> = kept
             .iter()
-            .map(|r| r.header.enrichments.as_ref().unwrap()["incident_id"].to_string())
+            .map(|r| {
+                r.header.enrichments.as_ref().unwrap()["incident_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
         assert_ne!(ids[0], ids[1], "the second incident takes the next id");
 
@@ -1436,7 +1443,7 @@ mod tests {
         for (result, id) in kept.iter().zip(&ids) {
             let ip = &result.as_detection().unwrap().matched_fields[0].value;
             let snap = ring
-                .snapshot_incident(None, id.trim_matches('"'))
+                .snapshot_incident(None, id)
                 .expect("each incident has its own capture generation");
             assert_eq!(snap.events.len(), 2);
             assert!(snap.events.iter().all(|e| &e.event["SourceIp"] == ip));
