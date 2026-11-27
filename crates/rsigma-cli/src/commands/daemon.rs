@@ -282,7 +282,7 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "nats-nkey", env = "NATS_NKEY", conflicts_with_all = ["nats_creds", "nats_token", "nats_user"])]
     pub nats_nkey: Option<String>,
 
-    /// TLS client certificate for mutual TLS with NATS.
+    /// TLS client certificate for mutual TLS with NATS. Also requires TLS.
     #[cfg(feature = "daemon-nats")]
     #[arg(long = "nats-tls-cert", requires = "nats_tls_key")]
     pub nats_tls_cert: Option<PathBuf>,

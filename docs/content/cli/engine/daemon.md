@@ -288,7 +288,7 @@ On that machine and these lanes:
 | `--nats-user <USER>` | `NATS_USER` | NATS username (requires `--nats-password`). |
 | `--nats-password <PASS>` | `NATS_PASSWORD` | NATS password (requires `--nats-user`). |
 | `--nats-nkey <SEED>` | `NATS_NKEY` | NATS NKey seed. |
-| `--nats-tls-cert <FILE>` | unset | TLS client certificate for mutual TLS with NATS. |
+| `--nats-tls-cert <FILE>` | unset | TLS client certificate for mutual TLS with NATS. Setting it requires TLS, as `--nats-require-tls` does. {{ added "unreleased" }} |
 | `--nats-tls-key <FILE>` | unset | TLS client private key for mutual TLS with NATS. |
 | `--nats-require-tls` | off | Refuse to connect to a NATS server that does not negotiate TLS. |
 | `--replay-from-sequence <SEQ>` | unset | Replay from a specific JetStream sequence number. |

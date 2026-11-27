@@ -56,9 +56,9 @@ jaq-core = "3.0"
 jaq-json = "2.0"
 jaq-std = "3.0"
 jsonpath-rust = "1"
-cel = "0.15"
+cel = "0.16"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 notify = "8.2"
 hmac = { version = "0.13", features = ["zeroize"] }
 sha2 = "0.11"
@@ -69,7 +69,7 @@ rayon = "1.12.0"
 
 # optional
 tokio-stream = { version = "0.1", optional = true }
-async-nats = { version = "0.52", optional = true }
+async-nats = { version = "0.53", optional = true }
 futures = { version = "0.3", optional = true }
 time = { version = "0.3", optional = true }
 evtx = { version = "0.15.1", optional = true, default-features = false }

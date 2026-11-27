@@ -8,8 +8,8 @@
     "docs:validate": "docmd validate"
   },
   "devDependencies": {
-    "@docmd/core": "0.9.7",
-    "@docmd/plugin-git": "0.9.7",
+    "@docmd/core": "0.10.1",
+    "@docmd/plugin-git": "0.10.1",
     "docmd-plugin-rsigma": "file:docmd-plugin-rsigma"
   }
 }
