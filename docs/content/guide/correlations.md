@@ -53,14 +53,14 @@ Each type computes one number per group and window, the `aggregated_value` in th
 
 | Type | Aggregated value | Needs `field` | Typical use |
 |------|------------------|---------------|-------------|
-| `event_count` | Number of matching events. | no | Brute force, alert storms, repeated failures. |
-| `value_count` | Number of distinct values of `field`. A list of fields counts distinct combinations. | yes | One source scanning many ports or hosts, one user on many machines. |
-| `value_sum` | Sum of `field`. | yes | Bytes transferred, records exported. |
-| `value_avg` | Mean of `field`. | yes | Average request size or session length. |
-| `value_percentile` | Value of `field` at `percentile` (0 to 100, default 50), by linear interpolation. | yes | Tail latency, unusually large transfers. |
-| `value_median` | Median of `field`. | yes | Typical size or duration, robust to outliers. |
-| `temporal` | Number of distinct referenced rules that matched. Fires when all of them did, unless `condition` says otherwise. | no | Several techniques from one host in a short span. |
-| `temporal_ordered` | Same as `temporal`, but the rules must match in the order listed in `rules`. | no | Attack chains: access, then escalation, then exfiltration. |
+| `event_count` | Number of matching events. | no | Brute force, alert storms, repeated failures |
+| `value_count` | Number of distinct values of `field`. A list of fields counts distinct combinations. | yes | One source scanning many ports or hosts, one user on many machines |
+| `value_sum` | Sum of `field`. | yes | Bytes transferred, records exported |
+| `value_avg` | Mean of `field`. | yes | Average request size or session length |
+| `value_percentile` | Value of `field` at `percentile` (0 to 100, default 50), by linear interpolation. | yes | Tail latency, unusually large transfers |
+| `value_median` | Median of `field`. | yes | Typical size or duration, robust to outliers |
+| `temporal` | Number of distinct referenced rules that matched. Fires when all of them did, unless `condition` says otherwise. | no | Several techniques from one host in a short span |
+| `temporal_ordered` | Same as `temporal`, but the rules must match in the order listed in `rules`. | no | Attack chains: access, then escalation, then exfiltration |
 
 The four numeric types read `field` as a number. Integers, floats, and numeric strings such as `"4096"` count; any other value is skipped. When several fields are listed, only the first is used.
 
