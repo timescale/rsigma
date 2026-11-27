@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Performance regression gate runs only on labeled PRs (#796)
+
+The coarse performance regression gate no longer runs on every pull request that touches the evaluator, daemon intake, dependencies, or the toolchain. It runs only on PRs labeled `performance`, starting when the label is added and again on each push while it stays. The gate spent about 20 minutes per run, mostly on two cold release builds, and its only failures were noise from the shared runner on dependency updates. Weekly and manually dispatched measurements still run the full performance matrix.
+
 ### Correlation window attributes work in `custom_attributes`, pipelines, and overlays (#795)
 
 `rsigma.window` and `rsigma.gap` were read only as top-level keys. Inside a `custom_attributes:` block they were silently ignored, so a session window ran as a sliding one, and lint did not check them there. A pipeline's `set_custom_attribute` changed the attribute but not the window the engine and backends used, and ruleset overlays rejected both keys. All three now set the window. The `custom_attributes:` block wins over a top-level key, which wins over `correlation.window` and `correlation.gap`, and lint checks whichever spelling is in effect. Parsing stays strict, but an override that switches a session window to `sliding` or `tumbling` drops the gap rather than failing; switching to `session` still needs a gap. An overlay cannot remove these attributes with `null`. Library users who change the attributes after parsing call the new `CorrelationRule::apply_window_attributes`; `apply_pipelines_to_correlation` and overlays call it for them.
