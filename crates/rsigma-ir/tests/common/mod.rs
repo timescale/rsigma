@@ -14,9 +14,16 @@ use rsigma_parser::{
 };
 use serde_json::Value;
 
-/// Parse a full Sigma collection (rules + correlations + filters).
+/// Parse a full Sigma collection (rules + correlations + filters), failing
+/// on any parse diagnostic so a dropped document cannot pass silently.
 pub fn collection_from(yaml: &str) -> SigmaCollection {
-    parse_sigma_yaml(yaml).expect("fixture YAML must parse")
+    let collection = parse_sigma_yaml(yaml).expect("fixture YAML must parse");
+    assert!(
+        collection.diagnostics.is_empty(),
+        "fixture has parse diagnostics: {:?}",
+        collection.diagnostics
+    );
+    collection
 }
 
 /// Parse the first detection rule from a YAML fixture.
@@ -53,7 +60,7 @@ pub fn compiled_from(yaml: &str) -> CompiledRule {
 
 /// Parse YAML and load into an [`Engine`] (includes rule index / bloom).
 pub fn engine_from(yaml: &str) -> Engine {
-    let collection = parse_sigma_yaml(yaml).expect("fixture YAML must parse");
+    let collection = collection_from(yaml);
     let mut engine = Engine::new();
     engine
         .add_collection(&collection)

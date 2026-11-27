@@ -1022,6 +1022,9 @@ detection:
         // until the total fits.
         let mut rules = String::new();
         for i in 0..50 {
+            if i > 0 {
+                rules.push_str("---\n");
+            }
             rules.push_str(&format!(
                 "title: R{i}\n\
                  id: r-{i:03}\n\
@@ -1030,13 +1033,11 @@ detection:
                  detection:\n\
                  \x20   selection:\n\
                  \x20       Field{i}|contains: 'foo'\n\
-                 \x20   condition: selection\n\
-                 ---\n",
+                 \x20   condition: selection\n",
             ));
         }
-        let collection = parse_sigma_yaml(&rules).unwrap();
-        let mut engine = Engine::new();
-        engine.add_collection(&collection).unwrap();
+        let engine = engine_from(&rules);
+        assert_eq!(engine.rule_count(), 50);
 
         // Each single-pattern field rounds up to one 64-bit limb (8 bytes).
         // With a 100-byte budget, only ~12 fields can fit.
