@@ -225,3 +225,26 @@ fn store_text_search_finds_attack_pattern_external_id() {
         "attack-pattern--22222222-2222-4222-8222-222222222222"
     );
 }
+
+#[test]
+fn store_text_match_modes() {
+    use rstix::store::TextMatch;
+
+    let bundle = parse_bundle(include_str!("fixtures/store/multi-indicators.json")).expect("parse");
+    let store = MemoryStore::new();
+    store.import_bundle(&bundle).expect("import");
+    let count = |text: &str, mode: TextMatch| {
+        store
+            .query(&StixQuery::new().text_search(text).text_match(mode))
+            .expect("query")
+            .objects
+            .len()
+    };
+    let indicators = bundle.objects().len();
+    assert_eq!(count("indicator", TextMatch::Substring), indicators);
+    assert_eq!(count("indicator", TextMatch::Token), indicators);
+    assert_eq!(count("indicator", TextMatch::Exact), indicators);
+    assert_eq!(count("indic", TextMatch::Substring), indicators);
+    assert_eq!(count("indic", TextMatch::Token), 0);
+    assert_eq!(count("indic", TextMatch::Exact), 0);
+}

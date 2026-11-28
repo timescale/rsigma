@@ -58,6 +58,24 @@ pub struct QueryResult {
     pub next_cursor: Option<QueryCursor>,
 }
 
+/// How [`StixQuery::text_search`] is compared with an object's indexed text.
+///
+/// The indexed text is the object's type and id plus its names, labels,
+/// descriptions, patterns, values, and external references, lowercased.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextMatch {
+    /// The search text appears anywhere.
+    #[default]
+    Substring,
+    /// The search text appears with no letter, digit, `_`, `-`, or non-ASCII
+    /// character directly before or after it, so `10.0.0.1` does not match
+    /// `10.0.0.10` and `evil.example` does not match `notevil.example`.
+    Token,
+    /// The search text equals one whole indexed value (a name, a label, a
+    /// pattern, an SCO `value`).
+    Exact,
+}
+
 /// Typed store query parameters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StixQuery {
@@ -69,8 +87,11 @@ pub struct StixQuery {
     pub modified_after: Option<StixTimestamp>,
     /// Include objects whose labels contain any listed value.
     pub labels_include: Option<Vec<String>>,
-    /// Case-insensitive substring match against indexed searchable text.
+    /// Case-insensitive match against indexed searchable text, compared as
+    /// [`StixQuery::text_match`] says.
     pub text_search: Option<String>,
+    /// How [`StixQuery::text_search`] is compared with indexed text.
+    pub text_match: TextMatch,
     /// Maximum number of results.
     pub max_results: Option<usize>,
     /// Pagination cursor.
@@ -113,6 +134,12 @@ impl StixQuery {
         self
     }
 
+    /// Compare [`StixQuery::text_search`] as `mode` says instead of as a substring.
+    pub fn text_match(mut self, mode: TextMatch) -> Self {
+        self.text_match = mode;
+        self
+    }
+
     /// Limit the number of returned objects.
     pub fn max_results(mut self, max: usize) -> Self {
         self.max_results = Some(max);
@@ -133,6 +160,12 @@ pub trait StixStore: Send + Sync {
 
     /// Returns an owned (cloned) object, not a borrowed reference.
     fn get(&self, id: &StixId) -> Result<Option<StixObject>, StoreError>;
+
+    /// Whether an object with `id` is stored. The default clones it through
+    /// [`StixStore::get`]; stores override it to check without cloning.
+    fn contains(&self, id: &StixId) -> Result<bool, StoreError> {
+        Ok(self.get(id)?.is_some())
+    }
 
     /// All stored versions for `id`.
     fn get_all_versions(&self, id: &StixId) -> Result<Vec<StixObject>, StoreError>;
@@ -159,14 +192,18 @@ pub(crate) fn audit_unresolved_refs(
     source_ids: &[StixId],
 ) -> Result<Vec<(StixId, String, StixId)>, StoreError> {
     let mut unresolved = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for source_id in source_ids {
+        if !seen.insert(source_id.as_str()) {
+            continue;
+        }
         let Some(object) = store.get(source_id)? else {
             continue;
         };
         let mut paths = Vec::new();
         collect_ref_paths(&object, &mut paths);
         for (path, target) in paths {
-            if store.get(&target)?.is_none() {
+            if !store.contains(&target)? {
                 unresolved.push((object.id().clone(), path, target));
             }
         }

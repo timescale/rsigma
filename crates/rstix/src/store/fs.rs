@@ -247,6 +247,10 @@ impl StixStore for FsStore {
         self.memory.get(id)
     }
 
+    fn contains(&self, id: &StixId) -> Result<bool, StoreError> {
+        self.memory.contains(id)
+    }
+
     fn get_all_versions(&self, id: &StixId) -> Result<Vec<StixObject>, StoreError> {
         self.memory.get_all_versions(id)
     }
