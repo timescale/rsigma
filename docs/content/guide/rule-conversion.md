@@ -409,7 +409,7 @@ Correlation rules lower to Fibratus's inline `sequence` DSL: `temporal_ordered` 
 
 ## Selecting columns with `fields:`
 
-When a Sigma rule lists `fields:`, the PostgreSQL backend emits `SELECT field1, field2, ...` instead of `SELECT *`. Function calls (e.g. `count(*)`) and `field as alias` are preserved. Mixed-case identifiers are double-quoted; lowercase ones are not. This gives you control over what each generated query returns without writing the SELECT clause by hand.
+When a Sigma rule lists `fields:`, the PostgreSQL backend emits `SELECT field1, field2, ...` instead of `SELECT *`. Each entry is a field, `*`, or a `count`, `sum`, `avg`, `min`, or `max` call over a field (or `count(*)`), optionally followed by `AS alias`. Field names are quoted like everywhere else in the query: mixed-case names and reserved words such as `user` are double-quoted, plain lowercase names are not. This gives you control over what each generated query returns without writing the SELECT clause by hand.
 
 ```yaml
 title: Sad Puppy in Dog Supply Line
@@ -428,8 +428,10 @@ fields:
 ```sql
 SELECT dog_name, dog_breed, status AS current_state
 FROM security_events
-WHERE status = 'sad'
+WHERE status ILIKE 'sad'
 ```
+
+Any other entry, such as a different function, a nested call, a sub-select, or text with `;`, quotes, or comments, fails conversion with an error that names the entry, so a rule cannot add SQL through `fields`. An aggregate call groups the query by the other listed fields. See [Selecting columns](../reference/backends/postgres.md#selecting-columns) for the full grammar and how JSONB mode and the TimescaleDB formats render the list. {{ added "unreleased" }}
 
 ## Skipping unsupported rules
 

@@ -1,0 +1,2 @@
+SELECT "user", "group" AS grp FROM security_events WHERE "user" ILIKE 'alice' AND "group" ILIKE 'admins' AND "order" ILIKE '42%' AND "current_user" ILIKE 'postgres'
+WITH combined_events AS (SELECT * FROM security_events WHERE "user" ILIKE 'alice' AND "group" ILIKE 'admins' AND "order" ILIKE '42%' AND "current_user" ILIKE 'postgres') SELECT "user", COUNT(DISTINCT "order") AS value_count FROM combined_events GROUP BY "user" HAVING COUNT(DISTINCT "order") >= 3

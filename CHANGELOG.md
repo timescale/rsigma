@@ -4,6 +4,24 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL (#813)
+
+The PostgreSQL backend passed any `fields` entry containing `(` and `)` into the SELECT list as written, so a rule could add a sub-select, a call such as `pg_sleep(10)`, or a comment to the query. An entry must now be `*`, a field name, or a `count`, `sum`, `avg`, `min`, or `max` call over a field or `*`, each with an optional `AS alias`. Anything else fails conversion with `InvalidSelectField`, which names the entry. An aggregate call now groups the query by the other listed fields. In JSONB mode a selected field is named after its Sigma field, and an alias is a column name instead of a JSONB path.
+
+Lowercase field names that are reserved PostgreSQL keywords rendered bare, so `user` and `current_user` compared the session user instead of the event's column, and `group` and `order` failed to parse. They are now double-quoted in predicates, SELECT lists, `GROUP BY`, `PARTITION BY`, and aggregates, and a reserved table or schema name is quoted in its lowercase form. `timestamp_field` and `json_field` must now be plain SQL identifiers and are quoted like field columns, so `-O timestamp_field=EventTime` renders as `"EventTime"`, as `hunt run` already did.
+
+Correlations embedded each referenced rule's own output in their `combined_events` CTE, so a rule's `fields` hid the columns the correlation reads, and `-f view`, `-f continuous_aggregate`, and `-f sliding_window` produced invalid SQL. They now embed the rule's `default` query with every column. In JSONB mode, correlation group-by columns are named after their fields, and `value_sum`, `value_avg`, `value_percentile`, and `value_median` aggregate the value cast to `numeric`, since PostgreSQL has no `SUM` over text. A value correlation without a field fails instead of aggregating a string literal.
+
+`continuous_aggregate` emitted `SELECT time_bucket(...) AS bucket, *` with no `GROUP BY`, which TimescaleDB rejects. It now groups by the bucket and the listed fields, and counts the matching events as `event_count` unless `fields` has an aggregate call.
+
+JSONB path segments now accept hyphenated names such as `cs-method` and `c-uri` and a leading `@` as in `@timestamp`, and reject empty segments such as `a..b`. The LynxDB backend now validates the pipeline `index` as a LynxDB source name, as its documentation said.
+
+A new fuzz target, `fuzz_postgres_select_fields`, converts `fields` entries in every output format and checks that rule content stays inside quoted identifiers and literals.
+
+New library surface: `ConvertError::InvalidSelectField`, `Backend::correlation_source_query`, and `PostgresBackend::timestamp_column`.
+
+**Breaking changes:** a `fields` entry with any other function or expression fails conversion; use a pipeline `query_expression_template` for a custom projection. A mixed-case `timestamp_field` or `json_field` is now quoted, so it must match the column's case. `continuous_aggregate` queries now aggregate as described above.
+
 ### TAXII client trust, retries, and timestamps hold up against a hostile server, and one bad file no longer stops a STIX store (#812)
 
 With DANE and `dane_require_dnssec` (the default), the rstix TAXII client used TLSA and SRV answers whatever their DNSSEC proof state. It now uses only records the resolver proves Secure and fails with a trust error before connecting otherwise. A TLSA usage 0 (PKIX-TA) record matched any certificate the server sent; it must now match an intermediate or the trust anchor of the chain PKIX validated. `discover_via_srv` checked the certificate against the SRV target, so whoever answered the SRV query could steer the client and its credentials to any host with a valid certificate for its own name; unless the SRV record is DNSSEC-validated, the certificate must now be valid for the queried domain, and the new `TaxiiClientConfig::server_identity` names it explicitly.

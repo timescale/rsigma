@@ -426,6 +426,23 @@ pub trait Backend: Send + Sync {
         "default"
     }
 
+    /// The query a correlation embeds for a detection rule it references,
+    /// which [`crate::convert_collection`] passes to the correlation in the
+    /// `_rule_queries` state.
+    ///
+    /// `None` (the default) reuses the first query [`Backend::convert_rule`]
+    /// returned for `output_format`. PostgreSQL overrides this because its
+    /// correlations read every column of the matched events, which a rule's
+    /// `fields` projection or a `view` wrapper would hide.
+    fn correlation_source_query(
+        &self,
+        _rule: &SigmaRule,
+        _output_format: &str,
+        _pipeline_state: &PipelineState,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     /// Convert a correlation rule, discarding any non-fatal warnings.
     ///
     /// Convenience wrapper over [`convert_correlation_rule_with_warnings`]; the

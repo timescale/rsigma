@@ -85,6 +85,8 @@ for result in &output.queries {
 | `timestamp_field` | Column name for the timestamp (default `time`). |
 | `json_field` | Treat field references as JSONB extraction paths in this column. |
 
+`timestamp_field` and `json_field` must be plain SQL identifiers; conversion fails with `InvalidIdentifier` otherwise. `PostgresBackend::timestamp_column` returns the timestamp column as the backend renders it in SQL, quoted when it is mixed-case or a reserved word. {{ added "unreleased" }}
+
 LynxDB has no CLI `-O` options; its only knob is the target index, controlled via pipeline `set_state` with `key: index` (default `main`).
 
 ## Writing a custom backend
@@ -103,13 +105,17 @@ A keyword with `base64` or `base64offset` encodes to fragments of a longer base6
 
 The numeric leaves (`convert_field_eq_num`, `convert_field_compare_op`, `convert_keyword_num`) receive a `rsigma_ir::NumericLiteral` rather than an `f64`, so integers above 2^53 reach the backend exactly. Render it with `to_string()` to get the exact digits. {{ added "0.25.0" }}
 
+`Backend::correlation_source_query` returns the query a correlation embeds for a detection rule it references, which `convert_collection` passes to the correlation in the `_rule_queries` state. The default `None` reuses the rule's first converted query; PostgreSQL returns the rule's `default` query without its `fields` projection. {{ added "unreleased" }}
+
 `render_query_template(template, lookup)` substitutes `{name}` placeholders in a query template in one pass: `lookup` returns the text for a name, or `None` to keep the placeholder as written. Substituted text is never scanned again, so a rule value or title that contains a placeholder stays literal. `text_finish_query` uses it, and a backend with its own `finish_query` should too, rather than calling `str::replace` on a string that already holds the rendered detection. {{ added "0.28.0" }}
 
 See [Adding Backends](../developers/adding-backends.md) for the step-by-step walkthrough, the testing pattern, and how to wire a new backend into `rsigma backend convert` if you also want CLI integration.
 
 ## Error handling
 
-`ConvertError` from `thiserror`. Variants include `RuleConversion` (a rule could not be converted with the chosen backend or format), `UnsupportedModifier`, `InvalidIdentifier` (table/schema name failed validation), and `Pipeline` (a pre-conversion pipeline step failed).
+`ConvertError` from `thiserror`. Variants include `RuleConversion` (a rule could not be converted with the chosen backend or format), `UnsupportedModifier`, `InvalidIdentifier` (a table, schema, `timestamp_field`, `json_field`, or JSONB path segment failed validation), and `Pipeline` (a pre-conversion pipeline step failed).
+
+`InvalidSelectField` reports a rule's `fields` entry outside the PostgreSQL SELECT list grammar, with the `entry` and a `reason`. {{ added "unreleased" }}
 
 ## See also
 

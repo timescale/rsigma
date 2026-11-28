@@ -165,7 +165,7 @@ rsigma backend convert -r rules/ -t lynxdb -p pipeline.yml
 
 ### SELECT column selection
 
-When a Sigma rule specifies `fields:`, the backend emits `SELECT field1, field2, ...` instead of `SELECT *`. Function calls (e.g. `count(*)`) pass through unchanged, and `field as alias` is supported with both sides quoted independently.
+When a Sigma rule specifies `fields:`, the backend emits `SELECT field1, field2, ...` instead of `SELECT *`. Each entry must be `*`, a field name, or a `count`, `sum`, `avg`, `min`, or `max` call over a field (or `count(*)`), with an optional `AS alias`; anything else fails with `ConvertError::InvalidSelectField`. Fields and aliases are quoted like every other identifier, including reserved words such as `user`. An aggregate call groups the query by the other listed fields, and in JSONB mode extracted fields are aliased with their Sigma names. Correlations embed each referenced rule's `default` query without its `fields` projection (`Backend::correlation_source_query`).
 
 ### CLI backend options
 

@@ -1,0 +1,2 @@
+(SELECT password FROM users)
+max((SELECT 1))

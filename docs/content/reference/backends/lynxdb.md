@@ -33,7 +33,7 @@ Defaults:
 |------|---------|
 | Index | `main` |
 
-The state key `index` is validated identically to PostgreSQL identifiers (`^[A-Za-z_][A-Za-z0-9_$]*$`). A custom index gets baked into the `FROM <index>` prefix of every generated query.
+The state key `index` must be one LynxDB source name: `*`, or letters, digits, `_`, `.`, `:`, `-`, and `*` globs (`web-logs`, `2xlog`, `logs*`). Any other value, such as one with spaces, quotes, commas, or `|`, fails conversion. {{ added "unreleased" }} A custom index gets baked into the `FROM <index>` prefix of every generated query.
 
 ## Search or where
 

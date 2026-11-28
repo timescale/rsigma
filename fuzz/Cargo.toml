@@ -201,6 +201,11 @@ path = "fuzz_targets/fuzz_rstix_validate_json.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_postgres_select_fields"
+path = "fuzz_targets/fuzz_postgres_select_fields.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_lucene_frontend"
 path = "fuzz_targets/fuzz_lucene_frontend.rs"
 doc = false

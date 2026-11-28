@@ -271,6 +271,29 @@ fn field_ident(field: &str) -> Result<&str> {
     }
 }
 
+/// The target index from the pipeline state `index` key, or `main`. It is
+/// rendered bare after `FROM`, so it must be one LynxDB source name: `*`, or
+/// letters, digits, `_`, `.`, `:`, `-`, and `*` globs.
+fn index_name(state: &ConversionState) -> Result<&str> {
+    let index = state
+        .processing_state
+        .get("index")
+        .and_then(|v| v.as_str())
+        .unwrap_or("main");
+    let mut chars = index.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '*')
+        && chars.all(|c| c.is_ascii_alphanumeric() || "_.:*-".contains(c));
+    if valid {
+        Ok(index)
+    } else {
+        Err(ConvertError::RuleConversion(format!(
+            "invalid LynxDB index name: {index:?}"
+        )))
+    }
+}
+
 /// The field as read from the event's raw JSON. Columns store an empty string
 /// as null, while the raw JSON keeps the two apart.
 fn raw_field(field: &str) -> String {
@@ -665,6 +688,7 @@ impl Backend for LynxDbBackend {
         query: String,
         state: &ConversionState,
     ) -> Result<String> {
+        index_name(state)?;
         // Pipeline-provided values (e.g. `index`) override the defaults
         // ("main"), unlike the generic `text_finish_query`.
         Ok(render_query_template(
@@ -700,11 +724,7 @@ impl Backend for LynxDbBackend {
         match output_format {
             "default" => Ok(query),
             "minimal" => {
-                let index = state
-                    .processing_state
-                    .get("index")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("main");
+                let index = index_name(state)?;
                 let stage = if self.where_mode { "where" } else { "search" };
                 let Some(expr) = query.strip_prefix(&format!("FROM {index} | {stage} ")) else {
                     return Ok(query);
@@ -1421,6 +1441,49 @@ detection:
             ps,
         );
         assert_eq!(q, vec!["FROM security_logs | search FieldA=\"val1\""]);
+    }
+
+    #[test]
+    fn index_accepts_source_names_and_globs() {
+        for index in ["web-logs", "2xlog", "logs*", "*", "a.b:c"] {
+            let mut ps = PipelineState::default();
+            ps.set_state("index".to_string(), serde_json::json!(index));
+            let q = convert_with_state(
+                "title: T\nlogsource: {category: test}\ndetection:\n  sel: {FieldA: val1}\n  condition: sel\n",
+                ps,
+            );
+            assert_eq!(q, vec![format!("FROM {index} | search FieldA=\"val1\"")]);
+        }
+    }
+
+    #[test]
+    fn index_rejects_names_that_would_add_query_text() {
+        let collection = parse_sigma_yaml(
+            "title: T\nlogsource: {category: test}\ndetection:\n  sel: {FieldA: val1}\n  condition: sel\n",
+        )
+        .unwrap();
+        for index in [
+            "main | delete",
+            "main\n| eval x=1",
+            "a b",
+            "\"main\"",
+            "a,b",
+            "",
+            "-x",
+            "main/*",
+        ] {
+            let mut ps = PipelineState::default();
+            ps.set_state("index".to_string(), serde_json::json!(index));
+            for format in ["default", "minimal"] {
+                let err = LynxDbBackend::new()
+                    .convert_rule(&collection.rules[0], format, &ps)
+                    .unwrap_err();
+                assert!(
+                    err.to_string().contains("invalid LynxDB index name"),
+                    "{index:?} ({format}): {err}"
+                );
+            }
+        }
     }
 
     // --- Output formats ---

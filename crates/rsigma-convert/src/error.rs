@@ -42,6 +42,9 @@ pub enum ConvertError {
     #[error("invalid SQL identifier: {0}")]
     InvalidIdentifier(String),
 
+    #[error("invalid `fields` entry {entry:?}: {reason}")]
+    InvalidSelectField { entry: String, reason: String },
+
     #[error("pipeline error: {0}")]
     Pipeline(#[from] rsigma_eval::error::EvalError),
 }

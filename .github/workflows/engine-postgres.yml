@@ -2,7 +2,7 @@ name: Engine (PostgreSQL)
 
 # Runs the PostgreSQL backend's SQL in a real PostgreSQL server, for the shared
 # engine cases and for SigmaHQ rules whose conditions need grouping (checked
-# against eval). Triggered only by changes to that backend, its engine tests,
+# against eval), and its TimescaleDB formats in a real TimescaleDB. Triggered only by changes to that backend, its engine tests,
 # the shared engine cases, the shared conversion core, or eval.
 on:
   push:

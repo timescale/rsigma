@@ -253,12 +253,15 @@ pub(crate) fn build_hunt_plan(
         eprintln!("Warning: rule '{rule_title}': {warning}");
     }
 
-    // Quote the timestamp column with the backend's own field machinery so
-    // the wrapper's identifier rendering matches the generated query's.
-    let timestamp_column = rsigma_convert::backend::text_escape_and_quote_field(
-        backend.config,
-        &backend.timestamp_field,
-    );
+    // Quote the timestamp column the way the backend does, so the wrapper's
+    // identifier rendering matches the generated query's.
+    let timestamp_column =
+        backend
+            .timestamp_column()
+            .map_err(|_| HuntQueryError::InvalidIdentifier {
+                option: "timestamp_field".to_string(),
+                value: backend.timestamp_field.clone(),
+            })?;
 
     let mut queries = Vec::new();
     for result in &output.queries {
@@ -514,6 +517,21 @@ level: low
         assert_eq!(plan.json_field.as_deref(), Some("data"));
         let actual = format!("{};\n", plan.queries[0].sql);
         check_golden("hunt_sql_jsonb.sql", &actual);
+    }
+
+    #[test]
+    fn timestamp_column_is_quoted_like_the_backend_quotes_it() {
+        for (field, column) in [
+            ("user", "\"user\""),
+            ("EventTime", "\"EventTime\""),
+            ("event_time", "event_time"),
+        ] {
+            let options: HashMap<String, String> =
+                [("timestamp_field".to_string(), field.to_string())].into();
+            let sql = &plan_for(FLAT_RULE, &options).queries[0].sql;
+            assert!(sql.contains(&format!("WHERE {column} >= ")), "{sql}");
+            assert!(sql.contains(&format!("ORDER BY {column} LIMIT")), "{sql}");
+        }
     }
 
     #[test]

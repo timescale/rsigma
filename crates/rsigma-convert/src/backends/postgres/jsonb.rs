@@ -11,7 +11,7 @@ mod tests;
 use rsigma_ir::{IrDetection, IrDetectionItem};
 use rsigma_parser::ArrayQuantifier;
 
-use super::{PostgresBackend, validate_sql_identifier};
+use super::{PostgresBackend, is_field_key};
 use crate::error::{ConvertError, Result};
 use crate::state::ConversionState;
 
@@ -75,17 +75,22 @@ pub(super) fn jsonb_path(base: &str, field: &str, as_text: bool) -> Result<Strin
 }
 
 /// Parse a JSONB field path into object-key and positional-index ops,
-/// validating each key as a SQL identifier.
+/// validating each key with [`is_field_key`].
 fn parse_field_ops(field: &str) -> Result<Vec<FieldOp>> {
     let mut ops = Vec::new();
     for part in field.split('.') {
+        if part.is_empty() {
+            return Err(ConvertError::InvalidIdentifier(field.to_string()));
+        }
         let bpos = part.find('[');
         let name = match bpos {
             Some(p) => &part[..p],
             None => part,
         };
         if !name.is_empty() {
-            validate_sql_identifier(name)?;
+            if !is_field_key(name) {
+                return Err(ConvertError::InvalidIdentifier(name.to_string()));
+            }
             ops.push(FieldOp::Key(name.to_string()));
         }
         if let Some(p) = bpos {
