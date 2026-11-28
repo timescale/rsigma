@@ -56,7 +56,7 @@ type RuleIdentity = (Option<String>, Option<String>);
 // =============================================================================
 
 /// Current snapshot schema version. Bump when the serialized format changes.
-pub(crate) const SNAPSHOT_VERSION: u32 = 2;
+pub(crate) const SNAPSHOT_VERSION: u32 = 3;
 
 /// Parent hops evaluated after a first-level correlation fire in one event.
 /// The first-level result is produced by `feed_detections`; each loop
@@ -1939,6 +1939,9 @@ impl<L> CorrelationEngine<L> {
         tenant: Option<&TenantId>,
         before: i64,
     ) -> Vec<(EvaluationResult, usize)> {
+        if self.retention_dirty {
+            self.refresh_retention();
+        }
         let tenant_key = tenant.cloned();
         let mut out = Vec::new();
         loop {
@@ -2956,6 +2959,9 @@ impl<L> CorrelationEngine<L> {
     /// Armed deadmen are left in place: they fire only when the clock passes
     /// their deadline during the input.
     pub fn finalize(&mut self) -> Vec<EvaluationResult> {
+        if self.retention_dirty {
+            self.refresh_retention();
+        }
         let mut due: Vec<(i64, StateKey, Obligation)> = Vec::new();
         for (key, state) in &self.state {
             if let WindowState::Absence { obligations, .. } = state {
@@ -3097,8 +3103,24 @@ impl<L> CorrelationEngine<L> {
                 .push((key.group_key.clone(), buf.clone()));
         }
 
+        for (tenant, clock) in &self.clocks {
+            by_tenant
+                .entry(tenant.clone())
+                .or_insert_with(|| TenantStateSnapshot::empty(tenant.clone()))
+                .clock = Some(*clock);
+        }
+
+        // Version 3 carries absence state and clocks; a deployment without
+        // absence rules keeps writing version 2 so older binaries can read it.
+        let has_absence = self
+            .state
+            .values()
+            .any(|state| matches!(state, WindowState::Absence { .. }))
+            || !self.clocks.is_empty();
+        let version = if has_absence { SNAPSHOT_VERSION } else { 2 };
+
         CorrelationSnapshot {
-            version: SNAPSHOT_VERSION,
+            version,
             windows: HashMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
@@ -3125,7 +3147,7 @@ impl<L> CorrelationEngine<L> {
     /// Like [`import_state`](Self::import_state), returning the counts of
     /// restored and discarded entries.
     ///
-    /// Accepts versions 1 and 2. Attribution follows
+    /// Accepts versions 1, 2, and 3. Attribution follows
     /// [`CorrelationConfig::require_tenant`]: with it set, untenanted entries
     /// are discarded; without it, tenanted entries are discarded. Returns
     /// `None` for an unknown version or a multi-ruleset snapshot that does not
@@ -3134,7 +3156,7 @@ impl<L> CorrelationEngine<L> {
         &mut self,
         mut snapshot: CorrelationSnapshot,
     ) -> Option<ImportStats> {
-        if !matches!(snapshot.version, 1 | 2) {
+        if !matches!(snapshot.version, 1 | 2 | 3) {
             return None;
         }
         if !snapshot.rulesets.is_empty() {
@@ -3160,11 +3182,16 @@ impl<L> CorrelationEngine<L> {
             last_alert: snapshot.last_alert,
             event_buffers: snapshot.event_buffers,
             event_ref_buffers: snapshot.event_ref_buffers,
+            clock: None,
         });
+
+        let mut dropped_groups: HashSet<(String, GroupKey)> = HashSet::new();
+        let mut dropped_kind = 0usize;
 
         for tenant_state in tenant_states {
             let entries = tenant_state.window_entries();
             let tenant = tenant_state.tenant;
+            let clock = tenant_state.clock;
             let keep = if require_tenant {
                 tenant.is_some()
             } else {
@@ -3179,9 +3206,26 @@ impl<L> CorrelationEngine<L> {
                 continue;
             }
 
+            if let Some(clock) = clock {
+                let entry = self.clocks.entry(tenant.clone()).or_insert(clock);
+                *entry = (*entry).max(clock);
+            }
+
             for (corr_id, groups) in tenant_state.windows {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
+                    let corr_is_absence = self
+                        .correlations
+                        .get(idx)
+                        .is_some_and(|correlation| correlation.absence.is_some());
                     for (gk, mut ws) in groups {
+                        // A rule that switched between absence and non-absence
+                        // state cannot restore the other kind's window.
+                        let window_is_absence = matches!(ws, WindowState::Absence { .. });
+                        if window_is_absence != corr_is_absence {
+                            dropped_kind += 1;
+                            dropped_groups.insert((corr_id.clone(), gk));
+                            continue;
+                        }
                         let had_entries = !ws.is_empty();
                         ws.bound_restored(clamp_to, drop_after);
                         match ws.latest_timestamp() {
@@ -3226,6 +3270,9 @@ impl<L> CorrelationEngine<L> {
             for (corr_id, groups) in tenant_state.event_buffers {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
                     for (gk, mut buf) in groups {
+                        if dropped_groups.contains(&(corr_id.clone(), gk.clone())) {
+                            continue;
+                        }
                         buf.bound_restored(clamp_to, drop_after);
                         if buf.is_empty() {
                             continue;
@@ -3245,6 +3292,9 @@ impl<L> CorrelationEngine<L> {
             for (corr_id, groups) in tenant_state.event_ref_buffers {
                 if let Some(&idx) = id_to_idx.get(&corr_id) {
                     for (gk, mut buf) in groups {
+                        if dropped_groups.contains(&(corr_id.clone(), gk.clone())) {
+                            continue;
+                        }
                         buf.bound_restored(clamp_to, drop_after);
                         if buf.is_empty() {
                             continue;
@@ -3260,6 +3310,13 @@ impl<L> CorrelationEngine<L> {
                     }
                 }
             }
+        }
+
+        if dropped_kind > 0 {
+            log::info!(
+                "Dropped {dropped_kind} imported correlation group(s) whose rule now compiles to \
+                 the other state kind (absence vs. threshold)"
+            );
         }
 
         self.resequence_imported_buffers();

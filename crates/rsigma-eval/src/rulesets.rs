@@ -608,6 +608,7 @@ impl RulesetEngines {
     /// Export per-ruleset correlation state in one snapshot.
     pub fn export_state(&self) -> CorrelationSnapshot {
         let mut rulesets = BTreeMap::new();
+        let mut version = 2;
         for unit in &self.units {
             let snapshot = match &unit.engine {
                 UnitEngine::Detection(_) => None,
@@ -615,11 +616,12 @@ impl RulesetEngines {
                 UnitEngine::Routed(router) => router.export_state(),
             };
             if let Some(snapshot) = snapshot {
+                version = version.max(snapshot.version);
                 rulesets.insert(unit.name.to_string(), snapshot);
             }
         }
         CorrelationSnapshot {
-            version: crate::correlation_engine::SNAPSHOT_VERSION,
+            version,
             windows: HashMap::new(),
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
@@ -645,7 +647,7 @@ impl RulesetEngines {
         &mut self,
         snapshot: &CorrelationSnapshot,
     ) -> Option<crate::ImportStats> {
-        if !matches!(snapshot.version, 1 | 2) {
+        if !matches!(snapshot.version, 1 | 2 | 3) {
             return None;
         }
         if snapshot.rulesets.is_empty() {

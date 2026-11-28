@@ -314,6 +314,9 @@ pub struct TenantStateSnapshot {
     pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
     /// Per-correlation, per-group event reference buffers.
     pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// The tenant's event-time clock, when absence correlations are loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<i64>,
 }
 
 impl TenantStateSnapshot {
@@ -325,6 +328,7 @@ impl TenantStateSnapshot {
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
+            clock: None,
         }
     }
 
