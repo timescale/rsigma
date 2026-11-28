@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### CI keeps its build caches under the repository's 10 GB limit
+### CI keeps its build caches under the repository's 10 GB limit (#807)
 
 The Actions cache held about 10.8 GB, over the 10 GB that GitHub keeps per repository, so it evicted entries the next run needed. The three engine workflows built the same `rsigma-convert` dependencies into three entries and now share one. The weekly fuzz workflow no longer uses the cache at all: one job compiles every harness and the 33 fuzz jobs run its binaries, where each job used to compile the whole fuzz crate and install cargo-fuzz from source. Its corpus moves from the cache, which evicted it before the following week's run, to a `fuzz-corpus-<target>` artifact kept for 90 days, so each run on `main` starts from the inputs the previous one found.
 
