@@ -208,6 +208,15 @@ fn should_emit_permutations(rule: &CorrelationRule, cfg: &FibratusConfig) -> boo
     cfg.temporal_permute
         && rule.correlation_type == CorrelationType::Temporal
         && !rule.rules.is_empty()
+        && !has_negated_rules(rule)
+}
+
+/// Whether a string condition negates a rule reference. Permutations make
+/// every listed rule a required stage, so a negated rule must reach the
+/// rejection instead.
+fn has_negated_rules(rule: &CorrelationRule) -> bool {
+    matches!(rule.condition, CorrelationCondition::Extended(_))
+        && !matches!(rsigma_parser::analyze_absence(rule), Ok(None))
 }
 
 /// Generate N! ordered sequence documents for a `temporal` correlation.
@@ -1764,5 +1773,40 @@ correlation:
             "{message}"
         );
         assert!(!message.contains("negated rules"), "{message}");
+    }
+
+    #[test]
+    fn temporal_permute_rejects_negated_rules() {
+        let detections = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+"#;
+        for correlation in [
+            "type: temporal\n    rules: [login-rule, mfa-rule]\n    condition: login-rule and not mfa-rule",
+            "type: temporal\n    condition: not login-rule",
+        ] {
+            let yaml = format!(
+                "{detections}---\ntitle: Absence\ncorrelation:\n    {correlation}\n    group-by: [User]\n    timespan: 5m\n"
+            );
+            let error =
+                run_with_backend(&yaml, "expr", backend_with_temporal_permute()).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("negated rules"), "{message}");
+        }
     }
 }
