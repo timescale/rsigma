@@ -63,7 +63,7 @@ fn bench_alert_pipeline(c: &mut Criterion) {
     let metrics = NoopMetrics;
 
     let mut group = c.benchmark_group("alert_pipeline_process");
-    for &cardinality in &[1usize, 10, 100] {
+    for &cardinality in &[1usize, 10, 100, 1000] {
         group.bench_with_input(
             BenchmarkId::from_parameter(cardinality),
             &cardinality,

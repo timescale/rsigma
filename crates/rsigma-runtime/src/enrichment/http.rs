@@ -8,7 +8,7 @@
 //! so operators learn one mental model, not two.
 //!
 //! Optional in-memory response cache via [`super::http_cache::HttpResponseCache`]
-//! keyed on `(method, url, body_hash)` with configurable TTL. Mandatory
+//! keyed on `(method, url, body, headers)` with configurable TTL. Mandatory
 //! in practice for rate-limited APIs (VirusTotal: 4 req/min free tier).
 //!
 //! When the 2xx body, after the optional extract, is `null`, the configured

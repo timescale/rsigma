@@ -1,18 +1,21 @@
 //! Fingerprint deduplication with an Alertmanager-style active-alert lifecycle.
 //!
-//! Each in-scope result is reduced to a fingerprint (the rule identity plus the
-//! configured selector values). The first fire for a fingerprint passes through
-//! unchanged and opens an *active alert*; subsequent fires within the window
-//! fold into that alert (incrementing the count and `last_seen`) instead of
-//! being emitted again. A periodic tick re-emits a still-active alert every
-//! `repeat_interval` (carrying the accumulated fire count) and emits a final
-//! `resolved` record once `resolve_timeout` elapses with no further fires.
+//! Each in-scope result is reduced to its exact identity (the tenant, the rule
+//! identity, and the configured selector values; see [`IdentityKey`]). The
+//! first fire for an identity passes through unchanged and opens an *active
+//! alert*; subsequent fires within the window fold into that alert
+//! (incrementing the count and `last_seen`) instead of being emitted again. A
+//! periodic tick re-emits a still-active alert every `repeat_interval`
+//! (carrying the accumulated fire count) and emits a final `resolved` record
+//! once `resolve_timeout` elapses with no further fires.
 //!
 //! Re-emit and resolved records are ordinary [`EvaluationResult`]s carrying a
 //! `dedup_state` key in `header.enrichments`, so they ride the existing sink
-//! path and wire shape.
+//! path and wire shape. Their `dedup_fingerprint` is the alert's display id,
+//! unique among active alerts.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
@@ -20,13 +23,15 @@ use rsigma_eval::TenantId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::identity::{self, IdentityKey};
 use super::strip_event_payloads;
 use crate::selector::Selector;
 
 /// Validated dedup configuration.
 #[derive(Debug, Clone)]
 pub struct DedupConfig {
-    /// Selectors hashed (with the rule identity) into the fingerprint.
+    /// Selectors that, with the tenant and rule identity, form the alert
+    /// identity.
     pub fingerprint: Vec<Selector>,
     /// Re-emit cadence for a still-active alert. `0` disables re-emits
     /// (pure suppression with a single resolved summary on expiry).
@@ -40,13 +45,17 @@ pub struct DedupConfig {
     pub max_active_alerts: usize,
 }
 
-/// One fingerprint's active-alert state.
+/// One identity's active-alert state.
 ///
 /// `sample` is the event-stripped first-fire result as a JSON [`Value`] (rather
 /// than an [`EvaluationResult`], which is serialize-only), so the active-alert
 /// store round-trips through the persistence snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ActiveAlert {
+    /// Display id surfaced as `dedup_fingerprint`. Persisted beside the alert
+    /// in [`DedupSnap`].
+    #[serde(skip)]
+    fingerprint: String,
     first_seen: i64,
     last_seen: i64,
     last_emitted: i64,
@@ -64,11 +73,35 @@ pub(crate) struct ActiveAlert {
     pub(crate) tenant: Option<TenantId>,
 }
 
+/// One persisted active alert. Snapshots before version 3 hold bare
+/// `(fingerprint, alert)` pairs, whose key is rebuilt on restore.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum DedupSnap {
+    Keyed {
+        fingerprint: String,
+        key: IdentityKey,
+        alert: ActiveAlert,
+    },
+    Legacy(String, ActiveAlert),
+}
+
+impl DedupSnap {
+    /// Tenant that owns the persisted alert.
+    pub(crate) fn tenant(&self) -> Option<&TenantId> {
+        match self {
+            DedupSnap::Keyed { alert, .. } | DedupSnap::Legacy(_, alert) => alert.tenant.as_ref(),
+        }
+    }
+}
+
 /// In-memory active-alert store, owned single-threaded by the sink task.
 #[derive(Debug, Default)]
 pub struct DedupStore {
-    alerts: HashMap<String, ActiveAlert>,
-    /// Fingerprints per tenant, kept in step with `alerts`.
+    alerts: HashMap<Arc<IdentityKey>, ActiveAlert>,
+    /// Display id to key, kept in step with `alerts`.
+    fingerprints: HashMap<String, Arc<IdentityKey>>,
+    /// Display ids per tenant, kept in step with `alerts`.
     tenant_fingerprints: HashMap<Option<TenantId>, HashSet<String>>,
 }
 
@@ -92,31 +125,55 @@ impl DedupStore {
         self.alerts.is_empty()
     }
 
-    /// True when a fingerprint already has an active alert.
-    pub(crate) fn contains(&self, fingerprint: &str) -> bool {
-        self.alerts.contains_key(fingerprint)
+    /// True when an identity already has an active alert.
+    #[cfg(test)]
+    pub(crate) fn contains(&self, key: &IdentityKey) -> bool {
+        self.alerts.contains_key(key)
     }
 
-    /// Fold a duplicate into the existing active alert.
-    pub(crate) fn fold(&mut self, fingerprint: &str, now: i64) {
-        if let Some(alert) = self.alerts.get_mut(fingerprint) {
-            alert.fire_count += 1;
-            alert.last_seen = now;
+    /// The display id of the active alert for `key`, if one is open.
+    pub(crate) fn fingerprint_of(&self, key: &IdentityKey) -> Option<&str> {
+        self.alerts.get(key).map(|alert| alert.fingerprint.as_str())
+    }
+
+    /// The display id a new alert for `key` would take: its natural id, or
+    /// the next candidate when another key holds that one.
+    pub(crate) fn allocate_fingerprint(&self, key: &IdentityKey) -> String {
+        key.allocate_id(|id| self.fingerprints.contains_key(id))
+    }
+
+    /// Fold a duplicate into the active alert for `key`. Returns whether one
+    /// was open.
+    pub(crate) fn fold(&mut self, key: &IdentityKey, now: i64) -> bool {
+        match self.alerts.get_mut(key) {
+            Some(alert) => {
+                alert.fire_count += 1;
+                alert.last_seen = now;
+                true
+            }
+            None => false,
         }
     }
 
-    /// Open a new active alert for a first-fire result.
+    /// Open a new active alert for a first-fire result, under `fingerprint`
+    /// when it is still free (see [`Self::allocate_fingerprint`]).
     pub(crate) fn insert(
         &mut self,
+        key: IdentityKey,
         fingerprint: String,
         now: i64,
         sample: Value,
         fields: Vec<(String, Value)>,
-        tenant: Option<TenantId>,
     ) {
+        let fingerprint = match self.fingerprints.get(&fingerprint) {
+            Some(holder) if **holder != key => self.allocate_fingerprint(&key),
+            _ => fingerprint,
+        };
+        let tenant = key.tenant().cloned();
         self.insert_alert(
-            fingerprint,
+            Arc::new(key),
             ActiveAlert {
+                fingerprint,
                 first_seen: now,
                 last_seen: now,
                 last_emitted: now,
@@ -137,20 +194,20 @@ impl DedupStore {
         let mut out = Vec::new();
         let mut resolved = Vec::new();
 
-        for (fingerprint, alert) in self.alerts.iter_mut() {
+        for (key, alert) in self.alerts.iter_mut() {
             if now - alert.last_seen >= resolve_secs {
                 out.push(DedupRecord {
                     state: "resolved",
-                    json: build_record(alert, fingerprint, "resolved"),
+                    json: build_record(alert, "resolved"),
                 });
-                resolved.push(fingerprint.clone());
+                resolved.push(key.clone());
             } else if repeat_secs > 0
                 && now - alert.last_emitted >= repeat_secs
                 && alert.fire_count > alert.emitted_count
             {
                 out.push(DedupRecord {
                     state: "repeat",
-                    json: build_record(alert, fingerprint, "repeat"),
+                    json: build_record(alert, "repeat"),
                 });
                 alert.last_emitted = now;
                 alert.emitted_count = alert.fire_count;
@@ -163,32 +220,27 @@ impl DedupStore {
         out
     }
 
-    fn insert_alert(&mut self, fingerprint: String, alert: ActiveAlert) {
-        let tenant = alert.tenant.clone();
-        if let Some(old) = self.alerts.insert(fingerprint.clone(), alert)
-            && old.tenant != tenant
-        {
-            self.forget_fingerprint(&old.tenant, &fingerprint);
-        }
+    fn insert_alert(&mut self, key: Arc<IdentityKey>, alert: ActiveAlert) {
+        self.remove_alert(&key);
+        self.fingerprints
+            .insert(alert.fingerprint.clone(), key.clone());
         self.tenant_fingerprints
-            .entry(tenant)
+            .entry(alert.tenant.clone())
             .or_default()
-            .insert(fingerprint);
+            .insert(alert.fingerprint.clone());
+        self.alerts.insert(key, alert);
     }
 
-    fn remove_alert(&mut self, fingerprint: &str) -> Option<ActiveAlert> {
-        let alert = self.alerts.remove(fingerprint)?;
-        self.forget_fingerprint(&alert.tenant, fingerprint);
-        Some(alert)
-    }
-
-    fn forget_fingerprint(&mut self, tenant: &Option<TenantId>, fingerprint: &str) {
-        if let Some(fingerprints) = self.tenant_fingerprints.get_mut(tenant) {
-            fingerprints.remove(fingerprint);
+    fn remove_alert(&mut self, key: &IdentityKey) -> Option<ActiveAlert> {
+        let alert = self.alerts.remove(key)?;
+        self.fingerprints.remove(&alert.fingerprint);
+        if let Some(fingerprints) = self.tenant_fingerprints.get_mut(&alert.tenant) {
+            fingerprints.remove(&alert.fingerprint);
             if fingerprints.is_empty() {
-                self.tenant_fingerprints.remove(tenant);
+                self.tenant_fingerprints.remove(&alert.tenant);
             }
         }
+        Some(alert)
     }
 
     /// Count of active alerts owned by `tenant`.
@@ -206,11 +258,16 @@ impl DedupStore {
             .get(&tenant.cloned())
             .into_iter()
             .flatten()
-            .filter_map(|fingerprint| self.alerts.get(fingerprint).map(|a| (fingerprint, a)))
-            .min_by_key(|(_, alert)| alert.last_seen)
-            .map(|(fingerprint, _)| fingerprint.clone());
+            .filter_map(|fingerprint| self.fingerprints.get(fingerprint))
+            .filter_map(|key| {
+                self.alerts
+                    .get(key.as_ref())
+                    .map(|alert| (key, alert.last_seen))
+            })
+            .min_by_key(|(_, last_seen)| *last_seen)
+            .map(|(key, _)| Arc::clone(key));
         match victim {
-            Some(fingerprint) => self.remove_alert(&fingerprint).is_some(),
+            Some(key) => self.remove_alert(&key).is_some(),
             None => false,
         }
     }
@@ -235,27 +292,62 @@ impl DedupStore {
         evicted
     }
 
-    /// Snapshot the active alerts (fingerprint -> alert) for persistence.
-    pub(crate) fn snapshot(&self) -> Vec<(String, ActiveAlert)> {
+    /// Snapshot the active alerts with their keys for persistence.
+    pub(crate) fn snapshot(&self) -> Vec<DedupSnap> {
         self.alerts
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(key, alert)| DedupSnap::Keyed {
+                fingerprint: alert.fingerprint.clone(),
+                key: IdentityKey::clone(key),
+                alert: alert.clone(),
+            })
             .collect()
     }
 
     /// Restore active alerts, dropping any already past `resolve_timeout` at
-    /// `now`.
-    pub(crate) fn restore(
-        &mut self,
-        alerts: Vec<(String, ActiveAlert)>,
-        now: i64,
-        resolve_secs: i64,
-    ) {
-        for (fingerprint, alert) in alerts {
-            if now - alert.last_seen < resolve_secs {
-                self.insert_alert(fingerprint, alert);
+    /// `now`. An alert keeps its persisted display id unless another restored
+    /// alert already holds it. Returns how many legacy entries were dropped
+    /// because their key could not be rebuilt.
+    pub(crate) fn restore(&mut self, alerts: Vec<DedupSnap>, now: i64, resolve_secs: i64) -> usize {
+        let mut unrebuildable = 0;
+        for entry in alerts {
+            let (fingerprint, key, mut alert) = match entry {
+                DedupSnap::Keyed {
+                    fingerprint,
+                    key,
+                    alert,
+                } => (fingerprint, key, alert),
+                DedupSnap::Legacy(fingerprint, alert) => {
+                    match identity::rebuild_dedup_key(
+                        &fingerprint,
+                        alert.tenant.as_ref(),
+                        &alert.sample,
+                        &alert.fields,
+                    ) {
+                        Some(key) => (fingerprint, key, alert),
+                        None => {
+                            unrebuildable += 1;
+                            continue;
+                        }
+                    }
+                }
+            };
+            if now - alert.last_seen >= resolve_secs
+                || self
+                    .alerts
+                    .get(&key)
+                    .is_some_and(|held| held.last_seen >= alert.last_seen)
+            {
+                continue;
             }
+            alert.tenant = key.tenant().cloned();
+            alert.fingerprint = match self.fingerprints.get(&fingerprint) {
+                Some(holder) if **holder != key => self.allocate_fingerprint(&key),
+                _ => fingerprint,
+            };
+            self.insert_alert(Arc::new(key), alert);
         }
+        unrebuildable
     }
 
     /// Evict the least recently seen alerts until at most `max` remain,
@@ -267,76 +359,27 @@ impl DedupStore {
         if excess == 0 {
             return 0;
         }
-        let mut by_age: Vec<(i64, String)> = self
+        let mut by_age: Vec<(i64, &str)> = self
             .alerts
-            .iter()
-            .map(|(fingerprint, alert)| (alert.last_seen, fingerprint.clone()))
+            .values()
+            .map(|alert| (alert.last_seen, alert.fingerprint.as_str()))
             .collect();
         by_age.sort_unstable();
-        for (_, fingerprint) in by_age.into_iter().take(excess) {
-            self.remove_alert(&fingerprint);
+        let victims: Vec<Arc<IdentityKey>> = by_age
+            .into_iter()
+            .take(excess)
+            .filter_map(|(_, fingerprint)| self.fingerprints.get(fingerprint).cloned())
+            .collect();
+        for key in victims {
+            self.remove_alert(&key);
         }
         excess
     }
 }
 
-/// Compute the fingerprint for a result under `selectors`.
-///
-/// The rule identity is always part of the fingerprint; each selector
-/// contributes its resolved value or an explicit null marker. The canonical
-/// string is reduced to a compact, stable 64-bit FNV-1a hex digest so the same
-/// logical alert keeps one fingerprint across restarts.
-pub(crate) fn fingerprint(selectors: &[Selector], result: &EvaluationResult) -> String {
-    let rule = result
-        .header
-        .rule_id
-        .as_deref()
-        .unwrap_or(result.header.rule_title.as_str());
-
-    let mut buf = String::with_capacity(64);
-    if let Some(tenant) = &result.header.tenant_id {
-        buf.push_str("tenant=");
-        buf.push_str(tenant.as_str());
-        buf.push('\u{1f}');
-    }
-    buf.push_str("rule=");
-    buf.push_str(rule);
-    for sel in selectors {
-        buf.push('\u{1f}');
-        buf.push_str(&sel.as_str());
-        buf.push('=');
-        match sel.resolve(result) {
-            Some(value) => buf.push_str(&canonical(&value)),
-            None => buf.push_str("\u{0}null"),
-        }
-    }
-    format!("{:016x}", fnv1a64(buf.as_bytes()))
-}
-
-/// Resolve the selector values once, for storage on the active alert and
-/// surfacing on the summary records.
-pub(crate) fn resolve_fields(
-    selectors: &[Selector],
-    result: &EvaluationResult,
-) -> Vec<(String, Value)> {
-    selectors
-        .iter()
-        .map(|sel| (sel.as_str(), sel.resolve(result).unwrap_or(Value::Null)))
-        .collect()
-}
-
-/// Canonical string form of a resolved value for fingerprinting. Strings use
-/// their raw text; everything else uses compact JSON.
-fn canonical(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
 /// Build a `repeat` / `resolved` summary line (a JSON [`Value`]) from an active
 /// alert by injecting the `dedup_*` keys into the sample's `enrichments` object.
-fn build_record(alert: &ActiveAlert, fingerprint: &str, state: &'static str) -> Value {
+fn build_record(alert: &ActiveAlert, state: &'static str) -> Value {
     let mut result = alert.sample.clone();
     if !result.is_object() {
         result = Value::Object(serde_json::Map::new());
@@ -354,7 +397,7 @@ fn build_record(alert: &ActiveAlert, fingerprint: &str, state: &'static str) -> 
     map.insert("dedup_state".to_string(), Value::String(state.to_string()));
     map.insert(
         "dedup_fingerprint".to_string(),
-        Value::String(fingerprint.to_string()),
+        Value::String(alert.fingerprint.clone()),
     );
     map.insert(
         "dedup_fire_count".to_string(),
@@ -378,19 +421,9 @@ pub(crate) fn sample_of(result: &EvaluationResult) -> Value {
     serde_json::to_value(&sample).unwrap_or(Value::Null)
 }
 
-/// FNV-1a 64-bit. Inlined so the digest is stable across toolchains and crate
-/// versions (unlike `DefaultHasher`), which matters for persisted fingerprints.
-pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::identity::{colliding_display_id, display_values, force_display_id};
     use super::*;
     use rsigma_eval::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader};
     use rsigma_parser::Level;
@@ -426,14 +459,42 @@ mod tests {
         }
     }
 
+    /// Open an alert for `r` the way the pipeline does, returning its key.
+    fn open(
+        store: &mut DedupStore,
+        c: &DedupConfig,
+        r: &EvaluationResult,
+        now: i64,
+    ) -> IdentityKey {
+        let key = IdentityKey::dedup(&c.fingerprint, r);
+        let fingerprint = store.allocate_fingerprint(&key);
+        store.insert(
+            key.clone(),
+            fingerprint,
+            now,
+            sample_of(r),
+            display_values(key.names(), &c.fingerprint, r),
+        );
+        key
+    }
+
     #[test]
-    fn fingerprint_is_stable_and_value_sensitive() {
+    fn identity_is_stable_and_value_sensitive() {
         let c = cfg(0, 60);
-        let a = fingerprint(&c.fingerprint, &result("10.0.0.1"));
-        let b = fingerprint(&c.fingerprint, &result("10.0.0.1"));
-        let d = fingerprint(&c.fingerprint, &result("10.0.0.2"));
-        assert_eq!(a, b, "same inputs must hash identically");
+        let a = IdentityKey::dedup(&c.fingerprint, &result("10.0.0.1"));
+        let b = IdentityKey::dedup(&c.fingerprint, &result("10.0.0.1"));
+        let d = IdentityKey::dedup(&c.fingerprint, &result("10.0.0.2"));
+        assert_eq!(a, b, "same inputs must yield the same identity");
         assert_ne!(a, d, "different selector values must differ");
+        let store = DedupStore::default();
+        assert_eq!(
+            store.allocate_fingerprint(&a),
+            store.allocate_fingerprint(&b)
+        );
+        assert_ne!(
+            store.allocate_fingerprint(&a),
+            store.allocate_fingerprint(&d)
+        );
     }
 
     #[test]
@@ -441,32 +502,26 @@ mod tests {
         let c = cfg(0, 60);
         let mut store = DedupStore::default();
         let r = result("10.0.0.1");
-        let fp = fingerprint(&c.fingerprint, &r);
+        let key = IdentityKey::dedup(&c.fingerprint, &r);
 
-        assert!(!store.contains(&fp));
-        store.insert(
-            fp.clone(),
-            100,
-            sample_of(&r),
-            resolve_fields(&c.fingerprint, &r),
-            None,
-        );
+        assert!(!store.contains(&key));
+        assert!(!store.fold(&key, 99), "nothing to fold into yet");
+        open(&mut store, &c, &r, 100);
         assert_eq!(store.len(), 1);
 
-        // The stored sample has no raw event payload.
-        // (Folding does not re-store the sample.)
-        store.fold(&fp, 105);
-        store.fold(&fp, 110);
-        // Three fires total: one insert + two folds.
-        let records = {
-            // Force resolution by jumping past resolve_timeout.
-            store.tick(&c, 200)
-        };
+        assert!(store.fold(&key, 105));
+        assert!(store.fold(&key, 110));
+        // Three fires total: one insert + two folds. Jump past resolve_timeout.
+        let records = store.tick(&c, 200);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].state, "resolved");
         let enr = &records[0].json["enrichments"];
         assert_eq!(enr["dedup_state"], serde_json::json!("resolved"));
         assert_eq!(enr["dedup_fire_count"], serde_json::json!(3));
+        assert_eq!(
+            enr["dedup_fingerprint"],
+            serde_json::json!(store.allocate_fingerprint(&key))
+        );
         assert!(records[0].json.get("event").is_none());
         assert!(store.is_empty(), "resolved alert is evicted");
     }
@@ -475,21 +530,13 @@ mod tests {
     fn repeat_emits_only_when_new_fires_accumulate() {
         let c = cfg(10, 600);
         let mut store = DedupStore::default();
-        let r = result("10.0.0.1");
-        let fp = fingerprint(&c.fingerprint, &r);
-        store.insert(
-            fp.clone(),
-            0,
-            sample_of(&r),
-            resolve_fields(&c.fingerprint, &r),
-            None,
-        );
+        let key = open(&mut store, &c, &result("10.0.0.1"), 0);
 
         // No new fires since insert: a repeat tick is a no-op.
         assert!(store.tick(&c, 20).is_empty());
 
         // A fold then a due tick emits one repeat carrying the new count.
-        store.fold(&fp, 25);
+        store.fold(&key, 25);
         let records = store.tick(&c, 40);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].state, "repeat");
@@ -507,16 +554,8 @@ mod tests {
     fn repeat_interval_zero_is_pure_suppression() {
         let c = cfg(0, 100);
         let mut store = DedupStore::default();
-        let r = result("10.0.0.1");
-        let fp = fingerprint(&c.fingerprint, &r);
-        store.insert(
-            fp.clone(),
-            0,
-            sample_of(&r),
-            resolve_fields(&c.fingerprint, &r),
-            None,
-        );
-        store.fold(&fp, 10);
+        let key = open(&mut store, &c, &result("10.0.0.1"), 0);
+        store.fold(&key, 10);
         // No repeats ever, even with new fires.
         assert!(store.tick(&c, 50).is_empty());
         // Only a resolved record on expiry.
@@ -535,27 +574,102 @@ mod tests {
     fn the_same_value_in_two_tenants_is_two_alerts() {
         let c = cfg(0, 60);
         let mut store = DedupStore::default();
-        let a = tenant_result("10.0.0.1", "a");
-        let b = tenant_result("10.0.0.1", "b");
-        let fa = fingerprint(&c.fingerprint, &a);
-        let fb = fingerprint(&c.fingerprint, &b);
-        assert_ne!(fa, fb, "tenant is part of the fingerprint");
-        store.insert(
-            fa.clone(),
-            0,
-            sample_of(&a),
-            resolve_fields(&c.fingerprint, &a),
-            a.header.tenant_id.clone(),
-        );
-        store.insert(
-            fb.clone(),
-            0,
-            sample_of(&b),
-            resolve_fields(&c.fingerprint, &b),
-            b.header.tenant_id.clone(),
-        );
+        let ka = open(&mut store, &c, &tenant_result("10.0.0.1", "a"), 0);
+        let kb = open(&mut store, &c, &tenant_result("10.0.0.1", "b"), 0);
+        assert_ne!(ka, kb, "tenant is part of the identity");
         assert_eq!(store.len(), 2);
-        assert!(store.contains(&fa));
-        assert!(store.contains(&fb));
+        assert_ne!(store.fingerprint_of(&ka), store.fingerprint_of(&kb));
+        assert_eq!(store.count_for_tenant(ka.tenant()), 1);
+        assert_eq!(store.count_for_tenant(kb.tenant()), 1);
+    }
+
+    #[test]
+    fn colliding_display_ids_stay_separate_alerts() {
+        let _forced = force_display_id(colliding_display_id);
+        let c = cfg(0, 60);
+        let mut store = DedupStore::default();
+        let ka = open(&mut store, &c, &result("10.0.0.1"), 0);
+        let kb = open(&mut store, &c, &result("10.0.0.2"), 1);
+        assert_eq!(store.len(), 2, "a shared display id does not merge alerts");
+        let (fa, fb) = (
+            store.fingerprint_of(&ka).unwrap().to_string(),
+            store.fingerprint_of(&kb).unwrap().to_string(),
+        );
+        assert_ne!(fa, fb, "the second alert takes the next candidate id");
+
+        assert!(store.fold(&kb, 2));
+        let records = store.tick(&c, 100);
+        let mut seen: Vec<(String, u64)> = records
+            .iter()
+            .map(|r| {
+                let e = &r.json["enrichments"];
+                (
+                    e["dedup_fingerprint"].as_str().unwrap().to_string(),
+                    e["dedup_fire_count"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        seen.sort();
+        let mut expected = vec![(fa, 1), (fb, 2)];
+        expected.sort();
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn insert_never_reuses_a_display_id_held_by_another_key() {
+        let _forced = force_display_id(colliding_display_id);
+        let c = cfg(0, 60);
+        let mut store = DedupStore::default();
+        let ka = open(&mut store, &c, &result("10.0.0.1"), 0);
+        let held = store.fingerprint_of(&ka).unwrap().to_string();
+        let r = result("10.0.0.2");
+        let kb = IdentityKey::dedup(&c.fingerprint, &r);
+        store.insert(kb.clone(), held.clone(), 1, sample_of(&r), vec![]);
+        assert_eq!(store.fingerprint_of(&ka), Some(held.as_str()));
+        assert_ne!(store.fingerprint_of(&kb), Some(held.as_str()));
+    }
+
+    #[test]
+    fn a_snapshot_round_trips_keys_and_display_ids() {
+        let _forced = force_display_id(colliding_display_id);
+        let c = cfg(0, 600);
+        let mut store = DedupStore::default();
+        let ka = open(&mut store, &c, &result("10.0.0.1"), 0);
+        let kb = open(&mut store, &c, &result("10.0.0.2"), 0);
+        let json = serde_json::to_string(&store.snapshot()).unwrap();
+
+        let mut restored = DedupStore::default();
+        let snaps: Vec<DedupSnap> = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.restore(snaps, 10, 600), 0);
+        assert_eq!(restored.fingerprint_of(&ka), store.fingerprint_of(&ka));
+        assert_eq!(restored.fingerprint_of(&kb), store.fingerprint_of(&kb));
+    }
+
+    #[test]
+    fn a_legacy_entry_restores_under_its_old_fingerprint() {
+        let c = cfg(0, 600);
+        let r = result("10.0.0.1");
+        let legacy_fingerprint = "c1a5d5a9b8d5c9a3";
+        let legacy = serde_json::json!([[
+            legacy_fingerprint,
+            {
+                "first_seen": 0,
+                "last_seen": 5,
+                "last_emitted": 0,
+                "fire_count": 2,
+                "emitted_count": 1,
+                "sample": sample_of(&r),
+                "fields": [["match.SourceIp", "10.0.0.1"]],
+            }
+        ]]);
+        let snaps: Vec<DedupSnap> = serde_json::from_value(legacy).unwrap();
+        let mut store = DedupStore::default();
+        assert_eq!(store.restore(snaps, 10, 600), 0);
+        let key = IdentityKey::dedup(&c.fingerprint, &r);
+        assert_eq!(store.fingerprint_of(&key), Some(legacy_fingerprint));
+        assert!(
+            store.fold(&key, 11),
+            "a live fire folds into the restored alert"
+        );
     }
 }

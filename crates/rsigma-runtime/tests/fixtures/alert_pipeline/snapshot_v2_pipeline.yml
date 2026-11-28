@@ -1,0 +1,19 @@
+dedup:
+  fingerprint: [match.SourceIp, match.User]
+  resolve_timeout: 1h
+group:
+  by: [match.SourceIp, match.User]
+  group_wait: 1h
+  resolve_timeout: 1h
+inhibit_rules:
+  - name: critical-inhibits-high
+    source_match:
+      - selector: level
+        op: "="
+        value: critical
+    target_match:
+      - selector: level
+        op: "="
+        value: high
+    equal: [match.SourceIp]
+    duration: 1h

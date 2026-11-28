@@ -1090,6 +1090,73 @@ level: high
 }
 
 #[test]
+fn test_value_count_multi_field_separator_in_a_value_stays_distinct() {
+    // ("a\x1fb", "c") and ("a", "b\x1fc") used to join into the same key, so
+    // three distinct tuples counted as two.
+    let yaml = r#"
+title: Failed Login
+id: failed-login-004
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: failed_login
+    condition: selection
+level: low
+---
+title: Distinct (User, SrcIp) With Separators
+id: corr-vc-004
+correlation:
+    type: value_count
+    rules:
+        - failed-login-004
+    group-by:
+        - Host
+    timespan: 60s
+    condition:
+        field: [User, SrcIp]
+        gte: 3
+level: high
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+    engine.add_collection(&collection).unwrap();
+
+    let events = [("a\u{1f}b", "c"), ("a", "b\u{1f}c"), ("x", "y")];
+    let mut fired = 0;
+    for (i, (user, ip)) in events.iter().enumerate() {
+        let v = json!({
+            "EventType": "failed_login",
+            "Host": "srv01",
+            "User": user,
+            "SrcIp": ip,
+        });
+        let event = JsonEvent::borrow(&v);
+        fired += engine
+            .process_event_at(&event, 1000 + i as i64)
+            .correlation_count();
+    }
+    assert_eq!(fired, 1, "three distinct tuples reach the threshold");
+}
+
+#[test]
+fn test_composite_value_count_key_forms() {
+    let fields = ["A".to_string(), "B".to_string()];
+    let key = |a: &str, b: &str| {
+        let v = json!({"A": a, "B": b});
+        composite_value_count_key(&JsonEvent::borrow(&v), &fields).unwrap()
+    };
+    assert_eq!(
+        key("x", "y"),
+        "x\u{1f}y",
+        "keys without a separator are unchanged"
+    );
+    assert_eq!(key("a\u{1f}b", "c"), "\u{1f}\u{1f}\u{1f}3:a\u{1f}b1:c");
+    assert_ne!(key("a\u{1f}b", "c"), key("a", "b\u{1f}c"));
+    assert_ne!(key("", "\u{1f}"), key("\u{1f}", ""));
+}
+
+#[test]
 fn test_value_count_multi_field_duplicate_tuple_does_not_double_count() {
     // Same (User, SrcIp) tuple repeated should be counted as one distinct
     // value, regardless of how many times it appears.

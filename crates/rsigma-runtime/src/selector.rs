@@ -15,8 +15,9 @@
 //! - `correlation.group_key.<field>` — a group-by value (correlation results
 //!   only).
 //!
-//! A selector that resolves to nothing yields `None`; the fingerprint treats
-//! that as an explicit null marker, and entity extraction contributes nothing.
+//! A selector that resolves to nothing yields `None`. Dedup and grouping
+//! identities keep it apart from every resolved value, including JSON `null`;
+//! entity extraction skips it, and skips a `null` too.
 
 use rsigma_eval::{EvaluationResult, ResultBody};
 use serde_json::Value;

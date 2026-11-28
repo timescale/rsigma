@@ -21,6 +21,7 @@
 mod config;
 mod dedup;
 mod grouping;
+mod identity;
 mod inhibit;
 mod matcher;
 mod silence;
@@ -36,8 +37,8 @@ pub use config::{
 pub use dedup::DedupStore;
 pub use grouping::{
     Caps, GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, SampleMode,
-    group_fingerprint,
 };
+pub use identity::IdentityKey;
 pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
 pub use silence::{
     DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin,
@@ -45,6 +46,8 @@ pub use silence::{
 };
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;
+
+use std::sync::Arc;
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
 use serde_json::Value;
@@ -81,6 +84,10 @@ pub struct AlertPipeline {
     strip_event: bool,
     dedup: Option<DedupConfig>,
     group: Option<GroupConfig>,
+    /// Names of the `dedup.fingerprint` and `group.by` selectors, shared by
+    /// every identity key the pipeline builds.
+    dedup_names: Arc<[String]>,
+    group_names: Arc<[String]>,
     static_silences: Vec<StaticSilence>,
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
@@ -118,6 +125,13 @@ impl AlertPipeline {
         AlertPipeline {
             scope,
             strip_event,
+            dedup_names: dedup.as_ref().map_or_else(
+                || Arc::from([]),
+                |d| identity::selector_names(&d.fingerprint),
+            ),
+            group_names: group
+                .as_ref()
+                .map_or_else(|| Arc::from([]), |g| identity::selector_names(&g.by)),
             dedup,
             group,
             static_silences,
@@ -322,18 +336,44 @@ impl AlertPipeline {
                 continue;
             }
 
+            let dedup_key = self
+                .dedup
+                .as_ref()
+                .map(|cfg| IdentityKey::dedup_named(&self.dedup_names, &cfg.fingerprint, &result));
+            // Capture needs the group identity before dedup; otherwise grouping
+            // computes it only for results that survive dedup.
+            let group_slot_for = |result: &EvaluationResult| {
+                self.group
+                    .as_ref()
+                    .filter(|g| g.mode == GroupMode::GroupBy)
+                    .map(|g| grouping::GroupSlot {
+                        key: Arc::new(IdentityKey::group_named(&self.group_names, &g.by, result)),
+                        id: None,
+                    })
+            };
+            let mut group_slot = if capturing {
+                group_slot_for(&result)
+            } else {
+                None
+            };
+            let mut new_fingerprint = None;
             if capturing {
-                self.offer_capture(&result, &state.incidents, capture_ok, &mut pending);
+                new_fingerprint = self.offer_capture(
+                    &result,
+                    state,
+                    dedup_key.as_ref(),
+                    group_slot.as_mut(),
+                    capture_ok,
+                    &mut pending,
+                );
             }
 
             // Dedup: fold duplicates into the active alert. When the store is at
             // its cap, a first-fire for a new fingerprint passes through
             // un-deduped rather than opening another alert, bounding memory; the
             // store-entries gauge plateauing at the cap signals saturation.
-            if let Some(cfg) = self.dedup.as_ref() {
-                let fingerprint = dedup::fingerprint(&cfg.fingerprint, &result);
-                if state.dedup.contains(&fingerprint) {
-                    state.dedup.fold(&fingerprint, now);
+            if let (Some(cfg), Some(key)) = (self.dedup.as_ref(), dedup_key) {
+                if state.dedup.fold(&key, now) {
                     metrics.on_alert_pipeline_result("folded");
                     continue;
                 }
@@ -349,15 +389,11 @@ impl AlertPipeline {
                     {
                         metrics.on_tenant_quota_eviction("active_alerts");
                     }
-                    let fields = dedup::resolve_fields(&cfg.fingerprint, &result);
+                    let fingerprint =
+                        new_fingerprint.unwrap_or_else(|| state.dedup.allocate_fingerprint(&key));
+                    let fields = identity::display_values(key.names(), &cfg.fingerprint, &result);
                     let sample = dedup::sample_of(&result);
-                    state.dedup.insert(
-                        fingerprint,
-                        now,
-                        sample,
-                        fields,
-                        result.header.tenant_id.clone(),
-                    );
+                    state.dedup.insert(key, fingerprint, now, sample, fields);
                 }
                 metrics.on_alert_pipeline_result("emitted");
             }
@@ -370,9 +406,11 @@ impl AlertPipeline {
                     max: self.tenant_quotas.incidents,
                     on_evict: || metrics.on_tenant_quota_eviction("incidents"),
                 };
+                let slot = group_slot.or_else(|| group_slot_for(&result));
                 if let Some(id) = state.incidents.assign_with_finding_uid(
                     gcfg,
                     &result,
+                    slot,
                     finding_uid.as_deref().filter(|uid| !uid.is_empty()),
                     now,
                     |guard| {
@@ -409,46 +447,68 @@ impl AlertPipeline {
         (kept, kept_uids)
     }
 
+    /// Offer a result to capture. Resolves the display ids the result's
+    /// incident and dedup alert have or would take, recording a new incident
+    /// id on `group` so grouping assigns the same one. Returns the dedup
+    /// fingerprint allocated for an alert that is not yet open.
     fn offer_capture(
         &self,
         result: &EvaluationResult,
-        incidents: &IncidentStore,
+        state: &AlertPipelineState,
+        dedup_key: Option<&IdentityKey>,
+        group: Option<&mut grouping::GroupSlot>,
         capture_ok: bool,
         pending: &mut Vec<crate::capture::PendingCapture>,
-    ) {
+    ) -> Option<String> {
         use crate::capture::{AdmittedMatch, CaptureReject, PendingAdmit, PendingCapture};
 
         if !result.is_detection() {
             pending.push(PendingCapture::Reject(CaptureReject::UnsupportedResultKind));
-            return;
+            return None;
         }
         if !capture_ok {
-            return;
+            return None;
         }
         let Some(event) = result.as_detection().and_then(|d| d.event.clone()) else {
             pending.push(PendingCapture::Reject(CaptureReject::MissingEvent));
-            return;
+            return None;
         };
-        let Some(gcfg) = self.group.as_ref() else {
-            return;
+        let (Some(gcfg), Some(slot)) = (self.group.as_ref(), group) else {
+            return None;
         };
-        let (incident_id, _) = grouping::group_fingerprint(&gcfg.by, result);
-        if !incidents.can_assign(&incident_id, gcfg.caps.max_open_incidents) {
+        if !state
+            .incidents
+            .can_assign(&slot.key, gcfg.caps.max_open_incidents)
+        {
             pending.push(PendingCapture::Reject(CaptureReject::NotAssignable));
-            return;
+            return None;
         }
-        let fingerprint = self
-            .dedup
-            .as_ref()
-            .map(|cfg| dedup::fingerprint(&cfg.fingerprint, result));
+        let open_id = state.incidents.incident_id_for(&slot.key);
+        let is_fresh_generation = open_id.is_none();
+        let incident_id = match open_id {
+            Some(id) => id.to_string(),
+            None => {
+                let id = state.incidents.allocate_id(&slot.key);
+                slot.id = Some(id.clone());
+                id
+            }
+        };
+        let mut new_fingerprint = None;
+        let fingerprint = dedup_key.map(|key| match state.dedup.fingerprint_of(key) {
+            Some(fingerprint) => fingerprint.to_string(),
+            None => new_fingerprint
+                .insert(state.dedup.allocate_fingerprint(key))
+                .clone(),
+        });
         let rule_id = result
             .header
             .rule_id
             .clone()
             .unwrap_or_else(|| result.header.rule_title.clone());
         pending.push(PendingCapture::Admit(PendingAdmit {
-            is_fresh_generation: !incidents.contains(&incident_id),
+            is_fresh_generation,
             incident_id,
+            incident_key: Arc::clone(&slot.key),
             tenant: result.header.tenant_id.clone(),
             event,
             match_: AdmittedMatch {
@@ -457,6 +517,7 @@ impl AlertPipeline {
                 fingerprint,
             },
         }));
+        new_fingerprint
     }
 
     /// Advance time: emit due dedup `repeat` / `resolved` records and incident
@@ -531,9 +592,11 @@ impl AlertPipeline {
     }
 
     /// Like [`restore`](Self::restore), returning the restored and discarded
-    /// counts. Accepts versions 1 and 2 and applies the tenant attribution rule
+    /// counts. Accepts versions 1 to 3 and applies the tenant attribution rule
     /// to every store: with `tenancy`, untenanted entries are discarded; without
-    /// it, tenanted ones are.
+    /// it, tenanted ones are. Dedup alerts and `group_by` incidents from
+    /// versions 1 and 2 have their identity keys rebuilt from their stored
+    /// values and keep their old ids.
     pub fn restore_detailed(
         &self,
         state: &mut AlertPipelineState,
@@ -541,9 +604,10 @@ impl AlertPipeline {
         now: i64,
         tenancy: bool,
     ) -> Option<rsigma_eval::ImportStats> {
-        if !matches!(snap.version, 1 | 2) {
+        if !matches!(snap.version, 1..=SNAPSHOT_VERSION) {
             return None;
         }
+        let version = snap.version;
         let mut stats = rsigma_eval::ImportStats::default();
         let keep = |tenant: Option<&rsigma_eval::TenantId>| {
             if tenancy {
@@ -577,9 +641,9 @@ impl AlertPipeline {
         let dedup: Vec<_> = snap
             .dedup
             .into_iter()
-            .filter(|(_, alert)| {
-                count(alert.tenant.as_ref());
-                keep(alert.tenant.as_ref())
+            .filter(|alert| {
+                count(alert.tenant());
+                keep(alert.tenant())
             })
             .collect();
         let incidents: Vec<_> = snap
@@ -607,9 +671,16 @@ impl AlertPipeline {
         );
         let mut trim = CapTrim::default();
         if let Some(cfg) = self.dedup.as_ref() {
-            state
-                .dedup
-                .restore(dedup, now, cfg.resolve_timeout.as_secs() as i64);
+            let unrebuildable =
+                state
+                    .dedup
+                    .restore(dedup, now, cfg.resolve_timeout.as_secs() as i64);
+            if unrebuildable > 0 {
+                tracing::warn!(
+                    count = unrebuildable,
+                    "Dropped restored dedup alerts whose sample names no rule"
+                );
+            }
             trim.dedup_alerts = state.dedup.enforce_cap(cfg.max_active_alerts);
         }
         if let Some(g) = self.group.as_ref() {
@@ -621,7 +692,7 @@ impl AlertPipeline {
             );
         }
         if let Some(icfg) = self.inhibit.as_ref() {
-            state.inhibit.restore(inhibit_sources, icfg, now);
+            state.inhibit.restore(inhibit_sources, icfg, now, version);
             trim.inhibit_sources = state.inhibit.enforce_cap(icfg.max_sources);
         }
         self.trim_tenants(state, &mut trim);
@@ -1334,6 +1405,89 @@ mod tests {
         assert_eq!(sink.admits[0].matches.len(), 2);
         assert!(sink.admits[0].matches.iter().any(|m| m.rule_id == "rule-1"));
         assert!(sink.admits[0].matches.iter().any(|m| m.rule_id == "rule-2"));
+    }
+
+    #[test]
+    fn colliding_display_ids_keep_alerts_incidents_and_captures_apart() {
+        let _forced = identity::force_display_id(identity::colliding_display_id);
+        let p = capture_pipeline();
+        let mut st = AlertPipelineState::default();
+        let mut ring = crate::CaptureRing::new(crate::CaptureConfig::default());
+        let mut kept = Vec::new();
+        for (now, batch) in [
+            vec!["10.0.0.1", "10.0.0.2"],
+            vec!["10.0.0.2"],
+            vec!["10.0.0.1"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut sink = crate::CaptureRingSink {
+                ring: &mut ring,
+                metrics: &NoopMetrics,
+            };
+            kept.extend(
+                p.process_with_capture(
+                    batch
+                        .into_iter()
+                        .map(|ip| {
+                            let mut d = detection(ip, Level::High);
+                            d.as_detection_mut().unwrap().event =
+                                Some(serde_json::json!({"SourceIp": ip}));
+                            d
+                        })
+                        .collect(),
+                    &mut st,
+                    now as i64,
+                    &NoopMetrics,
+                    Some(&mut sink),
+                ),
+            );
+        }
+
+        assert_eq!(kept.len(), 2, "each identity emits once, then folds");
+        assert_eq!((st.dedup.len(), st.incidents.len()), (2, 2));
+        let ids: Vec<String> = kept
+            .iter()
+            .map(|r| {
+                r.header.enrichments.as_ref().unwrap()["incident_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_ne!(ids[0], ids[1], "the second incident takes the next id");
+
+        assert_eq!(ring.stats().incidents, 2);
+        let mut fingerprints = Vec::new();
+        for (result, id) in kept.iter().zip(&ids) {
+            let ip = &result.as_detection().unwrap().matched_fields[0].value;
+            let snap = ring
+                .snapshot_incident(None, id)
+                .expect("each incident has its own capture generation");
+            assert_eq!(snap.events.len(), 2);
+            assert!(snap.events.iter().all(|e| &e.event["SourceIp"] == ip));
+            fingerprints.push(snap.events[0].matches[0].fingerprint.clone().unwrap());
+        }
+        assert_ne!(fingerprints[0], fingerprints[1]);
+
+        let out = p.tick(&mut st, 10_000, &NoopMetrics);
+        let mut resolved: Vec<String> = out
+            .dedup_lines
+            .iter()
+            .map(|line| {
+                line["enrichments"]["dedup_fingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        resolved.sort();
+        fingerprints.sort();
+        assert_eq!(
+            resolved, fingerprints,
+            "captured fingerprints name the alerts dedup emits"
+        );
     }
 
     #[test]

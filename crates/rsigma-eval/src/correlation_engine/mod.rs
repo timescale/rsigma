@@ -2570,8 +2570,12 @@ fn value_to_string_for_count(v: &EventValue) -> Option<String> {
 /// Build a composite distinct-key for `value_count` over one or more fields.
 ///
 /// Each field's value is rendered with [`value_to_string_for_count`] and the
-/// rendered parts are joined with `\u{1f}` (the ASCII Unit Separator), which
-/// is unlikely to occur in normal log data. If any field is missing or has a
+/// rendered parts are joined with `\u{1f}` (the ASCII Unit Separator). When a
+/// part itself contains `\u{1f}`, joining could shift text from one field into
+/// the next, so the key is instead `n + 1` separators followed by each part as
+/// `<byte length>:<part>`. A joined key holds exactly `n - 1` separators and a
+/// length-prefixed key at least `n + 2`, so the two forms never meet, and
+/// joined keys in persisted state stay valid. If any field is missing or has a
 /// type that does not produce a stable string representation, the event is
 /// excluded from the distinct count (return `None`), matching the historical
 /// single-field behavior.
@@ -2587,6 +2591,15 @@ fn composite_value_count_key(event: &impl Event, fields: &[String]) -> Option<St
         let val = event.get_field(field_name)?;
         let rendered = value_to_string_for_count(&val)?;
         parts.push(rendered);
+    }
+    if parts.iter().any(|part| part.contains('\u{1f}')) {
+        let mut key = "\u{1f}".repeat(parts.len() + 1);
+        for part in &parts {
+            key.push_str(&part.len().to_string());
+            key.push(':');
+            key.push_str(part);
+        }
+        return Some(key);
     }
     Some(parts.join("\u{1f}"))
 }

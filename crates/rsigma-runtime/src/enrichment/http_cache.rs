@@ -1,8 +1,10 @@
 //! In-memory response cache for [`HttpEnricher`](super::http::HttpEnricher).
 //!
-//! Keyed on `(method, url, body_hash, headers_hash)` with a configurable
-//! TTL. The rendered headers are part of the key because a header template
-//! can carry a per-result value such as the tenant. Each
+//! Keyed on `(method, url, body, headers)` with a configurable TTL. The
+//! rendered headers are part of the key because a header template can carry
+//! a per-result value such as the tenant. The key holds the body and headers
+//! themselves rather than a digest of them, so two requests share a cached
+//! response only when they are identical. Each
 //! `HttpEnricher` instance owns its own cache so two recipes that hit
 //! the same URL with different API keys (different `Authorization`
 //! headers) cannot accidentally share each other's cached responses.
@@ -25,39 +27,28 @@ pub struct CacheKey {
     pub method: String,
     /// Full request URL.
     pub url: String,
-    /// 64-bit hash of the request body (zero when no body).
-    pub body_hash: u64,
-    /// 64-bit hash of the rendered request headers (zero when none).
-    pub headers_hash: u64,
+    /// Request body (empty when no body).
+    pub body: Vec<u8>,
+    /// Rendered request headers, in request order.
+    pub headers: Vec<(String, String)>,
 }
 
 impl CacheKey {
-    /// Build a cache key from raw components. Hashes the body once at
-    /// insert time so subsequent lookups are O(key-size).
+    /// Build a cache key from raw components.
     pub fn new(method: &str, url: &str, body: Option<&[u8]>) -> Self {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        body.unwrap_or(&[]).hash(&mut hasher);
         Self {
             method: method.to_ascii_uppercase(),
             url: url.to_string(),
-            body_hash: hasher.finish(),
-            headers_hash: 0,
+            body: body.unwrap_or_default().to_vec(),
+            headers: Vec::new(),
         }
     }
 
-    /// Fold the rendered request headers into the key, so two requests that
+    /// Add the rendered request headers to the key, so two requests that
     /// differ only in a header never share a cached response.
     #[must_use]
     pub fn with_headers(mut self, headers: &[(String, String)]) -> Self {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        headers.hash(&mut hasher);
-        self.headers_hash = if headers.is_empty() {
-            0
-        } else {
-            hasher.finish()
-        };
+        self.headers = headers.to_vec();
         self
     }
 }
@@ -99,7 +90,7 @@ impl std::fmt::Debug for CacheStats {
     }
 }
 
-/// In-memory `(method, url, body_hash) → JSON value` cache with TTL.
+/// In-memory `(method, url, body, headers) → JSON value` cache with TTL.
 ///
 /// Cheap to clone (`Arc`-wrapped internals); each enricher instance keeps
 /// its own clone in its hot path, and the daemon may share instances
@@ -274,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn body_hash_separates_keys() {
+    fn body_separates_keys() {
         let a = CacheKey::new("POST", "https://x", Some(b"a"));
         let b = CacheKey::new("POST", "https://x", Some(b"b"));
         assert_ne!(a, b);

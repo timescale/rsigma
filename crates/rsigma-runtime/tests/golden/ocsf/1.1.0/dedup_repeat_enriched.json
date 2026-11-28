@@ -38,7 +38,7 @@
       }
     ],
     "title": "Malware execution",
-    "uid": "dedup-13bf5ab591909123-1000"
+    "uid": "dedup-5ba0a3578eb33b46c5884eef27001ebb-1000"
   },
   "message": "Malware execution",
   "metadata": {
@@ -81,7 +81,7 @@
         "match.CommandLine": "malware.exe",
         "rule": "rule-1"
       },
-      "dedup_fingerprint": "13bf5ab591909123",
+      "dedup_fingerprint": "5ba0a3578eb33b46c5884eef27001ebb",
       "dedup_state": "repeat",
       "geo": {
         "city": "Berlin",

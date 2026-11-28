@@ -1543,7 +1543,7 @@ The decision matrix:
 
 ### `http`: per-result HTTP fetch with optional response cache
 
-Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on `(method, url, body_hash)` with a configurable TTL; mandatory in practice for any rate-limited API.
+Per-result `reqwest` request with template-expanded URL, headers, and optional body. Parses the response as JSON, optionally sliced by an `extract` expression. The optional response cache is keyed on the exact `(method, url, body, headers)` with a configurable TTL; mandatory in practice for any rate-limited API.
 
 ```yaml
 - id: hash_virustotal

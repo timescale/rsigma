@@ -43,7 +43,7 @@ The token is read from an environment variable and never taken as an argument, s
 
 ```bash
 export RSIGMA_API_TOKEN="$(cat /run/secrets/rsigma-token)"
-rsigma engine incidents export f8bcd62a829b1126
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0
 ```
 
 ## Examples
@@ -51,7 +51,7 @@ rsigma engine incidents export f8bcd62a829b1126
 ### Export to stdout and pick the bundle apart
 
 ```bash
-rsigma engine incidents export f8bcd62a829b1126 | jq '.rules[] | {key, count, resolution}'
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0 | jq '.rules[] | {key, count, resolution}'
 ```
 
 ```json
@@ -64,7 +64,7 @@ rsigma engine incidents export f8bcd62a829b1126 | jq '.rules[] | {key, count, re
 ### A Markdown report for a ticket
 
 ```bash
-rsigma engine incidents export f8bcd62a829b1126 \
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0 \
   --bundle-format markdown \
   --output incident-f8bcd62a.md
 ```
@@ -72,7 +72,7 @@ rsigma engine incidents export f8bcd62a829b1126 \
 ### A remote TLS daemon
 
 ```bash
-rsigma engine incidents export f8bcd62a829b1126 --addr https://daemon.internal:9443
+rsigma engine incidents export 6112491905cfd189ee15d93938676ee0 --addr https://daemon.internal:9443
 ```
 
 ### Export every open incident

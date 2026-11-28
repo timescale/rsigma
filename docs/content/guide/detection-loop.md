@@ -210,14 +210,14 @@ curl -s http://127.0.0.1:9090/api/v1/incidents \
 ```
 
 ```text
-srv-bk01	48cc261cd074df8f
-srv-bk02	48cc271cd074e142
-srv-db01	4ea64b0b2974d516
-ws-014	d099e6d4360c35b5
-ws-022	d09ce6d4360e6b8c
+srv-bk01	8973716040b4ebf1cfddd336251d2611
+srv-bk02	b3265873ec001f68ce12595b518881a2
+srv-db01	d0260e6e01b47fcfd9fa8d6d1569ff66
+ws-014	0d0e4bd59eb46dfb9e8fb4b28c12fe0d
+ws-022	195c10163ac3090eff2d7da287f38a69
 ```
 
-Incident ids are a fingerprint of the grouping values, so you get the same ids.
+Incident ids are derived from the grouping values, so you get the same ids.
 
 ## 5. Alert and triage: record verdicts
 

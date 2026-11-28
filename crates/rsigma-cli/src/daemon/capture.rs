@@ -714,6 +714,7 @@ mod tests {
         ring.admit(
             rsigma_runtime::AdmittedEvent {
                 incident_id: "inc".into(),
+                incident_key: None,
                 tenant: None,
                 is_fresh_generation: true,
                 event: json!({"user":"a"}),
