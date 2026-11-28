@@ -1,0 +1,15 @@
+enrichers:
+  - id: ip_intel
+    kind: detection
+    type: stix
+    inject_field: stix_indicators
+    text_search: "${detection.fields.DestinationIp}"
+    text_match: token
+    type_filter: [indicator]
+    max_results: 2
+  - id: name_intel
+    kind: detection
+    type: stix
+    inject_field: stix_names
+    stix_id: "${detection.fields.Id}"
+    text_match: exact
