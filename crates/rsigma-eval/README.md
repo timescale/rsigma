@@ -135,7 +135,7 @@ Opt-in counter that records every observed field name and surfaces gap and broke
 | Type / function | Description |
 |-----------------|-------------|
 | `FieldObserver::new(max_keys)` | Construct an observer with a hard cap on distinct keys (overflow drops are counted, existing keys keep updating) |
-| `FieldObserver::observe(event: &impl Event)` | Walk `event.field_keys()` and bump per-field counters; `&self` so callers can share an `Arc` |
+| `FieldObserver::observe(event: &impl Event)` | Walk `event.visit_field_keys()` within the default `FieldKeyBudget` and bump per-field counters, counting skipped paths in `oversized_keys` and cut-short events in `truncated_events`; `&self` so callers can share an `Arc` |
 | `FieldObserver::snapshot()` | `FieldObservation { entries, events_observed, unique_keys, overflow_dropped, lifetime_events_observed, lifetime_overflow_dropped, max_keys, uptime_seconds }`. Entries sorted by descending count then name. Keys held as `Arc<str>` so the snapshot is refcount-cheap |
 | `FieldObservation::coverage(&RuleFieldSet)` | Partition a snapshot into `FieldCoverage { unknown, intersection_count, missing }` against a rule field set in one pass. Both the daemon HTTP handlers and the eval report consume this, so the partition semantics cannot drift |
 | `FieldObserver::reset()` | Clear counters; lifetime totals survive so Prometheus counter bridges stay monotonic |
@@ -246,7 +246,7 @@ The `Event` wrapper provides flexible field access over `serde_json::Value`:
 - **Dot-notation**: if no flat key matches and the path contains `.`, split and traverse nested objects.
 - **Array traversal**: arrays are searched with OR semantics (first matching element wins).
 - **Keyword detection**: `matches_keyword` searches all string values across all fields recursively, and numbers as their JSON text.
-- **Field enumeration**: `field_keys()` returns the leaf field paths in dot-notation (e.g. `actor.id`), with intermediate object names included so callers can inspect coverage at any nesting level. Used by the daemon's opt-in field observer; not on the detection hot path. Ships with a default impl that walks `to_json()`; `JsonEvent` overrides with a zero-copy recursive walk.
+- **Field enumeration**: `visit_field_keys(budget, visit)` walks the leaf field paths in dot-notation (e.g. `actor.id`; intermediate object names are not emitted) in one reused buffer, within a `FieldKeyBudget` (default 4,096 paths, 512 bytes per path, 256 KiB in total), and returns a `FieldKeyOverflow` describing what it skipped, so a hostile event cannot make the walk cost key length times leaf count. `field_keys()` collects it with the default budget, and `has_any_field()` stops at the first leaf without building paths. Used by the daemon's opt-in field and schema observers; not on the detection hot path. The default impls walk `to_json()`; `JsonEvent` overrides them to walk its value directly.
 - **Max nesting depth**: recursive traversal stops at depth **64** (`MAX_NESTING_DEPTH`).
 - **Unwrapping**: `JsonEvent::into_value` returns the wrapped `serde_json::Value`, cloning only when the event borrows it.
 

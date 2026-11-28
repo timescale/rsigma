@@ -149,6 +149,7 @@ daemon:
     format: auto
     buffer_size: 10000     # at least 1
     batch_size: 128        # at least 1, capped at buffer_size
+    otlp_max_records: 10000   # at least 1; OTLP requests with more log records are refused
   output:
     sinks: [stdout]        # stdout | file://... | nats://... | otlp://... | unix:///run/rsigma/out.sock (Unix)
                            # query params: ?on_full=drop, ?format=ndjson|ocsf (line and OTLP sinks), ?ocsf_version=<v>, ?ocsf_incident_class=2004|2005, and ?ocsf_assignee_group=<name> (with format=ocsf; defaults 1.1.0 and 2004; assignee group is required for class 2005), ?compression=gzip and ?timeout=10s (OTLP), TLS ?ca=/?client_cert=/?client_key=/?tls_domain=

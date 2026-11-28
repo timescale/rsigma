@@ -120,9 +120,9 @@ pub use io::webhook::{
 };
 pub use io::{
     AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
-    EventSource, FileSink, FormattedIncidentEnvelope, IncidentEnvelope, OnFull, RawEvent, Sink,
-    SinkFormat, StdinReadStatus, StdinSource, StdoutSink, WithTenant, spawn_source,
-    validate_nats_subject_template,
+    EventSource, FileSink, FormattedIncidentEnvelope, FramedLine, IncidentEnvelope, LineFramer,
+    MAX_LINE_BYTES, OnFull, RawEvent, Sink, SinkFormat, StdinReadStatus, StdinSource, StdoutSink,
+    WithTenant, spawn_source, validate_nats_subject_template,
 };
 #[cfg(all(unix, feature = "uds"))]
 pub use io::{
@@ -162,7 +162,9 @@ pub use input::evtx::{EvtxError, EvtxFileReader};
 
 #[cfg(feature = "otlp")]
 pub use io::otlp::{
-    DEFAULT_OTLP_TIMEOUT, ExportLogsServiceRequest, ExportLogsServiceResponse, LogsService,
-    LogsServiceServer, OtlpClientTls, OtlpProtocol, OtlpSink, evaluation_results_to_logs_request,
-    logs_request_to_raw_events, logs_request_to_raw_events_for,
+    DEFAULT_OTLP_TIMEOUT, ExportLogsPartialSuccess, ExportLogsServiceRequest,
+    ExportLogsServiceResponse, LogRecordConverter, LogsService, LogsServiceServer, OtlpClientTls,
+    OtlpLimits, OtlpProtocol, OtlpSink, RejectedRecords, count_log_records, count_log_records_json,
+    evaluation_results_to_logs_request, log_record_count, logs_request_to_raw_events,
+    logs_request_to_raw_events_for,
 };

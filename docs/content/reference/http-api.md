@@ -126,6 +126,12 @@ curl -sS http://127.0.0.1:9090/readyz
 {"status":"not_ready","rules_loaded":false}
 ```
 
+Once a stdin source has stopped on a read error, `/readyz` stays at 503 with `"input_failed": true`, whatever later reloads do, until the daemon exits. {{ added "unreleased" }}
+
+```json
+{"status":"not_ready","rules_loaded":true,"input_failed":true}
+```
+
 ## Reload
 
 ### `POST /api/v1/reload`
@@ -160,6 +166,8 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/events \
 ```
 
 Lines that fail to parse increment `rsigma_events_parse_errors_total` and are dropped silently. To inspect parse errors, scrape `/metrics` or watch the daemon's stderr log.
+
+A line that is not valid UTF-8 is queued with the invalid bytes replaced by `U+FFFD` and counted in `rsigma_input_invalid_utf8_total{source="http"}`. A line over 1 MiB refuses the whole request with `413` before any line is queued, so a retried request never duplicates events. {{ added "unreleased" }}
 
 ## Dynamic sources
 
@@ -291,6 +299,8 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/sources/c2_ips/indicators \
 OTLP log ingestion over HTTP. Accepts `application/x-protobuf` or `application/json`, optionally gzip-encoded. Returns `application/x-protobuf` (or `application/json` matching the request) with the standard OTLP `ExportLogsServiceResponse`. Requires the daemon to be built with `daemon-otlp`.
 
 The request body is limited to 2 MiB as sent. A gzip-encoded body is also limited to 4 MiB after decompression, the same limit the gRPC transport applies, and a larger body is rejected with `413 Payload Too Large`. {{ added "0.25.0" }}
+
+A request with more log records than `--otlp-max-records` (default 10,000) is rejected with `413` before it is decoded, and log records past the flattening limits are reported in the response's partial success. See [OTLP Integration: Request limits](../guide/otlp-integration.md#request-limits). {{ added "unreleased" }}
 
 ### gRPC `LogsService/Export`
 

@@ -25,6 +25,9 @@ pub struct Metrics {
     pub input_queue_depth: IntGauge,
     pub output_queue_depth: IntGauge,
     pub back_pressure_events: IntCounter,
+    pub input_dropped_total: IntCounterVec,
+    pub input_invalid_utf8_total: IntCounterVec,
+    pub input_source_failed_total: IntCounterVec,
     pub pipeline_latency: Histogram,
     pub batch_size_histogram: Histogram,
     pub dlq_events: IntCounter,
@@ -74,6 +77,8 @@ pub struct Metrics {
     pub otlp_log_records: IntCounter,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_errors: IntCounterVec,
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_rejected_log_records: IntCounterVec,
     #[cfg(feature = "daemon-tls")]
     pub tls_certificate_expiry_seconds: Gauge,
     #[cfg(feature = "daemon-tls")]
@@ -81,6 +86,8 @@ pub struct Metrics {
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
+    pub fields_observer_oversized_keys_total: IntCounter,
+    pub fields_observer_truncated_events_total: IntCounter,
     pub events_by_schema: IntCounterVec,
     pub events_unknown_schema: IntCounter,
     pub events_ambiguous_schema: IntCounter,
@@ -265,6 +272,44 @@ impl Metrics {
             "Times a source was blocked on a full event channel",
         ))
         .unwrap();
+        let input_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_input_dropped_total",
+                "Input records a source dropped, by source (stdin, unix, nats) and reason \
+                 (too_long, blank)",
+            ),
+            &["source", "reason"],
+        )
+        .unwrap();
+        for (source, reason) in [
+            ("stdin", "too_long"),
+            ("unix", "too_long"),
+            ("nats", "too_long"),
+            ("nats", "blank"),
+        ] {
+            input_dropped_total.with_label_values(&[source, reason]);
+        }
+        let input_invalid_utf8_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_input_invalid_utf8_total",
+                "Input records that were not valid UTF-8 and were passed on with the \
+                 invalid bytes replaced, by source",
+            ),
+            &["source"],
+        )
+        .unwrap();
+        let input_source_failed_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_input_source_failed_total",
+                "Times an input source stopped on an error instead of at the end of its input",
+            ),
+            &["source"],
+        )
+        .unwrap();
+        for source in ["stdin", "unix", "nats", "http"] {
+            input_invalid_utf8_total.with_label_values(&[source]);
+        }
+        input_source_failed_total.with_label_values(&["stdin"]);
         let pipeline_latency = Histogram::with_opts(
             HistogramOpts::new(
                 "rsigma_pipeline_latency_seconds",
@@ -415,6 +460,15 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(back_pressure_events.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(input_dropped_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(input_invalid_utf8_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(input_source_failed_total.clone()))
             .unwrap();
         registry
             .register(Box::new(pipeline_latency.clone()))
@@ -769,7 +823,7 @@ impl Metrics {
         #[cfg(feature = "daemon-otlp")]
         let otlp_log_records = IntCounter::with_opts(Opts::new(
             "rsigma_otlp_log_records_total",
-            "Log records ingested via OTLP",
+            "Log records ingested via OTLP and forwarded to the engine",
         ))
         .unwrap();
         #[cfg(feature = "daemon-otlp")]
@@ -778,6 +832,22 @@ impl Metrics {
             &["transport", "reason"],
         )
         .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        let otlp_rejected_log_records = IntCounterVec::new(
+            Opts::new(
+                "rsigma_otlp_rejected_log_records_total",
+                "OTLP log records rejected and reported as a partial success, by transport \
+                 and reason (too_large, over_budget)",
+            ),
+            &["transport", "reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        for transport in ["http", "grpc"] {
+            for reason in ["too_large", "over_budget"] {
+                otlp_rejected_log_records.with_label_values(&[transport, reason]);
+            }
+        }
 
         #[cfg(feature = "daemon-otlp")]
         {
@@ -786,6 +856,9 @@ impl Metrics {
                 .register(Box::new(otlp_log_records.clone()))
                 .unwrap();
             registry.register(Box::new(otlp_errors.clone())).unwrap();
+            registry
+                .register(Box::new(otlp_rejected_log_records.clone()))
+                .unwrap();
         }
 
         #[cfg(feature = "daemon-tls")]
@@ -827,6 +900,16 @@ impl Metrics {
             "New-key insert attempts dropped because the field observer was at capacity",
         ))
         .unwrap();
+        let fields_observer_oversized_keys_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observer_oversized_keys_total",
+            "Field paths the field observer skipped for being longer than 512 bytes",
+        ))
+        .unwrap();
+        let fields_observer_truncated_events_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observer_truncated_events_total",
+            "Events whose field walk stopped at the per-event key or byte cap",
+        ))
+        .unwrap();
         registry
             .register(Box::new(fields_observed_total.clone()))
             .unwrap();
@@ -835,6 +918,12 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(fields_observer_overflow_dropped_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_oversized_keys_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_truncated_events_total.clone()))
             .unwrap();
 
         let events_by_schema = IntCounterVec::new(
@@ -1491,6 +1580,9 @@ impl Metrics {
             input_queue_depth,
             output_queue_depth,
             back_pressure_events,
+            input_dropped_total,
+            input_invalid_utf8_total,
+            input_source_failed_total,
             pipeline_latency,
             batch_size_histogram,
             dlq_events,
@@ -1540,6 +1632,8 @@ impl Metrics {
             otlp_log_records,
             #[cfg(feature = "daemon-otlp")]
             otlp_errors,
+            #[cfg(feature = "daemon-otlp")]
+            otlp_rejected_log_records,
             #[cfg(feature = "daemon-tls")]
             tls_certificate_expiry_seconds,
             #[cfg(feature = "daemon-tls")]
@@ -1547,6 +1641,8 @@ impl Metrics {
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
+            fields_observer_oversized_keys_total,
+            fields_observer_truncated_events_total,
             events_by_schema,
             events_ambiguous_schema,
             unknown_schema_clusters,
@@ -1632,6 +1728,18 @@ impl Metrics {
         if overflow_now > overflow_prev {
             self.fields_observer_overflow_dropped_total
                 .inc_by(overflow_now - overflow_prev);
+        }
+        let oversized_now = snapshot.lifetime_oversized_keys;
+        let oversized_prev = self.fields_observer_oversized_keys_total.get();
+        if oversized_now > oversized_prev {
+            self.fields_observer_oversized_keys_total
+                .inc_by(oversized_now - oversized_prev);
+        }
+        let truncated_now = snapshot.lifetime_truncated_events;
+        let truncated_prev = self.fields_observer_truncated_events_total.get();
+        if truncated_now > truncated_prev {
+            self.fields_observer_truncated_events_total
+                .inc_by(truncated_now - truncated_prev);
         }
     }
 
@@ -1728,6 +1836,24 @@ impl Metrics {
 
 /// Bridge from rsigma-runtime's MetricsHook trait to the Prometheus-backed Metrics struct.
 impl MetricsHook for Metrics {
+    fn on_input_dropped(&self, source: &'static str, reason: &'static str) {
+        self.input_dropped_total
+            .with_label_values(&[source, reason])
+            .inc();
+    }
+
+    fn on_input_invalid_utf8(&self, source: &'static str) {
+        self.input_invalid_utf8_total
+            .with_label_values(&[source])
+            .inc();
+    }
+
+    fn on_input_source_failed(&self, source: &'static str) {
+        self.input_source_failed_total
+            .with_label_values(&[source])
+            .inc();
+    }
+
     fn on_tenant_rejected(&self, channel: &'static str, reason: &'static str) {
         self.tenant_rejected_total
             .with_label_values(&[channel, reason])

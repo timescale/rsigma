@@ -76,12 +76,23 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--input <URL>` | `stdin` | Event source. Schemes: `stdin`, `http` (accepts `POST /api/v1/events`), `nats://<host>:<port>/<subject>`, and on Unix `unix:///path/to.sock` (newline-delimited events over a Unix domain socket). |
-| `--stdin-mode <MODE>` | `batch` | How a stdin input ends (config `daemon.input.stdin_mode`). `batch` exits at end of input and reports the [batch result](#batch-runs) in the exit code. `stream` keeps the daemon running after end of input until a shutdown signal, restores state like the other inputs, and exits `0`. Ignored for other inputs. {{ added "0.28.0" }} |
+| `--stdin-mode <MODE>` | `batch` | How a stdin input ends (config `daemon.input.stdin_mode`). `batch` exits at end of input and reports the [batch result](#batch-runs) in the exit code. `stream` keeps the daemon running after end of input until a shutdown signal, restores state like the other inputs, and exits `0`. Ignored for other inputs. {{ added "0.28.0" }} A stdin read error ends a stream-mode daemon as well: readiness drops, the events already read drain, and it exits `4`. {{ added "unreleased" }} |
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With features: `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog (`+HH:MM` or `-HH:MM`). |
 | `--syslog-strip-bom <BOOL>` | `true` | Strip a leading UTF-8 BOM (`U+FEFF`) from RFC 5424 syslog messages. RFC 5424 treats the BOM as an encoding marker, not content. Pass `--syslog-strip-bom false` to keep it byte-for-byte. |
 | `--jq <JQ>` | unset | `jq` filter to extract the event payload from each JSON object. Mutually exclusive with `--jsonpath`. The `env` builtin is not available. {{ added "0.27.0" }} |
 | `--jsonpath <JSONPATH>` | unset | JSONPath ([RFC 9535](https://www.rfc-editor.org/rfc/rfc9535)) query to extract the event payload. |
+| `--otlp-max-records <N>` | `10000` | Most log records one OTLP request (`POST /v1/logs` or gRPC) may carry, also `daemon.input.otlp_max_records`. A request with more is refused before it is decoded, with HTTP `413` or gRPC `RESOURCE_EXHAUSTED`. Must be at least 1. Requires a `daemon-otlp` build. See [OTLP Integration: Request limits](../../guide/otlp-integration.md#request-limits). {{ added "unreleased" }} |
+
+#### Line input
+
+Stdin, `unix://`, and `POST /api/v1/events` read one event per line. {{ added "unreleased" }}
+
+- A line may be up to 1 MiB, not counting its `\n` or `\r\n` terminator. A longer line is dropped as it arrives, without being held in memory, and counted in `rsigma_input_dropped_total{reason="too_long"}`; `POST /api/v1/events` instead refuses the whole request with `413` before it forwards any line, so a retry cannot duplicate events.
+- Bytes that are not valid UTF-8 are replaced with `U+FFFD` and the line is evaluated, so one bad line never stops a source or fails a batch. Each such line counts in `rsigma_input_invalid_utf8_total`.
+- Only an I/O error or the end of input stops a source. A stdin read error counts in `rsigma_input_source_failed_total{source="stdin"}`, marks `/readyz` not ready, and makes the daemon exit `4` in both stdin modes.
+
+A NATS message is settled when it carries no event, so it never holds the consumer's ack window: an empty or whitespace-only message is acked and one over 1 MiB is terminated so the server stops redelivering it. Both count in `rsigma_input_dropped_total` (`reason="blank"` and `reason="too_long"`). A payload that is not valid UTF-8 is evaluated with the invalid bytes replaced. {{ added "unreleased" }}
 
 ### Output sinks and DLQ
 
@@ -532,7 +543,7 @@ rsigma engine daemon -r rules/ \
 | Endpoint | Returns | Probe wiring |
 |----------|---------|--------------|
 | `/healthz` | 200 once the listener is up. | Liveness probe. |
-| `/readyz` | 200 once rules + pipelines are loaded; 503 during startup or after a failed reload. | Readiness probe. Drain traffic when 503. |
+| `/readyz` | 200 once rules + pipelines are loaded; 503 during startup or after a failed reload. 503 with `"input_failed": true` once the stdin source stopped on a read error, which no reload clears. {{ added "unreleased" }} | Readiness probe. Drain traffic when 503. |
 | `/metrics` | Prometheus text format. {{ rsigma.metrics.names }} metric names under `--all-features` ({{ rsigma.metrics.always }} always-present + {{ rsigma.metrics.otlp }} OTLP + {{ rsigma.metrics.tls }} TLS + {{ rsigma.metrics.stix }} STIX source, gated on the matching build features). A startup scrape shows a subset; the rest appear as their surfaces are exercised. | Scrape every 15-30 s. |
 
 Full HTTP API reference: [HTTP API](../../reference/http-api.md). All metric definitions: [Prometheus metrics](../../reference/metrics.md).
@@ -579,6 +590,8 @@ See [Serverless](../../deployment/serverless.md) for an AWS Lambda handler and a
 
 `--stdin-mode stream` turns the batch contract off for a writer that is not a batch, such as `tail -F app.log | rsigma engine daemon --stdin-mode stream`. The daemon keeps running after stdin ends, so the API, metrics, hot reload, and periodic state saves stay up until `SIGTERM` or `SIGINT`. A stored snapshot that cannot be restored logs a warning and starts fresh, and a signal exits `0`, the same as the HTTP, NATS, and unix-socket inputs.
 
+End of input is held open, but a read error is not: the daemon marks itself not ready on `/readyz`, drains and delivers the events it already read, saves state, and exits `4`, so a supervisor sees the failure instead of a daemon that stays up with no input. {{ added "unreleased" }}
+
 ## Shutdown
 
 `SIGTERM` and `SIGINT` trigger a graceful drain bounded by `--drain-timeout`. In-flight events are processed and acknowledged before the daemon exits. With `--state-db`, the final correlation state snapshot is written during shutdown.
@@ -590,7 +603,7 @@ See [Serverless](../../deployment/serverless.md) for an AWS Lambda handler and a
 | `0` | Normal shutdown (including `--dry-run`). |
 | `2` | Initial rules could not be loaded or compiled. |
 | `3` | Configuration error: missing `--rules`/`daemon.rules`, bad `-p`, malformed `--suppress`, invalid `--input` URL, TLS/auth/audit misconfiguration, and similar startup failures. In a stdin batch run, also stored state that cannot be restored. {{ added "0.28.0" }} |
-| `4` | `RUNTIME_ERROR`: a stdin batch run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "0.28.0" }} |
+| `4` | `RUNTIME_ERROR`: a stdin batch run that did not complete cleanly, because a signal stopped it before end of input, a stdin read failed, output reached neither a sink nor the DLQ, the final state save failed, or a pipeline task panicked. {{ added "0.28.0" }} Also a stream-mode stdin daemon whose stdin read failed. {{ added "unreleased" }} |
 
 ## See also
 

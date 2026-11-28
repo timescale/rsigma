@@ -247,3 +247,75 @@ fn metrics_include_per_rule_labels_after_detection() {
         "metrics should contain level label"
     );
 }
+
+fn post_bytes(url: &str, body: Vec<u8>) -> (u16, String) {
+    match ureq::post(url).send(&body[..]) {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            (status, resp.into_body().read_to_string().unwrap())
+        }
+        Err(ureq::Error::StatusCode(code)) => (code, String::new()),
+        Err(e) => panic!("HTTP POST failed: {e}"),
+    }
+}
+
+#[test]
+fn ingest_forwards_the_lines_around_invalid_utf8() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let daemon = DaemonProcess::spawn_http(rule.path().to_str().unwrap());
+
+    let body = b"{\"CommandLine\":\"malware.exe a\"}\n{\"x\":\"\xff\"}\n{\"CommandLine\":\"malware.exe b\"}\n"
+        .to_vec();
+    let (status, response) = post_bytes(&daemon.url("/api/v1/events"), body);
+    assert_eq!(
+        status, 200,
+        "a byte that is not UTF-8 must not refuse the batch"
+    );
+    let v: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(v["accepted"], 3);
+
+    let metrics = poll_until(Duration::from_secs(5), || {
+        let (_, body) = http_get(&daemon.url("/metrics"));
+        body.lines()
+            .any(|l| l == "rsigma_detection_matches_total 2")
+            .then_some(body)
+    })
+    .expect("both matching lines should be evaluated");
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == r#"rsigma_input_invalid_utf8_total{source="http"} 1"#),
+        "{metrics}"
+    );
+}
+
+#[test]
+fn ingest_with_an_over_long_line_forwards_nothing() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let daemon = DaemonProcess::spawn_http(rule.path().to_str().unwrap());
+
+    let mut body = b"{\"CommandLine\":\"malware.exe a\"}\n".to_vec();
+    body.extend(std::iter::repeat_n(b'x', 1024 * 1024 + 1));
+    body.extend_from_slice(b"\n{\"CommandLine\":\"malware.exe b\"}\n");
+    let (status, _) = post_bytes(&daemon.url("/api/v1/events"), body);
+    assert_eq!(status, 413);
+
+    let (status, _) = http_post(
+        &daemon.url("/api/v1/events"),
+        "{\"CommandLine\":\"benign\"}\n",
+    );
+    assert_eq!(status, 200);
+    poll_until(Duration::from_secs(5), || {
+        let (_, body) = http_get(&daemon.url("/api/v1/status"));
+        let v: serde_json::Value = serde_json::from_str(&body).ok()?;
+        (v["events_processed"].as_u64()? >= 1).then_some(())
+    })
+    .expect("the follow-up event should be processed");
+    let (_, body) = http_get(&daemon.url("/api/v1/status"));
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        v["events_processed"], 1,
+        "no line of the refused request may be forwarded"
+    );
+    assert_eq!(v["detection_matches"], 0);
+}

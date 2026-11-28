@@ -185,23 +185,56 @@ pub trait Event {
     /// Materialize the event as a `serde_json::Value`.
     fn to_json(&self) -> Value;
 
-    /// Collect the names of every leaf field in the event, with nested
-    /// objects flattened to dot-separated paths (e.g. `actor.id`).
+    /// Collect the names of the leaf fields in the event, with nested
+    /// objects flattened to dot-separated paths (e.g. `actor.id`), within
+    /// the default [`FieldKeyBudget`].
     /// Intermediate object names are not emitted; only leaves count.
     /// Arrays contribute their parent path once; per-index suffixes are
     /// not emitted.
     ///
-    /// Used by the daemon's opt-in field-observability surface; not on the
-    /// detection hot path. The default implementation walks `to_json()`,
-    /// which clones the event and allocates one `String` per leaf path;
-    /// concrete event types override to skip the `to_json()` clone. The
-    /// per-leaf `String` allocation is unavoidable for nested objects
-    /// (the dot-joined path doesn't exist anywhere in the source) but
-    /// flat formats like `KvEvent` can return `Cow::Borrowed`.
+    /// Used by field-observability and authoring tools; not on the detection
+    /// hot path. The default collects [`Self::visit_field_keys`] into owned
+    /// strings; flat formats like `KvEvent` return `Cow::Borrowed`.
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
-        let mut paths: Vec<String> = Vec::new();
-        collect_field_keys_json(&self.to_json(), "", &mut paths);
-        paths.into_iter().map(Cow::Owned).collect()
+        let mut paths: Vec<Cow<'_, str>> = Vec::new();
+        self.visit_field_keys(&FieldKeyBudget::default(), &mut |path| {
+            paths.push(Cow::Owned(path.to_owned()));
+        });
+        paths
+    }
+
+    /// Visit the leaf field paths [`Self::field_keys`] describes, within
+    /// `budget`, and report what the budget left out.
+    ///
+    /// A path longer than [`FieldKeyBudget::max_key_bytes`] is skipped, and
+    /// so is every path under a nested object whose own path is already too
+    /// long. The walk stops at [`FieldKeyBudget::max_keys`] paths or
+    /// [`FieldKeyBudget::max_total_bytes`] bytes of paths. Paths are built in
+    /// one reused buffer, so the walk allocates no string per leaf.
+    ///
+    /// The default walks `to_json()`; concrete event types override it to
+    /// skip that clone.
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        visit_field_keys_json(&self.to_json(), budget, visit)
+    }
+
+    /// Whether the event has at least one leaf field.
+    ///
+    /// Stops at the first leaf and builds no paths. The default visits field
+    /// keys with a one-key budget; concrete event types override it.
+    fn has_any_field(&self) -> bool {
+        let budget = FieldKeyBudget {
+            max_keys: 1,
+            max_key_bytes: usize::MAX,
+            max_total_bytes: usize::MAX,
+        };
+        let mut found = false;
+        self.visit_field_keys(&budget, &mut |_| found = true);
+        found
     }
 
     /// Top-level object keys when the event can report them cheaply.
@@ -230,38 +263,163 @@ pub trait Event {
     }
 }
 
-/// Maximum nesting depth honoured by `field_keys` default + JsonEvent
-/// overrides. Matches the existing 64-level cap used elsewhere in the
-/// crate for recursive JSON traversal.
+/// Maximum nesting depth honoured by field-key walks. Matches the existing
+/// 64-level cap used elsewhere in the crate for recursive JSON traversal.
 pub(crate) const FIELD_KEYS_MAX_DEPTH: usize = 64;
 
-/// Walk a JSON value and push every leaf field path into `out`. The
-/// helper threads owned `String`s rather than `Cow` because every path
-/// is constructed by `format!`-joining (or copying the top-level key),
-/// so there are no borrowed shortcuts to capture.
-pub(crate) fn collect_field_keys_json(value: &Value, prefix: &str, out: &mut Vec<String>) {
-    collect_field_keys_json_depth(value, prefix, out, FIELD_KEYS_MAX_DEPTH);
+/// Limits on one field-key walk ([`Event::visit_field_keys`]).
+///
+/// Field names come from untrusted events, so a walk is bounded in the
+/// number of paths it reports, the length of each path, and their total
+/// size, however large or deeply nested the event is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldKeyBudget {
+    /// Most paths reported.
+    pub max_keys: usize,
+    /// Longest path reported, in bytes.
+    pub max_key_bytes: usize,
+    /// Most bytes of paths reported in total.
+    pub max_total_bytes: usize,
 }
 
-fn collect_field_keys_json_depth(value: &Value, prefix: &str, out: &mut Vec<String>, depth: usize) {
-    if depth == 0 {
-        return;
-    }
-    if let Value::Object(map) = value {
-        for (k, v) in map {
-            let path = if prefix.is_empty() {
-                k.clone()
-            } else {
-                format!("{prefix}.{k}")
-            };
-            match v {
-                // Recurse into nested objects without emitting the
-                // intermediate path; only leaf descendants count.
-                Value::Object(_) => collect_field_keys_json_depth(v, &path, out, depth - 1),
-                _ => out.push(path),
-            }
+impl Default for FieldKeyBudget {
+    /// 4,096 paths of at most 512 bytes each, and 256 KiB in total.
+    fn default() -> Self {
+        Self {
+            max_keys: 4096,
+            max_key_bytes: 512,
+            max_total_bytes: 256 * 1024,
         }
     }
+}
+
+/// What a field-key walk left out to stay within its [`FieldKeyBudget`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldKeyOverflow {
+    /// Paths skipped for being longer than `max_key_bytes`. A nested object
+    /// whose own path is too long counts once for everything under it.
+    pub too_long: u64,
+    /// The walk stopped at `max_keys` or `max_total_bytes` before it had
+    /// seen every field.
+    pub truncated: bool,
+}
+
+impl FieldKeyOverflow {
+    /// Whether the walk reported every field.
+    pub fn is_empty(&self) -> bool {
+        self.too_long == 0 && !self.truncated
+    }
+}
+
+/// Walk a JSON value's leaf field paths within `budget`.
+pub(crate) fn visit_field_keys_json(
+    value: &Value,
+    budget: &FieldKeyBudget,
+    visit: &mut dyn FnMut(&str),
+) -> FieldKeyOverflow {
+    let mut walker = KeyWalker {
+        budget,
+        path: String::new(),
+        emitted: 0,
+        emitted_bytes: 0,
+        overflow: FieldKeyOverflow::default(),
+        visit,
+    };
+    if let Value::Object(map) = value {
+        walker.walk(map, FIELD_KEYS_MAX_DEPTH);
+    }
+    walker.overflow
+}
+
+struct KeyWalker<'b, 'v> {
+    budget: &'b FieldKeyBudget,
+    /// The current path. Never longer than `budget.max_key_bytes`.
+    path: String,
+    emitted: usize,
+    emitted_bytes: usize,
+    overflow: FieldKeyOverflow,
+    visit: &'v mut dyn FnMut(&str),
+}
+
+impl KeyWalker<'_, '_> {
+    /// Walk one object's fields. `false` once the walk has to stop.
+    fn walk(&mut self, map: &serde_json::Map<String, Value>, depth: usize) -> bool {
+        if depth == 0 {
+            return true;
+        }
+        for (key, child) in map {
+            let base = self.path.len();
+            let separator = usize::from(base > 0);
+            if base + separator + key.len() > self.budget.max_key_bytes {
+                self.overflow.too_long += 1;
+                continue;
+            }
+            if separator == 1 {
+                self.path.push('.');
+            }
+            self.path.push_str(key);
+            let more = match child {
+                // Only leaves are reported; a nested object contributes the
+                // paths of its descendants.
+                Value::Object(inner) => self.walk(inner, depth - 1),
+                _ => self.emit(),
+            };
+            self.path.truncate(base);
+            if !more {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn emit(&mut self) -> bool {
+        if self.emitted >= self.budget.max_keys
+            || self.emitted_bytes + self.path.len() > self.budget.max_total_bytes
+        {
+            self.overflow.truncated = true;
+            return false;
+        }
+        self.emitted += 1;
+        self.emitted_bytes += self.path.len();
+        (self.visit)(&self.path);
+        true
+    }
+}
+
+/// Visit flat field names (no nesting) within `budget`.
+pub(crate) fn visit_flat_field_keys<'a>(
+    keys: impl IntoIterator<Item = &'a str>,
+    budget: &FieldKeyBudget,
+    visit: &mut impl FnMut(&'a str),
+) -> FieldKeyOverflow {
+    let mut overflow = FieldKeyOverflow::default();
+    let (mut emitted, mut emitted_bytes) = (0usize, 0usize);
+    for key in keys {
+        if key.len() > budget.max_key_bytes {
+            overflow.too_long += 1;
+            continue;
+        }
+        if emitted >= budget.max_keys || emitted_bytes + key.len() > budget.max_total_bytes {
+            overflow.truncated = true;
+            break;
+        }
+        emitted += 1;
+        emitted_bytes += key.len();
+        visit(key);
+    }
+    overflow
+}
+
+/// Whether a JSON value has a leaf field within the nesting cap.
+pub(crate) fn json_has_any_field(value: &Value) -> bool {
+    fn walk(map: &serde_json::Map<String, Value>, depth: usize) -> bool {
+        depth > 0
+            && map.values().any(|child| match child {
+                Value::Object(inner) => walk(inner, depth - 1),
+                _ => true,
+            })
+    }
+    matches!(value, Value::Object(map) if walk(map, FIELD_KEYS_MAX_DEPTH))
 }
 
 impl<T: Event + ?Sized> Event for &T {
@@ -287,6 +445,18 @@ impl<T: Event + ?Sized> Event for &T {
 
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
         (**self).field_keys()
+    }
+
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        (**self).visit_field_keys(budget, visit)
+    }
+
+    fn has_any_field(&self) -> bool {
+        (**self).has_any_field()
     }
 
     fn top_level_keys(&self) -> Option<Vec<Cow<'_, str>>> {

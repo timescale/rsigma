@@ -489,6 +489,10 @@ pub(crate) struct InputPartial {
     pub buffer_size: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<usize>,
+    /// Most log records one OTLP request may carry; a request with more is
+    /// refused before it is decoded (default 10,000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otlp_max_records: Option<usize>,
     /// jq filter to extract the event payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jq: Option<String>,
@@ -527,6 +531,7 @@ impl Merge for InputPartial {
             syslog_strip_bom: over.syslog_strip_bom.or(self.syslog_strip_bom),
             buffer_size: over.buffer_size.or(self.buffer_size),
             batch_size: over.batch_size.or(self.batch_size),
+            otlp_max_records: over.otlp_max_records.or(self.otlp_max_records),
             jq: over.jq.or(self.jq),
             jsonpath: over.jsonpath.or(self.jsonpath),
             tenant: over.tenant.or(self.tenant),

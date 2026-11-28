@@ -116,6 +116,9 @@ daemon:
     buffer_size: 10000
     # Max events processed per engine lock acquisition, capped at buffer_size.
     batch_size: 128
+    # Most log records one OTLP request may carry; a request with more is
+    # refused before it is decoded.
+    otlp_max_records: 10000
     # jq filter / JSONPath query to extract the event payload (mutually exclusive).
     # jq: ".event"
     # jsonpath: "$.event"

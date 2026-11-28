@@ -1,5 +1,6 @@
 mod delivery;
 mod file;
+mod line_framer;
 mod lines;
 #[cfg(feature = "nats")]
 pub mod nats_config;
@@ -23,6 +24,7 @@ pub use delivery::{
     DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher, OnFull,
 };
 pub use file::FileSink;
+pub use line_framer::{FramedLine, LineFramer, MAX_LINE_BYTES};
 #[cfg(feature = "nats")]
 pub use nats_config::NatsConnectConfig;
 #[cfg(feature = "nats")]

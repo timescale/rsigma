@@ -33,14 +33,17 @@
 //!   Prometheus counter bridges don't desync when the daemon resets
 //!   the observer via `DELETE /api/v1/fields/observer`.
 //!
+//! - Each event's keys are walked within the default
+//!   [`FieldKeyBudget`]: a path longer than 512 bytes is never stored, and
+//!   one event reports at most 4,096 paths and 256 KiB of them. Together
+//!   with `max_keys` this bounds the observer's memory however large the
+//!   events are. Skipped paths and cut-short walks are counted.
+//!
 //! # Coordinates
 //!
-//! - Iterate [`Event::field_keys`] once per event before evaluation.
-//!   For JSON events this is a recursive walk that allocates one
-//!   `String` per leaf path (dot-joined paths are not substrings of
-//!   the source value); for flat formats like `KvEvent` the override
-//!   returns `Cow::Borrowed`. The cost is acceptable in the opt-in
-//!   diagnostic mode but is not free.
+//! - Walk [`Event::visit_field_keys`] once per event before evaluation.
+//!   The paths are gathered into a reused per-thread buffer, then counted
+//!   under the lock, so an event allocates only for keys seen the first time.
 //! - Render the gap and broken-coverage signals by joining a
 //!   [`FieldObserver::snapshot`] against a [`RuleFieldSet`].
 
@@ -50,7 +53,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use crate::event::Event;
+use crate::event::{Event, FieldKeyBudget};
 use crate::fields::{FieldOrigin, RuleFieldSet};
 
 /// Single field-name counter as exposed via the snapshot API.
@@ -91,10 +94,34 @@ pub struct FieldObservation {
     /// Lifetime total of insert attempts dropped because the observer
     /// was at capacity, ignoring resets. Drives Prometheus counters.
     pub lifetime_overflow_dropped: u64,
+    /// Field paths skipped since the last reset because they were longer
+    /// than the per-path cap (a nested object whose own path is too long
+    /// counts once for everything under it).
+    pub oversized_keys: u64,
+    /// Events since the last reset whose key walk stopped at the per-event
+    /// key or byte cap before it had seen every field.
+    pub truncated_events: u64,
+    /// Lifetime total of [`Self::oversized_keys`], ignoring resets.
+    pub lifetime_oversized_keys: u64,
+    /// Lifetime total of [`Self::truncated_events`], ignoring resets.
+    pub lifetime_truncated_events: u64,
     /// Configured ceiling for distinct keys.
     pub max_keys: usize,
     /// Seconds since the observer was created (or last reset).
     pub uptime_seconds: f64,
+}
+
+/// One event's field paths, concatenated, with the end offset of each. Kept
+/// per thread and reused, so observing an event allocates nothing once the
+/// buffer has grown; the field-key budget bounds how far it grows.
+#[derive(Default)]
+struct KeyBuffer {
+    paths: String,
+    ends: Vec<usize>,
+}
+
+thread_local! {
+    static KEY_BUFFER: std::cell::RefCell<KeyBuffer> = std::cell::RefCell::new(KeyBuffer::default());
 }
 
 /// Capped, opt-in field-name counter shared across producers (the
@@ -114,6 +141,14 @@ pub struct FieldObserver {
     lifetime_events_observed: AtomicU64,
     /// Monotonic. Never reset. Drives the Prometheus counter bridge.
     lifetime_overflow_dropped: AtomicU64,
+    /// Resets to 0 on [`reset`](Self::reset).
+    oversized_keys: AtomicU64,
+    /// Resets to 0 on [`reset`](Self::reset).
+    truncated_events: AtomicU64,
+    /// Monotonic. Never reset.
+    lifetime_oversized_keys: AtomicU64,
+    /// Monotonic. Never reset.
+    lifetime_truncated_events: AtomicU64,
     start: Mutex<Instant>,
 }
 
@@ -186,6 +221,10 @@ impl FieldObserver {
             events_observed: AtomicU64::new(0),
             lifetime_events_observed: AtomicU64::new(0),
             lifetime_overflow_dropped: AtomicU64::new(0),
+            oversized_keys: AtomicU64::new(0),
+            truncated_events: AtomicU64::new(0),
+            lifetime_oversized_keys: AtomicU64::new(0),
+            lifetime_truncated_events: AtomicU64::new(0),
             start: Mutex::new(Instant::now()),
         }
     }
@@ -197,8 +236,22 @@ impl FieldObserver {
     /// the observer can be shared behind an `Arc` without locking from
     /// the caller's side.
     pub fn observe<E: Event + ?Sized>(&self, event: &E) {
-        let keys = event.field_keys();
-        if keys.is_empty() {
+        KEY_BUFFER.with(|cell| match cell.try_borrow_mut() {
+            Ok(mut buffer) => self.observe_into(event, &mut buffer),
+            // An `Event` whose key walk observes another event lands here.
+            Err(_) => self.observe_into(event, &mut KeyBuffer::default()),
+        });
+    }
+
+    fn observe_into<E: Event + ?Sized>(&self, event: &E, buffer: &mut KeyBuffer) {
+        let KeyBuffer { paths, ends } = buffer;
+        paths.clear();
+        ends.clear();
+        let overflow = event.visit_field_keys(&FieldKeyBudget::default(), &mut |key| {
+            paths.push_str(key);
+            ends.push(paths.len());
+        });
+        if ends.is_empty() && overflow.is_empty() {
             self.events_observed.fetch_add(1, Ordering::Relaxed);
             self.lifetime_events_observed
                 .fetch_add(1, Ordering::Relaxed);
@@ -209,11 +262,14 @@ impl FieldObserver {
         // which reads them under the same lock, never sees an event's keys
         // without its event and overflow counts.
         let mut counts = self.inner.lock().expect("field observer mutex poisoned");
-        for key in keys {
-            if let Some(slot) = counts.get_mut(key.as_ref()) {
+        let mut start = 0;
+        for &end in ends.iter() {
+            let key = &paths[start..end];
+            start = end;
+            if let Some(slot) = counts.get_mut(key) {
                 *slot = slot.saturating_add(1);
             } else if counts.len() < self.max_keys {
-                counts.insert(Arc::<str>::from(key.as_ref()), 1);
+                counts.insert(Arc::<str>::from(key), 1);
             } else {
                 overflow_local = overflow_local.saturating_add(1);
             }
@@ -223,6 +279,17 @@ impl FieldObserver {
                 .fetch_add(overflow_local, Ordering::Relaxed);
             self.lifetime_overflow_dropped
                 .fetch_add(overflow_local, Ordering::Relaxed);
+        }
+        if overflow.too_long > 0 {
+            self.oversized_keys
+                .fetch_add(overflow.too_long, Ordering::Relaxed);
+            self.lifetime_oversized_keys
+                .fetch_add(overflow.too_long, Ordering::Relaxed);
+        }
+        if overflow.truncated {
+            self.truncated_events.fetch_add(1, Ordering::Relaxed);
+            self.lifetime_truncated_events
+                .fetch_add(1, Ordering::Relaxed);
         }
         self.events_observed.fetch_add(1, Ordering::Relaxed);
         self.lifetime_events_observed
@@ -251,6 +318,10 @@ impl FieldObserver {
         let overflow_dropped = self.overflow_dropped.load(Ordering::Relaxed);
         let lifetime_events_observed = self.lifetime_events_observed.load(Ordering::Relaxed);
         let lifetime_overflow_dropped = self.lifetime_overflow_dropped.load(Ordering::Relaxed);
+        let oversized_keys = self.oversized_keys.load(Ordering::Relaxed);
+        let truncated_events = self.truncated_events.load(Ordering::Relaxed);
+        let lifetime_oversized_keys = self.lifetime_oversized_keys.load(Ordering::Relaxed);
+        let lifetime_truncated_events = self.lifetime_truncated_events.load(Ordering::Relaxed);
         drop(counts);
         entries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.field.cmp(&b.field)));
         FieldObservation {
@@ -260,6 +331,10 @@ impl FieldObserver {
             overflow_dropped,
             lifetime_events_observed,
             lifetime_overflow_dropped,
+            oversized_keys,
+            truncated_events,
+            lifetime_oversized_keys,
+            lifetime_truncated_events,
             max_keys: self.max_keys,
             uptime_seconds: self
                 .start
@@ -279,6 +354,8 @@ impl FieldObserver {
         counts.clear();
         let previous_events = self.events_observed.swap(0, Ordering::Relaxed);
         self.overflow_dropped.store(0, Ordering::Relaxed);
+        self.oversized_keys.store(0, Ordering::Relaxed);
+        self.truncated_events.store(0, Ordering::Relaxed);
         drop(counts);
         *self
             .start
@@ -482,6 +559,39 @@ mod tests {
         assert_eq!(after.lifetime_events_observed, 4);
         assert_eq!(after.overflow_dropped, 2);
         assert_eq!(after.lifetime_overflow_dropped, 8);
+    }
+
+    #[test]
+    fn over_long_keys_are_skipped_and_counted() {
+        let observer = FieldObserver::new(100);
+        let long = "k".repeat(100 * 1024);
+        let scalars: serde_json::Map<String, serde_json::Value> =
+            (0..50_000).map(|i| (format!("f{i}"), json!(i))).collect();
+        let v = json!({ "ok": 1, long: serde_json::Value::Object(scalars) });
+        observer.observe(&JsonEvent::borrow(&v));
+        let snap = observer.snapshot();
+        assert_eq!(snap.unique_keys, 1);
+        assert_eq!(snap.entries[0].field.as_ref(), "ok");
+        assert_eq!(snap.oversized_keys, 1);
+        assert_eq!(snap.lifetime_oversized_keys, 1);
+        assert_eq!(snap.truncated_events, 0);
+
+        observer.reset();
+        let snap = observer.snapshot();
+        assert_eq!(snap.oversized_keys, 0);
+        assert_eq!(snap.lifetime_oversized_keys, 1);
+    }
+
+    #[test]
+    fn a_wide_event_is_cut_at_the_key_budget_and_counted() {
+        let observer = FieldObserver::new(100_000);
+        let wide: serde_json::Map<String, serde_json::Value> =
+            (0..10_000).map(|i| (format!("f{i}"), json!(i))).collect();
+        observer.observe(&JsonEvent::owned(serde_json::Value::Object(wide)));
+        let snap = observer.snapshot();
+        assert_eq!(snap.unique_keys, FieldKeyBudget::default().max_keys);
+        assert_eq!(snap.truncated_events, 1);
+        assert_eq!(snap.lifetime_truncated_events, 1);
     }
 
     #[test]

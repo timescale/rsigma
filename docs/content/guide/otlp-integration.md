@@ -53,6 +53,21 @@ Both transports cap a decompressed request at 4 MiB. Over HTTP, a gzip body that
 
 When no `Content-Type` is provided on a POST to `/v1/logs`, protobuf is assumed, matching the OTLP/HTTP specification default.
 
+The response is encoded like the request: a protobuf request gets a protobuf `ExportLogsServiceResponse` (`Content-Type: application/x-protobuf`), a JSON request a JSON one. {{ added "unreleased" }}
+
+## Request limits
+
+Every log record becomes its own JSON event carrying a copy of the resource attributes, so one request could otherwise expand far beyond its own size. Both transports bound that expansion. {{ added "unreleased" }}
+
+| Limit | Value | When it is exceeded |
+|-------|-------|---------------------|
+| Log records per request | `--otlp-max-records`, default `10000` | The request is refused before it is decoded: HTTP `413`, gRPC `RESOURCE_EXHAUSTED`. Counted as `rsigma_otlp_errors_total{reason="too_many_records"}`. |
+| One flattened event | 1 MiB | The record is rejected, mostly before its event is built, and the rest of the request is accepted. |
+| Flattened events per request | 64 MiB | That record and every later one in the request are rejected. |
+| Requests decoded at once | 16, over both transports | Further requests wait for a slot before their bodies are read. |
+
+Rejected records are reported in the response as an OTLP partial success (`partial_success.rejected_log_records` and an `error_message` naming the limit), counted in `rsigma_otlp_rejected_log_records_total{transport, reason}` with `reason` `too_large` or `over_budget`, and logged in a warning. As the OTLP specification asks, agents do not retry them. Records the daemon accepts are forwarded to the engine one at a time, so a large request never holds all of its events in memory at once.
+
 ## LogRecord to JSON mapping
 
 OTLP `LogRecord` carries data across several fields: timestamp, severity, body, attributes, plus nested Resource and InstrumentationScope. RSigma flattens every record into one JSON event before evaluating rules:
@@ -243,7 +258,7 @@ Each of the four agents documented above can be pointed at an `https://` endpoin
 
 ## Authentication
 
-When API auth is enabled (`--api-token-env` or a `daemon.api.auth` config block), `POST /v1/logs` and the gRPC `LogsService/Export` require the `events:ingest` permission. Agents send a bearer token via the usual `Authorization: Bearer <token>` header (or gRPC `authorization` metadata). Auth is off by default, in which case the listener is open and network position is the only guard.
+When API auth is enabled (`--api-token-env` or a `daemon.api.auth` config block), `POST /v1/logs` and the gRPC `LogsService/Export` require the `events:ingest` permission. Agents send a bearer token via the usual `Authorization: Bearer <token>` header (or gRPC `authorization` metadata). Auth is off by default, in which case the listener is open and network position is the only guard. Both transports check the token, and with tenancy its tenant binding, before they read the request body, so an unauthenticated request is refused without being decompressed or decoded; gRPC answers `UNAUTHENTICATED` or `PERMISSION_DENIED`. {{ added "unreleased" }}
 
 For agent-to-daemon pinning without tokens, use mutual TLS via `--tls-client-ca` so every agent presents a CA-signed client cert at the handshake. Auth and TLS complement each other: see [Daemon API authentication](../reference/security.md#daemon-api-authentication) and [TLS termination](../reference/security.md#tls-termination-for-the-api-listener).
 
@@ -254,9 +269,10 @@ OTLP traffic surfaces in three places:
 | Where | What |
 |-------|------|
 | Prometheus metric `rsigma_otlp_requests_total{transport, encoding}` | Counter of OTLP export requests received. Labels: `transport` (`http` or `grpc`) and `encoding` (`protobuf` or `json`). Gzip is decompressed before the encoding label is recorded. |
-| Prometheus metric `rsigma_otlp_log_records_total` | Counter of LogRecords ingested. |
-| Prometheus metric `rsigma_otlp_errors_total{transport, reason}` | Errors by transport and reason (`unsupported_content_type`, `decompression`, `body_too_large`, `decode`, `channel_closed`). |
-| `RUST_LOG=info,rsigma=debug` | Per-request `otlp_ingest` span on both HTTP and gRPC handlers, with `record_count` after decoding. |
+| Prometheus metric `rsigma_otlp_log_records_total` | Counter of LogRecords ingested and forwarded to the engine. |
+| Prometheus metric `rsigma_otlp_rejected_log_records_total{transport, reason}` | LogRecords rejected by the [request limits](#request-limits) and reported as a partial success, by `reason` (`too_large`, `over_budget`). {{ added "unreleased" }} |
+| Prometheus metric `rsigma_otlp_errors_total{transport, reason}` | Errors by transport and reason (`unsupported_content_type`, `decompression`, `body_too_large`, `too_many_records`, `decode`, `channel_closed`). `too_many_records` counts requests over `--otlp-max-records`. {{ added "unreleased" }} |
+| `RUST_LOG=info,rsigma=debug` | Per-request `otlp_ingest` span on both HTTP and gRPC handlers, with `record_count` once the records are forwarded. |
 
 See [Prometheus metrics reference](../reference/metrics.md) for the full set, and [Observability](observability.md) for the `RUST_LOG` filter targets.
 

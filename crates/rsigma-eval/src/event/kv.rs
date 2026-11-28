@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use super::{Event, EventValue};
+use super::{Event, EventValue, FieldKeyBudget, FieldKeyOverflow};
 
 /// Flat key-value event (e.g., from logfmt, syslog structured data).
 ///
@@ -52,10 +52,29 @@ impl Event for KvEvent {
     }
 
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
-        self.fields
-            .iter()
-            .map(|(k, _)| Cow::Borrowed(k.as_str()))
-            .collect()
+        let mut keys = Vec::new();
+        super::visit_flat_field_keys(
+            self.fields.iter().map(|(k, _)| k.as_str()),
+            &FieldKeyBudget::default(),
+            &mut |key| keys.push(Cow::Borrowed(key)),
+        );
+        keys
+    }
+
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        super::visit_flat_field_keys(
+            self.fields.iter().map(|(k, _)| k.as_str()),
+            budget,
+            &mut |key| visit(key),
+        )
+    }
+
+    fn has_any_field(&self) -> bool {
+        !self.fields.is_empty()
     }
 
     fn top_level_keys(&self) -> Option<Vec<Cow<'_, str>>> {

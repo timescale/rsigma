@@ -158,7 +158,7 @@ impl SchemaPredicate {
             SchemaPredicate::Not(inner) => !inner.eval(event),
             SchemaPredicate::Any(preds) => preds.iter().any(|p| p.eval(event)),
             SchemaPredicate::All(preds) => preds.iter().all(|p| p.eval(event)),
-            SchemaPredicate::HasAnyField => !event.field_keys().is_empty(),
+            SchemaPredicate::HasAnyField => event.has_any_field(),
         }
     }
 
@@ -1660,6 +1660,17 @@ pub struct UnknownShapeEntry {
 
 /// Maximum distinct unknown-event shapes retained, to bound memory.
 const UNKNOWN_SHAPE_CAP: usize = 200;
+
+/// The field keys of an event for a redacted shape, within the default
+/// [`FieldKeyBudget`](crate::FieldKeyBudget), so no shape holds a key longer
+/// than its per-path cap.
+fn shape_keys<E: Event + ?Sized>(event: &E) -> Vec<String> {
+    let mut keys = Vec::new();
+    event.visit_field_keys(&crate::FieldKeyBudget::default(), &mut |key| {
+        keys.push(key.to_owned())
+    });
+    keys
+}
 /// Maximum field keys kept per shape, to bound a single shape's size.
 const UNKNOWN_SHAPE_MAX_KEYS: usize = 64;
 
@@ -1797,7 +1808,7 @@ impl SchemaObserver {
     /// Record the redacted field-key shape of one unknown event, capped in both
     /// distinct-shape count and per-shape key count.
     fn record_unknown_shape<E: Event + ?Sized>(&self, event: &E) {
-        let mut keys: Vec<String> = event.field_keys().iter().map(|k| k.to_string()).collect();
+        let mut keys = shape_keys(event);
         keys.sort();
         keys.dedup();
         keys.truncate(UNKNOWN_SHAPE_MAX_KEYS);
@@ -1815,7 +1826,7 @@ impl SchemaObserver {
     /// (no match or `generic_json`) into the discovery sampler, capped the same
     /// way as [`Self::record_unknown_shape`].
     fn record_unrecognized_shape<E: Event + ?Sized>(&self, event: &E) {
-        let mut keys: Vec<String> = event.field_keys().iter().map(|k| k.to_string()).collect();
+        let mut keys = shape_keys(event);
         keys.sort();
         keys.dedup();
         keys.truncate(UNKNOWN_SHAPE_MAX_KEYS);

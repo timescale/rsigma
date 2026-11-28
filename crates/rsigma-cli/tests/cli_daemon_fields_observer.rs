@@ -234,3 +234,41 @@ fn metrics_includes_field_observer_counters_when_enabled() {
     assert!(body.contains("rsigma_fields_observer_unique_keys"));
     assert!(body.contains("rsigma_fields_observer_overflow_dropped_total"));
 }
+
+#[test]
+fn fields_skip_over_long_keys_and_report_them() {
+    let rule = temp_file(".yml", RULE);
+    let daemon =
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &["--observe-fields"]);
+
+    let long = "k".repeat(4096);
+    let leaves: serde_json::Map<String, Value> = (0..2000)
+        .map(|i| (format!("f{i}"), Value::from(i)))
+        .collect();
+    let mut event = serde_json::Map::new();
+    event.insert("CommandLine".into(), Value::from("whoami"));
+    event.insert(long.clone(), Value::Object(leaves));
+    let (status, _) = http_post(
+        &daemon.url("/api/v1/events"),
+        &Value::Object(event).to_string(),
+    );
+    assert_eq!(status, 200);
+
+    let v = wait_for_events_observed(&daemon, 1);
+    assert_eq!(v["summary"]["unique_keys_observed"], 1);
+    assert_eq!(v["summary"]["oversized_keys"], 1);
+    assert_eq!(v["summary"]["truncated_events"], 0);
+    let (_, body) = http_get(&daemon.url("/api/v1/fields/unknown"));
+    assert!(
+        !body.contains(&long[..600]),
+        "an over-long key must not be served"
+    );
+
+    let (_, metrics) = http_get(&daemon.url("/metrics"));
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == "rsigma_fields_observer_oversized_keys_total 1"),
+        "{metrics}"
+    );
+}

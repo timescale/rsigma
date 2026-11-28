@@ -12,7 +12,8 @@
 //! by the caller as a `FnMut(&EvaluationResult)` callback, and the choice of
 //! engine is abstracted behind [`EventProcessor`].
 
-use std::io::BufRead;
+use std::borrow::Cow;
+use std::io::{BufRead, ErrorKind, Read};
 
 use rsigma_eval::{
     CorrelationEngine, Engine, EvaluationResult, Event, FieldObserver, JsonEvent, RouteOutcome,
@@ -122,15 +123,21 @@ fn observe_event<E: Event + ?Sized>(observer: Option<&FieldObserver>, event: &E)
     }
 }
 
+/// Longest line the stream loop evaluates, not counting the terminator. The
+/// same cap the daemon applies to stdin, Unix socket, and HTTP lines.
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+
 /// Stream lines from `reader` through `processor` with format-aware parsing,
 /// invoking `on_result` for each evaluation result.
 ///
 /// Returns the number of lines read (events), matching the historical eval
-/// "Processed N events" semantics: blank and unreadable lines are counted but
-/// skipped before evaluation.
+/// "Processed N events" semantics: blank and over-long lines are counted but
+/// skipped before evaluation. A line that is not valid UTF-8 is evaluated
+/// with the invalid bytes replaced, as the daemon does. A read error ends the
+/// stream after the lines before it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stream_events<P: EventProcessor>(
-    reader: impl BufRead,
+    mut reader: impl BufRead,
     event_filter: &EventFilter,
     input_format_str: &str,
     syslog_tz_str: &str,
@@ -147,15 +154,45 @@ pub(crate) fn stream_events<P: EventProcessor>(
     #[cfg(not(feature = "daemon"))]
     let _ = (input_format_str, syslog_tz_str, syslog_strip_bom);
 
-    for line in reader.lines() {
-        line_num += 1;
-        let line = match line {
-            Ok(l) => l,
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        // Room for the longest line plus its `\r\n`, so a longer one is seen
+        // as unterminated.
+        let limit = MAX_LINE_BYTES as u64 + 2;
+        let read = match (&mut reader).take(limit).read_until(b'\n', &mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => {
-                eprintln!("Error reading line {line_num}: {e}");
-                continue;
+                eprintln!("Error reading input after line {line_num}: {e}");
+                break;
             }
         };
+        line_num += 1;
+        let terminated = buf.last() == Some(&b'\n');
+        if !terminated && read as u64 == limit {
+            eprintln!("Skipping line {line_num}: longer than {MAX_LINE_BYTES} bytes");
+            if let Err(e) = reader.skip_until(b'\n') {
+                eprintln!("Error reading input after line {line_num}: {e}");
+                break;
+            }
+            continue;
+        }
+        if terminated {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+        }
+        if buf.len() > MAX_LINE_BYTES {
+            eprintln!("Skipping line {line_num}: longer than {MAX_LINE_BYTES} bytes");
+            continue;
+        }
+        let line = String::from_utf8_lossy(&buf);
+        if let Cow::Owned(_) = line {
+            eprintln!("Line {line_num} is not valid UTF-8; invalid bytes were replaced");
+        }
 
         if line.trim().is_empty() {
             continue;

@@ -136,7 +136,10 @@ pub use correlation_engine::{
 };
 pub use engine::{Engine, apply_filters};
 pub use error::{EvalError, Result};
-pub use event::{Event, EventValue, JsonEvent, KvEvent, MapEvent, MappedEvent, PlainEvent};
+pub use event::{
+    Event, EventValue, FieldKeyBudget, FieldKeyOverflow, JsonEvent, KvEvent, MapEvent, MappedEvent,
+    PlainEvent,
+};
 pub use exemplar::{
     ExemplarReport, ExemplarResult, ExemplarRunError, MissingExemplars, run_exemplars,
 };

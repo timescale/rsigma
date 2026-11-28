@@ -26,7 +26,7 @@ env:
 
 jobs:
   # Every target links the same dependency graph, so compile them in one job
-  # and hand the binaries to the matrix instead of compiling 33 times. There is
+  # and hand the binaries to the matrix instead of compiling 36 times. There is
   # no rust-cache here: a weekly entry is the least recently used in the repo's
   # cache, so it is evicted before the next run, and saving it evicts CI's.
   build:
@@ -135,6 +135,12 @@ jobs:
             max_len: 65536
           - target: fuzz_otlp_logs_decode
             max_len: 65536
+          - target: fuzz_otlp_logs_json
+            max_len: 65536
+          - target: fuzz_line_framer
+            max_len: 4096
+          - target: fuzz_field_keys
+            max_len: 16384
           - target: fuzz_mmdb_record
             max_len: 65536
           - target: fuzz_dns_answer

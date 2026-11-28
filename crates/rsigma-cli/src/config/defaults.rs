@@ -21,6 +21,8 @@ pub(crate) const INPUT_FORMAT: &str = "auto";
 pub(crate) const SYSLOG_TZ: &str = "+00:00";
 pub(crate) const SYSLOG_STRIP_BOM: bool = true;
 pub(crate) const BUFFER_SIZE: usize = 10_000;
+/// Most log records one OTLP request may carry.
+pub(crate) const OTLP_MAX_RECORDS: usize = 10_000;
 pub(crate) const BATCH_SIZE: usize = 128;
 pub(crate) const DRAIN_TIMEOUT: u64 = 5;
 pub(crate) const CORRELATION_ACTION: &str = "alert";
@@ -163,6 +165,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 syslog_strip_bom: Some(SYSLOG_STRIP_BOM),
                 buffer_size: Some(BUFFER_SIZE),
                 batch_size: Some(BATCH_SIZE),
+                otlp_max_records: Some(OTLP_MAX_RECORDS),
                 jq: None,
                 jsonpath: None,
                 tenant: None,

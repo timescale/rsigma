@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use rsigma_parser::fieldpath::{first_unescaped, unescape_brackets};
 use serde_json::Value;
 
-use super::{Event, EventValue};
+use super::{Event, EventValue, FieldKeyBudget, FieldKeyOverflow};
 
 /// Maximum nesting depth for recursive JSON traversal.
 const MAX_NESTING_DEPTH: usize = 64;
@@ -154,7 +154,7 @@ impl<'a> Event for JsonEvent<'a> {
         self.inner.as_ref().clone()
     }
 
-    /// Walk every leaf field in the event and yield dot-joined paths.
+    /// Walk the leaf fields in the event and yield dot-joined paths.
     /// Intermediate object names (`actor` for `{"actor":{"id":"x"}}`)
     /// are NOT emitted; only the leaves (`actor.id`) appear. This
     /// matches typical Sigma rules, which reference nested values via
@@ -164,10 +164,16 @@ impl<'a> Event for JsonEvent<'a> {
     /// (`{"actor":"alice"}`) emit `actor` because they ARE leaves.
     /// Arrays contribute their parent path once; per-index suffixes
     /// are not emitted.
-    fn field_keys(&self) -> Vec<Cow<'_, str>> {
-        let mut out = Vec::new();
-        collect_field_keys(&self.inner, "", &mut out, MAX_NESTING_DEPTH);
-        out
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        super::visit_field_keys_json(&self.inner, budget, visit)
+    }
+
+    fn has_any_field(&self) -> bool {
+        super::json_has_any_field(&self.inner)
     }
 }
 
@@ -308,31 +314,6 @@ fn any_string_value_json(v: &Value, pred: &dyn Fn(&str) -> bool, depth: usize) -
             .iter()
             .any(|val| any_string_value_json(val, pred, depth - 1)),
         _ => false,
-    }
-}
-
-fn collect_field_keys<'a>(v: &'a Value, prefix: &str, out: &mut Vec<Cow<'a, str>>, depth: usize) {
-    if depth == 0 {
-        return;
-    }
-    if let Value::Object(map) = v {
-        for (k, child) in map {
-            let path = if prefix.is_empty() {
-                k.clone()
-            } else {
-                format!("{prefix}.{k}")
-            };
-            match child {
-                // Recurse into nested objects but do NOT emit the
-                // intermediate path; only the leaf descendants count.
-                // Sigma rules normally reference leaves via
-                // dot-notation, so emitting `actor` alongside
-                // `actor.id` would falsely flag the parent as
-                // "unknown" in the gap signal.
-                Value::Object(_) => collect_field_keys(child, &path, out, depth - 1),
-                _ => out.push(Cow::Owned(path)),
-            }
-        }
     }
 }
 
@@ -627,6 +608,60 @@ mod tests {
         let v = json!("just a string");
         let event = JsonEvent::owned(v);
         assert!(event.field_keys().is_empty());
+    }
+
+    #[test]
+    fn json_field_keys_skip_paths_over_the_length_cap() {
+        let long = "k".repeat(600);
+        let v = json!({ "short": 1, long.clone(): 2, "nested": { long: { "x": 1 } , "y": 2 } });
+        let event = JsonEvent::borrow(&v);
+        let mut keys = Vec::new();
+        let overflow = event.visit_field_keys(&FieldKeyBudget::default(), &mut |k| {
+            keys.push(k.to_string())
+        });
+        keys.sort();
+        assert_eq!(keys, ["nested.y", "short"]);
+        assert_eq!(overflow.too_long, 2);
+        assert!(!overflow.truncated);
+    }
+
+    #[test]
+    fn json_field_keys_stop_at_the_key_budget() {
+        let v = json!({ "a": 1, "b": 2, "c": 3, "d": 4 });
+        let event = JsonEvent::borrow(&v);
+        let budget = FieldKeyBudget {
+            max_keys: 2,
+            ..FieldKeyBudget::default()
+        };
+        let mut keys = Vec::new();
+        let overflow = event.visit_field_keys(&budget, &mut |k| keys.push(k.to_string()));
+        assert_eq!(keys.len(), 2);
+        assert!(overflow.truncated);
+    }
+
+    #[test]
+    fn json_field_keys_stop_at_the_byte_budget() {
+        let v = json!({ "aaaa": 1, "bbbb": 2, "cccc": 3 });
+        let event = JsonEvent::borrow(&v);
+        let budget = FieldKeyBudget {
+            max_total_bytes: 9,
+            ..FieldKeyBudget::default()
+        };
+        let mut keys = Vec::new();
+        let overflow = event.visit_field_keys(&budget, &mut |k| keys.push(k.to_string()));
+        assert_eq!(keys.len(), 2);
+        assert!(overflow.truncated);
+    }
+
+    #[test]
+    fn json_has_any_field_needs_a_leaf() {
+        assert!(JsonEvent::owned(json!({"a": 1})).has_any_field());
+        assert!(JsonEvent::owned(json!({"a": {"b": [1]}})).has_any_field());
+        assert!(JsonEvent::owned(json!({"a": null})).has_any_field());
+        assert!(!JsonEvent::owned(json!({})).has_any_field());
+        assert!(!JsonEvent::owned(json!({"a": {}, "b": {"c": {}}})).has_any_field());
+        assert!(!JsonEvent::owned(json!("text")).has_any_field());
+        assert!(!JsonEvent::owned(json!([{"a": 1}])).has_any_field());
     }
 
     #[test]

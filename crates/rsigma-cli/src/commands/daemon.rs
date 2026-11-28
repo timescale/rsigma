@@ -187,6 +187,14 @@ pub(crate) struct DaemonArgs {
           value_parser = at_least_one())]
     pub buffer_size: usize,
 
+    /// Most log records one OTLP request (`POST /v1/logs` or gRPC) may carry.
+    /// A request with more is refused before it is decoded, with HTTP 413 or
+    /// gRPC `RESOURCE_EXHAUSTED`.
+    #[cfg(feature = "daemon-otlp")]
+    #[arg(long = "otlp-max-records", default_value_t = config::defaults::OTLP_MAX_RECORDS,
+          value_parser = at_least_one())]
+    pub otlp_max_records: usize,
+
     /// Maximum events to process per engine lock acquisition.
     /// Enables parallel detection and amortizes mutex overhead under load.
     /// Capped at `--buffer-size`.
@@ -844,6 +852,8 @@ pub(crate) fn cmd_daemon(
         output,
         buffer_size,
         batch_size,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_max_records,
         worker_threads,
         detect_threads,
         detect_inflight,
@@ -1009,6 +1019,11 @@ pub(crate) fn cmd_daemon(
         eprintln!("{e}");
         process::exit(exit_code::CONFIG_ERROR);
     }
+    #[cfg(feature = "daemon-otlp")]
+    if otlp_max_records == 0 {
+        eprintln!("Invalid daemon.input.otlp_max_records 0: must be at least 1");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
     let threads = daemon::server::ThreadSizing {
         worker_threads,
         detect_threads,
@@ -1059,6 +1074,8 @@ pub(crate) fn cmd_daemon(
         state_save_interval,
         input,
         stdin_mode,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_max_records,
         output,
         buffer_size,
         batch_size,
@@ -1597,6 +1614,12 @@ fn apply_daemon_config(
         {
             args.batch_size = v;
         }
+        #[cfg(feature = "daemon-otlp")]
+        if !explicit("otlp_max_records")
+            && let Some(v) = input.otlp_max_records
+        {
+            args.otlp_max_records = v;
+        }
         if !explicit("jq")
             && let Some(v) = input.jq
         {
@@ -2099,6 +2122,7 @@ fn run_daemon(
     state_save_interval: u64,
     input: String,
     stdin_mode: daemon::server::StdinMode,
+    #[cfg(feature = "daemon-otlp")] otlp_max_records: usize,
     output: Vec<String>,
     buffer_size: usize,
     batch_size: usize,
@@ -2311,6 +2335,11 @@ fn run_daemon(
         state_save_interval,
         input,
         stdin_mode,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_limits: rsigma_runtime::OtlpLimits {
+            max_records: otlp_max_records,
+            ..rsigma_runtime::OtlpLimits::default()
+        },
         output,
         buffer_size,
         batch_size,

@@ -20,6 +20,8 @@ Loads rules from a file or directory, optionally applies one or more processing 
 
 Each run starts with empty correlation state. To carry correlation windows between runs, use [daemon batch runs](daemon.md#batch-runs).
 
+NDJSON from stdin or `@path` is read one event per line, as the daemon reads stdin: a line over 1 MiB is skipped with a note on stderr, a line that is not valid UTF-8 is evaluated with the invalid bytes replaced by `U+FFFD`, and a read error ends the input after the lines before it. Skipped lines still count in the `Processed N events` summary. {{ added "unreleased" }}
+
 This is the right tool for ad-hoc threat hunting, forensic replay over `.evtx` and NDJSON files, and any "run rules against this data, then exit" workflow. For a long-running daemon with hot-reload and metrics, use [`engine daemon`](daemon.md). For per-rule assertions over a corpus (a CI fixture harness with expected-vs-actual fire counts and a JUnit report), use [`rule backtest`](../rule/backtest.md).
 
 For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md).
@@ -103,7 +105,7 @@ The same gap and broken-coverage signals exposed by the daemon's `/api/v1/fields
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--observe-fields` | off | Record the field keys of every evaluated event and emit a coverage report at end-of-run. The report has the same JSON shape as `GET /api/v1/fields`, so the same `jq` queries work against either runtime (suited for CI gap analysis). |
-| `--observe-fields-max-keys <N>` | `10000` | Hard ceiling on distinct field names tracked. New keys are dropped after the cap (and counted via `overflow_dropped` in the report). |
+| `--observe-fields-max-keys <N>` | `10000` | Hard ceiling on distinct field names tracked. New keys are dropped after the cap (and counted via `overflow_dropped` in the report). Paths over 512 bytes and the paths past 4,096 (or 256 KiB) in one event are not tracked either, and count in `oversized_keys` and `truncated_events`. {{ added "unreleased" }} |
 | `--observe-fields-report <PATH>` | unset | Write the report to a file. When omitted (and `--observe-fields` is set), the report goes to stderr so detections on stdout stay machine-consumable. |
 
 ```bash

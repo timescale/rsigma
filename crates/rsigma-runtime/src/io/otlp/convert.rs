@@ -10,6 +10,311 @@ use serde_json::{Map, Value};
 
 use crate::io::{AckToken, RawEvent};
 
+/// Limits on how much one OTLP logs request may expand into events.
+///
+/// Every log record is flattened into its own JSON event that carries a copy
+/// of the resource attributes, so a request with large resource attributes
+/// and many records would otherwise expand far beyond its own size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OtlpLimits {
+    /// Most log records one request may carry. A request with more is
+    /// refused as a whole, before it is decoded.
+    pub max_records: usize,
+    /// Largest flattened event, in bytes. A larger record is rejected.
+    pub max_record_bytes: usize,
+    /// Most bytes of flattened events one request may produce. Once the next
+    /// record would pass it, that record and every later one are rejected.
+    pub max_request_bytes: usize,
+}
+
+impl Default for OtlpLimits {
+    /// 10,000 records, 1 MiB per event, and 64 MiB per request.
+    fn default() -> Self {
+        Self {
+            max_records: 10_000,
+            max_record_bytes: crate::io::MAX_LINE_BYTES,
+            max_request_bytes: 64 * 1024 * 1024,
+        }
+    }
+}
+
+/// Log records a [`LogRecordConverter`] rejected, by reason.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RejectedRecords {
+    /// Records whose flattened event was larger than
+    /// [`OtlpLimits::max_record_bytes`].
+    pub too_large: u64,
+    /// Records past [`OtlpLimits::max_request_bytes`].
+    pub over_budget: u64,
+}
+
+impl RejectedRecords {
+    /// Every rejected record.
+    pub fn total(&self) -> u64 {
+        self.too_large + self.over_budget
+    }
+}
+
+/// Count the log records in an encoded `ExportLogsServiceRequest` without
+/// decoding it, so a request with too many can be refused before decoding
+/// allocates them all.
+///
+/// Walks only the `resource_logs`, `scope_logs`, and `log_records` framing.
+/// Returns `None` when that framing is malformed. For a request that decodes,
+/// the count equals the number of decoded records.
+pub fn count_log_records(request: &[u8]) -> Option<usize> {
+    let mut count = 0usize;
+    for_each_message(request, 1, &mut |resource_logs| {
+        for_each_message(resource_logs, 2, &mut |scope_logs| {
+            for_each_message(scope_logs, 2, &mut |_| {
+                count += 1;
+                Some(())
+            })
+        })
+    })?;
+    Some(count)
+}
+
+/// Call `f` with the payload of every length-delimited occurrence of field
+/// `field` in one protobuf message, skipping every other field.
+fn for_each_message(
+    mut buf: &[u8],
+    field: u64,
+    f: &mut dyn FnMut(&[u8]) -> Option<()>,
+) -> Option<()> {
+    // Field numbers of the groups being skipped, innermost last.
+    let mut groups: Vec<u64> = Vec::new();
+    while !buf.is_empty() {
+        let key = read_varint(&mut buf)?;
+        let number = key >> 3;
+        if number == 0 {
+            return None;
+        }
+        match key & 7 {
+            0 => {
+                read_varint(&mut buf)?;
+            }
+            1 => buf = buf.get(8..)?,
+            2 => {
+                let len = usize::try_from(read_varint(&mut buf)?).ok()?;
+                let payload = buf.get(..len)?;
+                buf = &buf[len..];
+                if groups.is_empty() && number == field {
+                    f(payload)?;
+                }
+            }
+            3 => groups.push(number),
+            4 => {
+                if groups.pop()? != number {
+                    return None;
+                }
+            }
+            5 => buf = buf.get(4..)?,
+            _ => return None,
+        }
+    }
+    groups.is_empty().then_some(())
+}
+
+fn read_varint(buf: &mut &[u8]) -> Option<u64> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let (&byte, rest) = buf.split_first()?;
+        *buf = rest;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Count the log records in an OTLP/JSON `ExportLogsServiceRequest` without
+/// decoding it into records.
+///
+/// Walks `resourceLogs[].scopeLogs[].logRecords[]` and skips everything else
+/// without allocating. Returns `None` when the body is not valid JSON. For a
+/// request that decodes, the count is at least the number of decoded records.
+pub fn count_log_records_json(request: &[u8]) -> Option<usize> {
+    use serde::de::DeserializeSeed;
+    let mut de = serde_json::Deserializer::from_slice(request);
+    let count = json_count::Level::Request.deserialize(&mut de).ok()?;
+    de.end().ok()?;
+    Some(count)
+}
+
+mod json_count {
+    use std::fmt;
+
+    use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+    /// The object a seed expects. Anything else at that place counts zero.
+    #[derive(Clone, Copy)]
+    pub(super) enum Level {
+        Request,
+        ResourceLogs,
+        ScopeLogs,
+    }
+
+    impl Level {
+        fn child(self) -> (&'static str, Option<Level>) {
+            match self {
+                Level::Request => ("resourceLogs", Some(Level::ResourceLogs)),
+                Level::ResourceLogs => ("scopeLogs", Some(Level::ScopeLogs)),
+                Level::ScopeLogs => ("logRecords", None),
+            }
+        }
+    }
+
+    impl<'de> DeserializeSeed<'de> for Level {
+        type Value = usize;
+
+        fn deserialize<D: de::Deserializer<'de>>(self, de: D) -> Result<usize, D::Error> {
+            de.deserialize_any(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for Level {
+        type Value = usize;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("an OTLP logs object")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<usize, A::Error> {
+            let (name, child) = self.child();
+            let mut count = 0usize;
+            while let Some(matched) = map.next_key_seed(KeyIs(name))? {
+                count = count.saturating_add(if matched {
+                    map.next_value_seed(Elements(child))?
+                } else {
+                    map.next_value::<IgnoredAny>()?;
+                    0
+                });
+            }
+            Ok(count)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<usize, A::Error> {
+            while seq.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(0)
+        }
+
+        fn visit_bool<E: de::Error>(self, _: bool) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_i64<E: de::Error>(self, _: i64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_u64<E: de::Error>(self, _: u64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_f64<E: de::Error>(self, _: f64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_str<E: de::Error>(self, _: &str) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<usize, E> {
+            Ok(0)
+        }
+    }
+
+    /// The elements of an array: each counted at the next level down, or
+    /// counted as one record when there is no lower level.
+    struct Elements(Option<Level>);
+
+    impl<'de> DeserializeSeed<'de> for Elements {
+        type Value = usize;
+
+        fn deserialize<D: de::Deserializer<'de>>(self, de: D) -> Result<usize, D::Error> {
+            de.deserialize_any(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for Elements {
+        type Value = usize;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("an array")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<usize, A::Error> {
+            let mut count = 0usize;
+            match self.0 {
+                Some(level) => {
+                    while let Some(n) = seq.next_element_seed(level)? {
+                        count = count.saturating_add(n);
+                    }
+                }
+                None => {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {
+                        count = count.saturating_add(1);
+                    }
+                }
+            }
+            Ok(count)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<usize, A::Error> {
+            IgnoredAny.visit_map(map).map(|_| 0)
+        }
+
+        fn visit_bool<E: de::Error>(self, _: bool) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_i64<E: de::Error>(self, _: i64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_u64<E: de::Error>(self, _: u64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_f64<E: de::Error>(self, _: f64) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_str<E: de::Error>(self, _: &str) -> Result<usize, E> {
+            Ok(0)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<usize, E> {
+            Ok(0)
+        }
+    }
+
+    /// Whether an object key equals one name, compared without allocating
+    /// when the key has no escapes.
+    struct KeyIs(&'static str);
+
+    impl<'de> DeserializeSeed<'de> for KeyIs {
+        type Value = bool;
+
+        fn deserialize<D: de::Deserializer<'de>>(self, de: D) -> Result<bool, D::Error> {
+            de.deserialize_str(self)
+        }
+    }
+
+    impl<'de> Visitor<'de> for KeyIs {
+        type Value = bool;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("an object key")
+        }
+
+        fn visit_str<E: de::Error>(self, key: &str) -> Result<bool, E> {
+            Ok(key == self.0)
+        }
+    }
+}
+
 /// Convert an OTLP `ExportLogsServiceRequest` into a vec of [`RawEvent`]s.
 ///
 /// Each `LogRecord` is flattened into a JSON object following industry
@@ -19,6 +324,9 @@ use crate::io::{AckToken, RawEvent};
 /// - Log attributes are unprefixed (primary detection target)
 /// - Scope metadata goes to `scope.name` / `scope.version`
 /// - Timestamps are ISO 8601, trace/span IDs are lowercase hex
+///
+/// Records past the [`OtlpLimits::default`] sizes are left out; use a
+/// [`LogRecordConverter`] to learn how many.
 pub fn logs_request_to_raw_events(request: &ExportLogsServiceRequest) -> Vec<RawEvent> {
     logs_request_to_raw_events_for(request, None)
 }
@@ -29,37 +337,214 @@ pub fn logs_request_to_raw_events_for(
     request: &ExportLogsServiceRequest,
     tenant: Option<&TenantId>,
 ) -> Vec<RawEvent> {
-    let mut events = Vec::new();
+    LogRecordConverter::new(request, tenant, OtlpLimits::default()).collect()
+}
 
-    for resource_logs in &request.resource_logs {
-        let resource_attrs = resource_logs
+/// The number of log records in a decoded request.
+pub fn log_record_count(request: &ExportLogsServiceRequest) -> usize {
+    request
+        .resource_logs
+        .iter()
+        .flat_map(|resource| &resource.scope_logs)
+        .map(|scope| scope.log_records.len())
+        .sum()
+}
+
+/// Flattens the log records of one request into [`RawEvent`]s one at a time,
+/// within [`OtlpLimits`].
+///
+/// The resource attributes of each `ResourceLogs` are converted once and
+/// copied into its events. A record whose event would be larger than
+/// [`OtlpLimits::max_record_bytes`] is rejected, mostly before its event is
+/// built, and once the events produced so far plus the next one would pass
+/// [`OtlpLimits::max_request_bytes`], every remaining record is rejected.
+/// [`Self::rejected`] reports both after the iteration.
+pub struct LogRecordConverter<'a> {
+    request: &'a ExportLogsServiceRequest,
+    tenant: Option<TenantId>,
+    limits: OtlpLimits,
+    resource: usize,
+    scope: usize,
+    record: usize,
+    prepared: Option<PreparedResource>,
+    total_records: usize,
+    seen_records: usize,
+    produced_bytes: usize,
+    rejected: RejectedRecords,
+}
+
+/// The resource attributes of one `ResourceLogs`, converted once for all of
+/// its records.
+struct PreparedResource {
+    /// `resource.`-prefixed attributes, or `None` when they alone exceed the
+    /// per-record limit, so every record under them is rejected.
+    attributes: Option<Vec<(String, Value)>>,
+    /// A lower bound on the bytes the attributes add to an event.
+    bytes: usize,
+}
+
+impl<'a> LogRecordConverter<'a> {
+    /// A converter over `request` that stamps every event with `tenant`.
+    pub fn new(
+        request: &'a ExportLogsServiceRequest,
+        tenant: Option<&TenantId>,
+        limits: OtlpLimits,
+    ) -> Self {
+        Self {
+            request,
+            tenant: tenant.cloned(),
+            limits,
+            resource: 0,
+            scope: 0,
+            record: 0,
+            prepared: None,
+            total_records: log_record_count(request),
+            seen_records: 0,
+            produced_bytes: 0,
+            rejected: RejectedRecords::default(),
+        }
+    }
+
+    /// Records rejected so far.
+    pub fn rejected(&self) -> RejectedRecords {
+        self.rejected
+    }
+
+    fn prepare(&self, resource_logs: &ResourceLogs) -> PreparedResource {
+        let attrs = resource_logs
             .resource
             .as_ref()
             .map(|r| &r.attributes[..])
             .unwrap_or_default();
-
-        for scope_logs in &resource_logs.scope_logs {
-            let scope = scope_logs.scope.as_ref();
-
-            for log_record in &scope_logs.log_records {
-                let json = log_record_to_json(log_record, resource_attrs, scope);
-                let payload = serde_json::to_string(&json).unwrap_or_default();
-                events.push(RawEvent {
-                    payload,
-                    ack_token: AckToken::Noop,
-                    tenant: tenant.cloned(),
-                });
+        let bytes = attributes_len(attrs, "resource.".len());
+        if bytes > self.limits.max_record_bytes {
+            return PreparedResource {
+                attributes: None,
+                bytes,
+            };
+        }
+        let mut attributes = Vec::with_capacity(attrs.len());
+        for kv in attrs {
+            if let Some(v) = &kv.value {
+                attributes.push((format!("resource.{}", kv.key), any_value_to_json(v)));
             }
         }
+        PreparedResource {
+            attributes: Some(attributes),
+            bytes,
+        }
     }
+}
 
-    events
+impl Iterator for LogRecordConverter<'_> {
+    type Item = RawEvent;
+
+    fn next(&mut self) -> Option<RawEvent> {
+        loop {
+            let resource_logs = self.request.resource_logs.get(self.resource)?;
+            let Some(scope_logs) = resource_logs.scope_logs.get(self.scope) else {
+                self.resource += 1;
+                self.scope = 0;
+                self.prepared = None;
+                continue;
+            };
+            let Some(record) = scope_logs.log_records.get(self.record) else {
+                self.scope += 1;
+                self.record = 0;
+                continue;
+            };
+            self.record += 1;
+            self.seen_records += 1;
+            if self.prepared.is_none() {
+                self.prepared = Some(self.prepare(resource_logs));
+            }
+            let prepared = self.prepared.as_ref()?;
+            let scope = scope_logs.scope.as_ref();
+            let estimate = prepared.bytes + record_len(record, scope);
+            if estimate > self.limits.max_record_bytes {
+                self.rejected.too_large += 1;
+                continue;
+            }
+            if self.produced_bytes + estimate > self.limits.max_request_bytes {
+                let remaining = self.total_records - self.seen_records + 1;
+                self.rejected.over_budget += remaining as u64;
+                self.resource = self.request.resource_logs.len();
+                return None;
+            }
+            let resource = prepared.attributes.as_deref().unwrap_or_default();
+            let json = log_record_to_json(record, resource, scope);
+            let payload = serde_json::to_string(&json).unwrap_or_default();
+            if payload.len() > self.limits.max_record_bytes {
+                self.rejected.too_large += 1;
+                continue;
+            }
+            self.produced_bytes += payload.len();
+            return Some(RawEvent {
+                payload,
+                ack_token: AckToken::Noop,
+                tenant: self.tenant.clone(),
+            });
+        }
+    }
+}
+
+/// A lower bound on the bytes the record's own fields and its scope add to
+/// its flattened event.
+fn record_len(record: &LogRecord, scope: Option<&InstrumentationScope>) -> usize {
+    // `"timestamp":"…"` with a nanosecond RFC 3339 value.
+    const TIMESTAMP: usize = 45;
+    let mut len = 2usize;
+    if record.time_unix_nano != 0 {
+        len += TIMESTAMP;
+    }
+    if record.observed_time_unix_nano != 0 {
+        len += TIMESTAMP + "observed_".len();
+    }
+    if !record.severity_text.is_empty() {
+        len += record.severity_text.len() + "\"severity_text\":\"\",".len();
+    }
+    if let Some(body) = &record.body {
+        len = len.saturating_add(any_value_len(body) + "\"body\":,".len());
+    }
+    len += record.trace_id.len() * 2 + record.span_id.len() * 2;
+    len = len.saturating_add(attributes_len(&record.attributes, 0));
+    if let Some(scope) = scope {
+        len += scope.name.len() + scope.version.len();
+    }
+    len
+}
+
+/// A lower bound on the bytes `"key":value,` pairs add to an event, with
+/// `prefix` extra bytes on every key.
+fn attributes_len(attrs: &[KeyValue], prefix: usize) -> usize {
+    attrs.iter().fold(0usize, |len, kv| match &kv.value {
+        Some(v) => len.saturating_add(prefix + kv.key.len() + 4 + any_value_len(v)),
+        None => len,
+    })
+}
+
+/// A lower bound on the length of a value serialized as JSON.
+fn any_value_len(value: &AnyValue) -> usize {
+    match &value.value {
+        Some(any_value::Value::StringValue(s)) => s.len() + 2,
+        Some(any_value::Value::BoolValue(_)) => 4,
+        Some(any_value::Value::IntValue(_)) | Some(any_value::Value::DoubleValue(_)) => 1,
+        Some(any_value::Value::ArrayValue(arr)) => arr
+            .values
+            .iter()
+            .fold(2usize, |len, v| len.saturating_add(any_value_len(v) + 1)),
+        Some(any_value::Value::KvlistValue(kvlist)) => {
+            attributes_len(&kvlist.values, 0).saturating_add(2)
+        }
+        Some(any_value::Value::BytesValue(bytes)) => bytes.len() * 2 + 2,
+        Some(any_value::Value::StringValueStrindex(_)) | None => 4,
+    }
 }
 
 fn log_record_to_json(
-    record: &opentelemetry_proto::tonic::logs::v1::LogRecord,
-    resource_attrs: &[KeyValue],
-    scope: Option<&opentelemetry_proto::tonic::common::v1::InstrumentationScope>,
+    record: &LogRecord,
+    resource_attrs: &[(String, Value)],
+    scope: Option<&InstrumentationScope>,
 ) -> Value {
     let mut map = Map::new();
 
@@ -113,7 +598,9 @@ fn log_record_to_json(
     flatten_attributes(&mut map, &record.attributes, "");
 
     // Resource attributes (prefixed with "resource.")
-    flatten_attributes(&mut map, resource_attrs, "resource.");
+    for (key, value) in resource_attrs {
+        map.insert(key.clone(), value.clone());
+    }
 
     // Scope metadata
     if let Some(scope) = scope {
@@ -834,6 +1321,190 @@ mod tests {
         };
         let parsed: Value = serde_json::from_str(&raw).expect("finding JSON");
         assert_eq!(parsed, golden, "the string body is the finding");
+    }
+
+    fn records(n: usize) -> Vec<LogRecord> {
+        (0..n)
+            .map(|i| LogRecord {
+                body: Some(string_val(&format!("event-{i}"))),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn record_counts_match_the_decoded_request() {
+        use prost::Message;
+
+        let request = ExportLogsServiceRequest {
+            resource_logs: vec![
+                ResourceLogs {
+                    resource: Some(Resource {
+                        attributes: vec![kv("host.name", string_val("a"))],
+                        ..Default::default()
+                    }),
+                    scope_logs: vec![
+                        ScopeLogs {
+                            log_records: records(3),
+                            schema_url: "https://example.test".to_string(),
+                            ..Default::default()
+                        },
+                        ScopeLogs::default(),
+                        ScopeLogs {
+                            log_records: records(2),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ResourceLogs {
+                    scope_logs: vec![ScopeLogs {
+                        log_records: records(4),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+        };
+        assert_eq!(log_record_count(&request), 9);
+
+        let encoded = request.encode_to_vec();
+        assert_eq!(count_log_records(&encoded), Some(9));
+        let json = serde_json::to_vec(&request).unwrap();
+        assert_eq!(count_log_records_json(&json), Some(9));
+
+        assert_eq!(count_log_records(&[]), Some(0));
+        assert_eq!(count_log_records_json(b"{}"), Some(0));
+        assert_eq!(count_log_records(&encoded[..encoded.len() - 1]), None);
+        assert_eq!(count_log_records_json(b"{\"resourceLogs\":["), None);
+    }
+
+    #[test]
+    fn the_protobuf_count_skips_unknown_fields_and_groups() {
+        use prost::Message;
+
+        let mut encoded = Vec::new();
+        // Field 9 as a varint, a fixed64, a fixed32, and a group.
+        encoded.extend_from_slice(&[0x48, 0x96, 0x01]);
+        encoded.extend_from_slice(&[0x49, 1, 2, 3, 4, 5, 6, 7, 8]);
+        encoded.extend_from_slice(&[0x4d, 1, 2, 3, 4]);
+        encoded.extend_from_slice(&[0x4b, 0x08, 0x01, 0x4c]);
+        make_request(vec![], None, records(5))
+            .encode(&mut encoded)
+            .unwrap();
+
+        let decoded = ExportLogsServiceRequest::decode(encoded.as_slice()).unwrap();
+        assert_eq!(log_record_count(&decoded), 5);
+        assert_eq!(count_log_records(&encoded), Some(5));
+
+        // An unterminated group.
+        assert_eq!(count_log_records(&[0x4b, 0x08, 0x01]), None);
+    }
+
+    #[test]
+    fn the_json_count_ignores_other_fields_and_shapes() {
+        let body = br#"{
+            "resourceLogs": [
+                {"resource": {"attributes": [{"key": "logRecords", "value": {"arrayValue": {"values": [1, 2]}}}]},
+                 "scopeLogs": [{"scope": {"name": "s"}, "logRecords": [{}, {"body": {"stringValue": "x"}}]},
+                               {"logRecords": null}]},
+                {"scopeLogs": "not an array"}
+            ],
+            "extra": {"resourceLogs": [{"scopeLogs": [{"logRecords": [{}]}]}]}
+        }"#;
+        assert_eq!(count_log_records_json(body), Some(2));
+    }
+
+    #[test]
+    fn a_large_resource_over_many_records_stays_within_the_request_budget() {
+        let big = "r".repeat(512 * 1024);
+        let request = make_request(
+            vec![kv("service.blob", string_val(&big))],
+            None,
+            records(10_000),
+        );
+        let limits = OtlpLimits::default();
+        let mut converter = LogRecordConverter::new(&request, None, limits);
+        let mut produced = 0usize;
+        let mut accepted = 0u64;
+        for event in converter.by_ref() {
+            assert!(event.payload.len() <= limits.max_record_bytes);
+            produced += event.payload.len();
+            accepted += 1;
+        }
+        let rejected = converter.rejected();
+        assert!(produced <= limits.max_request_bytes);
+        assert!(accepted > 0);
+        assert_eq!(rejected.too_large, 0);
+        assert_eq!(accepted + rejected.over_budget, 10_000);
+    }
+
+    #[test]
+    fn a_resource_over_the_record_limit_rejects_every_record_under_it() {
+        let huge = "r".repeat(2 * 1024 * 1024);
+        let request = ExportLogsServiceRequest {
+            resource_logs: vec![
+                ResourceLogs {
+                    resource: Some(Resource {
+                        attributes: vec![kv("service.blob", string_val(&huge))],
+                        ..Default::default()
+                    }),
+                    scope_logs: vec![ScopeLogs {
+                        log_records: records(1000),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ResourceLogs {
+                    scope_logs: vec![ScopeLogs {
+                        log_records: records(2),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+        };
+        let mut converter = LogRecordConverter::new(&request, None, OtlpLimits::default());
+        let events: Vec<RawEvent> = converter.by_ref().collect();
+        assert_eq!(
+            events.len(),
+            2,
+            "the records under the small resource remain"
+        );
+        assert_eq!(converter.rejected().too_large, 1000);
+        assert_eq!(converter.rejected().over_budget, 0);
+    }
+
+    #[test]
+    fn an_over_large_record_is_rejected_and_its_neighbours_kept() {
+        let mut log_records = records(3);
+        log_records[1].attributes = vec![kv("blob", string_val(&"x".repeat(2 * 1024 * 1024)))];
+        let request = make_request(vec![], None, log_records);
+        let mut converter = LogRecordConverter::new(&request, None, OtlpLimits::default());
+        let bodies: Vec<String> = converter
+            .by_ref()
+            .map(|e| serde_json::from_str::<Value>(&e.payload).unwrap()["body"].to_string())
+            .collect();
+        assert_eq!(bodies, ["\"event-0\"", "\"event-2\""]);
+        assert_eq!(converter.rejected().too_large, 1);
+    }
+
+    #[test]
+    fn a_record_whose_estimate_fits_but_whose_event_does_not_is_rejected() {
+        // Every byte here is escaped in JSON, so the event is six times the
+        // size the estimate assumes.
+        let control = "\u{1}".repeat(400 * 1024);
+        let request = make_request(
+            vec![],
+            None,
+            vec![LogRecord {
+                body: Some(string_val(&control)),
+                ..Default::default()
+            }],
+        );
+        let mut converter = LogRecordConverter::new(&request, None, OtlpLimits::default());
+        assert_eq!(converter.by_ref().count(), 0);
+        assert_eq!(converter.rejected().too_large, 1);
     }
 
     #[test]
