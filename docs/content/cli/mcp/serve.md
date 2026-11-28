@@ -42,7 +42,10 @@ The command is gated behind the opt-in `mcp` Cargo feature: build from source wi
 | `--http <ADDR>` | stdio | Serve over the Streamable HTTP transport on this address (e.g. `127.0.0.1:9100`) instead of stdio. The MCP endpoint is mounted at `/mcp`. Config key: `mcp.http_addr`. |
 | `--auth-token <TOKEN>` | none | Require this static bearer token on every HTTP request (`Authorization: Bearer <token>`); requests without it get `401`. Also read from `RSIGMA_MCP_AUTH_TOKEN`. Flag/env only: secrets are never read from config files. |
 | `--allow-unauthenticated` | off | Serve `--http` on a non-loopback address without `--auth-token`. Without it, such a bind refuses to start, because anyone who can reach the port could call every tool. Loopback binds never need it. Flag only. {{ added "0.27.0" }} |
-| `--allowed-host <HOST>` | see below | Accept this `Host` header value (a host name or `host:port`) on the HTTP transport. Repeatable. Adds to `localhost`, `127.0.0.1`, `::1`, and a specific bind IP; other hosts get `403`. Without it, a non-loopback bind with `--auth-token` accepts any host. Flag only. {{ added "0.27.0" }} |
+| `--allowed-host <HOST>` | see below | Accept this `Host` header value (a host name or `host:port`) on the HTTP transport. Repeatable. Adds to `localhost`, `127.0.0.1`, `::1`, and a specific bind IP; other hosts get `403`. Without it, a non-loopback bind with `--auth-token` accepts any host. `*` accepts every host and needs `--auth-token`. {{ added "unreleased" }} Flag only. {{ added "0.27.0" }} |
+| `--max-connections <N>` | `1024` | Open HTTP connections served at once. Further clients wait in the listen backlog until a connection closes. Flag only. {{ added "unreleased" }} |
+| `--read-timeout <DURATION>` | `30s` | How long the HTTP transport waits for a client's first bytes, each request head (including the next request on an idle keep-alive connection), and each chunk of a request body before closing the connection. Flag only. {{ added "unreleased" }} |
+| `--tls-handshake-timeout <DURATION>` | `10s` | How long a client may take to complete the TLS handshake. Handshakes run off the accept path, at most 256 at once, so a client that never sends a `ClientHello` cannot delay others. Flag only. {{ added "unreleased" }} |
 | `--allow-plaintext` | off | Allow binding plaintext HTTP on a non-loopback address without TLS. Loopback binds never need it. |
 | `--tls-cert <PATH>` | none | TLS certificate (PEM) for the HTTP transport. Requires `--tls-key` and a build with the `daemon-tls` feature. |
 | `--tls-key <PATH>` | none | TLS private key (PEM) for the HTTP transport. Requires `--tls-cert`. |
@@ -128,7 +131,7 @@ The endpoint is `https?://<addr>/mcp`. Plaintext binds on non-loopback addresses
 
 A host without a port matches any port. Other hosts get `403 Forbidden`.
 
-A request carrying an `Origin` header must name one of the accepted hosts over `http` or `https` (for example `http://localhost:6274` for a browser-based inspector), or it gets `403 Forbidden`. Requests without `Origin` are unaffected, and a bind that accepts any host skips the check.
+A request carrying an `Origin` header must name one of the accepted hosts over `http` or `https` (for example `http://localhost:6274` for a browser-based inspector), or it gets `403 Forbidden`. Requests without `Origin` are unaffected. A bind that accepts any host accepts an `Origin` only when it names the host the request addresses. {{ added "unreleased" }} The daemon API applies the same rules; see [Host and Origin validation](../engine/daemon.md#host-and-origin-validation).
 
 `--http` refuses to start without `--rules-dir` unless `--allow-unconfined-paths` is set, because any client that reaches the endpoint could otherwise read files outside a rules tree. {{ added "0.25.0" }}
 

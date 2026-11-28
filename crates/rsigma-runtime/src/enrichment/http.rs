@@ -276,6 +276,25 @@ impl Enricher for HttpEnricher {
         self.on_miss
     }
 
+    fn request_key(&self, result: &EvaluationResult) -> Option<String> {
+        let mut key = format!(
+            "{} {}",
+            self.method,
+            render_enricher_template_url(&self.url, result)
+        );
+        if let Some(body) = &self.body {
+            key.push('\n');
+            key.push_str(&render_enricher_template_json(body, result));
+        }
+        for (name, value) in &self.headers {
+            key.push('\n');
+            key.push_str(name);
+            key.push(':');
+            key.push_str(&render_enricher_template(value, result));
+        }
+        Some(key)
+    }
+
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let url = render_enricher_template_url(&self.url, result);
         let body = self

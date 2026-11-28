@@ -12,8 +12,9 @@ homepage.workspace = true
 [features]
 default = []
 # Streamable HTTP transport: mounts the MCP service on an axum router with
-# optional bearer-token auth. stdio works without this feature.
-http = ["dep:axum", "rmcp/transport-streamable-http-server"]
+# optional bearer-token auth, Host and Origin validation, and connection
+# limits. stdio works without this feature.
+http = ["dep:axum", "rmcp/transport-streamable-http-server", "rsigma-runtime/http-server"]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.28.0" }

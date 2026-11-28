@@ -726,6 +726,203 @@ fn http_reload_with_invalid_cert_keeps_previous_one() {
     assert_eq!(status, 200, "body: {body}");
 }
 
+// ---------------------------------------------------------------------------
+// Handshakes off the accept path
+// ---------------------------------------------------------------------------
+
+/// Open `n` TCP connections that never send a `ClientHello`.
+fn stalled_connections(addr: &str, n: usize) -> Vec<std::net::TcpStream> {
+    (0..n)
+        .map(|_| {
+            let stream = std::net::TcpStream::connect(addr).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            stream
+        })
+        .collect()
+}
+
+/// Assert each stalled connection is closed by the server within `within`.
+fn assert_closed_within(stalled: Vec<std::net::TcpStream>, within: Duration) {
+    use std::io::Read;
+    let started = std::time::Instant::now();
+    for mut stream in stalled {
+        let mut buf = [0u8; 16];
+        assert!(
+            matches!(stream.read(&mut buf), Ok(0) | Err(_)),
+            "a stalled handshake was left open"
+        );
+    }
+    assert!(started.elapsed() < within, "{:?}", started.elapsed());
+}
+
+#[test]
+fn stalled_handshakes_do_not_block_new_tls_clients() {
+    let fixture = mint_ca_and_leaf();
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--tls-cert",
+        &fixture.cert_path,
+        "--tls-key",
+        &fixture.key_path,
+        "--tls-handshake-timeout",
+        "2s",
+    ]);
+
+    let stalled = stalled_connections(daemon.api_addr(), 10);
+    std::thread::sleep(Duration::from_millis(100));
+    let started = std::time::Instant::now();
+    let (status, body) = https_get(
+        daemon.api_addr(),
+        "/healthz",
+        client_config(fixture.root_store.clone()),
+    )
+    .expect("a new TLS client must be served while others stall");
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the new client waited behind stalled handshakes: {:?}",
+        started.elapsed()
+    );
+
+    assert_closed_within(stalled, Duration::from_secs(6));
+    let (_, metrics) = https_get(
+        daemon.api_addr(),
+        "/metrics",
+        client_config(fixture.root_store),
+    )
+    .unwrap();
+    let timeouts: f64 = metrics
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("rsigma_tls_handshake_failures_total{reason=\"timeout\"} ")?
+                .trim()
+                .parse()
+                .ok()
+        })
+        .expect("handshake failure counter missing");
+    assert!(timeouts >= 10.0, "{timeouts}");
+}
+
+/// A running `rsigma mcp serve --http` over TLS, killed on drop.
+#[cfg(feature = "mcp")]
+struct McpTls {
+    child: std::process::Child,
+    addr: String,
+    _stderr: NamedTempFile,
+    _rules: tempfile::TempDir,
+}
+
+#[cfg(feature = "mcp")]
+impl Drop for McpTls {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(feature = "mcp")]
+fn spawn_mcp_tls(fixture: &TlsFixture, extra: &[&str]) -> McpTls {
+    let rules = tempfile::tempdir().unwrap();
+    let stderr = NamedTempFile::new().unwrap();
+    let mut child = std::process::Command::new(common::rsigma_bin())
+        .args(["mcp", "serve", "--http", "127.0.0.1:0", "--tls-cert"])
+        .arg(&fixture.cert_path)
+        .arg("--tls-key")
+        .arg(&fixture.key_path)
+        .arg("--rules-dir")
+        .arg(rules.path())
+        .args(extra)
+        .env_remove("RSIGMA_MCP_AUTH_TOKEN")
+        .stdout(std::process::Stdio::null())
+        .stderr(stderr.reopen().unwrap())
+        .spawn()
+        .expect("spawn rsigma mcp serve");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let log = std::fs::read_to_string(stderr.path()).unwrap();
+        if let Some(addr) = log
+            .split("listening on https://")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+        {
+            return McpTls {
+                child,
+                addr: addr.to_string(),
+                _stderr: stderr,
+                _rules: rules,
+            };
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("MCP server exited with {status}: {log}");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "MCP server did not start: {log}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(feature = "mcp")]
+#[test]
+fn mcp_stalled_handshakes_do_not_block_new_tls_clients() {
+    let fixture = mint_ca_and_leaf();
+    let server = spawn_mcp_tls(&fixture, &["--tls-handshake-timeout", "2s"]);
+
+    let stalled = stalled_connections(&server.addr, 10);
+    std::thread::sleep(Duration::from_millis(100));
+    let started = std::time::Instant::now();
+    let (status, _) = https_get(
+        &server.addr,
+        "/mcp",
+        client_config(fixture.root_store.clone()),
+    )
+    .expect("a new TLS client must be served while others stall");
+    assert!(status >= 200, "no HTTP response from /mcp");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the new client waited behind stalled handshakes: {:?}",
+        started.elapsed()
+    );
+    assert_closed_within(stalled, Duration::from_secs(6));
+}
+
+#[cfg(feature = "mcp")]
+#[test]
+fn mcp_tls_listener_refuses_a_foreign_host() {
+    let fixture = mint_ca_and_leaf();
+    let server = spawn_mcp_tls(&fixture, &[]);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let response = rt.block_on(async {
+        let tcp = TcpStream::connect(server.addr.as_str()).await.unwrap();
+        let connector = TlsConnector::from(Arc::new(client_config(fixture.root_store.clone())));
+        let mut tls = connector
+            .connect(ServerName::try_from("localhost").unwrap(), tcp)
+            .await
+            .unwrap();
+        tls.write_all(b"GET /mcp HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        let _ = tls.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).into_owned()
+    });
+    assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+}
+
 // Avoid unused-write warning on rcgen's keypair pem helpers across cfg
 // permutations.
 #[allow(dead_code)]

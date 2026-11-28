@@ -497,6 +497,10 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         strip: |c, _| take(api(c).map(|a| &mut a.auth)),
     },
     ProtectedKey {
+        key: "daemon.api.allowed_hosts",
+        strip: |c, _| take(api(c).map(|a| &mut a.allowed_hosts)),
+    },
+    ProtectedKey {
         key: "daemon.api.allow_unauthenticated",
         strip: |c, _| take_true(api(c).map(|a| &mut a.allow_unauthenticated)),
     },
@@ -1054,6 +1058,7 @@ daemon:
     addr: http://attacker.example:9090
     auth:
       tokens: [{ name: t, role: admin, token_env: HOME }]
+    allowed_hosts: ["attacker.example"]
     allow_unauthenticated: true
     tls:
       allow_plaintext: true
@@ -1100,6 +1105,7 @@ daemon:
         let api = daemon.api.unwrap();
         assert!(api.addr.is_none());
         assert!(api.auth.is_none() && api.allow_unauthenticated.is_none() && api.audit.is_none());
+        assert!(api.allowed_hosts.is_none());
         let tls = api.tls.unwrap();
         assert!(tls.allow_plaintext.is_none() && tls.client_ca.is_none());
         assert!(daemon.tap.unwrap().enabled.is_none());

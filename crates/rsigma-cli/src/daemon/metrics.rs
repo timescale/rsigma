@@ -58,6 +58,7 @@ pub struct Metrics {
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
+    pub enrichment_short_circuits_total: IntCounterVec,
     pub enrichment_http_cache_hits_total: IntCounterVec,
     pub enrichment_http_cache_misses_total: IntCounterVec,
     pub enrichment_http_cache_expirations_total: IntCounterVec,
@@ -83,6 +84,8 @@ pub struct Metrics {
     pub tls_certificate_expiry_seconds: Gauge,
     #[cfg(feature = "daemon-tls")]
     pub tls_active_connections: std::sync::Arc<IntGauge>,
+    #[cfg(feature = "daemon-tls")]
+    pub tls_handshake_failures_total: IntCounterVec,
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
@@ -657,6 +660,14 @@ impl Metrics {
             "Pending enrichment calls (sum across both kinds)",
         ))
         .unwrap();
+        let enrichment_short_circuits_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_short_circuits_total",
+                "Enricher calls skipped because the same request was in flight or recently timed out or failed",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
         let enrichment_http_cache_hits_total = IntCounterVec::new(
             Opts::new(
                 "rsigma_enrichment_http_cache_hits_total",
@@ -772,6 +783,9 @@ impl Metrics {
             .register(Box::new(enrichment_queue_depth.clone()))
             .unwrap();
         registry
+            .register(Box::new(enrichment_short_circuits_total.clone()))
+            .unwrap();
+        registry
             .register(Box::new(enrichment_http_cache_hits_total.clone()))
             .unwrap();
         registry
@@ -876,12 +890,29 @@ impl Metrics {
             .unwrap(),
         );
         #[cfg(feature = "daemon-tls")]
+        let tls_handshake_failures_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tls_handshake_failures_total",
+                "TLS handshakes on the API listener that failed or timed out",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "daemon-tls")]
         {
             registry
                 .register(Box::new(tls_certificate_expiry_seconds.clone()))
                 .unwrap();
             registry
                 .register(Box::new(tls_active_connections.as_ref().clone()))
+                .unwrap();
+            for reason in ["timeout", "error"] {
+                tls_handshake_failures_total
+                    .with_label_values(&[reason])
+                    .inc_by(0);
+            }
+            registry
+                .register(Box::new(tls_handshake_failures_total.clone()))
                 .unwrap();
         }
 
@@ -1613,6 +1644,7 @@ impl Metrics {
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,
+            enrichment_short_circuits_total,
             enrichment_http_cache_hits_total,
             enrichment_http_cache_misses_total,
             enrichment_http_cache_expirations_total,
@@ -1638,6 +1670,8 @@ impl Metrics {
             tls_certificate_expiry_seconds,
             #[cfg(feature = "daemon-tls")]
             tls_active_connections,
+            #[cfg(feature = "daemon-tls")]
+            tls_handshake_failures_total,
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
@@ -2113,6 +2147,12 @@ impl MetricsHook for Metrics {
             .observe(duration_seconds);
     }
 
+    fn on_enrichment_short_circuit(&self, enricher_id: &str) {
+        self.enrichment_short_circuits_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
     fn on_enrichment_queue_depth_change(&self, delta: i64) {
         if delta > 0 {
             self.enrichment_queue_depth.add(delta);
@@ -2233,6 +2273,9 @@ impl MetricsHook for Metrics {
         let _ = self
             .enrichment_duration_seconds
             .with_label_values(&[enricher_id, kind]);
+        self.enrichment_short_circuits_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
     }
 
     fn register_http_enricher_cache(&self, enricher_id: &str) {

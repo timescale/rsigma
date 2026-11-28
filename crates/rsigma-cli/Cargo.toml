@@ -24,6 +24,7 @@ daemon = [
     "ocsf",
     "dep:rsigma-runtime",
     "rsigma-runtime/uds",
+    "rsigma-runtime/http-server",
     "tokio",
     "axum",
     "async-trait",
@@ -34,13 +35,14 @@ daemon = [
     "dep:tower",
     "tokio-stream",
     "dep:getrandom",
+    "dep:futures-util",
 ]
 # MCP server (`rsigma mcp serve`). Pulls in rmcp via rsigma-mcp and needs a
 # tokio runtime; opt-in, build with --features mcp (the prebuilt binaries and
 # Docker image, built with --all-features, include it).
 # Includes the Streamable HTTP transport (`--http`); TLS for it reuses the
 # `daemon-tls` rustls loader when that feature is also enabled.
-mcp = ["dep:rsigma-mcp", "rsigma-mcp/http", "tokio", "axum"]
+mcp = ["dep:rsigma-mcp", "rsigma-mcp/http", "dep:rsigma-runtime", "tokio", "axum"]
 daemon-nats = ["daemon", "rsigma-runtime/nats", "async-nats", "tokio-stream", "time", "dep:rustls"]
 daemon-otlp = ["daemon", "rsigma-runtime/otlp", "prost", "tonic", "flate2", "tokio-stream"]
 daemon-tls = [
@@ -141,6 +143,7 @@ rusqlite = { version = "0.43", features = ["bundled"], optional = true }
 tower-http = { version = "0.7", features = ["trace"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 getrandom = { version = "0.4", optional = true }
+futures-util = { version = "0.3", optional = true }
 async-nats = { version = "0.53", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 time = { version = "0.3", optional = true }

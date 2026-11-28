@@ -106,10 +106,36 @@ pub(crate) struct McpServeArgs {
 
     /// Accept this `Host` header value (a host name or `host:port`) on the HTTP
     /// transport, in addition to `localhost`, `127.0.0.1`, `::1`, and a
-    /// specific bind IP. Repeatable. Without it, a non-loopback bind with
-    /// `--auth-token` accepts any host.
+    /// specific bind IP. Repeatable. `*` accepts every host and needs
+    /// `--auth-token`. Without it, a non-loopback bind with `--auth-token`
+    /// accepts any host. Requests whose `Origin` names another site are
+    /// refused either way.
     #[arg(long = "allowed-host", value_name = "HOST")]
     pub allowed_hosts: Vec<String>,
+
+    /// Open HTTP connections served at once. Further clients wait until a
+    /// connection closes.
+    #[arg(
+        long = "max-connections",
+        value_name = "N",
+        default_value_t = rsigma_mcp::ServeLimits::default().max_connections,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    pub max_connections: usize,
+
+    /// How long the HTTP transport waits for a client's first bytes, each
+    /// request head, and each chunk of a request body (e.g. `30s`).
+    #[arg(long = "read-timeout", value_name = "DURATION", default_value = "30s", value_parser = parse_duration)]
+    pub read_timeout: std::time::Duration,
+
+    /// How long a client may take to complete the TLS handshake (e.g. `10s`).
+    #[arg(
+        long = "tls-handshake-timeout",
+        value_name = "DURATION",
+        default_value = "10s",
+        value_parser = parse_duration
+    )]
+    pub tls_handshake_timeout: std::time::Duration,
 
     /// Allow binding plaintext HTTP on a non-loopback address without TLS.
     #[arg(long = "allow-plaintext")]
@@ -328,7 +354,8 @@ async fn serve_http_transport(
 
     let mut options = rsigma_mcp::HttpOptions::default();
     options.auth_token = args.auth_token.clone();
-    options.allowed_hosts = allowed_hosts(addr, args);
+    options.allowed_hosts = allowed_hosts(addr, args).map_err(|e| anyhow::anyhow!(e))?;
+    options.limits = rsigma_mcp::ServeLimits::new(args.max_connections, args.read_timeout);
     if !addr.ip().is_loopback() {
         match &options.allowed_hosts {
             rsigma_mcp::AllowedHosts::Any => eprintln!(
@@ -388,21 +415,31 @@ fn enforce_auth_policy(addr: SocketAddr, args: &McpServeArgs) -> Result<(), Stri
 /// guarded by a token accepts any host unless `--allowed-host` narrows it;
 /// otherwise the loopback names, a specific bind IP, and every
 /// `--allowed-host` are accepted.
-fn allowed_hosts(addr: SocketAddr, args: &McpServeArgs) -> rsigma_mcp::AllowedHosts {
-    if args.allowed_hosts.is_empty() && !addr.ip().is_loopback() && args.auth_token.is_some() {
-        return rsigma_mcp::AllowedHosts::Any;
+fn allowed_hosts(
+    addr: SocketAddr,
+    args: &McpServeArgs,
+) -> Result<rsigma_mcp::AllowedHosts, String> {
+    let guard = rsigma_runtime::http_guard::guard_for_listener(
+        addr,
+        &args.allowed_hosts,
+        args.auth_token.is_some(),
+    )
+    .map_err(|e| format!("invalid --allowed-host: {e}"))?;
+    Ok(match guard.hosts() {
+        Some(_) => rsigma_mcp::AllowedHosts::List(rsigma_runtime::http_guard::default_hosts(
+            addr.ip(),
+            &args.allowed_hosts,
+        )),
+        None => rsigma_mcp::AllowedHosts::Any,
+    })
+}
+
+fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
+    match humantime::parse_duration(value) {
+        Ok(d) if !d.is_zero() => Ok(d),
+        Ok(_) => Err("must be greater than zero".to_string()),
+        Err(e) => Err(e.to_string()),
     }
-    let mut hosts: Vec<String> = rsigma_mcp::LOOPBACK_HOSTS
-        .iter()
-        .map(|host| host.to_string())
-        .collect();
-    if !addr.ip().is_unspecified() {
-        hosts.push(addr.ip().to_string());
-    }
-    hosts.extend(args.allowed_hosts.iter().cloned());
-    let mut seen = std::collections::HashSet::new();
-    hosts.retain(|host| seen.insert(host.clone()));
-    rsigma_mcp::AllowedHosts::List(hosts)
 }
 
 /// TLS path: only available when the `daemon-tls` feature is compiled. Reuses
@@ -415,9 +452,7 @@ async fn serve_http_tls(
     addr: SocketAddr,
     args: &McpServeArgs,
 ) -> anyhow::Result<()> {
-    use std::sync::Arc;
-
-    use crate::daemon::tls::{RustlsListener, TlsCliConfig, TlsState};
+    use crate::daemon::tls::{RustlsListener, TlsCliConfig, TlsListenerMetrics, TlsState};
 
     let cli = TlsCliConfig {
         cert_path: args.tls_cert.clone().expect("tls_cert present"),
@@ -428,19 +463,18 @@ async fn serve_http_tls(
     };
     let tls_state = TlsState::from_paths(cli).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let gauge = Arc::new(
-        prometheus::IntGauge::new(
-            "rsigma_mcp_tls_active_connections",
-            "Active TLS connections to the MCP HTTP server",
-        )
-        .expect("valid gauge"),
-    );
-    let tls_listener = RustlsListener::new(listener, tls_state.config, gauge);
+    let tls_listener = RustlsListener::new(
+        listener,
+        tls_state.config,
+        TlsListenerMetrics::unregistered("rsigma_mcp"),
+        args.tls_handshake_timeout,
+    )?;
 
     eprintln!("MCP Streamable HTTP server listening on https://{addr}/mcp");
 
+    let limits = options.limits;
     let router = rsigma_mcp::http_router_with(handler, options);
-    axum::serve(tls_listener, router).await?;
+    rsigma_runtime::http_server::serve(tls_listener, router, limits, std::future::pending()).await;
     Ok(())
 }
 
@@ -486,7 +520,7 @@ mod tests {
     }
 
     fn hosts(addr: &str, argv: &[&str]) -> rsigma_mcp::AllowedHosts {
-        allowed_hosts(addr.parse().unwrap(), &parse(argv))
+        allowed_hosts(addr.parse().unwrap(), &parse(argv)).unwrap()
     }
 
     fn list(hosts: &[&str]) -> rsigma_mcp::AllowedHosts {
@@ -556,6 +590,29 @@ mod tests {
             hosts("0.0.0.0:9100", &["--allow-unauthenticated"]),
             list(&["localhost", "127.0.0.1", "::1"])
         );
+    }
+
+    #[test]
+    fn wildcard_host_needs_a_token() {
+        assert_eq!(
+            hosts(
+                "127.0.0.1:9100",
+                &["--auth-token", "t", "--allowed-host", "*"]
+            ),
+            rsigma_mcp::AllowedHosts::Any
+        );
+        let err = allowed_hosts(
+            "0.0.0.0:9100".parse().unwrap(),
+            &parse(&["--allowed-host", "*"]),
+        )
+        .unwrap_err();
+        assert!(err.contains("needs authentication"), "{err}");
+        let err = allowed_hosts(
+            "127.0.0.1:9100".parse().unwrap(),
+            &parse(&["--allowed-host", "bad host"]),
+        )
+        .unwrap_err();
+        assert!(err.contains("bad host"), "{err}");
     }
 
     #[test]

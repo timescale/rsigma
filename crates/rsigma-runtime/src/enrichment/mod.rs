@@ -23,12 +23,22 @@
 //!
 //! # Concurrency
 //!
-//! Results within a single sink batch are enriched concurrently with bounded
-//! concurrency via a single [`tokio::sync::Semaphore`] owned by the pipeline.
-//! Within a single result the enricher chain runs sequentially (so later
-//! enrichers can depend on earlier ones via `${detection.enrichments.*}` in a
-//! follow-up implementation; for this initial cut the chain is linear and
-//! enrichers are independent).
+//! Results are enriched concurrently, within a batch and across concurrent
+//! [`EnrichmentPipeline::run`] calls, bounded by one [`tokio::sync::Semaphore`]
+//! owned by the pipeline (`max_concurrent_enrichments` permits, one per result
+//! being enriched). Within a single result the enricher chain runs in order.
+//! Output order is preserved.
+//!
+//! # Shared requests and the failure cache
+//!
+//! An enricher that names a [`request_key`](Enricher::request_key) for a
+//! result makes each distinct request once at a time: results whose request
+//! is already in flight wait for it and take its outcome. When the request
+//! times out or fails to fetch, the pipeline also remembers the failure for
+//! that enricher and key for the failure cache TTL (60 seconds by default)
+//! and applies it to later results with the same key without calling the
+//! enricher, so a dead upstream costs one timeout per key instead of one per
+//! detection.
 //!
 //! # Errors
 //!
@@ -257,6 +267,20 @@ pub trait Enricher: Send + Sync {
         self.on_error()
     }
 
+    /// The identity of the external call this enricher would make for
+    /// `result` (for example the rendered URL, DNS name, or command line), or
+    /// `None` when the enricher does no external I/O.
+    ///
+    /// Two results with the same key must get the same outcome: the same
+    /// value under [`Self::inject_field`] or the same error. When this returns
+    /// `Some`, a result whose request is already in flight takes that call's
+    /// outcome instead of making it again, and a timeout or fetch failure is
+    /// remembered for the pipeline's failure cache TTL so later results with
+    /// the same key fail the same way without a call. Defaults to `None`.
+    fn request_key(&self, _result: &EvaluationResult) -> Option<String> {
+        None
+    }
+
     /// Run the enrichment.
     ///
     /// Implementations write into [`RuleHeader::enrichments`](rsigma_eval::RuleHeader::enrichments)
@@ -299,9 +323,144 @@ enum EnrichOutcome {
 pub struct EnrichmentPipeline {
     enrichers: Vec<Box<dyn Enricher>>,
     semaphore: Arc<Semaphore>,
+    max_concurrent: usize,
     metrics: Arc<dyn MetricsHook>,
     needs_event: bool,
     failure_logs: Arc<FailureLogs>,
+    failure_cache: Option<Arc<FailureCache>>,
+    in_flight: Arc<InFlight>,
+}
+
+/// What a finished call produced for its request: the value written under
+/// `inject_field` (if any), or the failure.
+type SharedOutcome = Result<Option<serde_json::Value>, EnrichErrorKind>;
+
+/// Calls in progress, keyed like [`FailureCache`]. A result whose request is
+/// already being made waits for that call and takes its outcome instead of
+/// making the same call again.
+#[derive(Default)]
+struct InFlight {
+    calls: Mutex<HashMap<[u8; 32], tokio::sync::watch::Receiver<Option<SharedOutcome>>>>,
+}
+
+enum Flight {
+    /// This result makes the call and publishes the outcome.
+    Leader(FlightGuard),
+    /// Another result is making the call.
+    Follower(tokio::sync::watch::Receiver<Option<SharedOutcome>>),
+}
+
+impl InFlight {
+    fn join(self: &Arc<Self>, key: [u8; 32]) -> Flight {
+        let mut calls = self.calls.lock();
+        if let Some(rx) = calls.get(&key) {
+            return Flight::Follower(rx.clone());
+        }
+        let (tx, rx) = tokio::sync::watch::channel(None);
+        calls.insert(key, rx);
+        Flight::Leader(FlightGuard {
+            in_flight: Arc::clone(self),
+            key,
+            tx,
+        })
+    }
+}
+
+/// Removes the in-flight entry when the leading call ends, whether it
+/// published an outcome or was cancelled.
+struct FlightGuard {
+    in_flight: Arc<InFlight>,
+    key: [u8; 32],
+    tx: tokio::sync::watch::Sender<Option<SharedOutcome>>,
+}
+
+impl FlightGuard {
+    fn publish(self, outcome: SharedOutcome) {
+        self.tx.send_replace(Some(outcome));
+    }
+}
+
+impl Drop for FlightGuard {
+    fn drop(&mut self) {
+        let mut calls = self.in_flight.calls.lock();
+        if calls
+            .get(&self.key)
+            .is_some_and(|rx| rx.same_channel(&self.tx.subscribe()))
+        {
+            calls.remove(&self.key);
+        }
+    }
+}
+
+/// Wait for the leading call's outcome. `None` when the leader went away
+/// without one, in which case the caller makes the call itself.
+async fn wait_for_leader(
+    mut rx: tokio::sync::watch::Receiver<Option<SharedOutcome>>,
+) -> Option<SharedOutcome> {
+    loop {
+        if let Some(outcome) = rx.borrow_and_update().clone() {
+            return Some(outcome);
+        }
+        if rx.changed().await.is_err() {
+            return rx.borrow().clone();
+        }
+    }
+}
+
+/// Default for [`EnrichmentPipeline::with_failure_cache_ttl`].
+pub const DEFAULT_FAILURE_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Most failures the cache remembers at once. Past this, new failures are
+/// not cached until old ones expire.
+const MAX_FAILURE_CACHE_ENTRIES: usize = 10_000;
+
+/// Recent timeouts and fetch failures, keyed by a digest of the enricher id
+/// and its [`Enricher::request_key`].
+struct FailureCache {
+    ttl: Duration,
+    entries: Mutex<HashMap<[u8; 32], (Instant, EnrichErrorKind)>>,
+}
+
+impl FailureCache {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn digest(enricher_id: &str, key: &str) -> [u8; 32] {
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(enricher_id.as_bytes());
+        hasher.update([0]);
+        hasher.update(key.as_bytes());
+        hasher.finalize().into()
+    }
+
+    /// The cached failure for `key`, if it has not expired.
+    fn get(&self, key: &[u8; 32], now: Instant) -> Option<EnrichErrorKind> {
+        let mut entries = self.entries.lock();
+        match entries.get(key) {
+            Some((expires, kind)) if *expires > now => Some(kind.clone()),
+            Some(_) => {
+                entries.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn insert(&self, key: [u8; 32], kind: EnrichErrorKind, now: Instant) {
+        let mut entries = self.entries.lock();
+        if entries.len() >= MAX_FAILURE_CACHE_ENTRIES {
+            entries.retain(|_, (expires, _)| *expires > now);
+            if entries.len() >= MAX_FAILURE_CACHE_ENTRIES {
+                return;
+            }
+        }
+        entries.insert(key, (now + self.ttl, kind));
+    }
 }
 
 /// Rate limits the failure warnings of each enricher id.
@@ -345,7 +504,12 @@ impl std::fmt::Debug for EnrichmentPipeline {
         f.debug_struct("EnrichmentPipeline")
             .field("enrichers", &self.enrichers.len())
             .field("permits", &self.semaphore.available_permits())
+            .field("max_concurrent", &self.max_concurrent)
             .field("needs_event", &self.needs_event)
+            .field(
+                "failure_cache_ttl",
+                &self.failure_cache.as_ref().map(|c| c.ttl),
+            )
             .finish()
     }
 }
@@ -354,7 +518,8 @@ impl EnrichmentPipeline {
     /// Build a pipeline from a list of configured enrichers.
     ///
     /// `max_concurrent_enrichments` bounds the number of results that can
-    /// be enriched in parallel; defaults to 16 if zero is passed.
+    /// be enriched in parallel; defaults to 16 if zero is passed. The
+    /// failure cache starts at [`DEFAULT_FAILURE_CACHE_TTL`].
     /// Metrics default to a no-op sink; call [`Self::with_metrics`] to
     /// route counters and latency histograms into a real
     /// [`MetricsHook`] implementation.
@@ -370,10 +535,26 @@ impl EnrichmentPipeline {
         Self {
             enrichers,
             semaphore: Arc::new(Semaphore::new(permits)),
+            max_concurrent: permits,
             metrics: Arc::new(NoopMetrics),
             needs_event: false,
             failure_logs: Arc::default(),
+            failure_cache: Some(Arc::new(FailureCache::new(DEFAULT_FAILURE_CACHE_TTL))),
+            in_flight: Arc::default(),
         }
+    }
+
+    /// How long a timeout or fetch failure is remembered per enricher and
+    /// [`request_key`](Enricher::request_key). Zero turns the
+    /// failure cache off.
+    pub fn with_failure_cache_ttl(mut self, ttl: Duration) -> Self {
+        self.failure_cache = (!ttl.is_zero()).then(|| Arc::new(FailureCache::new(ttl)));
+        self
+    }
+
+    /// The number of results this pipeline enriches at once.
+    pub fn max_concurrent(&self) -> usize {
+        self.max_concurrent
     }
 
     /// Whether any configured enricher reads a detection payload that the
@@ -444,14 +625,17 @@ impl EnrichmentPipeline {
 
     /// Run every applicable enricher against each result in `results`.
     ///
-    /// For each result the pipeline:
-    /// 1. Acquires a global semaphore permit (bounded concurrency).
-    /// 2. Iterates the configured enricher list.
+    /// Results are enriched concurrently. For each result the pipeline:
+    /// 1. Acquires a semaphore permit (bounded concurrency shared by every
+    ///    `run` call on this pipeline).
+    /// 2. Iterates the configured enricher list in order.
     /// 3. Skips enrichers whose [`EnricherKind`] does not match the
     ///    result's body variant.
     /// 4. Skips enrichers whose [`Scope`] excludes this result.
-    /// 5. Wraps each remaining `enrich()` call in
-    ///    [`tokio::time::timeout`] using the enricher's timeout.
+    /// 5. Applies a cached failure for the enricher's
+    ///    [`request_key`](Enricher::request_key) without calling
+    ///    it, or wraps the `enrich()` call in [`tokio::time::timeout`] using
+    ///    the enricher's timeout.
     /// 6. On a miss, applies the enricher's [`Enricher::on_miss`] policy, and
     ///    on any other error its [`Enricher::on_error`] policy.
     /// 7. If any enricher in the chain returns the internal `Drop`
@@ -459,61 +643,63 @@ impl EnrichmentPipeline {
     ///    to [`OnError::Drop`]), the result is removed from the
     ///    output.
     ///
-    /// The pipeline initializes `result.header.enrichments` to
-    /// `Some(empty)` lazily on first successful injection, so the
-    /// `skip_serializing_if = "Option::is_none"` contract on
-    /// `RuleHeader::enrichments` is preserved when no enricher writes.
-    ///
-    /// Currently sequential per result; concurrent across results would
-    /// require splitting `results` into chunks across futures and is left
-    /// for a follow-up tuning pass once we have realistic throughput
-    /// numbers from the integration tests.
+    /// The surviving results keep their order. The pipeline initializes
+    /// `result.header.enrichments` to `Some(empty)` lazily on first
+    /// successful injection, so the `skip_serializing_if = "Option::is_none"`
+    /// contract on `RuleHeader::enrichments` is preserved when no enricher
+    /// writes.
     pub async fn run(&self, results: &mut Vec<EvaluationResult>) {
         if self.enrichers.is_empty() || results.is_empty() {
             return;
         }
 
-        // Single-pass enrichment with drop bookkeeping.
-        //
-        // We cannot use `Vec::retain_mut` together with `.await` (the
-        // closure must be sync), so we collect drop indices first and
-        // apply them in a single linear pass at the end.
-        let mut drop_indices: Vec<usize> = Vec::new();
-
-        for (idx, result) in results.iter_mut().enumerate() {
-            let permit = self.semaphore.clone().acquire_owned().await.ok();
-            if permit.is_none() {
-                // Semaphore closed (only happens at shutdown). Drain
-                // remaining results unenriched rather than blocking.
-                tracing::debug!("Enrichment semaphore closed, draining remaining results");
-                return;
-            }
-            let _permit = permit.unwrap();
-
-            let mut should_drop = false;
-            for enricher in &self.enrichers {
-                match self.run_one(enricher.as_ref(), result).await {
-                    EnrichOutcome::Drop => {
-                        should_drop = true;
-                        break;
-                    }
-                    EnrichOutcome::Ok
-                    | EnrichOutcome::Skip
-                    | EnrichOutcome::Null
-                    | EnrichOutcome::Filtered => {}
+        // A fixed set of workers pulls results from a shared queue, so a slow
+        // result holds up only its own worker and the batch costs no
+        // allocation per result.
+        let workers = self.max_concurrent.min(results.len());
+        let queue = Mutex::new(results.iter_mut().enumerate());
+        let dropped = futures_util::future::join_all((0..workers).map(|_| async {
+            let mut dropped = Vec::new();
+            loop {
+                let Some((idx, result)) = queue.lock().next() else {
+                    break;
+                };
+                if self.enrich_one(result).await {
+                    dropped.push(idx);
                 }
             }
-            if should_drop {
-                drop_indices.push(idx);
-            }
+            dropped
+        }))
+        .await;
+        let mut dropped: Vec<usize> = dropped.into_iter().flatten().collect();
+        if !dropped.is_empty() {
+            dropped.sort_unstable();
+            let mut next = dropped.into_iter().peekable();
+            let mut idx = 0;
+            results.retain(|_| {
+                let keep = next.peek() != Some(&idx);
+                if !keep {
+                    next.next();
+                }
+                idx += 1;
+                keep
+            });
         }
+    }
 
-        if !drop_indices.is_empty() {
-            // Remove from the back so earlier indices stay valid.
-            for idx in drop_indices.into_iter().rev() {
-                results.swap_remove(idx);
+    /// Run the enricher chain on one result. Returns true when the result
+    /// must be dropped.
+    async fn enrich_one(&self, result: &mut EvaluationResult) -> bool {
+        let Ok(_permit) = self.semaphore.acquire().await else {
+            tracing::debug!("Enrichment semaphore closed, delivering the result unenriched");
+            return false;
+        };
+        for enricher in &self.enrichers {
+            if let EnrichOutcome::Drop = self.run_one(enricher.as_ref(), result).await {
+                return true;
             }
         }
+        false
     }
 
     /// Run a single enricher against a single result, applying the
@@ -540,22 +726,83 @@ impl EnrichmentPipeline {
         let id = enricher.id().to_string();
         let kind_label = enricher.kind().as_str();
 
-        metrics.on_enrichment_queue_depth_change(1);
-        let started = std::time::Instant::now();
-        let outcome = tokio::time::timeout(timeout, enricher.enrich(result)).await;
-        let elapsed = started.elapsed().as_secs_f64();
-        metrics.on_enrichment_queue_depth_change(-1);
+        let request = enricher
+            .request_key(result)
+            .map(|key| FailureCache::digest(&id, &key));
+        let started = Instant::now();
+        let mut leader = None;
+        let mut answered = None;
+        if let Some(key) = request {
+            answered = self
+                .failure_cache
+                .as_ref()
+                .and_then(|cache| cache.get(&key, started))
+                .map(Err);
+            if answered.is_none() {
+                match self.in_flight.join(key) {
+                    Flight::Leader(guard) => leader = Some(guard),
+                    Flight::Follower(rx) => answered = wait_for_leader(rx).await,
+                }
+            }
+        }
 
-        let err = match outcome {
-            Ok(Ok(())) => {
+        let (err, elapsed) = match answered {
+            Some(Ok(value)) => {
+                metrics.on_enrichment_short_circuit(&id);
+                if let Some(value) = value {
+                    inject_enrichment(result, &inject_field, value);
+                }
+                let elapsed = started.elapsed().as_secs_f64();
                 metrics.on_enrichment_completed(&id, kind_label, "success", elapsed);
                 return EnrichOutcome::Ok;
             }
-            Ok(Err(e)) => e,
-            Err(_) => EnrichError {
-                enricher_id: id.clone(),
-                kind: EnrichErrorKind::Timeout,
-            },
+            Some(Err(kind)) => {
+                metrics.on_enrichment_short_circuit(&id);
+                let err = EnrichError {
+                    enricher_id: id.clone(),
+                    kind,
+                };
+                (err, started.elapsed().as_secs_f64())
+            }
+            None => {
+                metrics.on_enrichment_queue_depth_change(1);
+                let outcome = tokio::time::timeout(timeout, enricher.enrich(result)).await;
+                let elapsed = started.elapsed().as_secs_f64();
+                metrics.on_enrichment_queue_depth_change(-1);
+
+                let err = match outcome {
+                    Ok(Ok(())) => {
+                        if let Some(leader) = leader {
+                            let injected = result
+                                .header
+                                .enrichments
+                                .as_ref()
+                                .and_then(|map| map.get(&inject_field))
+                                .cloned();
+                            leader.publish(Ok(injected));
+                        }
+                        metrics.on_enrichment_completed(&id, kind_label, "success", elapsed);
+                        return EnrichOutcome::Ok;
+                    }
+                    Ok(Err(e)) => e,
+                    Err(_) => EnrichError {
+                        enricher_id: id.clone(),
+                        kind: EnrichErrorKind::Timeout,
+                    },
+                };
+                if let (Some(key), Some(cache)) = (request, &self.failure_cache)
+                    && matches!(
+                        err.kind,
+                        EnrichErrorKind::Timeout | EnrichErrorKind::Fetch(_)
+                    )
+                {
+                    cache.insert(key, err.kind.clone(), Instant::now());
+                }
+                if let Some(leader) = leader {
+                    leader.publish(Err(err.kind.clone()));
+                }
+                (err, elapsed)
+            }
         };
 
         let is_timeout = matches!(err.kind, EnrichErrorKind::Timeout);
@@ -653,9 +900,12 @@ impl Clone for EnrichmentPipeline {
         Self {
             enrichers: Vec::new(),
             semaphore: Arc::clone(&self.semaphore),
+            max_concurrent: self.max_concurrent,
             metrics: Arc::clone(&self.metrics),
             needs_event: self.needs_event,
             failure_logs: Arc::clone(&self.failure_logs),
+            failure_cache: self.failure_cache.clone(),
+            in_flight: Arc::default(),
         }
     }
 }

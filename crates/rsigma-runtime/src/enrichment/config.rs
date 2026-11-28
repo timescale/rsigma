@@ -63,6 +63,7 @@ const DEFAULT_MAX_CONCURRENT_ENRICHMENTS: usize = 16;
 ///
 /// ```yaml
 /// max_concurrent_enrichments: 16
+/// failure_cache_ttl: 60s
 /// enrichers:
 ///   - id: runbook_det
 ///     kind: detection
@@ -78,6 +79,14 @@ pub struct EnrichersFile {
     /// pipeline functional even on a malformed config.
     #[serde(default)]
     pub max_concurrent_enrichments: Option<usize>,
+
+    /// How long a timeout or fetch failure of an `http`, `dns`, or `command`
+    /// enricher is remembered for the same request, so later detections with
+    /// that request fail fast instead of waiting for the timeout again.
+    /// Accepts humantime strings (`60s`, `5m`); `0s` turns it off. Defaults
+    /// to 60 seconds.
+    #[serde(default, with = "humantime_opt")]
+    pub failure_cache_ttl: Option<Duration>,
 
     /// Per-enricher configurations. Empty list / missing key is allowed
     /// (no enrichment is configured) so an operator can keep an
@@ -711,7 +720,12 @@ pub fn build_enrichers_full(
     let cap = file
         .max_concurrent_enrichments
         .unwrap_or(DEFAULT_MAX_CONCURRENT_ENRICHMENTS);
-    let mut pipeline = EnrichmentPipeline::new(enrichers, cap).with_metrics(metrics);
+    let mut pipeline = EnrichmentPipeline::new(enrichers, cap)
+        .with_failure_cache_ttl(
+            file.failure_cache_ttl
+                .unwrap_or(super::DEFAULT_FAILURE_CACHE_TTL),
+        )
+        .with_metrics(metrics);
     pipeline.set_needs_event(needs_event);
     Ok(pipeline)
 }
@@ -1493,6 +1507,21 @@ enrichers:
         let parsed: EnrichersFile = yaml_serde::from_str(cfg_template_yaml()).unwrap();
         let pipeline = build_enrichers(parsed).unwrap();
         assert_eq!(pipeline.len(), 2);
+        assert_eq!(pipeline.max_concurrent(), 8);
+        assert!(format!("{pipeline:?}").contains("failure_cache_ttl: Some(60s)"));
+    }
+
+    #[test]
+    fn failure_cache_ttl_is_configurable() {
+        let parse = |ttl: &str| {
+            let yaml = format!("failure_cache_ttl: {ttl}\nenrichers: []\n");
+            let parsed: EnrichersFile = yaml_serde::from_str(&yaml).unwrap();
+            format!("{:?}", build_enrichers(parsed).unwrap())
+        };
+        assert!(parse("5m").contains("failure_cache_ttl: Some(300s)"));
+        assert!(parse("0s").contains("failure_cache_ttl: None"));
+        let bad: Result<EnrichersFile, _> = yaml_serde::from_str("failure_cache_ttl: soon\n");
+        assert!(bad.is_err());
     }
 
     #[test]

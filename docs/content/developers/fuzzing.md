@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 42 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 36 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
+The workspace ships 43 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 37 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -39,6 +39,7 @@ The workspace ships 42 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_otlp_logs_decode` | OTLP log ingestion: protobuf decoding of `ExportLogsServiceRequest` (the body of `POST /v1/logs` and the gRPC `LogsService` message) and `logs_request_to_raw_events`, asserting every converted record is valid JSON. Seeds in `fuzz/seeds/fuzz_otlp_logs_decode/` cover every `AnyValue` variant, many attributes, and nesting on both sides of prost's recursion limit. {{ added "0.25.0" }} The harness also checks that `count_log_records` matches the decoded record count and that `LogRecordConverter` stays within its event and request limits and accounts for every record; seeds add a large resource over many records, thousands of empty records, an oversized record, and unknown fields and groups. {{ added "unreleased" }} | 65536 |
 | `fuzz_otlp_logs_json` | OTLP/JSON request bodies: `count_log_records_json` must never count fewer records than serde decoding produces, and conversion of what decodes stays within its limits. Seeds cover escaped and duplicate keys, odd shapes, and deep nesting. {{ added "unreleased" }} | 65536 |
 | `fuzz_line_framer` | The `LineFramer` that cuts stdin, `unix://`, and `POST /api/v1/events` input into lines: the lines must not depend on how the stream is split into reads, every newline must yield one line, and no valid line may pass the cap. The first byte seeds the read boundaries. {{ added "unreleased" }} | 4096 |
+| `fuzz_host_guard` | `Host` and `Origin` validation shared by the daemon API and the MCP HTTP transport: checks never panic, are deterministic, answer only 400 or 403, and a guard built from a host accepts that host. The input is newline-separated allowed hosts, `Host`, `Origin`, and HTTP/2 authority. {{ added "unreleased" }} | 1024 |
 | `fuzz_field_keys` | Bounded field-key walks over JSON events (`Event::visit_field_keys`): a walk must stay within its key, length, and byte budget, and `has_any_field` must agree with an unbounded walk. {{ added "unreleased" }} | 16384 |
 | `fuzz_risk_config` | Risk configuration parsing. Not in the weekly matrix; run manually. | (default) |
 | `fuzz_lucene_frontend` | Lucene reverse-conversion frontend. Not in the weekly matrix; run manually. Seeds in `fuzz/seeds/fuzz_lucene_frontend/` cover plain queries, value groups, and nesting past the depth limit. {{ added "unreleased" }} | (default) |

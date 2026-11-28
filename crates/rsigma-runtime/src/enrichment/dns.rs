@@ -626,6 +626,11 @@ impl Enricher for DnsEnricher {
         self.on_miss
     }
 
+    fn request_key(&self, result: &EvaluationResult) -> Option<String> {
+        let rendered = render_enricher_template(&self.key_template, result);
+        Some(format!("{:?} {}", self.record_type, rendered.trim()))
+    }
+
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let rendered = render_enricher_template(&self.key_template, result);
         let key = rendered.trim();
@@ -1291,6 +1296,36 @@ mod tests {
             matches!(&err.kind, EnrichErrorKind::Fetch(m) if m.contains("error response")),
             "got {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn repeated_servfail_is_answered_from_the_failure_cache() {
+        let backend = Arc::new(FakeBackend::new(responses(vec![(
+            (name("host.example.com."), RecordType::A),
+            Err(NetError::Dns(DnsError::ResponseCode(
+                hickory_resolver::proto::op::ResponseCode::ServFail,
+            ))),
+        )])));
+        let e = enricher(
+            DnsRecordType::parse("A").unwrap(),
+            "${detection.fields.Host}",
+            None,
+            None,
+            backend.clone(),
+        );
+        let pipeline = crate::EnrichmentPipeline::new(vec![Box::new(e)], 4);
+        let mut results: Vec<_> = (0..5)
+            .map(|_| detection_result("Host", serde_json::json!("host.example.com")))
+            .collect();
+        results.push(detection_result(
+            "Host",
+            serde_json::json!("other.example.com"),
+        ));
+        for result in results.chunks_mut(1) {
+            let mut batch = result.to_vec();
+            pipeline.run(&mut batch).await;
+        }
+        assert_eq!(backend.calls(), 2, "one SERVFAIL query, one other name");
     }
 
     #[tokio::test]

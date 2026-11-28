@@ -520,3 +520,158 @@ fn reloading_enrichers_that_read_the_event_turns_retention_on() {
         "an event retained only for enrichment must not be delivered: {after}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Slow upstreams
+// ---------------------------------------------------------------------------
+
+/// An `http` enricher keyed by the event's `User`, with a 1s timeout.
+fn owner_enrichers_yaml(http_base: &str) -> String {
+    format!(
+        r#"
+max_concurrent_enrichments: 16
+enrichers:
+  - id: owner
+    kind: detection
+    type: http
+    inject_field: owner
+    url: "{http_base}/owners/${{detection.event.User}}"
+    timeout: 1s
+    on_error: "null"
+"#
+    )
+}
+
+/// A mock upstream that hangs for users starting with `slow` and answers
+/// at once for `fast`.
+fn owner_upstream(rt: &tokio::runtime::Runtime) -> MockServer {
+    rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex("^/owners/slow"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/owners/fast"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!("fast")))
+            .mount(&server)
+            .await;
+        server
+    })
+}
+
+/// The rule and enrichers sit in their own directory so the reload watcher,
+/// whose reload resets the failure cache, does not see other tests' files.
+fn spawn_owner_daemon(
+    upstream: &MockServer,
+) -> (DaemonProcess, tempfile::TempDir, tempfile::NamedTempFile) {
+    let dir = tempfile::tempdir().unwrap();
+    let rule = dir.path().join("rule.yml");
+    std::fs::write(&rule, common::SIMPLE_RULE).unwrap();
+    let enrichers = dir.path().join("enrichers.yml");
+    std::fs::write(&enrichers, owner_enrichers_yaml(&upstream.uri())).unwrap();
+    let output = tempfile::NamedTempFile::new().unwrap();
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        rule.to_str().unwrap(),
+        "--enrichers",
+        enrichers.to_str().unwrap(),
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--output",
+        &format!("file://{}", output.path().display()),
+    ]);
+    (daemon, dir, output)
+}
+
+fn post_user(daemon: &DaemonProcess, user: &str) {
+    let event = serde_json::json!({"CommandLine": "malware.exe", "User": user}).to_string();
+    let (status, _) = http_post(&daemon.url("/api/v1/events"), &event);
+    assert_eq!(status, 200);
+}
+
+fn sink_lines(
+    output: &tempfile::NamedTempFile,
+    n: usize,
+    within: Duration,
+) -> Vec<serde_json::Value> {
+    poll_until(within, || {
+        let text = std::fs::read_to_string(output.path()).ok()?;
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        (lines.len() >= n).then_some(lines)
+    })
+    .unwrap_or_else(|| panic!("{n} detections never reached the sink within {within:?}"))
+}
+
+#[test]
+fn timing_out_enrichments_do_not_queue_behind_each_other() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let upstream = owner_upstream(&rt);
+    let (daemon, _files, output) = spawn_owner_daemon(&upstream);
+
+    let started = std::time::Instant::now();
+    for i in 0..6 {
+        post_user(&daemon, &format!("slow-{i}"));
+    }
+    post_user(&daemon, "fast");
+    let lines = sink_lines(&output, 7, Duration::from_secs(15));
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "six 1s timeouts ran one after another: {elapsed:?}"
+    );
+    assert_eq!(
+        lines[6]["enrichments"]["owner"], "fast",
+        "delivery order changed"
+    );
+    for line in &lines[..6] {
+        assert!(line["enrichments"]["owner"].is_null(), "{line}");
+    }
+}
+
+#[test]
+fn a_timed_out_request_is_not_retried_within_the_failure_cache_ttl() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let upstream = owner_upstream(&rt);
+    let (daemon, _files, output) = spawn_owner_daemon(&upstream);
+    // A reload builds a fresh pipeline with an empty failure cache; let the
+    // file watcher's startup reload pass first.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    post_user(&daemon, "slow-same");
+    sink_lines(&output, 1, Duration::from_secs(10));
+    let started = std::time::Instant::now();
+    for _ in 0..3 {
+        post_user(&daemon, "slow-same");
+    }
+    sink_lines(&output, 4, Duration::from_secs(10));
+    assert!(
+        started.elapsed() < Duration::from_millis(900),
+        "{:?}",
+        started.elapsed()
+    );
+
+    let requests = rt.block_on(upstream.received_requests()).unwrap();
+    assert_eq!(requests.len(), 1, "the failing request was retried");
+    let (_, metrics) = common::http_get(&daemon.url("/metrics"));
+    assert!(
+        metrics.contains("rsigma_enrichment_short_circuits_total{enricher_id=\"owner\"} 3"),
+        "{metrics}"
+    );
+}

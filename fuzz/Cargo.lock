@@ -3005,6 +3005,7 @@ dependencies = [
  "chrono",
  "csv",
  "flate2",
+ "futures-util",
  "globset",
  "hex",
  "hickory-resolver",

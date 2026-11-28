@@ -67,6 +67,11 @@ pub trait MetricsHook: Send + Sync {
     /// The enrichment queue depth changed (positive = a result entered the
     /// pipeline, negative = a result completed). Sum across both kinds.
     fn on_enrichment_queue_depth_change(&self, _delta: i64) {}
+    /// An enricher was not called for a result because the same request was
+    /// already in flight (the result took that call's outcome) or timed out
+    /// or failed to fetch within the failure cache TTL. The result still
+    /// reports its usual `on_enrichment_completed` status.
+    fn on_enrichment_short_circuit(&self, _enricher_id: &str) {}
     /// HTTP enrichment cache lookup hit a live entry.
     fn on_enrichment_http_cache_hit(&self, _enricher_id: &str) {}
     /// HTTP enrichment cache lookup missed (no entry).

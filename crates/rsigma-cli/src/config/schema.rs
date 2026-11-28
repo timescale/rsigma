@@ -350,12 +350,28 @@ pub(crate) struct ApiPartial {
     /// when a state database is configured; tune retention or disable here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audit: Option<AuditPartial>,
+    /// Extra `Host` header values a TCP listener accepts (host names or
+    /// `host:port`), on top of `localhost`, `127.0.0.1`, `::1`, and a
+    /// specific bind IP. `"*"` accepts every host and needs authentication.
+    /// Without it, an authenticated non-loopback listener accepts every host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_hosts: Option<Vec<String>>,
+    /// Open connections the API serves at once. Default: 1024.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<usize>,
+    /// How long the API waits for a client's first bytes, each request head,
+    /// and each chunk of a request body (e.g. `30s`). Default: 30s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_timeout: Option<String>,
 }
 
 impl Merge for ApiPartial {
     fn merge(self, over: Self) -> Self {
         Self {
             addr: over.addr.or(self.addr),
+            allowed_hosts: over.allowed_hosts.or(self.allowed_hosts),
+            max_connections: over.max_connections.or(self.max_connections),
+            read_timeout: over.read_timeout.or(self.read_timeout),
             tls: merge_opt(self.tls, over.tls),
             // An auth block replaces a lower-precedence one wholesale: deep
             // list merges across layers would be surprising for a security
@@ -451,6 +467,10 @@ pub(crate) struct TlsPartial {
     /// with or without `daemon-tls`. Default: false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_plaintext: Option<bool>,
+    /// How long a client may take to complete the TLS handshake (e.g. `10s`).
+    /// Default: 10s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handshake_timeout: Option<String>,
 }
 
 impl Merge for TlsPartial {
@@ -461,6 +481,7 @@ impl Merge for TlsPartial {
             client_ca: over.client_ca.or(self.client_ca),
             min_version: over.min_version.or(self.min_version),
             allow_plaintext: over.allow_plaintext.or(self.allow_plaintext),
+            handshake_timeout: over.handshake_timeout.or(self.handshake_timeout),
         }
     }
 }
@@ -1558,6 +1579,9 @@ mod tests {
                     auth: None,
                     allow_unauthenticated: None,
                     audit: None,
+                    allowed_hosts: None,
+                    max_connections: None,
+                    read_timeout: None,
                 }),
                 ..Default::default()
             }),
@@ -1572,6 +1596,9 @@ mod tests {
                     auth: None,
                     allow_unauthenticated: None,
                     audit: None,
+                    allowed_hosts: None,
+                    max_connections: None,
+                    read_timeout: None,
                 }),
                 ..Default::default()
             }),

@@ -51,6 +51,9 @@ pub mod engine;
 pub mod enrichment;
 pub mod error;
 pub mod finding_links;
+pub mod http_guard;
+#[cfg(feature = "http-server")]
+pub mod http_server;
 pub mod input;
 pub mod io;
 mod log_throttle;
@@ -99,11 +102,12 @@ pub use enrichment::config::{
     build_enrichers_full, load_enrichers_file, parse_enrichers_config,
 };
 pub use enrichment::{
-    CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher,
-    EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher, HttpEnricherClient,
-    HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope, TemplateEnricher,
-    TemplateError, build_default_http_client, env_references, lookup_builtin, register_builtin,
-    render_webhook_body, validate_template_namespace, validate_url_tenant_position,
+    CacheKey, CacheOutcome, CommandEnricher, DEFAULT_FAILURE_CACHE_TTL, EnrichError,
+    EnrichErrorKind, Enricher, EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher,
+    HttpEnricherClient, HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope,
+    TemplateEnricher, TemplateError, build_default_http_client, env_references, lookup_builtin,
+    register_builtin, render_webhook_body, validate_template_namespace,
+    validate_url_tenant_position,
 };
 #[cfg(feature = "dns-enrich")]
 pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
@@ -113,6 +117,7 @@ pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;
 pub use finding_links::FindingLinks;
+pub use http_guard::{HostGuard, Rejection as HostRejection};
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::webhook::{
     BuiltWebhook, WebhookConfig, WebhookConfigError, WebhookKind, WebhookSink, WebhooksFile,

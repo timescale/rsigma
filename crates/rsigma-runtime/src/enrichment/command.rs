@@ -102,6 +102,20 @@ impl Enricher for CommandEnricher {
         self.on_error
     }
 
+    fn request_key(&self, result: &EvaluationResult) -> Option<String> {
+        let mut parts: Vec<String> = self
+            .argv
+            .iter()
+            .map(|a| render_enricher_template(a, result))
+            .collect();
+        let mut env: Vec<(&String, &String)> = self.env.iter().collect();
+        env.sort();
+        for (k, v) in env {
+            parts.push(format!("{k}={}", render_enricher_template(v, result)));
+        }
+        Some(parts.join("\0"))
+    }
+
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         if self.argv.is_empty() {
             return Err(EnrichError {

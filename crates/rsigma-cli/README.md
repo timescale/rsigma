@@ -297,6 +297,9 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--api-token-env` | string | none | Require bearer-token auth on the API; the named environment variable holds the single accepted token (full admin permissions). For per-token roles and granular `resource:action` permissions use the `daemon.api.auth` config block instead (mutually exclusive). `GET /healthz` and `GET /readyz` stay open. |
 | `--allow-plaintext` | flag | `false` | Permit plaintext on a non-loopback `--api-addr`. Loopback and `unix://` always allow plaintext. |
 | `--allow-unauthenticated` | flag | `false` | Permit an unauthenticated API on a non-loopback `--api-addr`. Without it, a public bind needs bearer tokens or `--tls-client-ca`. |
+| `--api-allowed-host` | string (repeatable) | none | Accept this `Host` header value on a TCP API listener, in addition to `localhost`, `127.0.0.1`, `::1`, and a specific bind IP. `*` accepts every host and needs authentication. Requests whose `Origin` names another site get `403` either way (config: `daemon.api.allowed_hosts`) |
+| `--api-max-connections` | integer | `1024` | Open API connections served at once (config: `daemon.api.max_connections`) |
+| `--api-read-timeout` | duration | `30s` | Time allowed for a client's first bytes, each request head, and each request-body chunk (config: `daemon.api.read_timeout`) |
 | `--suppress` | string | none | Suppression window for correlation alerts (e.g. `5m`, `1h`) |
 | `--action` | string | none | `alert` or `reset`, the action taken after correlation fires |
 | `--emit-detections` | flag | `false` | Emit detection and correlation matches that only feed correlations |
@@ -355,6 +358,7 @@ Unlike `engine eval`, the daemon stays alive after stdin reaches EOF and support
 | `--tls-key-password` | string | none | Password for an encrypted `--tls-key` (env: `RSIGMA_TLS_KEY_PASSWORD`). Currently rejected with a clear hint pointing at `openssl rsa` for offline decryption. |
 | `--tls-client-ca` | path | none | PEM bundle of trusted CAs for inbound client certificate verification (mTLS). |
 | `--tls-min-version` | string | `"1.3"` | Minimum TLS protocol version: `1.2` or `1.3`. |
+| `--tls-handshake-timeout` | duration | `10s` | Time allowed to complete the TLS handshake. Handshakes run off the accept path, at most 256 at once (config: `daemon.api.tls.handshake_timeout`) |
 
 Every build refuses to start on a non-loopback TCP `--api-addr` without `--tls-cert`/`--tls-key` or an explicit `--allow-plaintext`, and without authentication (bearer tokens or `--tls-client-ca`) or an explicit `--allow-unauthenticated`. With TLS configured, the same socket serves HTTP REST, `/metrics`, OTLP/HTTP, and OTLP/gRPC over a single TLS connection via ALPN (advertises both `h2` and `http/1.1`). Crypto provider is `aws-lc-rs`, matching the NATS client TLS path. Certificate hot-reload is cross-platform: any of the hot-reload triggers below re-reads the cert/key from disk and atomically swaps the active `rustls::ServerConfig` via `Arc<ArcSwap<…>>` without dropping inflight TLS connections.
 
@@ -539,6 +543,7 @@ The first three triggers all funnel through one debounced reload task that re-re
 | `rsigma_otlp_errors_total` | counter | `transport`, `reason` | OTLP request errors (requires `daemon-otlp`) |
 | `rsigma_tls_certificate_expiry_seconds` | gauge | | Seconds until the active TLS server certificate's `not_after` (signed; negative once expired). Requires `daemon-tls` |
 | `rsigma_tls_active_connections` | gauge | | Currently active TLS-terminated connections on the API listener (requires `daemon-tls`) |
+| `rsigma_tls_handshake_failures_total` | counter | `reason` | TLS handshakes that timed out or failed (requires `daemon-tls`) |
 
 The per-rule labeled counters (`_by_rule_total`) enable per-rule alerting in Grafana or other Prometheus-based tools. A single PromQL query like `increase(rsigma_detection_matches_by_rule_total[5m]) > 0` produces separate alert instances for each `{rule_title, level}` combination. The aggregate counters (`_total`) remain for lightweight total-throughput monitoring.
 
@@ -1419,9 +1424,12 @@ The config is hot-reloaded on `SIGHUP`, on file-watcher changes, and on `POST /a
 ### Config schema
 
 ```yaml
-# Bound on concurrent enrichment chains across all results in a batch.
-# Defaults to 16 if omitted.
+# Detections enriched at once, across batches. Defaults to 16 if omitted.
 max_concurrent_enrichments: 16
+# How long a timed-out or failed http, dns, or command request is remembered,
+# so later detections with the same request fail fast. Defaults to 60s; 0s
+# turns it off.
+failure_cache_ttl: 60s
 
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
@@ -1872,6 +1880,7 @@ The enrichment pipeline reports thirteen Prometheus metrics:
 | `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`miss`/`drop`. A miss that is skipped or injected as `null` reports `miss` |
 | `rsigma_enrichment_duration_seconds` | `enricher_id`, `kind` | Per-enricher latency histogram |
 | `rsigma_enrichment_queue_depth` | none | Pending enrichment calls (sum across both kinds) |
+| `rsigma_enrichment_short_circuits_total` | `enricher_id` | Enricher calls skipped because the same request was in flight or recently timed out or failed |
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |

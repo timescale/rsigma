@@ -10,6 +10,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use futures_util::StreamExt;
+use futures_util::stream::FuturesOrdered;
 use rsigma_eval::{
     CorrelationConfig, MatchDetailLevel, OnUnknown, Pipeline, ProcessResult, RoutingPlan, TenantId,
     load_schema_config,
@@ -117,6 +119,20 @@ enum BoundListener {
     Tcp(tokio::net::TcpListener),
     #[cfg(unix)]
     Unix(tokio::net::UnixListener),
+}
+
+/// Effective API listener protections, resolved from `daemon.api.*` and the
+/// matching flags.
+#[derive(Debug, Clone)]
+pub struct ApiListenerSettings {
+    /// `Host` and `Origin` validation for a TCP listener. `None` on a
+    /// `unix://` listener, which filesystem permissions guard instead.
+    pub host_guard: Option<rsigma_runtime::HostGuard>,
+    /// Connection cap and read timeouts.
+    pub limits: rsigma_runtime::http_server::ServeLimits,
+    /// How long a client may take to finish the TLS handshake.
+    #[cfg(feature = "daemon-tls")]
+    pub tls_handshake_timeout: std::time::Duration,
 }
 
 /// Effective live event-tap limits, resolved from `daemon.tap.*` plus the
@@ -289,6 +305,8 @@ pub struct DaemonConfig {
     pub include_event: bool,
     pub pretty: bool,
     pub api_addr: super::listen::ListenAddr,
+    /// Host validation, connection limits, and timeouts for the API listener.
+    pub api_listener: ApiListenerSettings,
     pub event_filter: Arc<EventFilter>,
     pub state_db: Option<PathBuf>,
     pub state_save_interval: u64,
@@ -1680,17 +1698,17 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // before any client can observe the daemon as ready. The same streams
     // are moved into the serve task below, so a signal delivered during the
     // remaining setup is coalesced and still triggers a clean drain.
-    let mut shutdown_fut: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>> = {
+    let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
             let sigint = signal(SignalKind::interrupt()).expect("install SIGINT handler");
             let sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-            Some(Box::pin(shutdown_signal(sigint, sigterm)))
+            Box::pin(shutdown_signal(sigint, sigterm))
         }
         #[cfg(not(unix))]
         {
-            Some(Box::pin(shutdown_signal()))
+            Box::pin(shutdown_signal())
         }
     };
 
@@ -2781,206 +2799,65 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         // pipeline is configured.
         let mut alert_tick = tokio::time::interval(tokio::time::Duration::from_secs(1));
         alert_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Enrichment runs in its own tasks, so a slow enricher holds up
+        // neither the tick below nor more results than the pipeline enriches
+        // at once. `FuturesOrdered` keeps delivery, and so acks, in arrival
+        // order.
+        let mut enriching = FuturesOrdered::new();
+        let mut input_open = true;
         loop {
-            tokio::select! {
-                maybe = sink_rx.recv() => {
-                    let Some((mut result, ack_tokens)) = maybe else { break };
-                    sink_metrics.on_output_queue_depth_change(-1);
-
-                    // Post-evaluation enrichment may suppress every entry; if
-                    // so, ack the events and skip sink delivery. `load_full`
-                    // keeps the pipeline alive across the await without holding
-                    // an `ArcSwap` guard.
-                    let pipeline_snapshot = enrichment_swap_for_sink.load_full();
-                    if let Some(pipeline) = pipeline_snapshot.as_ref()
-                        && !pipeline.is_empty()
-                    {
-                        pipeline.run(&mut result).await;
-                        if result.is_empty() {
-                            for token in ack_tokens {
-                                let _ = empty_ack_tx.send(token);
-                            }
-                            continue;
+            if !input_open && enriching.is_empty() {
+                break;
+            }
+            let max_enriching = enrichment_swap_for_sink
+                .load()
+                .as_ref()
+                .as_ref()
+                .map_or(1, |p| p.max_concurrent());
+            let ready = tokio::select! {
+                maybe = sink_rx.recv(), if input_open && enriching.len() < max_enriching => {
+                    match maybe {
+                        None => {
+                            input_open = false;
+                            None
                         }
-                    }
-                    if strip_retained_for_enrichment {
-                        for r in &mut result {
-                            strip_auto_retained_event(r);
-                        }
-                    }
-
-                    let mut delivery = DeliveryContext::new();
-                    let mut finding_uids: Option<Vec<String>> = link_findings
-                        .then(|| (0..result.len()).map(|i| delivery.finding_uid(i)).collect());
-
-                    // Risk layer: annotate each in-scope firing with a risk
-                    // score and risk objects, then (opt-in) emit a compact risk
-                    // event per (detection, risk object) pair. Runs before the
-                    // alert pipeline so risk accrues on every firing, before
-                    // dedup, silencing, or inhibition can fold or drop it.
-                    let risk_snapshot = risk_swap_for_sink.load_full();
-                    if let Some(risk_layer) = risk_snapshot.as_ref() {
-                        let now = chrono::Utc::now().timestamp();
-                        let out = {
-                            let mut st = risk_state_for_sink
-                                .write()
-                                .unwrap_or_else(|e| e.into_inner());
-                            risk_layer.process_with_finding_uids(
-                                result,
-                                finding_uids.as_deref().unwrap_or_default(),
-                                &mut st,
-                                now,
-                                risk_metrics.as_ref(),
-                            )
-                        };
-                        result = out.kept;
-                        if !out.risk_events.is_empty() {
-                            let subject =
-                                risk_layer.risk_event_nats_subject().map(|s| s.to_string());
-                            for event in out.risk_events {
-                                let Ok(json) = serde_json::to_string(&event) else {
-                                    tracing::warn!("Failed to serialize risk event");
-                                    continue;
-                                };
-                                let typed = serde_json::from_value::<rsigma_runtime::RiskEvent>(
-                                    event.clone(),
-                                );
-                                if typed.is_err() && !ocsf_options.is_empty() {
-                                    tracing::warn!("risk event JSON is not a risk event");
-                                }
-                                let ocsf = if typed.is_ok() {
-                                    ocsf_options.as_slice()
-                                } else {
-                                    &[]
-                                };
-                                let env = with_ocsf_lines(
-                                    FormattedIncidentEnvelope::new(
-                                        IncidentEnvelope::new(json, subject.clone())
-                                            .with_tenant(tenant_from_json(&event)),
-                                    ),
-                                    ocsf,
-                                    "risk event",
-                                    |opts| {
-                                        Ok(rsigma_runtime::ocsf::risk_event_finding_opts(
-                                            typed.as_ref().expect("risk event"),
-                                            opts,
-                                        ))
-                                    },
-                                );
-                                dispatcher.dispatch_formatted_incident(env).await;
-                            }
-                        }
-                        if !out.incidents.is_empty() {
-                            let subject =
-                                risk_layer.incident_nats_subject().map(|s| s.to_string());
-                            for (incident, links) in
-                                out.incidents.into_iter().zip(out.finding_links)
-                            {
-                                match serde_json::to_string(&incident) {
-                                    Ok(json) => {
-                                        let env = with_ocsf_lines(
-                                            FormattedIncidentEnvelope::new(
-                                                IncidentEnvelope::new(json, subject.clone())
-                                                    .with_tenant(incident.tenant_id.clone()),
-                                            ),
-                                            &ocsf_options,
-                                            "risk incident",
-                                            |opts| {
-                                                rsigma_runtime::ocsf::risk_incident_finding_in_class(
-                                                    &incident, &links, opts,
-                                                )
-                                            },
-                                        );
-                                        dispatcher.dispatch_formatted_incident(env).await;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "Failed to serialize risk incident");
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Alert pipeline: dedup folds duplicates and grouping
-                    // assigns survivors to incidents (annotating `incident_id`).
-                    // If the whole batch folds away, ack and skip dispatch,
-                    // mirroring the enrichment empty-result path. The incident
-                    // store is locked only for the synchronous process call.
-                    let alert_snapshot = alert_pipeline_swap_for_sink.load_full();
-                    if let Some(alert_pipeline) = alert_snapshot.as_ref() {
-                        let now = chrono::Utc::now().timestamp();
-                        let kept = {
-                            let mut st = alert_state_for_sink
-                                .write()
-                                .unwrap_or_else(|e| e.into_inner());
-                            // A reload trims the stores and swaps the pipeline
-                            // under this lock; re-read it so this batch cannot
-                            // refill them under the retired pipeline's caps.
-                            let current = alert_pipeline_swap_for_sink.load_full();
-                            let alert_pipeline = current.as_ref().as_ref().unwrap_or(alert_pipeline);
-                            let mut ring = capture_ring_for_sink
+                        Some((result, ack_tokens)) => {
+                            sink_metrics.on_output_queue_depth_change(-1);
+                            let pipeline = enrichment_swap_for_sink
+                                .load_full()
                                 .as_ref()
-                                .map(|ring| ring.lock().unwrap_or_else(|e| e.into_inner()));
-                            let mut capture_sink = ring.as_mut().map(|ring| CaptureRingSink {
-                                ring,
-                                metrics: capture_metrics.as_ref(),
-                            });
-                            let capture = capture_sink
-                                .as_mut()
-                                .map(|sink| sink as &mut dyn rsigma_runtime::CaptureSink);
-                            let mut kept = match finding_uids.take() {
-                                Some(uids) => {
-                                    let (kept, kept_uids) = alert_pipeline
-                                        .process_with_finding_uids(
-                                            result,
-                                            uids,
-                                            &mut st,
-                                            now,
-                                            alert_pipeline_metrics.as_ref(),
-                                            capture,
-                                        );
-                                    finding_uids = Some(kept_uids);
-                                    kept
+                                .clone()
+                                .filter(|p| !p.is_empty());
+                            match pipeline {
+                                None if enriching.is_empty() => Some((result, ack_tokens, false)),
+                                None => {
+                                    enriching.push_back(tokio::spawn(async move {
+                                        (result, ack_tokens, false)
+                                    }));
+                                    None
                                 }
-                                None => alert_pipeline.process_with_capture(
-                                    result,
-                                    &mut st,
-                                    now,
-                                    alert_pipeline_metrics.as_ref(),
-                                    capture,
-                                ),
-                            };
-                            if ring.is_some() && !operator_include_event {
-                                for result in &mut kept {
-                                    strip_auto_retained_event(result);
+                                Some(pipeline) => {
+                                    enriching.push_back(tokio::spawn(async move {
+                                        let mut result = result;
+                                        pipeline.run(&mut result).await;
+                                        (result, ack_tokens, true)
+                                    }));
+                                    None
                                 }
                             }
-                            kept
-                        };
-                        if kept.is_empty() {
-                            for token in ack_tokens {
-                                let _ = empty_ack_tx.send(token);
-                            }
-                            continue;
                         }
-                        result = kept;
                     }
-
-                    // Live detection tail: fan the post-enrichment result out to
-                    // any active tail sessions before dispatch. Lossy and
-                    // non-blocking, so it can never stall the sink task or the
-                    // ack-join.
-                    if let Some(tail) = &tail_for_sink {
-                        tail.capture(&result);
-                    }
-
-                    if let Some(uids) = finding_uids {
-                        delivery.set_finding_uids(uids);
-                    }
-                    dispatcher
-                        .dispatch_with_context(result, ack_tokens, delivery)
-                        .await;
                 }
+                Some(done) = enriching.next() => match done {
+                    Ok(ready) => Some(ready),
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            "Enrichment task failed; its results were not delivered or acknowledged"
+                        );
+                        None
+                    }
+                },
                 _ = alert_tick.tick() => {
                     // Emit any due dedup repeat/resolved records and incident
                     // emissions. These are synthetic (no input event): dedup
@@ -3056,8 +2933,192 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                             .unwrap_or_else(|e| e.into_inner());
                         risk_layer.tick(&mut st, now, risk_metrics.as_ref());
                     }
+                    None
+                }
+            };
+            let Some((mut result, ack_tokens, enriched)) = ready else {
+                continue;
+            };
+
+            // Post-evaluation enrichment may suppress every entry; if so, ack
+            // the events and skip sink delivery.
+            if enriched && result.is_empty() {
+                for token in ack_tokens {
+                    let _ = empty_ack_tx.send(token);
+                }
+                continue;
+            }
+            if strip_retained_for_enrichment {
+                for r in &mut result {
+                    strip_auto_retained_event(r);
                 }
             }
+
+            let mut delivery = DeliveryContext::new();
+            let mut finding_uids: Option<Vec<String>> =
+                link_findings.then(|| (0..result.len()).map(|i| delivery.finding_uid(i)).collect());
+
+            // Risk layer: annotate each in-scope firing with a risk
+            // score and risk objects, then (opt-in) emit a compact risk
+            // event per (detection, risk object) pair. Runs before the
+            // alert pipeline so risk accrues on every firing, before
+            // dedup, silencing, or inhibition can fold or drop it.
+            let risk_snapshot = risk_swap_for_sink.load_full();
+            if let Some(risk_layer) = risk_snapshot.as_ref() {
+                let now = chrono::Utc::now().timestamp();
+                let out = {
+                    let mut st = risk_state_for_sink
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
+                    risk_layer.process_with_finding_uids(
+                        result,
+                        finding_uids.as_deref().unwrap_or_default(),
+                        &mut st,
+                        now,
+                        risk_metrics.as_ref(),
+                    )
+                };
+                result = out.kept;
+                if !out.risk_events.is_empty() {
+                    let subject = risk_layer.risk_event_nats_subject().map(|s| s.to_string());
+                    for event in out.risk_events {
+                        let Ok(json) = serde_json::to_string(&event) else {
+                            tracing::warn!("Failed to serialize risk event");
+                            continue;
+                        };
+                        let typed =
+                            serde_json::from_value::<rsigma_runtime::RiskEvent>(event.clone());
+                        if typed.is_err() && !ocsf_options.is_empty() {
+                            tracing::warn!("risk event JSON is not a risk event");
+                        }
+                        let ocsf = if typed.is_ok() {
+                            ocsf_options.as_slice()
+                        } else {
+                            &[]
+                        };
+                        let env = with_ocsf_lines(
+                            FormattedIncidentEnvelope::new(
+                                IncidentEnvelope::new(json, subject.clone())
+                                    .with_tenant(tenant_from_json(&event)),
+                            ),
+                            ocsf,
+                            "risk event",
+                            |opts| {
+                                Ok(rsigma_runtime::ocsf::risk_event_finding_opts(
+                                    typed.as_ref().expect("risk event"),
+                                    opts,
+                                ))
+                            },
+                        );
+                        dispatcher.dispatch_formatted_incident(env).await;
+                    }
+                }
+                if !out.incidents.is_empty() {
+                    let subject = risk_layer.incident_nats_subject().map(|s| s.to_string());
+                    for (incident, links) in out.incidents.into_iter().zip(out.finding_links) {
+                        match serde_json::to_string(&incident) {
+                            Ok(json) => {
+                                let env = with_ocsf_lines(
+                                    FormattedIncidentEnvelope::new(
+                                        IncidentEnvelope::new(json, subject.clone())
+                                            .with_tenant(incident.tenant_id.clone()),
+                                    ),
+                                    &ocsf_options,
+                                    "risk incident",
+                                    |opts| {
+                                        rsigma_runtime::ocsf::risk_incident_finding_in_class(
+                                            &incident, &links, opts,
+                                        )
+                                    },
+                                );
+                                dispatcher.dispatch_formatted_incident(env).await;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to serialize risk incident");
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Alert pipeline: dedup folds duplicates and grouping
+            // assigns survivors to incidents (annotating `incident_id`).
+            // If the whole batch folds away, ack and skip dispatch,
+            // mirroring the enrichment empty-result path. The incident
+            // store is locked only for the synchronous process call.
+            let alert_snapshot = alert_pipeline_swap_for_sink.load_full();
+            if let Some(alert_pipeline) = alert_snapshot.as_ref() {
+                let now = chrono::Utc::now().timestamp();
+                let kept = {
+                    let mut st = alert_state_for_sink
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
+                    // A reload trims the stores and swaps the pipeline
+                    // under this lock; re-read it so this batch cannot
+                    // refill them under the retired pipeline's caps.
+                    let current = alert_pipeline_swap_for_sink.load_full();
+                    let alert_pipeline = current.as_ref().as_ref().unwrap_or(alert_pipeline);
+                    let mut ring = capture_ring_for_sink
+                        .as_ref()
+                        .map(|ring| ring.lock().unwrap_or_else(|e| e.into_inner()));
+                    let mut capture_sink = ring.as_mut().map(|ring| CaptureRingSink {
+                        ring,
+                        metrics: capture_metrics.as_ref(),
+                    });
+                    let capture = capture_sink
+                        .as_mut()
+                        .map(|sink| sink as &mut dyn rsigma_runtime::CaptureSink);
+                    let mut kept = match finding_uids.take() {
+                        Some(uids) => {
+                            let (kept, kept_uids) = alert_pipeline.process_with_finding_uids(
+                                result,
+                                uids,
+                                &mut st,
+                                now,
+                                alert_pipeline_metrics.as_ref(),
+                                capture,
+                            );
+                            finding_uids = Some(kept_uids);
+                            kept
+                        }
+                        None => alert_pipeline.process_with_capture(
+                            result,
+                            &mut st,
+                            now,
+                            alert_pipeline_metrics.as_ref(),
+                            capture,
+                        ),
+                    };
+                    if ring.is_some() && !operator_include_event {
+                        for result in &mut kept {
+                            strip_auto_retained_event(result);
+                        }
+                    }
+                    kept
+                };
+                if kept.is_empty() {
+                    for token in ack_tokens {
+                        let _ = empty_ack_tx.send(token);
+                    }
+                    continue;
+                }
+                result = kept;
+            }
+
+            // Live detection tail: fan the post-enrichment result out to
+            // any active tail sessions before dispatch. Lossy and
+            // non-blocking, so it can never stall the sink task or the
+            // ack-join.
+            if let Some(tail) = &tail_for_sink {
+                tail.capture(&result);
+            }
+
+            if let Some(uids) = finding_uids {
+                delivery.set_finding_uids(uids);
+            }
+            dispatcher
+                .dispatch_with_context(result, ack_tokens, delivery)
+                .await;
         }
         dispatcher.shutdown().await;
     });
@@ -3113,13 +3174,20 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
     // Build the unified axum router: with `daemon-otlp`, the OTLP/gRPC
     // service is folded into the same axum::Router via Tonic's
-    // `Routes::into_axum_router`. axum::serve handles HTTP/1 and HTTP/2
+    // `Routes::into_axum_router`. The serve loop handles HTTP/1 and HTTP/2
     // (including h2c for plaintext gRPC) via hyper-util's auto::Builder.
     #[cfg(feature = "daemon-otlp")]
-    let unified_app: axum::Router = otlp_routes.into_axum_router();
+    let mut unified_app: axum::Router = otlp_routes.into_axum_router();
     #[cfg(not(feature = "daemon-otlp"))]
-    let unified_app: axum::Router = app;
+    let mut unified_app: axum::Router = app;
 
+    if let Some(guard) = config.api_listener.host_guard.clone() {
+        unified_app = unified_app.layer(axum::middleware::from_fn_with_state(
+            Arc::new(guard),
+            super::host_guard::check_host,
+        ));
+    }
+    let limits = config.api_listener.limits;
     let mut serve_handle = match bound {
         BoundListener::Tcp(listener) => {
             #[cfg(feature = "daemon-tls")]
@@ -3128,56 +3196,50 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                     let tls_listener = super::tls::RustlsListener::new(
                         listener,
                         state.config.clone(),
-                        metrics.tls_active_connections.clone(),
-                    );
-                    let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
-                    tokio::spawn(async move {
-                        if let Err(e) = axum::serve(tls_listener, unified_app)
-                            .with_graceful_shutdown(shutdown_fut)
-                            .await
-                        {
-                            tracing::error!(error = %e, "server error");
-                        }
-                    })
+                        super::tls::TlsListenerMetrics {
+                            active_connections: metrics.tls_active_connections.clone(),
+                            handshake_failures: metrics.tls_handshake_failures_total.clone(),
+                        },
+                        config.api_listener.tls_handshake_timeout,
+                    )
+                    .unwrap_or_else(|e| {
+                        tracing::error!(error = %e, "Failed to start the TLS listener");
+                        std::process::exit(crate::exit_code::CONFIG_ERROR);
+                    });
+                    tokio::spawn(rsigma_runtime::http_server::serve(
+                        tls_listener,
+                        unified_app,
+                        limits,
+                        shutdown_fut,
+                    ))
                 } else {
-                    let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
-                    tokio::spawn(async move {
-                        if let Err(e) = axum::serve(listener, unified_app)
-                            .with_graceful_shutdown(shutdown_fut)
-                            .await
-                        {
-                            tracing::error!(error = %e, "server error");
-                        }
-                    })
+                    tokio::spawn(rsigma_runtime::http_server::serve(
+                        listener,
+                        unified_app,
+                        limits,
+                        shutdown_fut,
+                    ))
                 }
             }
             #[cfg(not(feature = "daemon-tls"))]
             {
-                let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
-                tokio::spawn(async move {
-                    if let Err(e) = axum::serve(listener, unified_app)
-                        .with_graceful_shutdown(shutdown_fut)
-                        .await
-                    {
-                        tracing::error!(error = %e, "server error");
-                    }
-                })
+                tokio::spawn(rsigma_runtime::http_server::serve(
+                    listener,
+                    unified_app,
+                    limits,
+                    shutdown_fut,
+                ))
             }
         }
         // A unix:// listener never terminates TLS (rejected at config time), so
         // it always serves plaintext over the socket.
         #[cfg(unix)]
-        BoundListener::Unix(listener) => {
-            let shutdown_fut = shutdown_fut.take().expect("shutdown future consumed once");
-            tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, unified_app)
-                    .with_graceful_shutdown(shutdown_fut)
-                    .await
-                {
-                    tracing::error!(error = %e, "server error");
-                }
-            })
-        }
+        BoundListener::Unix(listener) => tokio::spawn(rsigma_runtime::http_server::serve(
+            listener,
+            unified_app,
+            limits,
+            shutdown_fut,
+        )),
     };
 
     let mut task_failed = false;

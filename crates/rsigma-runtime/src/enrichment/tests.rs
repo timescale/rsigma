@@ -1115,6 +1115,353 @@ async fn timeout_triggers_on_error_policy() {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrency and the failure cache
+// ---------------------------------------------------------------------------
+
+/// A detection whose `User` field selects the behavior of [`KeyedEnricher`].
+fn detection_for(user: &str) -> EvaluationResult {
+    let mut result = detection_result();
+    if let ResultBody::Detection(body) = &mut result.body {
+        body.event = Some(serde_json::json!({ "User": user }));
+    }
+    result
+}
+
+/// Hangs past its timeout for users starting with `slow`, answers after a
+/// short delay otherwise, and counts calls. Names `User` as its request key.
+struct KeyedEnricher {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    timeout: Duration,
+}
+
+fn user_of(result: &EvaluationResult) -> String {
+    result
+        .as_detection()
+        .and_then(|d| d.event.as_ref())
+        .and_then(|e| e.get("User"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[async_trait::async_trait]
+impl Enricher for KeyedEnricher {
+    fn kind(&self) -> EnricherKind {
+        EnricherKind::Detection
+    }
+    fn id(&self) -> &str {
+        "keyed"
+    }
+    fn inject_field(&self) -> &str {
+        "owner"
+    }
+    fn timeout(&self) -> Duration {
+        self.timeout
+    }
+    fn scope(&self) -> &Scope {
+        static SCOPE: std::sync::OnceLock<Scope> = std::sync::OnceLock::new();
+        SCOPE.get_or_init(Scope::default)
+    }
+    fn on_error(&self) -> OnError {
+        OnError::Null
+    }
+    fn request_key(&self, result: &EvaluationResult) -> Option<String> {
+        Some(user_of(result))
+    }
+    async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let user = user_of(result);
+        let delay = if user.starts_with("slow") {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_millis(20)
+        };
+        tokio::time::sleep(delay).await;
+        super::inject_enrichment(result, "owner", serde_json::json!(user));
+        Ok(())
+    }
+}
+
+fn keyed(timeout: Duration) -> (Box<dyn Enricher>, Arc<std::sync::atomic::AtomicUsize>) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let enricher = KeyedEnricher {
+        calls: calls.clone(),
+        timeout,
+    };
+    (Box::new(enricher), calls)
+}
+
+#[tokio::test]
+async fn timing_out_results_do_not_delay_a_fast_one() {
+    let timeout = Duration::from_millis(300);
+    let (enricher, _) = keyed(timeout);
+    let pipeline =
+        EnrichmentPipeline::new(vec![enricher], 16).with_failure_cache_ttl(Duration::ZERO);
+    let mut results: Vec<_> = (0..8)
+        .map(|i| detection_for(&format!("slow-{i}")))
+        .collect();
+    results.insert(4, detection_for("fast"));
+
+    let started = std::time::Instant::now();
+    pipeline.run(&mut results).await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < timeout * 3,
+        "8 timeouts ran one after another: {elapsed:?}"
+    );
+    let owners: Vec<_> = results
+        .iter()
+        .map(|r| r.header.enrichments.as_ref().unwrap()["owner"].clone())
+        .collect();
+    assert_eq!(owners[4], serde_json::json!("fast"));
+    assert!(
+        owners
+            .iter()
+            .enumerate()
+            .all(|(i, o)| i == 4 || o.is_null())
+    );
+}
+
+#[tokio::test]
+async fn concurrent_runs_share_the_concurrency_bound() {
+    let timeout = Duration::from_millis(200);
+    let (enricher, _) = keyed(timeout);
+    let pipeline =
+        Arc::new(EnrichmentPipeline::new(vec![enricher], 2).with_failure_cache_ttl(Duration::ZERO));
+    assert_eq!(pipeline.max_concurrent(), 2);
+    let started = std::time::Instant::now();
+    let runs = (0..4).map(|i| {
+        let pipeline = pipeline.clone();
+        tokio::spawn(async move {
+            let mut results = vec![detection_for(&format!("slow-{i}"))];
+            pipeline.run(&mut results).await;
+        })
+    });
+    for run in runs.collect::<Vec<_>>() {
+        run.await.unwrap();
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= timeout * 2,
+        "more than two enrichments ran at once: {elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_key_is_short_circuited_within_the_ttl() {
+    let timeout = Duration::from_millis(200);
+    let (enricher, calls) = keyed(timeout);
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 1);
+    let mut results: Vec<_> = (0..6).map(|_| detection_for("slow-upstream")).collect();
+    results.push(detection_for("fast"));
+
+    let started = std::time::Instant::now();
+    pipeline.run(&mut results).await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "one timeout, one fast call"
+    );
+    assert!(elapsed < timeout * 3, "{elapsed:?}");
+    for result in &results[..6] {
+        assert!(result.header.enrichments.as_ref().unwrap()["owner"].is_null());
+    }
+    assert_eq!(
+        results[6].header.enrichments.as_ref().unwrap()["owner"],
+        serde_json::json!("fast")
+    );
+}
+
+#[tokio::test]
+async fn identical_requests_in_flight_share_one_call() {
+    let (enricher, calls) = keyed(Duration::from_millis(200));
+    let pipeline =
+        EnrichmentPipeline::new(vec![enricher], 16).with_failure_cache_ttl(Duration::ZERO);
+    let mut results: Vec<_> = (0..5).map(|_| detection_for("slow-same")).collect();
+    results.extend((0..5).map(|_| detection_for("fast-same")));
+    pipeline.run(&mut results).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    for result in &results[..5] {
+        assert!(result.header.enrichments.as_ref().unwrap()["owner"].is_null());
+    }
+    for result in &results[5..] {
+        assert_eq!(
+            result.header.enrichments.as_ref().unwrap()["owner"],
+            serde_json::json!("fast-same")
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_follower_makes_the_call_when_the_leader_goes_away() {
+    let in_flight = Arc::new(super::InFlight::default());
+    let key = [7u8; 32];
+    let super::Flight::Leader(guard) = in_flight.join(key) else {
+        panic!("the first caller leads");
+    };
+    let super::Flight::Follower(rx) = in_flight.join(key) else {
+        panic!("the second caller follows");
+    };
+    drop(guard);
+    assert!(super::wait_for_leader(rx).await.is_none());
+    assert!(matches!(in_flight.join(key), super::Flight::Leader(_)));
+
+    let super::Flight::Leader(guard) = in_flight.join([8u8; 32]) else {
+        panic!("a new key leads");
+    };
+    let super::Flight::Follower(rx) = in_flight.join([8u8; 32]) else {
+        panic!("follows");
+    };
+    guard.publish(Ok(Some(serde_json::json!(1))));
+    assert_eq!(
+        super::wait_for_leader(rx).await.unwrap().unwrap(),
+        Some(serde_json::json!(1))
+    );
+}
+
+#[tokio::test]
+async fn failure_cache_expires_and_can_be_turned_off() {
+    let timeout = Duration::from_millis(50);
+    let (enricher, calls) = keyed(timeout);
+    let pipeline =
+        EnrichmentPipeline::new(vec![enricher], 1).with_failure_cache_ttl(Duration::ZERO);
+    let mut results: Vec<_> = (0..3).map(|_| detection_for("slow")).collect();
+    pipeline.run(&mut results).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+
+    let (enricher, calls) = keyed(timeout);
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 1)
+        .with_failure_cache_ttl(Duration::from_millis(100));
+    pipeline.run(&mut vec![detection_for("slow")]).await;
+    pipeline.run(&mut vec![detection_for("slow")]).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    pipeline.run(&mut vec![detection_for("slow")]).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn misses_are_not_short_circuited() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    struct Missing(Arc<std::sync::atomic::AtomicUsize>, Scope);
+    #[async_trait::async_trait]
+    impl Enricher for Missing {
+        fn kind(&self) -> EnricherKind {
+            EnricherKind::Detection
+        }
+        fn id(&self) -> &str {
+            "missing"
+        }
+        fn inject_field(&self) -> &str {
+            "x"
+        }
+        fn scope(&self) -> &Scope {
+            &self.1
+        }
+        fn request_key(&self, _: &EvaluationResult) -> Option<String> {
+            Some("same".to_string())
+        }
+        async fn enrich(&self, _: &mut EvaluationResult) -> Result<(), EnrichError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(EnrichError {
+                enricher_id: "missing".to_string(),
+                kind: EnrichErrorKind::Miss("none".to_string()),
+            })
+        }
+    }
+    let pipeline =
+        EnrichmentPipeline::new(vec![Box::new(Missing(calls.clone(), Scope::default()))], 1);
+    pipeline
+        .run(&mut vec![detection_result(), detection_result()])
+        .await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[test]
+fn io_enrichers_key_failures_by_their_rendered_request() {
+    let yaml = r#"
+enrichers:
+  - id: owner_api
+    kind: detection
+    type: http
+    url: "https://cmdb.example/users/${detection.event.User}"
+    headers: { X-Host: "${detection.event.Host}" }
+    inject_field: owner
+  - id: owner_cmd
+    kind: detection
+    type: command
+    command: ["/usr/bin/lookup", "${detection.event.User}"]
+    inject_field: owner
+  - id: runbook
+    kind: detection
+    type: template
+    template: "https://wiki/${detection.rule.id}"
+    inject_field: runbook
+"#;
+    let file: EnrichersFile = yaml_serde::from_str(yaml).unwrap();
+    let pipeline = crate::build_enrichers(file).unwrap();
+    let alice = detection_result();
+    let mut bob = detection_result();
+    if let ResultBody::Detection(body) = &mut bob.body {
+        body.event = Some(serde_json::json!({"User": "bob", "Host": "dc01"}));
+    }
+    let keys: Vec<_> = pipeline
+        .enrichers()
+        .map(|e| (e.request_key(&alice), e.request_key(&bob)))
+        .collect();
+    let (http_alice, http_bob) = &keys[0];
+    assert!(http_alice.as_ref().unwrap().contains("users/alice"));
+    assert!(http_alice.as_ref().unwrap().contains("X-Host:dc01"));
+    assert_ne!(http_alice, http_bob);
+    let (cmd_alice, cmd_bob) = &keys[1];
+    assert!(cmd_alice.as_ref().unwrap().contains("alice"));
+    assert_ne!(cmd_alice, cmd_bob);
+    assert_eq!(keys[2], (None, None), "a template does no I/O");
+}
+
+#[tokio::test]
+async fn dropped_results_keep_the_order_of_the_rest() {
+    struct DropUser(Scope);
+    #[async_trait::async_trait]
+    impl Enricher for DropUser {
+        fn kind(&self) -> EnricherKind {
+            EnricherKind::Detection
+        }
+        fn id(&self) -> &str {
+            "drop"
+        }
+        fn inject_field(&self) -> &str {
+            "x"
+        }
+        fn scope(&self) -> &Scope {
+            &self.0
+        }
+        fn on_error(&self) -> OnError {
+            OnError::Drop
+        }
+        async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
+            if user_of(result).starts_with("drop") {
+                return Err(EnrichError {
+                    enricher_id: "drop".to_string(),
+                    kind: EnrichErrorKind::Fetch("refused".to_string()),
+                });
+            }
+            Ok(())
+        }
+    }
+    let users = ["a", "drop-1", "b", "c", "drop-2", "d"];
+    let mut results: Vec<_> = users.iter().map(|u| detection_for(u)).collect();
+    EnrichmentPipeline::new(vec![Box::new(DropUser(Scope::default()))], 4)
+        .run(&mut results)
+        .await;
+    let kept: Vec<_> = results.iter().map(user_of).collect();
+    assert_eq!(kept, ["a", "b", "c", "d"]);
+}
+
+// ---------------------------------------------------------------------------
 // register_builtin / lookup_builtin
 // ---------------------------------------------------------------------------
 //
