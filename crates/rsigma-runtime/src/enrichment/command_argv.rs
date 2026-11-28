@@ -527,8 +527,8 @@ mod tests {
                 .contains("command[2]")
         );
         // SAFETY: the variable name is unique to this test.
-        unsafe { std::env::set_var("RSIGMA_ARGV_TEST_TOOL", "/usr/bin/lookup") };
-        assert!(problem(&["${RSIGMA_ARGV_TEST_TOOL}", V]).is_none());
+        unsafe { std::env::set_var("RSIGMA_TEST_ARGV_TOOL", "/usr/bin/lookup") };
+        assert!(problem(&["${RSIGMA_TEST_ARGV_TOOL}", V]).is_none());
     }
 
     #[test]

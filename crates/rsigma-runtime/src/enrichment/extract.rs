@@ -701,9 +701,9 @@ mod tests {
     #[test]
     fn env_references_are_substituted_at_build_time() {
         // SAFETY: the variable name is unique to this test.
-        unsafe { std::env::set_var("RSIGMA_EXTRACT_TEST_KEY", "assets") };
+        unsafe { std::env::set_var("RSIGMA_TEST_EXTRACT_KEY", "assets") };
         assert_eq!(
-            rewrite_jq(r#".${RSIGMA_EXTRACT_TEST_KEY}["${detection.fields.Host}"]"#)
+            rewrite_jq(r#".${RSIGMA_TEST_EXTRACT_KEY}["${detection.fields.Host}"]"#)
                 .unwrap()
                 .0,
             r#".assets["\($__v0)"]"#
