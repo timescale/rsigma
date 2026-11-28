@@ -54,11 +54,15 @@ pub struct BatchProcessOutcome {
 
 /// Reference point for advancing a tenant's absence clock while input is idle.
 struct IdleRef {
-    /// Engine clock after the last batch that carried the tenant, or the wall
-    /// clock when that tenant has no event-time clock.
+    /// Engine clock when the reference was taken.
     base_secs: i64,
-    /// When that batch was processed.
+    /// When the reference was taken.
     at: Instant,
+    /// The tenant had no event-time clock when the reference was taken, so it
+    /// follows the wall clock until an event moves its clock past `seen`.
+    wall: bool,
+    /// The engine clock last observed for the tenant.
+    seen: Option<i64>,
 }
 
 /// Thread-safe handle to the engine, swappable atomically for hot-reload.
@@ -217,12 +221,20 @@ impl LogProcessor {
         let now = Instant::now();
         let mut idle = self.idle.lock();
         for tenant in tenants {
-            let base = engine.clock(tenant.as_ref()).unwrap_or(wall);
+            let clock = engine.clock(tenant.as_ref());
+            if idle
+                .get(tenant)
+                .is_some_and(|reference| reference.wall && clock <= reference.seen)
+            {
+                continue;
+            }
             idle.insert(
                 tenant.clone(),
                 IdleRef {
-                    base_secs: base,
+                    base_secs: clock.unwrap_or(wall),
                     at: now,
+                    wall: clock.is_none(),
+                    seen: clock,
                 },
             );
         }
@@ -233,14 +245,20 @@ impl LogProcessor {
         let wall = Utc::now().timestamp();
         let now = Instant::now();
         let mut idle = self.idle.lock();
-        idle.clear();
+        let previous = std::mem::take(&mut *idle);
         for tenant in engine.absence_tenants() {
-            let base = engine.clock(tenant.as_ref()).unwrap_or(wall);
+            let clock = engine.clock(tenant.as_ref());
+            let follows_wall = clock.is_none()
+                || previous
+                    .get(&tenant)
+                    .is_some_and(|reference| reference.wall);
             idle.insert(
                 tenant,
                 IdleRef {
-                    base_secs: base,
+                    base_secs: clock.unwrap_or(wall),
                     at: now,
+                    wall: follows_wall,
+                    seen: clock,
                 },
             );
         }
@@ -316,27 +334,21 @@ impl LogProcessor {
         let mut results = Vec::new();
         let mut idle = self.idle.lock();
         for tenant in tenants {
-            let target = match idle.get(&tenant) {
-                Some(reference) => {
-                    let elapsed = now.saturating_duration_since(reference.at).as_secs() as i64;
-                    reference.base_secs.saturating_add(elapsed)
-                }
-                None => engine.clock(tenant.as_ref()).unwrap_or(wall_secs),
-            };
-            let target = if engine.clock(tenant.as_ref()).is_none() {
+            let clock = engine.clock(tenant.as_ref());
+            let reference = idle.entry(tenant.clone()).or_insert_with(|| IdleRef {
+                base_secs: clock.unwrap_or(wall_secs),
+                at: now,
+                wall: clock.is_none(),
+                seen: clock,
+            });
+            let target = if reference.wall {
                 wall_secs
             } else {
-                target
+                let elapsed = now.saturating_duration_since(reference.at).as_secs() as i64;
+                reference.base_secs.saturating_add(elapsed)
             };
             results.extend(engine.advance_clock(tenant.as_ref(), target));
-            let base = engine.clock(tenant.as_ref()).unwrap_or(wall_secs);
-            idle.insert(
-                tenant,
-                IdleRef {
-                    base_secs: base,
-                    at: now,
-                },
-            );
+            reference.seen = engine.clock(tenant.as_ref());
         }
         drop(idle);
         self.report_absence_metrics(&mut engine, &results);
@@ -2598,6 +2610,32 @@ correlation:
         proc.process_batch_with_format(&batch, &InputFormat::Json, None);
         let wall = chrono::Utc::now().timestamp() + 61;
         let fired = proc.advance_idle_at(Instant::now(), wall);
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn ticks_closer_than_a_second_still_advance_the_clock() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let now = Instant::now();
+        let mut fired = Vec::new();
+        for tick in 1..=110 {
+            let at = now + std::time::Duration::from_millis(tick * 600);
+            fired.extend(proc.advance_idle_at(at, 0));
+        }
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn steady_events_without_timestamps_do_not_hold_the_clock_back() {
+        let proc = make_processor(ABSENCE_RULES);
+        let login = vec![r#"{"EventType": "login", "User": "alice"}"#.to_string()];
+        let other = vec![r#"{"EventType": "other", "User": "bob"}"#.to_string()];
+        proc.process_batch_with_format(&login, &InputFormat::Json, None);
+        let wall = chrono::Utc::now().timestamp();
+        assert!(proc.advance_idle_at(Instant::now(), wall).is_empty());
+        proc.process_batch_with_format(&other, &InputFormat::Json, None);
+        let fired = proc.advance_idle_at(Instant::now(), wall + 61);
         assert_eq!(fired.len(), 1);
     }
 
