@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### The CLI integration tests build as one test binary
+### The CLI integration tests build as one test binary (#806)
 
 Each of the 81 `cli_*.rs` files in `crates/rsigma-cli/tests/` was its own test target, so every build compiled and linked 81 executables, about 1 GB of linker output, and linking dominates the Windows and macOS test jobs. The files are now modules of a single `cli` target rooted at `tests/cli.rs` (`autotests = false`). The file layout and the 1,402 tests are unchanged; a rebuild of the suite with CI's settings drops from about 12.5 to 4.5 seconds on a 4-job macOS build. To run one file's tests, filter on its module, for example `cargo test -p rsigma --test cli cli_daemon_nats::`. The three `engine explain` insta snapshots are renamed for the new module path.
 
