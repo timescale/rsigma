@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 49 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 43 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
+The workspace ships 51 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 45 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -22,6 +22,8 @@ The workspace ships 49 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_pipeline_sources_yaml` | Dynamic source spec parser. | 8192 |
 | `fuzz_watchlist_request` | Watchlist push, replace, and delete bodies. The first byte selects the operation. The rest is JSON. {{ added "0.28.0" }} | 4096 |
 | `fuzz_alert_pipeline_config` | Alert-pipeline configuration parser. | 4096 |
+| `fuzz_silence_request` | `POST /api/v1/silences` bodies through the API silence builder: size limits before any compile, the bounded regex compile, and the regex memory budget of the silence store. Seeds in `fuzz/corpus/fuzz_silence_request/` include too many matchers, an over-long value, a regex over the size limit, and a value that would escape the full-match anchors. {{ added "unreleased" }} | 65536 |
+| `fuzz_alert_pipeline_snapshot` | Alert-pipeline snapshot restore (`AlertPipelineSnapshot::from_json`): unreadable entries are skipped one by one, and whatever restores must save to a snapshot that reads back with no entry skipped. Seeds in `fuzz/corpus/fuzz_alert_pipeline_snapshot/` include mixed good and bad entries, a future version, and an entry nested past the read limit. {{ added "unreleased" }} | 65536 |
 | `fuzz_enrichers_config` | Enrichers configuration parsing and validation through `parse_enrichers_config`: YAML deserialization, per-type key checks, template namespaces, scope, and extract compilation. Building enrichers does I/O and is not fuzzed. Seeds in `fuzz/corpus/fuzz_enrichers_config/` cover each built-in type and adversarial keys. {{ added "0.28.0" }} | 65536 |
 | `fuzz_enricher_extract` | Event values in `lookup` extract programs. The first byte selects either a fixed jq, JSONPath, or CEL lookup program, which must return exactly the record the event value names (never an error, a decoy, or a secret record), or an arbitrary extract template, which may fail but must not panic or run past its limits. The rest is `<program>\0<value>`. {{ added "unreleased" }} | 4096 |
 | `fuzz_input_formats` | The line-format parser (auto-detect, JSON, syslog, logfmt, CEF, plain). | 4096 |

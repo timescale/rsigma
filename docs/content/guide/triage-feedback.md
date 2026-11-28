@@ -96,11 +96,18 @@ daemon:
     window: 30d
     numerator: fp_only  # or fp_and_btp
     min_sample: 5
+    max_rules: 10000    # (tenant, rule) pairs counted
 ```
+
+## Limits
+
+The store holds counts only for rules the daemon runs and for at most `max_rules` `(tenant, rule)` pairs, so a flood of made-up rule ids cannot grow it or the per-rule metric series. {{ added "unreleased" }} A disposition is rejected, with the reason in the summary's `errors`, when its `rule_id` is not a loaded rule, when it would start a new pair past `max_rules`, when an identity field (`rule_id`, `fingerprint`, `incident_id`, `analyst`) is over 256 bytes, or when its `timestamp` is more than 5 minutes ahead (up to 5 minutes ahead is placed at ingest time) or older than the window. `POST /api/v1/dispositions` accepts at most 1000 records per request and answers `413` for more; a pull source may carry any number, and its payload is ingested off the async runtime. `rsigma_disposition_tracked_rules` shows the pairs in use.
+
+A dispositioned rule that a reload removes stops accepting new dispositions; its counts already in the window stay until they age out.
 
 ## Metrics
 
-See [Triage feedback loop](../reference/metrics.md#triage-feedback-loop-4-metrics) in the metrics reference for the four series (`rsigma_rule_false_positive_ratio`, `rsigma_dispositions_total`, `rsigma_disposition_ingest_total`, `rsigma_disposition_ingest_errors_total`).
+See [Triage feedback loop](../reference/metrics.md#triage-feedback-loop-5-metrics) in the metrics reference for the five series (`rsigma_rule_false_positive_ratio`, `rsigma_dispositions_total`, `rsigma_disposition_ingest_total`, `rsigma_disposition_ingest_errors_total`, `rsigma_disposition_tracked_rules`).
 
 ## See also
 

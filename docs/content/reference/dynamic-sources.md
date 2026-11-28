@@ -10,7 +10,7 @@ Dynamic sources let the daemon fetch reusable values from files, local commands,
 
 Dynamic pipelines and `lookup` enrichers are currently the only consumers of dynamic sources. This page documents the consumer-independent source specification: every source type, the data formats, the three extract languages, the five refresh policies, the three error policies, and every resource limit the runtime enforces.
 
-For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics).
+For pipeline-specific `${source.<id>}` and `include:` syntax, see [Dynamic Pipelines](dynamic-pipelines.md). For post-evaluation lookups, see [Enrichers: dynamic sources](../guide/enrichers.md#using-dynamic-sources-with-lookup-enrichers). For source testing, see [`pipeline resolve`](../cli/pipeline/resolve.md). For runtime metrics, see [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-13-metrics).
 
 ## Source declaration
 
@@ -467,16 +467,18 @@ The source is declared once in a standalone `--source` file. It does not need to
 | Trigger | What runs |
 |---------|-----------|
 | A referenced source value changes (file watch, interval, NATS message, watchlist push, or a resolve that returns a new value) | Rules are rebuilt from cached source values. Sources that are already cached are not fetched again. A failed rebuild keeps the previous rules. |
-| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Full reload: rules, pipelines, and a fresh fetch of dynamic sources. |
+| Filesystem change to a `.yml`/`.yaml` rules or pipeline file | Full reload: rules and pipelines are re-read and built from cached source values, then every dynamic source is re-fetched in the background; a value that changed rebuilds the rules again. A source that is slow or never answers cannot hold the reload. {{ added "unreleased" }} |
 | `SIGHUP` | Same as a full reload. |
 | `POST /api/v1/reload` | Same as a full reload. |
 | `POST /api/v1/sources/resolve` | Re-resolves every dynamic source. The request body is ignored. Rules reload only if a referenced value changes. |
-| `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. No request body. |
+| `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. No request body. An unknown id returns `404`. {{ added "unreleased" }} |
 | `DELETE /api/v1/sources/cache/{source_id}` | Invalidates the cache. The next read fetches fresh. Always returns `200 OK`, even for nonexistent IDs. |
 | NATS message on `rsigma.control.resolve` | Re-resolves every dynamic source. |
 | Interval timer | Re-resolves the one source whose `refresh:` interval elapsed. |
 
-A full reload and a pending rebuild collapse into the full reload. The rebuild itself does not fetch sources that already have a cached value, and it does not schedule another rebuild.
+A full reload and a pending rebuild collapse into the full reload. The rebuild itself does not fetch sources that already have a cached value, and it does not schedule another rebuild. It does not fetch an optional source with no cached value either: that source failed its last refresh, its references expand to null, and the scheduler retries it on its `refresh:` policy. {{ added "unreleased" }}
+
+Resolve requests from the API, `SIGHUP`, watchlist changes, and watchlist expiry are never dropped. Requests for one source coalesce, and a request that arrives while the source resolves runs it once more afterwards. Network, command, and TAXII sources share the `MAX_CONCURRENT_RESOLVES` slots; a watchlist resolves from memory without one, so sources that never answer cannot delay indicator pushes. {{ added "unreleased" }}
 
 ## Resource limits
 
@@ -490,7 +492,7 @@ Every dynamic source path enforces hard limits to bound resource consumption. Pe
 | Command execution timeout | `DEFAULT_COMMAND_TIMEOUT` | 30 s | `timeout` |
 | HTTP request timeout | (hard-coded default) | 30 s | `timeout` |
 | TAXII poll duration | `DEFAULT_TAXII_POLL_TIMEOUT` | 5 min | `poll_timeout` {{ added "unreleased" }} |
-| Concurrent source resolves | `MAX_CONCURRENT_RESOLVES` | 8 | not configurable {{ added "unreleased" }} |
+| Concurrent source resolves | `MAX_CONCURRENT_RESOLVES` | 8 (watchlists take no slot) | not configurable {{ added "unreleased" }} |
 | Refresh interval minimum | `MIN_REFRESH_INTERVAL` | 1 s | not configurable (lower values clamp with a warning) |
 | NATS message size cap | `MAX_SOURCE_RESPONSE_BYTES` | 10 MiB | not configurable |
 | Include nesting depth | `MAX_INCLUDE_DEPTH` | 1 | not configurable |
@@ -505,7 +507,7 @@ Exceeding any limit produces a `SourceErrorKind::ResourceLimit` failure with a d
 - [Disposition Source Recipes](../guide/disposition-recipes.md) for worked HTTP sources (env-header auth, POST `body`, jq `extract`) that pull case-system verdicts into the triage loop.
 - [`pipeline resolve`](../cli/pipeline/resolve.md) for offline source testing.
 - [`rule validate --resolve-sources`](../cli/rule/validate.md) for the strict CI gate.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for what every successful and failing resolve exposes.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-13-metrics) for what every successful and failing resolve exposes.
 - [HTTP API: sources](http-api.md#dynamic-sources) for the daemon control endpoints.
 - [Security Hardening](security.md) for every other resource limit the runtime enforces.
 - [`rsigma_runtime::sources` source](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation.
