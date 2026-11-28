@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Risk accumulator caps no longer discard real risk
+### Risk accumulator caps no longer discard real risk (#817)
 
 At `max_open_entities` the risk accumulator refused every new entity until tracked ones aged out, so a flood of cheap entities kept a real one from ever reaching its threshold for a whole window. A new entity now reclaims the tracked entity with the lowest window score (then the fewest distinct tactics, then the least recently seen), and an entity at or above `score_threshold` or `tactic_count_threshold` is reclaimed only when every tracked entity is. `daemon.tenancy.quotas.risk_entities` reclaims in the same order within a tenant instead of dropping the tenant's stalest entity. `rsigma_risk_evictions_total` now has a `reason` label, `aged` or `cap`, so reclaims no longer hide among normal ageing, and the daemon logs a rate-limited warning when it reclaims.
 
@@ -14,7 +14,7 @@ The risk snapshot moves to version 3 and stores the window buckets, so scores su
 
 Library changes: `RiskState::restore` and `restore_detailed` take the `IncidentConfig`; `RiskState::enforce_caps` and `RiskLayer::enforce_caps` replace `enforce_tenant_cap` and `evict_tenant_oldest` and return a `RiskCapTrim`; `MetricsHook::on_risk_eviction` takes a `reason`; `RiskConfigError` has an `Incident` variant.
 
-### Correlation and alert-pipeline caps report what they drop
+### Correlation and alert-pipeline caps report what they drop (#817)
 
 Correlation windows dropped by the `max_state_entries` hard cap were visible only as a warning log, and results that could not open a dedup alert or an incident because `dedup.max_active_alerts` or `group.caps.max_open_incidents` was full only as a plateauing gauge. They now count in `rsigma_correlation_state_evictions_total` and `rsigma_alert_pipeline_cap_refused_total{store}` (`active_alerts`, `incidents`). Correlation quota and cap evictions are also reported when events go through `LogProcessor::process_batch_lines`, which reported neither.
 
