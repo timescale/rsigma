@@ -170,6 +170,12 @@ custom_attributes:
 
 The generated SQL targets `siem.process_events` instead of the default `security_events`.
 
+## Names that match a standard key
+
+{{ added "unreleased" }}
+
+A custom attribute named after a standard key of a detection, correlation, or filter rule (such as `title`, `level`, `correlation`, or `filter`), or after the collection key `action`, never sets that key. Inside the `custom_attributes:` block, the parser keeps it as a custom attribute and reports a `CustomAttribute` warning, the same for all three document kinds. A top-level key that is standard only for another document kind, such as the `logsource` an `action: global` template merges into a correlation, is kept as a custom attribute without a warning. When RSigma writes a rule back out (for example `ruleset build` or reverse conversion), such an attribute goes under the `custom_attributes:` block so it reads back unchanged; every other custom attribute stays a top-level key. Ruleset overlays refuse to set these names.
+
 ## Other namespaces
 
 The `custom_attributes:` mapping is namespace-aware: only `rsigma.*` and `postgres.*` are interpreted by the engine and PostgreSQL backend. Other namespaces survive parsing but have no behavior attached, so a typo like `rsima.suppress` is silent. Always lint with [`rule lint`](../cli/rule/lint.md), which flags unknown `rsigma.*` and `postgres.*` keys.

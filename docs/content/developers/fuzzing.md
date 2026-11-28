@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 51 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 45 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
+The workspace ships 52 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 46 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -27,8 +27,9 @@ The workspace ships 51 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_enrichers_config` | Enrichers configuration parsing and validation through `parse_enrichers_config`: YAML deserialization, per-type key checks, template namespaces, scope, and extract compilation. Building enrichers does I/O and is not fuzzed. Seeds in `fuzz/corpus/fuzz_enrichers_config/` cover each built-in type and adversarial keys. {{ added "0.28.0" }} | 65536 |
 | `fuzz_enricher_extract` | Event values in `lookup` extract programs. The first byte selects either a fixed jq, JSONPath, or CEL lookup program, which must return exactly the record the event value names (never an error, a decoy, or a secret record), or an arbitrary extract template, which may fail but must not panic or run past its limits. The rest is `<program>\0<value>`. {{ added "unreleased" }} | 4096 |
 | `fuzz_input_formats` | The line-format parser (auto-detect, JSON, syslog, logfmt, CEF, plain). | 4096 |
-| `fuzz_rule_tune` | False-positive-driven rule tuning over JSON FP and TP corpora. | 65536 |
-| `fuzz_draft_groups` | Correlation draft grouping over grouped timed events (`draft_correlation`). | 65536 |
+| `fuzz_rule_tune` | False-positive-driven rule tuning over JSON FP and TP corpora. A proposed filter must never fail its own round-trip check. {{ added "unreleased" }} | 65536 |
+| `fuzz_draft_groups` | Correlation draft grouping over grouped timed events (`draft_correlation`). A draft must never fail its own round-trip check. {{ added "unreleased" }} | 65536 |
+| `fuzz_draft_emit` | Event field names and values written into generated YAML, one JSON event per line: `draft_rule` must never fail its own round-trip check, and the signatures `mine_events` proposes must read back exactly through `parse_schema_signatures`. Seeds in `fuzz/corpus/fuzz_draft_emit/` cover keys with YAML syntax, every YAML line break, control characters, keys over the length limits, and values that YAML would read as another type. {{ added "unreleased" }} | 65536 |
 | `fuzz_extract_jq` | jq extract language. | 4096 |
 | `fuzz_extract_jsonpath` | JSONPath extract language. | 4096 |
 | `fuzz_extract_cel` | CEL extract language. | 4096 |

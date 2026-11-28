@@ -20,6 +20,8 @@ Feed the interesting events (the malicious or noteworthy ones) and get back a co
 
 The draft is verified before it is printed: the emitted YAML is parsed and compiled through the real evaluation engine, and it must match every exemplar (fields that break the match are dropped, bounded by a two-field floor; below the floor the command errors instead of emitting an over-broad rule). With a baseline, the draft is also evaluated against it and the hit count is reported as the estimated false-positive rate.
 
+The emitted text is also checked before anything else: it must parse back as exactly one rule whose title, id, selections, field names, modifiers, values, and condition are the ones the command planned, or the command errors. Field names and values are quoted so YAML reads them back exactly, whatever they contain. A field whose name cannot be a Sigma field (one holding a line break, a control character, or `|`, an escaped bracket, a bare `.`, or a name over 256 bytes) is skipped with a warning naming it. {{ added "unreleased" }}
+
 Values containing literal `*` or `?` are escaped so an observed wildcard character never silently broadens the match. When exemplars fall into distinct value groups on the same fields (for example `vssadmin` and `wmic` variants of the same technique), the draft splits into `selection_<name>` blocks combined with `condition: 1 of selection_*`.
 
 For a draft from events, two things stay yours: the metadata (title, description, tags, and level are placeholders to edit) and the field names. The draft uses the exemplars' native field names, so evaluate it without a mapping pipeline; ECS exemplars produce a rule over `process.command_line`, not `CommandLine`. A draft from a STIX indicator fills the title, description, references, tags, and level from the indicator. `author` and `falsepositives` stay placeholders in both cases.
@@ -133,7 +135,7 @@ The window is the maximum positive first-to-last retained-slot span multiplied b
 
 Without `--group-by`, exactly one field must be present and stable within every positive group and distinct across groups. Zero or multiple candidates return an ambiguity error. Composite keys always require repeated `--group-by`.
 
-Each group is verified in a fresh correlation engine. Positive groups must fire only after all slots are consumed, and negative groups must never fire. The correlation document embeds a median-span positive group under `rsigma.exemplars`, so `rule test` replays the draft directly.
+Each group is verified in a fresh correlation engine. Positive groups must fire only after all slots are consumed, and negative groups must never fire. The correlation document embeds a median-span positive group under `rsigma.exemplars`, so `rule test` replays the draft directly. The emitted collection must also parse back as exactly the planned slot rules and correlation, with the embedded events unchanged; an event key too long for a plain YAML key is written in the explicit `? key` form. {{ added "unreleased" }}
 
 ## Draft from a STIX indicator
 

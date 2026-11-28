@@ -50,8 +50,12 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | Linter (`lint::*`) | {{ rsigma.lint.rules }} spec-conformance checks (including cross-document reference checks over a directory). See [Lint Rules reference](../reference/lint-rules.md). |
 | `lint::catalogue::catalogue() -> Vec<LintRuleInfo>` | Programmatic metadata for every lint rule: stable id, default severity, fix disposition, one-line description. |
 | `ads::ads_catalogue() -> Vec<AdsSectionInfo>` | The nine [ADS](../guide/detection-strategy.md) sections: id, carrier field, default-required, description. `AdsSection`/`AdsDocument` read present and missing sections off a `SigmaRule`. |
-| `lint::fix::apply_fixes_to_source(&str, &[&LintWarning]) -> SourceFixOutcome` | Apply every safe fix to a YAML source string, preserving comments and formatting; reports applied/failed counts. |
+| `lint::fix::apply_fixes_to_source(&str, &[&LintWarning]) -> SourceFixOutcome` | Apply every safe fix to a YAML source string, preserving comments and formatting; reports applied/failed counts. Each fix lands on the first document it changes and is kept only when that document reads back as exactly the requested edit with no new parse error. {{ added "unreleased" }} |
+| `lint::FixPatch::ReplaceBool { path, new_value }` | A fix patch that writes a YAML boolean, used by the wildcard-only fix to write `\|exists: true`. {{ added "unreleased" }} |
 | `emit_rule_yaml`, `emit_correlation_yaml`, `emit_filter_yaml`, `emit_collection_yaml` | Canonical emitters for detection, correlation, and filter rules. `emit_collection_yaml` covers detection rules only. {{ added "0.28.0" }} |
+| `is_reserved_attribute_name(&str) -> bool` | Whether a custom attribute is named after a standard key of any document kind or the collection `action` key. The parser keeps such attributes, with a `DiagnosticKind::CustomAttribute` warning when they appear in the `custom_attributes:` block, the emitters write them under `custom_attributes:`, and ruleset overlays refuse to set them. {{ added "unreleased" }} |
+| `quote_yaml_string(&str) -> String` | Quote any string as a one-line YAML scalar that reads back exactly: single-quoted when possible, double-quoted with escapes for line breaks and control characters. Valid as a value and as a mapping key of up to 1024 characters. {{ added "unreleased" }} |
+| `sanitize_single_line(&str) -> Cow<str>` | Replace line breaks (LF, CR, NEL, U+2028, U+2029) and control characters with spaces, for rule text written into a comment or another line-oriented output. {{ added "unreleased" }} |
 | `format_yaml(&str) -> Result<FormatOutcome, FormatError>` | Rewrite a Sigma YAML file into the canonical layout, keeping comments, anchors, tags, and directives. See [Formatting](#formatting). |
 | `format_yaml_range(&str, usize, usize) -> Result<Option<RangeEdit>, FormatError>` | Format only the smallest block mapping that contains a byte range, for editor selection formatting. |
 | `reference::{MODIFIERS, MITRE_TACTICS}` | Field-modifier descriptions and MITRE ATT&CK tactic metadata, shared with the LSP and the MCP server. |
@@ -206,7 +210,7 @@ assert!(check_regex("(?<!x)y").is_ok());
 The parse functions return `Err` only when they cannot start, for example when a file cannot be read. Problems inside the input are recorded on the returned collection as `CollectionDiagnostic` values in `SigmaCollection::diagnostics`, so one bad document does not hide the others: {{ added "0.25.0" }}
 
 - `severity` is `Error` when a document, a file, or the rest of the YAML stream was dropped, and `Warning` when a document was kept with an invalid `status`, `level`, `related` entry, or `sigma-version` ignored.
-- `kind` says what failed: `YamlSyntax`, `NotAMapping`, `CollectionAction`, `Document(SigmaParserErrorKind)`, `Metadata`, or `File(SigmaParserErrorKind)`.
+- `kind` says what failed: `YamlSyntax`, `NotAMapping`, `CollectionAction`, `Document(SigmaParserErrorKind)`, `Metadata`, or `File(SigmaParserErrorKind)`. A `CustomAttribute` warning reports a `custom_attributes:` entry named after a standard Sigma key or `action`, which is kept as a custom attribute and does not set that key. {{ added "unreleased" }}
 - `document` is the zero-based index of the YAML document, `path` is the file when the collection was read from disk, and `location` is set for YAML syntax and condition errors.
 - `Display` prints `message`.
 

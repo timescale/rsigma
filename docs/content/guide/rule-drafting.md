@@ -27,7 +27,7 @@ rsigma rule lint draft.yml
 rsigma engine eval --rules draft.yml -e @more-telemetry.ndjson
 ```
 
-Before printing the YAML, the command verifies the draft through the real evaluation engine: every exemplar must match. Without a baseline, stderr ends with a line like `matches 3/3 exemplars`. With a baseline, it also reports the false-positive estimate, for example `matches 3/3 exemplars, 0/86400 baseline events (0.0%)`. If the draft cannot cover every exemplar, the command fails instead of emitting a weaker rule.
+Before printing the YAML, the command verifies the draft through the real evaluation engine: every exemplar must match. Without a baseline, stderr ends with a line like `matches 3/3 exemplars`. With a baseline, it also reports the false-positive estimate, for example `matches 3/3 exemplars, 0/86400 baseline events (0.0%)`. If the draft cannot cover every exemplar, the command fails instead of emitting a weaker rule. The YAML itself is parsed back first and must read as exactly the planned rule, so a field name or value full of YAML syntax is quoted rather than allowed to change the rule. A field whose name cannot be a Sigma field (a line break, a control character, `|`, or over 256 bytes) is left out with a `skipped field` warning. {{ added "unreleased" }}
 
 You can also draft from a Windows Event Log file (`-e @Security.evtx`) when the `evtx` feature is compiled in; the prebuilt binaries include it.
 

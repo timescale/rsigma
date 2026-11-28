@@ -103,6 +103,8 @@ rsigma hunt run -r rules/ -t postgres -O table=okta_events -O json_field=data \
 SELECT * FROM (SELECT * FROM okta_events WHERE data->>'Image' ILIKE '/usr/bin/curl') AS __hunt WHERE time >= '2026-07-01T00:00:00+00:00'::timestamptz ORDER BY time LIMIT 1000;
 ```
 
+Each query has exactly one `-- rule:` header line. Line breaks and control characters in a rule title or id are written as spaces, so rule text cannot end the comment and add SQL. {{ added "unreleased" }}
+
 ### Feed a draft
 
 ```bash
