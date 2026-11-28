@@ -100,10 +100,15 @@ pub enum SourceType {
         auth: TaxiiAuthConfig,
         /// Page size sent as the TAXII `limit`.
         page_size: usize,
+        /// Wall-clock cap on one poll, across its pages, preflight requests, and retries.
+        poll_timeout: Duration,
         /// Which indicators become source values.
         stix: StixOptions,
     },
 }
+
+/// Default wall-clock cap on one TAXII poll (`poll_timeout`).
+pub const DEFAULT_TAXII_POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Credential environment-variable names for a TAXII source.
 ///

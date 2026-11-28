@@ -113,6 +113,7 @@ impl SourceResolver for InstrumentedResolver {
                         rsigma_runtime::SourceErrorKind::Extract(_) => "Extract",
                         rsigma_runtime::SourceErrorKind::Timeout => "Timeout",
                         rsigma_runtime::SourceErrorKind::ResourceLimit(_) => "ResourceLimit",
+                        rsigma_runtime::SourceErrorKind::Panic(_) => "Panic",
                     };
                     self.metrics
                         .source_resolve_errors

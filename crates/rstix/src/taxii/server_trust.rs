@@ -7,10 +7,14 @@
 //!   or notAfter validation (intentional for self-signed or test pins; see spec section 8.5.2
 //!   certificate pinning).
 //! - **DANE** — [`ServerTrustPolicy::Dane`] is fail-closed (RFC 7671): missing TLSA data or
-//!   non-matching usable records reject the handshake. Usage 3 (DANE-EE) and verified usage 2
-//!   (DANE-TA) bypass PKIX and therefore also skip hostname and expiry checks (RFC 7671 §5.1).
+//!   non-matching usable records reject the handshake. Usage 3 (DANE-EE) bypasses PKIX and
+//!   therefore skips hostname and expiry checks (RFC 7671 §5.1). Usage 2 (DANE-TA) builds the
+//!   chain to the TLSA-matched anchor and checks hostname and expiry. Usage 0 (PKIX-TA)
+//!   requires the PKIX-validated path itself to pass through a TLSA-matched CA; a matching
+//!   certificate the peer sends outside that path does not count.
 //!   TLSA (and SRV during [`TaxiiClient::discover_via_srv`]) lookups use DNSSEC validation by
-//!   default via [`TaxiiClientConfig::dane_require_dnssec`](super::client::TaxiiClientConfig::dane_require_dnssec) (TAXII spec section 8.5.2 SHOULD).
+//!   default via [`TaxiiClientConfig::dane_require_dnssec`](super::client::TaxiiClientConfig::dane_require_dnssec) (TAXII spec section 8.5.2 SHOULD);
+//!   with it on, only records the resolver proves Secure are used.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -27,8 +31,11 @@ use rustls::{DigitallySignedStruct, Error, SignatureScheme};
 use rustls_pki_types::CertificateDer as CertDer;
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use rustls_pki_types::TrustAnchor;
+use rustls_webpki::{EndEntityCert, VerifiedPath};
+
 use super::TaxiiError;
-use super::dane::{DaneDecision, TlsaRecord, evaluate_dane, spki_sha256};
+use super::dane::{DaneDecision, TlsaRecord, evaluate_dane, path_matches_pkix_ta, spki_sha256};
 use super::tls::ClientCertificate;
 
 /// SHA-256 SPKI pin for certificate pinning.
@@ -95,37 +102,26 @@ pub fn build_rustls_config(
     tlsa_cache: &TlsaCache,
     client_certificate: Option<&ClientCertificate>,
 ) -> Result<ClientConfig, TaxiiError> {
-    let provider = Arc::new(default_provider());
+    build_rustls_config_for(policy, tlsa_cache, client_certificate, None, system_roots())
+}
+
+pub(crate) fn system_roots() -> RootCertStore {
     let mut roots = RootCertStore::empty();
     roots.extend(TLS_SERVER_ROOTS.iter().cloned());
+    roots
+}
 
-    let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
-        .build()
-        .map_err(|err| TaxiiError::InvalidServerTrust {
-            reason: err.to_string(),
-        })?;
-
-    let (pins, pin_only, use_dane) = match policy {
-        ServerTrustPolicy::SystemRoots => (HashSet::new(), false, false),
-        ServerTrustPolicy::PinnedSpki(pins) => (pins.iter().map(|p| p.0).collect(), false, false),
-        ServerTrustPolicy::PinnedSpkiOnly(pins) => {
-            (pins.iter().map(|p| p.0).collect(), true, false)
-        }
-        ServerTrustPolicy::Dane => (HashSet::new(), false, true),
-    };
-
-    let verifier: Arc<dyn ServerCertVerifier> = if pins.is_empty() && !use_dane {
-        webpki
-    } else {
-        Arc::new(PolicyVerifier {
-            inner: webpki,
-            pins,
-            pin_only,
-            tlsa_cache: tlsa_cache.clone(),
-            use_dane,
-            provider: provider.clone(),
-        })
-    };
+/// Like [`build_rustls_config`], checking certificates against `identity`
+/// instead of the connection's server name when set, and trusting `roots`.
+pub(crate) fn build_rustls_config_for(
+    policy: &ServerTrustPolicy,
+    tlsa_cache: &TlsaCache,
+    client_certificate: Option<&ClientCertificate>,
+    identity: Option<ServerName<'static>>,
+    roots: RootCertStore,
+) -> Result<ClientConfig, TaxiiError> {
+    let provider = Arc::new(default_provider());
+    let verifier = build_verifier(policy, tlsa_cache, identity, roots, provider.clone())?;
 
     let builder = ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&TLS12, &TLS13])
@@ -144,13 +140,53 @@ pub fn build_rustls_config(
     }
 }
 
+pub(crate) fn build_verifier(
+    policy: &ServerTrustPolicy,
+    tlsa_cache: &TlsaCache,
+    identity: Option<ServerName<'static>>,
+    roots: RootCertStore,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+) -> Result<Arc<dyn ServerCertVerifier>, TaxiiError> {
+    let anchors = roots.roots.clone();
+    let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+        .build()
+        .map_err(|err| TaxiiError::InvalidServerTrust {
+            reason: err.to_string(),
+        })?;
+
+    let (pins, pin_only, use_dane) = match policy {
+        ServerTrustPolicy::SystemRoots => (HashSet::new(), false, false),
+        ServerTrustPolicy::PinnedSpki(pins) => (pins.iter().map(|p| p.0).collect(), false, false),
+        ServerTrustPolicy::PinnedSpkiOnly(pins) => {
+            (pins.iter().map(|p| p.0).collect(), true, false)
+        }
+        ServerTrustPolicy::Dane => (HashSet::new(), false, true),
+    };
+
+    if pins.is_empty() && !use_dane && identity.is_none() {
+        return Ok(webpki);
+    }
+    Ok(Arc::new(PolicyVerifier {
+        inner: webpki,
+        anchors,
+        pins,
+        pin_only,
+        tlsa_cache: tlsa_cache.clone(),
+        use_dane,
+        provider,
+        identity,
+    }))
+}
+
 struct PolicyVerifier {
     inner: Arc<WebPkiServerVerifier>,
+    anchors: Vec<TrustAnchor<'static>>,
     pins: HashSet<[u8; 32]>,
     pin_only: bool,
     tlsa_cache: TlsaCache,
     use_dane: bool,
     provider: Arc<rustls::crypto::CryptoProvider>,
+    identity: Option<ServerName<'static>>,
 }
 
 impl fmt::Debug for PolicyVerifier {
@@ -159,7 +195,55 @@ impl fmt::Debug for PolicyVerifier {
             .field("pins", &self.pins.len())
             .field("pin_only", &self.pin_only)
             .field("use_dane", &self.use_dane)
+            .field("identity", &self.identity)
             .finish()
+    }
+}
+
+impl PolicyVerifier {
+    /// PKIX-validate the chain and require a validated path through a CA that
+    /// matches one of the usage 0 `records`.
+    fn verify_pkix_trust_anchor(
+        &self,
+        records: &[TlsaRecord],
+        end_entity: &CertDer<'_>,
+        intermediates: &[CertDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
+        let verified = self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            server_name,
+            ocsp_response,
+            now,
+        )?;
+        let ee = EndEntityCert::try_from(end_entity)
+            .map_err(|err| Error::General(format!("DANE PKIX-TA: invalid certificate: {err}")))?;
+        let matches = |path: &VerifiedPath<'_>| {
+            if path_matches_pkix_ta(records, path, intermediates) {
+                Ok(())
+            } else {
+                Err(rustls_webpki::Error::UnknownIssuer)
+            }
+        };
+        ee.verify_for_usage(
+            self.provider.signature_verification_algorithms.all,
+            &self.anchors,
+            intermediates,
+            now,
+            rustls_webpki::KeyUsage::server_auth(),
+            None,
+            Some(&matches),
+        )
+        .map_err(|_| {
+            Error::General(
+                "DANE PKIX-TA: no validated chain passes through a CA matching the TLSA records"
+                    .into(),
+            )
+        })?;
+        Ok(verified)
     }
 }
 
@@ -172,6 +256,7 @@ impl ServerCertVerifier for PolicyVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
+        let server_name = self.identity.as_ref().unwrap_or(server_name);
         let host = server_name_to_str(server_name);
 
         if self.use_dane {
@@ -199,6 +284,16 @@ impl ServerCertVerifier for PolicyVerifier {
                 }
                 Ok(DaneDecision::RequirePkix) => {
                     return self.inner.verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        server_name,
+                        ocsp_response,
+                        now,
+                    );
+                }
+                Ok(DaneDecision::RequirePkixTrustAnchor(records)) => {
+                    return self.verify_pkix_trust_anchor(
+                        &records,
                         end_entity,
                         intermediates,
                         server_name,
@@ -250,7 +345,7 @@ impl ServerCertVerifier for PolicyVerifier {
     }
 }
 
-fn server_name_to_str(name: &ServerName<'_>) -> String {
+pub(crate) fn server_name_to_str(name: &ServerName<'_>) -> String {
     match name {
         ServerName::DnsName(d) => d.as_ref().to_owned(),
         ServerName::IpAddress(ip) => match ip {
@@ -281,5 +376,224 @@ mod tests {
     #[test]
     fn parses_spki_pin_hex() {
         SpkiPin::from_hex(&"ab".repeat(32)).expect("pin");
+    }
+
+    use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
+    use sha2::{Digest, Sha256};
+
+    struct Ca {
+        der: CertDer<'static>,
+        issuer: Issuer<'static, KeyPair>,
+    }
+
+    fn ca(name: &str) -> Ca {
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name.push(DnType::CommonName, name);
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let key = KeyPair::generate().unwrap();
+        let der = params.self_signed(&key).unwrap().der().clone();
+        Ca {
+            der,
+            issuer: Issuer::new(params, key),
+        }
+    }
+
+    fn intermediate(name: &str, parent: &Ca) -> Ca {
+        let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name.push(DnType::CommonName, name);
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let key = KeyPair::generate().unwrap();
+        let der = params
+            .signed_by(&key, &parent.issuer)
+            .unwrap()
+            .der()
+            .clone();
+        Ca {
+            der,
+            issuer: Issuer::new(params, key),
+        }
+    }
+
+    fn leaf(host: &str, issuer: &Ca) -> CertDer<'static> {
+        let params = CertificateParams::new(vec![host.to_owned()]).unwrap();
+        let key = KeyPair::generate().unwrap();
+        params
+            .signed_by(&key, &issuer.issuer)
+            .unwrap()
+            .der()
+            .clone()
+    }
+
+    fn roots(cas: &[&Ca]) -> RootCertStore {
+        let mut roots = RootCertStore::empty();
+        for ca in cas {
+            roots.add(ca.der.clone()).unwrap();
+        }
+        roots
+    }
+
+    fn pkix_ta(cert: &CertDer<'_>) -> TlsaRecord {
+        TlsaRecord {
+            cert_usage: 0,
+            selector: 0,
+            matching: 1,
+            cert_data: Sha256::digest(cert.as_ref()).to_vec(),
+        }
+    }
+
+    fn dane_verifier(host: &str, records: Vec<TlsaRecord>, roots: RootCertStore) -> PolicyVerifier {
+        let cache = TlsaCache::default();
+        cache.insert(host.to_owned(), records);
+        PolicyVerifier {
+            inner: WebPkiServerVerifier::builder_with_provider(
+                Arc::new(roots.clone()),
+                Arc::new(default_provider()),
+            )
+            .build()
+            .unwrap(),
+            anchors: roots.roots,
+            pins: HashSet::new(),
+            pin_only: false,
+            tlsa_cache: cache,
+            use_dane: true,
+            provider: Arc::new(default_provider()),
+            identity: None,
+        }
+    }
+
+    fn verify(
+        verifier: &dyn ServerCertVerifier,
+        host: &str,
+        ee: &CertDer<'_>,
+        chain: &[CertDer<'_>],
+    ) -> Result<ServerCertVerified, Error> {
+        verifier.verify_server_cert(
+            ee,
+            chain,
+            &ServerName::try_from(host.to_owned()).unwrap(),
+            &[],
+            UnixTime::now(),
+        )
+    }
+
+    #[test]
+    fn pkix_ta_ignores_a_pinned_ca_the_validated_path_does_not_use() {
+        let (pinned, other) = (ca("pinned-ca"), ca("other-ca"));
+        let ee = leaf("taxii.test", &other);
+        let verifier = dane_verifier(
+            "taxii.test",
+            vec![pkix_ta(&pinned.der)],
+            roots(&[&pinned, &other]),
+        );
+        let err = verify(
+            &verifier,
+            "taxii.test",
+            &ee,
+            std::slice::from_ref(&pinned.der),
+        )
+        .expect_err("path runs through other-ca");
+        assert!(err.to_string().contains("PKIX-TA"), "{err}");
+    }
+
+    #[test]
+    fn pkix_ta_accepts_a_path_through_the_pinned_ca() {
+        let pinned = ca("pinned-ca");
+        let ee = leaf("taxii.test", &pinned);
+        let verifier = dane_verifier("taxii.test", vec![pkix_ta(&pinned.der)], roots(&[&pinned]));
+        verify(
+            &verifier,
+            "taxii.test",
+            &ee,
+            std::slice::from_ref(&pinned.der),
+        )
+        .expect("anchor matches");
+    }
+
+    #[test]
+    fn pkix_ta_matches_the_anchor_by_spki_without_the_certificate() {
+        let pinned = ca("pinned-ca");
+        let ee = leaf("taxii.test", &pinned);
+        let spki = EndEntityCert::try_from(&pinned.der)
+            .unwrap()
+            .subject_public_key_info();
+        let record = TlsaRecord {
+            cert_usage: 0,
+            selector: 1,
+            matching: 1,
+            cert_data: Sha256::digest(spki.as_ref()).to_vec(),
+        };
+        let verifier = dane_verifier("taxii.test", vec![record], roots(&[&pinned]));
+        verify(&verifier, "taxii.test", &ee, &[]).expect("anchor SPKI matches");
+    }
+
+    #[test]
+    fn pkix_ta_matches_intermediates_on_the_path_only() {
+        let root = ca("root");
+        let pinned = intermediate("pinned-intermediate", &root);
+        let other = intermediate("other-intermediate", &root);
+        let verifier = dane_verifier("taxii.test", vec![pkix_ta(&pinned.der)], roots(&[&root]));
+
+        let through_pinned = leaf("taxii.test", &pinned);
+        verify(
+            &verifier,
+            "taxii.test",
+            &through_pinned,
+            std::slice::from_ref(&pinned.der),
+        )
+        .expect("intermediate on the path matches");
+
+        let through_other = leaf("taxii.test", &other);
+        verify(
+            &verifier,
+            "taxii.test",
+            &through_other,
+            &[other.der.clone(), pinned.der.clone()],
+        )
+        .expect_err("pinned intermediate is not on the path");
+    }
+
+    #[test]
+    fn pkix_ta_still_requires_pkix() {
+        let pinned = ca("pinned-ca");
+        let ee = leaf("taxii.test", &pinned);
+        let verifier = dane_verifier("taxii.test", vec![pkix_ta(&pinned.der)], roots(&[&pinned]));
+        verify(
+            &verifier,
+            "other.test",
+            &ee,
+            std::slice::from_ref(&pinned.der),
+        )
+        .expect_err("name mismatch fails PKIX");
+    }
+
+    #[test]
+    fn server_identity_replaces_the_connection_name() {
+        let root = ca("root");
+        let target = leaf("taxii.target.test", &root);
+        let source = leaf("example.test", &root);
+        let identity = ServerName::try_from("example.test".to_owned()).unwrap();
+        let provider = Arc::new(default_provider());
+        let verifier = build_verifier(
+            &ServerTrustPolicy::SystemRoots,
+            &TlsaCache::default(),
+            Some(identity),
+            roots(&[&root]),
+            provider.clone(),
+        )
+        .unwrap();
+        verify(verifier.as_ref(), "taxii.target.test", &target, &[])
+            .expect_err("certificate names only the SRV target");
+        verify(verifier.as_ref(), "taxii.target.test", &source, &[])
+            .expect("certificate names the source domain");
+
+        let plain = build_verifier(
+            &ServerTrustPolicy::SystemRoots,
+            &TlsaCache::default(),
+            None,
+            roots(&[&root]),
+            provider,
+        )
+        .unwrap();
+        verify(plain.as_ref(), "taxii.target.test", &target, &[]).expect("no identity override");
     }
 }

@@ -6,7 +6,7 @@ use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts};
 use hickory_resolver::net::NetError;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use hickory_resolver::proto::rr::RData;
+use hickory_resolver::proto::rr::{RData, Record};
 use url::Url;
 
 use super::TaxiiError;
@@ -56,11 +56,51 @@ pub async fn resolve_taxii_srv_with(
 }
 
 /// Like [`resolve_taxii_srv_with`], with explicit DNS lookup options.
+///
+/// With [`DnsLookupOptions::validate_dnssec`], only records the resolver proves
+/// Secure are used, and an answer with none is a trust error.
 pub async fn resolve_taxii_srv_with_options(
     domain: &str,
     nameserver: Option<SocketAddr>,
     options: DnsLookupOptions,
 ) -> Result<Vec<Url>, TaxiiError> {
+    resolve_taxii_srv_targets(domain, nameserver, options)
+        .await?
+        .iter()
+        .map(SrvTarget::discovery_url)
+        .collect()
+}
+
+/// One SRV target, in the order a client should try it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SrvTarget {
+    /// Target host name without the trailing dot.
+    pub host: String,
+    /// Target port.
+    pub port: u16,
+    /// The resolver proved the SRV record with DNSSEC.
+    pub dnssec_secure: bool,
+}
+
+impl SrvTarget {
+    pub(crate) fn base_url(&self) -> Result<Url, TaxiiError> {
+        Url::parse(&format!("https://{}:{}/", self.host, self.port))
+            .map_err(|err| TaxiiError::InvalidUrl(err.to_string()))
+    }
+
+    fn discovery_url(&self) -> Result<Url, TaxiiError> {
+        let mut url = self.base_url()?;
+        url.set_path(DISCOVERY_PATH);
+        ensure_trailing_slash(&mut url);
+        Ok(url)
+    }
+}
+
+pub(crate) async fn resolve_taxii_srv_targets(
+    domain: &str,
+    nameserver: Option<SocketAddr>,
+    options: DnsLookupOptions,
+) -> Result<Vec<SrvTarget>, TaxiiError> {
     let domain = domain.trim().trim_end_matches('.');
     let lookup = format!("{TAXII2_SRV_SERVICE}.{domain}");
 
@@ -69,24 +109,86 @@ pub async fn resolve_taxii_srv_with_options(
         .srv_lookup(lookup)
         .await
         .map_err(|err| map_dns_error(err, options.validate_dnssec))?;
+    srv_targets_from_answers(response.answers(), options.validate_dnssec)
+}
 
+pub(crate) fn srv_targets_from_answers(
+    answers: &[Record],
+    require_secure: bool,
+) -> Result<Vec<SrvTarget>, TaxiiError> {
+    let answers = select_answers(
+        answers,
+        |data| matches!(data, RData::SRV(_)),
+        require_secure,
+        "SRV",
+    )?;
     let mut records = Vec::new();
-    for answer in response.answers() {
+    for answer in answers {
         let RData::SRV(srv) = &answer.data else {
             continue;
         };
-        let target = srv.target.to_utf8();
-        if target == "." {
+        let target = srv.target.to_ascii();
+        let host = target.trim_end_matches('.');
+        if host.is_empty() || srv.port == 0 || !is_plain_host_name(host) {
             continue;
         }
-        let port = srv.port;
-        let mut url = Url::parse(&format!("https://{target}:{port}{DISCOVERY_PATH}"))
-            .map_err(|err| TaxiiError::InvalidUrl(err.to_string()))?;
-        ensure_trailing_slash(&mut url);
-        records.push((srv.priority, srv.weight, url));
+        records.push((
+            srv.priority,
+            srv.weight,
+            SrvTarget {
+                host: host.to_ascii_lowercase(),
+                port: srv.port,
+                dnssec_secure: answer.proof.is_secure(),
+            },
+        ));
     }
-
     Ok(order_srv_records(records))
+}
+
+/// A DNS host name a URL can carry as its host unchanged.
+fn is_plain_host_name(host: &str) -> bool {
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    })
+}
+
+/// Records of the wanted type, keeping only DNSSEC-Secure ones when required.
+///
+/// With `require_secure`, an answer that has records of the type but none
+/// proven Secure (Insecure, Bogus, or Indeterminate) is a trust error.
+fn select_answers<'a>(
+    answers: &'a [Record],
+    wanted: impl Fn(&RData) -> bool,
+    require_secure: bool,
+    record_type: &str,
+) -> Result<Vec<&'a Record>, TaxiiError> {
+    let typed: Vec<&Record> = answers
+        .iter()
+        .filter(|answer| wanted(&answer.data))
+        .collect();
+    if !require_secure {
+        return Ok(typed);
+    }
+    let secure: Vec<&Record> = typed
+        .iter()
+        .copied()
+        .filter(|answer| answer.proof.is_secure())
+        .collect();
+    if secure.is_empty()
+        && let Some(first) = typed.first()
+    {
+        return Err(TaxiiError::InvalidServerTrust {
+            reason: format!(
+                "DNSSEC: {record_type} answer for {} is {:?}, not Secure",
+                first.name, first.proof
+            ),
+        });
+    }
+    Ok(secure)
 }
 
 /// Resolve TLSA records for DANE (`_{port}._tcp.{host}`).
@@ -118,20 +220,31 @@ pub async fn resolve_tlsa_with_options(
         .tlsa_lookup(lookup)
         .await
         .map_err(|err| map_dns_error(err, options.validate_dnssec))?;
+    tlsa_from_answers(response.answers(), options.validate_dnssec)
+}
 
-    let mut records = Vec::new();
-    for answer in response.answers() {
-        let RData::TLSA(tlsa) = &answer.data else {
-            continue;
-        };
-        records.push(TlsaRecord {
-            cert_usage: tlsa.cert_usage.into(),
-            selector: tlsa.selector.into(),
-            matching: tlsa.matching.into(),
-            cert_data: tlsa.cert_data.to_vec(),
-        });
-    }
-    Ok(records)
+pub(crate) fn tlsa_from_answers(
+    answers: &[Record],
+    require_secure: bool,
+) -> Result<Vec<TlsaRecord>, TaxiiError> {
+    let answers = select_answers(
+        answers,
+        |data| matches!(data, RData::TLSA(_)),
+        require_secure,
+        "TLSA",
+    )?;
+    Ok(answers
+        .into_iter()
+        .filter_map(|answer| match &answer.data {
+            RData::TLSA(tlsa) => Some(TlsaRecord {
+                cert_usage: tlsa.cert_usage.into(),
+                selector: tlsa.selector.into(),
+                matching: tlsa.matching.into(),
+                cert_data: tlsa.cert_data.to_vec(),
+            }),
+            _ => None,
+        })
+        .collect())
 }
 
 fn build_resolver(
@@ -170,23 +283,21 @@ fn map_dns_error(err: NetError, validate_dnssec: bool) -> TaxiiError {
     }
 }
 
-fn order_srv_records(mut records: Vec<(u16, u16, Url)>) -> Vec<Url> {
+fn order_srv_records<T>(mut records: Vec<(u16, u16, T)>) -> Vec<T> {
     records.sort_by_key(|a| a.0);
     let mut ordered = Vec::new();
-    let mut index = 0;
-    while index < records.len() {
-        let priority = records[index].0;
-        let mut group = Vec::new();
-        while index < records.len() && records[index].0 == priority {
-            group.push((records[index].1, records[index].2.clone()));
-            index += 1;
+    let mut records = records.into_iter().peekable();
+    while let Some((priority, weight, item)) = records.next() {
+        let mut group = vec![(weight, item)];
+        while let Some((_, weight, item)) = records.next_if(|next| next.0 == priority) {
+            group.push((weight, item));
         }
         ordered.extend(select_weighted_srv_group(group));
     }
     ordered
 }
 
-fn select_weighted_srv_group(group: Vec<(u16, Url)>) -> Vec<Url> {
+fn select_weighted_srv_group<T>(group: Vec<(u16, T)>) -> Vec<T> {
     let mut remaining = group;
     let mut selected = Vec::new();
     while !remaining.is_empty() {
@@ -271,5 +382,160 @@ mod tests {
         )];
         let ordered = order_srv_records(records);
         assert_eq!(ordered.len(), 1);
+    }
+
+    use hickory_resolver::proto::dnssec::Proof;
+    use hickory_resolver::proto::rr::Name;
+    use hickory_resolver::proto::rr::rdata::tlsa::{CertUsage, Matching, Selector};
+    use hickory_resolver::proto::rr::rdata::{A, SRV, TLSA};
+
+    const ALL_PROOFS: [Proof; 4] = [
+        Proof::Secure,
+        Proof::Insecure,
+        Proof::Bogus,
+        Proof::Indeterminate,
+    ];
+
+    fn with_proof(name: &str, data: RData, proof: Proof) -> Record {
+        let mut record = Record::from_rdata(Name::from_ascii(name).unwrap(), 300, data);
+        record.proof = proof;
+        record
+    }
+
+    fn tlsa(proof: Proof, byte: u8) -> Record {
+        with_proof(
+            "_443._tcp.taxii.test.",
+            RData::TLSA(TLSA::new(
+                CertUsage::from(3),
+                Selector::from(1),
+                Matching::from(1),
+                vec![byte; 32],
+            )),
+            proof,
+        )
+    }
+
+    fn srv(proof: Proof, priority: u16, target: &str) -> Record {
+        with_proof(
+            "_taxii2._tcp.example.test.",
+            RData::SRV(SRV::new(
+                priority,
+                1,
+                8443,
+                Name::from_ascii(target).unwrap(),
+            )),
+            proof,
+        )
+    }
+
+    #[test]
+    fn required_dnssec_uses_only_secure_tlsa_records() {
+        for proof in ALL_PROOFS {
+            let answers = [tlsa(proof, 1)];
+            let result = tlsa_from_answers(&answers, true);
+            if proof == Proof::Secure {
+                assert_eq!(result.expect("secure").len(), 1);
+            } else {
+                let err = result.expect_err("not secure");
+                assert!(
+                    matches!(&err, TaxiiError::InvalidServerTrust { reason } if reason.contains("not Secure")),
+                    "{proof:?}: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn required_dnssec_drops_unproven_records_beside_secure_ones() {
+        let answers = [
+            tlsa(Proof::Insecure, 1),
+            tlsa(Proof::Secure, 2),
+            tlsa(Proof::Bogus, 3),
+        ];
+        let records = tlsa_from_answers(&answers, true).expect("one secure record");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].cert_data, vec![2; 32]);
+    }
+
+    #[test]
+    fn opportunistic_lookup_keeps_every_record() {
+        let answers: Vec<_> = ALL_PROOFS
+            .iter()
+            .enumerate()
+            .map(|(i, proof)| tlsa(*proof, i as u8))
+            .collect();
+        assert_eq!(tlsa_from_answers(&answers, false).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn other_record_types_do_not_count() {
+        let answers = [with_proof(
+            "_443._tcp.taxii.test.",
+            RData::A(A::new(127, 0, 0, 1)),
+            Proof::Secure,
+        )];
+        assert!(tlsa_from_answers(&answers, true).unwrap().is_empty());
+        assert!(srv_targets_from_answers(&answers, true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn srv_targets_record_their_proof_state() {
+        for proof in ALL_PROOFS {
+            let answers = [srv(proof, 0, "taxii.example.test.")];
+            let targets = srv_targets_from_answers(&answers, false).expect("targets");
+            assert_eq!(
+                targets,
+                vec![SrvTarget {
+                    host: "taxii.example.test".into(),
+                    port: 8443,
+                    dnssec_secure: proof == Proof::Secure,
+                }]
+            );
+            let required = srv_targets_from_answers(&answers, true);
+            assert_eq!(required.is_ok(), proof == Proof::Secure, "{proof:?}");
+        }
+    }
+
+    #[test]
+    fn srv_targets_follow_priority_and_skip_unusable_targets() {
+        let answers = [
+            srv(Proof::Indeterminate, 10, "second.example.test."),
+            srv(Proof::Indeterminate, 0, "first.example.test."),
+            srv(Proof::Indeterminate, 0, "."),
+            with_proof(
+                "_taxii2._tcp.example.test.",
+                RData::SRV(SRV::new(
+                    0,
+                    1,
+                    0,
+                    Name::from_ascii("zero-port.example.test.").unwrap(),
+                )),
+                Proof::Indeterminate,
+            ),
+        ];
+        let hosts: Vec<_> = srv_targets_from_answers(&answers, false)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.host)
+            .collect();
+        assert_eq!(hosts, ["first.example.test", "second.example.test"]);
+    }
+
+    #[test]
+    fn srv_target_names_must_be_plain_host_names() {
+        assert!(is_plain_host_name("taxii.example.test"));
+        assert!(is_plain_host_name("_svc.example-1.test"));
+        for bad in ["a/b.test", "a@b.test", "a\\b", "a..b", "a b", "a:443"] {
+            assert!(!is_plain_host_name(bad), "{bad}");
+        }
+        let target = SrvTarget {
+            host: "taxii.example.test".into(),
+            port: 8443,
+            dnssec_secure: false,
+        };
+        assert_eq!(
+            target.discovery_url().unwrap().as_str(),
+            "https://taxii.example.test:8443/taxii2/"
+        );
     }
 }

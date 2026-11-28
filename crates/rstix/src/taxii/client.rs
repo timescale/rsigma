@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::Stream;
+use rustls::pki_types::ServerName;
 use url::Url;
 
 use crate::core::StixId;
@@ -36,7 +37,9 @@ use super::resources::{
     CollectionsResponse, TaxiiApiRoot, TaxiiCollection, TaxiiDiscovery, VersionsResponse,
 };
 use super::retry::RetryPolicy;
-use super::server_trust::{ServerTrustPolicy, TlsaCache, build_rustls_config};
+use super::server_trust::{
+    ServerTrustPolicy, TlsaCache, build_rustls_config_for, server_name_to_str, system_roots,
+};
 use super::tls::ClientCertificate;
 use super::url::{HttpsPolicy, discovery_url, join_api_root};
 
@@ -62,6 +65,8 @@ pub struct TaxiiClientConfig {
     dns_nameserver: Option<SocketAddr>,
     dane_require_dnssec: bool,
     address_filter: Option<AddressFilter>,
+    clock_skew_correction: bool,
+    server_identity: Option<String>,
 }
 
 impl TaxiiClientConfig {
@@ -87,6 +92,8 @@ impl TaxiiClientConfig {
             dns_nameserver: None,
             dane_require_dnssec: true,
             address_filter: None,
+            clock_skew_correction: true,
+            server_identity: None,
         }
     }
 
@@ -210,6 +217,29 @@ impl TaxiiClientConfig {
         self.address_filter = Some(filter);
         self
     }
+
+    /// Shift a caller-supplied `added_after` by the offset between the local
+    /// clock and the server's HTTP `Date` header. Default `true`.
+    ///
+    /// A cursor taken from `X-TAXII-Date-Added-Last` during pagination is
+    /// already in server time and is never shifted. Turn this off when the
+    /// caller's `added_after` also comes from that header, for example the
+    /// cursor of an earlier poll. An offset of more than 24 hours is ignored.
+    pub fn clock_skew_correction(mut self, enabled: bool) -> Self {
+        self.clock_skew_correction = enabled;
+        self
+    }
+
+    /// Check the server certificate against `name` instead of the URL host.
+    ///
+    /// The connection, SNI, and `Host` header still use the URL host. Under
+    /// [`ServerTrustPolicy::Dane`] the TLSA lookup uses `name` too.
+    /// [`TaxiiClient::discover_via_srv`] sets this to the queried domain when
+    /// the SRV answer is not DNSSEC-validated and the caller has not set it.
+    pub fn server_identity(mut self, name: impl Into<String>) -> Self {
+        self.server_identity = Some(name.into());
+        self
+    }
 }
 
 struct TaxiiClientInner {
@@ -220,6 +250,7 @@ struct TaxiiClientInner {
     post_submit: PostSubmitPolicy,
     capability: CapabilityPolicy,
     https_policy: HttpsPolicy,
+    clock_skew_correction: bool,
 }
 
 /// Page and object bounds for one [`TaxiiClient::poll_object_pages`] call.
@@ -298,10 +329,25 @@ impl TaxiiClient {
             Url::parse(&config.base_url).map_err(|err| TaxiiError::InvalidUrl(err.to_string()))?;
         super::url::ensure_https(&base_url, https_policy)?;
 
-        let tls = build_rustls_config(
+        let identity = config
+            .server_identity
+            .as_deref()
+            .map(|name| {
+                let name = name.trim().trim_end_matches('.');
+                ServerName::try_from(name.to_owned()).map_err(|err| {
+                    TaxiiError::InvalidServerTrust {
+                        reason: format!("invalid server identity `{name}`: {err}"),
+                    }
+                })
+            })
+            .transpose()?;
+        let tls_identity = identity.as_ref().map(server_name_to_str);
+        let tls = build_rustls_config_for(
             &config.server_trust,
             &config.tlsa_cache,
             config.client_certificate.as_ref(),
+            identity,
+            system_roots(),
         )?;
         let mut builder = reqwest::Client::builder()
             .timeout(config.timeout)
@@ -330,6 +376,7 @@ impl TaxiiClient {
                     dns_nameserver: config.dns_nameserver,
                     dane_require_dnssec: config.dane_require_dnssec,
                     address_filter: config.address_filter,
+                    tls_identity,
                 },
                 preflight: config.preflight,
                 status_poll_interval: config.status_poll_interval,
@@ -337,11 +384,18 @@ impl TaxiiClient {
                 post_submit: config.post_submit,
                 capability: config.capability,
                 https_policy,
+                clock_skew_correction: config.clock_skew_correction,
             }),
         })
     }
 
     /// Discover a TAXII server via DNS SRV (`_taxii2._tcp.{domain}`) then GET `/taxii2/`.
+    ///
+    /// Targets are tried in SRV order. The server certificate must be valid
+    /// for `domain` unless the SRV record is DNSSEC-validated, in which case
+    /// the target's own name is accepted (RFC 6125 section 6.2.1). A
+    /// [`TaxiiClientConfig::server_identity`] set by the caller always wins.
+    /// Credentials are sent only over a connection that passed that check.
     pub async fn discover_via_srv(
         domain: &str,
         config: TaxiiClientConfig,
@@ -353,8 +407,20 @@ impl TaxiiClient {
         } else {
             dns::DnsLookupOptions::default()
         };
-        for base in dns::resolve_taxii_srv_with_options(domain, nameserver, dns_options).await? {
-            match Self::new(config.clone().base_url(base.to_string())) {
+        let source_domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        for target in dns::resolve_taxii_srv_targets(domain, nameserver, dns_options).await? {
+            let base = match target.base_url() {
+                Ok(base) => base,
+                Err(err) => {
+                    last_err = Some(err);
+                    continue;
+                }
+            };
+            let mut target_config = config.clone().base_url(base.to_string());
+            if target_config.server_identity.is_none() && !target.dnssec_secure {
+                target_config = target_config.server_identity(source_domain.clone());
+            }
+            match Self::new(target_config) {
                 Ok(client) => match client.discover().await {
                     Ok(discovery) => return Ok(discovery),
                     Err(err) => last_err = Some(err),
@@ -420,8 +486,7 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/objects/"),
             self.inner.https_policy,
         )?;
-        let query =
-            with_clock_skew_filter(&filter, self.inner.http.clock_skew_secs()).to_query_pairs()?;
+        let query = with_clock_skew_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let envelope = self.inner.http.decode_envelope(&response)?;
         Ok(TaxiiPaged::new(envelope, &response))
@@ -441,8 +506,8 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/objects/{object_id}/"),
             self.inner.https_policy,
         )?;
-        let query = with_clock_skew_object_filter(&filter, self.inner.http.clock_skew_secs())
-            .to_query_pairs()?;
+        let query =
+            with_clock_skew_object_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let envelope = self.inner.http.decode_envelope(&response)?;
         Ok(TaxiiPaged::new(envelope, &response))
@@ -523,7 +588,12 @@ impl TaxiiClient {
             }
             let sent = pagination.filter.clone();
             match self
-                .fetch_objects_page(api_root_url, collection_id, &pagination.filter)
+                .fetch_objects_page(
+                    api_root_url,
+                    collection_id,
+                    &pagination.filter,
+                    pagination.server_cursor,
+                )
                 .await
             {
                 Ok((envelope, response)) => {
@@ -553,6 +623,7 @@ impl TaxiiClient {
                         &mut pagination.filter,
                         pagination.baseline_added_after.clone(),
                     );
+                    pagination.server_cursor = false;
                     if pagination.filter == sent {
                         return Err(err);
                     }
@@ -587,8 +658,14 @@ impl TaxiiClient {
                         if pagination.finished {
                             return None;
                         }
+                        let sent = pagination.filter.clone();
                         match client
-                            .fetch_objects_page(&api_root_url, &collection_id, &pagination.filter)
+                            .fetch_objects_page(
+                                &api_root_url,
+                                &collection_id,
+                                &pagination.filter,
+                                pagination.server_cursor,
+                            )
                             .await
                         {
                             Ok((envelope, response)) => {
@@ -602,12 +679,19 @@ impl TaxiiClient {
                                 ) {
                                     return Some((Err(err), None));
                                 }
+                                if !pagination.finished && pagination.filter == sent {
+                                    return Some((Err(TaxiiError::RepeatedPaginationCursor), None));
+                                }
                             }
-                            Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                            Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                                 recover_from_range_not_satisfiable(
                                     &mut pagination.filter,
                                     pagination.baseline_added_after.clone(),
                                 );
+                                pagination.server_cursor = false;
+                                if pagination.filter == sent {
+                                    return Some((Err(err), None));
+                                }
                             }
                             Err(err) => return Some((Err(err), None)),
                         }
@@ -644,12 +728,14 @@ impl TaxiiClient {
                         if pagination.finished {
                             return None;
                         }
+                        let sent = pagination.filter.clone();
                         match client
                             .fetch_object_page(
                                 &api_root_url,
                                 &collection_id,
                                 &object_id,
                                 &pagination.filter,
+                                pagination.server_cursor,
                             )
                             .await
                         {
@@ -664,12 +750,19 @@ impl TaxiiClient {
                                 ) {
                                     return Some((Err(err), None));
                                 }
+                                if !pagination.finished && pagination.filter == sent {
+                                    return Some((Err(TaxiiError::RepeatedPaginationCursor), None));
+                                }
                             }
-                            Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                            Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                                 recover_from_range_not_satisfiable(
                                     &mut pagination.filter,
                                     pagination.baseline_added_after.clone(),
                                 );
+                                pagination.server_cursor = false;
+                                if pagination.filter == sent {
+                                    return Some((Err(err), None));
+                                }
                             }
                             Err(err) => return Some((Err(err), None)),
                         }
@@ -758,8 +851,8 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/objects/{object_id}/versions/"),
             self.inner.https_policy,
         )?;
-        let query = with_clock_skew_versions_filter(&filter, self.inner.http.clock_skew_secs())
-            .to_query_pairs()?;
+        let query =
+            with_clock_skew_versions_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let parsed: VersionsResponse = self.inner.http.decode_json(&response)?;
         Ok(TaxiiPaged::new(parsed, &response))
@@ -792,12 +885,14 @@ impl TaxiiClient {
                         if pagination.finished {
                             return None;
                         }
+                        let sent = pagination.filter.clone();
                         match client
                             .fetch_versions_page(
                                 &api_root_url,
                                 &collection_id,
                                 &object_id,
                                 &pagination.filter,
+                                pagination.server_cursor,
                             )
                             .await
                         {
@@ -812,12 +907,19 @@ impl TaxiiClient {
                                 ) {
                                     return Some((Err(err), None));
                                 }
+                                if !pagination.finished && pagination.filter == sent {
+                                    return Some((Err(TaxiiError::RepeatedPaginationCursor), None));
+                                }
                             }
-                            Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                            Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                                 recover_from_range_not_satisfiable(
                                     &mut pagination.filter,
                                     pagination.baseline_added_after.clone(),
                                 );
+                                pagination.server_cursor = false;
+                                if pagination.filter == sent {
+                                    return Some((Err(err), None));
+                                }
                             }
                             Err(err) => return Some((Err(err), None)),
                         }
@@ -878,8 +980,7 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/manifest/"),
             self.inner.https_policy,
         )?;
-        let query =
-            with_clock_skew_filter(&filter, self.inner.http.clock_skew_secs()).to_query_pairs()?;
+        let query = with_clock_skew_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, MANIFEST_ACCEPT).await?;
         let parsed: ManifestResponse = self.inner.http.decode_json(&response)?;
         Ok(TaxiiPaged::new(parsed, &response))
@@ -910,8 +1011,14 @@ impl TaxiiClient {
                         if pagination.finished {
                             return None;
                         }
+                        let sent = pagination.filter.clone();
                         match client
-                            .fetch_manifest_page(&api_root_url, &collection_id, &pagination.filter)
+                            .fetch_manifest_page(
+                                &api_root_url,
+                                &collection_id,
+                                &pagination.filter,
+                                pagination.server_cursor,
+                            )
                             .await
                         {
                             Ok((page, response)) => {
@@ -925,12 +1032,19 @@ impl TaxiiClient {
                                 ) {
                                     return Some((Err(err), None));
                                 }
+                                if !pagination.finished && pagination.filter == sent {
+                                    return Some((Err(TaxiiError::RepeatedPaginationCursor), None));
+                                }
                             }
-                            Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+                            Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                                 recover_from_range_not_satisfiable(
                                     &mut pagination.filter,
                                     pagination.baseline_added_after.clone(),
                                 );
+                                pagination.server_cursor = false;
+                                if pagination.filter == sent {
+                                    return Some((Err(err), None));
+                                }
                             }
                             Err(err) => return Some((Err(err), None)),
                         }
@@ -945,6 +1059,7 @@ impl TaxiiClient {
         api_root_url: &str,
         collection_id: &str,
         filter: &TaxiiFilter,
+        server_cursor: bool,
     ) -> Result<(TaxiiEnvelope, super::request::TaxiiResponse), TaxiiError> {
         if self.inner.preflight == PreflightPolicy::Enabled {
             let collection = self.collection(api_root_url, collection_id).await?;
@@ -958,7 +1073,7 @@ impl TaxiiClient {
             self.inner.https_policy,
         )?;
         let query =
-            with_clock_skew_filter(filter, self.inner.http.clock_skew_secs()).to_query_pairs()?;
+            with_clock_skew_filter(filter, self.clock_skew(server_cursor)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let envelope = self.inner.http.decode_envelope(&response)?;
         Ok((envelope, response))
@@ -970,6 +1085,7 @@ impl TaxiiClient {
         collection_id: &str,
         object_id: &StixId,
         filter: &ObjectByIdFilter,
+        server_cursor: bool,
     ) -> Result<(TaxiiEnvelope, super::request::TaxiiResponse), TaxiiError> {
         if self.inner.preflight == PreflightPolicy::Enabled {
             let collection = self.collection(api_root_url, collection_id).await?;
@@ -982,7 +1098,7 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/objects/{object_id}/"),
             self.inner.https_policy,
         )?;
-        let query = with_clock_skew_object_filter(filter, self.inner.http.clock_skew_secs())
+        let query = with_clock_skew_object_filter(filter, self.clock_skew(server_cursor))
             .to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let envelope = self.inner.http.decode_envelope(&response)?;
@@ -994,6 +1110,7 @@ impl TaxiiClient {
         api_root_url: &str,
         collection_id: &str,
         filter: &TaxiiFilter,
+        server_cursor: bool,
     ) -> Result<(ManifestResponse, super::request::TaxiiResponse), TaxiiError> {
         if self.inner.preflight == PreflightPolicy::Enabled {
             let collection = self.collection(api_root_url, collection_id).await?;
@@ -1007,7 +1124,7 @@ impl TaxiiClient {
             self.inner.https_policy,
         )?;
         let query =
-            with_clock_skew_filter(filter, self.inner.http.clock_skew_secs()).to_query_pairs()?;
+            with_clock_skew_filter(filter, self.clock_skew(server_cursor)).to_query_pairs()?;
         let response = self.inner.http.get(url, &query, MANIFEST_ACCEPT).await?;
         let parsed: ManifestResponse = self.inner.http.decode_json(&response)?;
         Ok((parsed, response))
@@ -1019,6 +1136,7 @@ impl TaxiiClient {
         collection_id: &str,
         object_id: &StixId,
         filter: &VersionsQueryFilter,
+        server_cursor: bool,
     ) -> Result<(VersionsResponse, super::request::TaxiiResponse), TaxiiError> {
         if self.inner.preflight == PreflightPolicy::Enabled {
             let collection = self.collection(api_root_url, collection_id).await?;
@@ -1031,7 +1149,7 @@ impl TaxiiClient {
             &format!("collections/{collection_id}/objects/{object_id}/versions/"),
             self.inner.https_policy,
         )?;
-        let query = with_clock_skew_versions_filter(filter, self.inner.http.clock_skew_secs())
+        let query = with_clock_skew_versions_filter(filter, self.clock_skew(server_cursor))
             .to_query_pairs()?;
         let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
         let parsed: VersionsResponse = self.inner.http.decode_json(&response)?;
@@ -1096,6 +1214,14 @@ impl TaxiiClient {
         } else {
             Err(TaxiiError::DeleteNotPermitted)
         }
+    }
+
+    /// Seconds to shift `added_after` by: `None` for a server-supplied cursor.
+    fn clock_skew(&self, server_cursor: bool) -> Option<i64> {
+        if server_cursor || !self.inner.clock_skew_correction {
+            return None;
+        }
+        self.inner.http.clock_skew_secs()
     }
 
     async fn ensure_api_capabilities(&self, api: &TaxiiApiRoot) -> Result<(), TaxiiError> {

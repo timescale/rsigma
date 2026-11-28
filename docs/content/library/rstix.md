@@ -168,6 +168,18 @@ while let Some(obj) = stream.next().await {
 }
 ```
 
+### Server trust, retries, and timestamps
+
+{{ added "unreleased" }}
+
+- With `ServerTrustPolicy::Dane` and `dane_require_dnssec(true)` (the default), only TLSA and SRV records the resolver proves DNSSEC Secure are used; an answer with none is `TaxiiError::InvalidServerTrust` before any connection.
+- A TLSA usage 0 (PKIX-TA) record must match an intermediate or the trust anchor of the PKIX-validated path. A matching certificate the server sends outside that path does not count.
+- `discover_via_srv` checks the certificate against the queried domain unless the SRV record is DNSSEC-validated. `TaxiiClientConfig::server_identity(name)` sets the name explicitly; the connection, SNI, and `Host` header keep the URL host.
+- A `Retry-After` longer than `RetryPolicy::max_delay` ends the retries with the server's error, and no backoff wait exceeds `max_delay`.
+- `TaxiiClientConfig::clock_skew_correction(b)` (default `true`) shifts only a caller-supplied `added_after` by the server's `Date` offset; cursors from `X-TAXII-Date-Added-Last` are sent unchanged, and an offset over 24 hours is ignored.
+- `TaxiiTimestamp::adjust_seconds` and `adjust_micros` saturate at the RFC 3339 range; `checked_adjust_*` return `None` instead. Digits past the microsecond are dropped at parse.
+- Every paginated call, including the streams and `ingest_collection`, ends with `RepeatedPaginationCursor` when a page does not advance the filter.
+
 ```bash
 cargo test -p rstix --features taxii --test taxii_client
 ```
@@ -215,7 +227,7 @@ Four optional feature flags (each implies `serde`; `store-fs` also implies `stor
 | `graph` | `StixGraph`, `RelationshipExpander` | `StixGraph::from_bundle`, sighting + relationship SRO edges, `in_refs`/incoming traversal, `EdgeTraversal` chain, `expand_from`, `unresolved_references` |
 | `marking` | `MarkingResolver`, `TlpV2Level` | Effective TLP (incl. AMBER+STRICT), granular selector resolution, `permits_disclosure`, `EffectiveMarking::language_tags` |
 | `store` | `StixStore`, `MemoryStore` | Type-indexed queries, full-text search, pagination, export/delete, SCO fingerprint conflicts in `ImportReport` |
-| `store-fs` | `FsStore` | Filesystem-backed durable store (implies `store`) |
+| `store-fs` | `FsStore` | Filesystem-backed durable store (implies `store`). Open and `reload_from_disk` skip a file they cannot read or parse and list it in `LoadReport` (`load_report()`); the other files still load. A write whose stored form would not parse back under the store's `ParseOptions` is refused with `StoreError::NotReloadable`. {{ added "unreleased" }} |
 
 ```rust
 use rstix::graph::{EdgePredicate, StixGraph};
@@ -323,6 +335,7 @@ See [Graph + Marking + Store](#rstix-graph-marking-store) and [TAXII Client](#rs
 | `max_bundle_bytes` | 256 MiB | Max bytes read from a stream or checked for a string parse. |
 | `max_object_count` | `usize::MAX` | Max objects in one bundle. |
 | `allow_custom` | `false` | Unknown `type` → error unless registered or allowed. |
+| `decode_email_encoded_words` | `true` | Decode RFC 2047 encoded-words in `email-message` headers while parsing. Turn off for STIX JSON whose values are already decoded. {{ added "unreleased" }} |
 
 ### Navigation
 
@@ -410,7 +423,7 @@ STIX MUST rules for `domain-name.value` (RFC 1034 and RFC 5890), `email-addr.val
 
 The Validation Pipeline re-runs the same checks on typed objects during the schema phase.
 
-SCO `*_enc` properties (§3.1, §3.9.1) MUST be IANA character-set names and MUST NOT appear without their base property. Spec-defined properties are `file.name_enc` and `directory.path_enc`; other `_enc` keys in `common.extra` follow the same rules. `email-message` RFC 2047 encoded-words are decoded on ingest (§6.6). Pattern evaluation can address vendor `_enc` siblings via `common.extra` when present on the wire object.
+SCO `*_enc` properties (§3.1, §3.9.1) MUST be IANA character-set names and MUST NOT appear without their base property. Spec-defined properties are `file.name_enc` and `directory.path_enc`; other `_enc` keys in `common.extra` follow the same rules. `email-message` RFC 2047 encoded-words in `subject`, `message_id`, `received_lines`, and `additional_header_fields` are decoded once, on wire ingest (§6.6); `body` is not decoded, serde deserialization never decodes, and `FsStore` loads with decoding off, so a saved message reloads unchanged. {{ added "unreleased" }} Pattern evaluation can address vendor `_enc` siblings via `common.extra` when present on the wire object.
 
 ## Extensions and round-trip
 

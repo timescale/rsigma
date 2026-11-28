@@ -121,10 +121,7 @@ pub fn cmd_taxii_store(args: TaxiiStoreArgs, ctx: OutputCtx) {
         process::exit(exit_code::CONFIG_ERROR);
     });
 
-    let store = FsStore::open(&args.store).unwrap_or_else(|err| {
-        eprintln!("failed to open store at {}: {err}", args.store.display());
-        process::exit(exit_code::CONFIG_ERROR);
-    });
+    let store = open_store(&args.store, args.allow_custom);
 
     let validation = validate_for_import(
         &bundle,
@@ -195,6 +192,25 @@ pub fn cmd_taxii_store(args: TaxiiStoreArgs, ctx: OutputCtx) {
     if args.strict && validation.objects_rejected > 0 {
         process::exit(exit_code::FINDINGS);
     }
+}
+
+/// Open the store with the parse options the command writes with, warning
+/// about files that do not load. Exits on an unusable store directory.
+pub(super) fn open_store(path: &Path, allow_custom: bool) -> FsStore {
+    let store =
+        FsStore::open_with_parse_options(path, ParseOptions::default().allow_custom(allow_custom))
+            .unwrap_or_else(|err| {
+                eprintln!("failed to open store at {}: {err}", path.display());
+                process::exit(exit_code::CONFIG_ERROR);
+            });
+    for skipped in store.load_report().skipped {
+        eprintln!(
+            "warning: skipped store file {}: {}",
+            skipped.path.display(),
+            skipped.reason
+        );
+    }
+    store
 }
 
 fn read_and_parse_bundle(

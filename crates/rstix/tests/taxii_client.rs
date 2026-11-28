@@ -6,10 +6,14 @@ mod address_filter_tests;
 mod auth_tests;
 #[path = "taxii/build.rs"]
 mod build;
+#[path = "taxii/clock_skew_tests.rs"]
+mod clock_skew_tests;
 #[path = "taxii/collections_tests.rs"]
 mod collections_tests;
 #[path = "taxii/coverage_tests.rs"]
 mod coverage_tests;
+#[path = "taxii/dane_tests.rs"]
+mod dane_tests;
 #[path = "taxii/discovery_tests.rs"]
 mod discovery_tests;
 #[path = "taxii/error_tests.rs"]

@@ -34,6 +34,8 @@ pub(crate) struct TaxiiHttp {
     pub dns_nameserver: Option<SocketAddr>,
     pub dane_require_dnssec: bool,
     pub address_filter: Option<AddressFilter>,
+    /// Host the certificate is checked against when it is not the URL host.
+    pub tls_identity: Option<String>,
 }
 
 pub(crate) struct TaxiiResponse {
@@ -129,10 +131,10 @@ impl TaxiiHttp {
                             www_authenticate,
                         );
                         if attempt < self.retry.max_attempts && err.is_retryable() {
+                            let Some(delay) = self.retry_delay(&err, attempt + 1) else {
+                                return Err(err);
+                            };
                             attempt += 1;
-                            let delay = err
-                                .retry_after()
-                                .unwrap_or_else(|| self.retry.delay_for_attempt(attempt));
                             tokio::time::sleep(delay).await;
                             continue;
                         }
@@ -155,6 +157,16 @@ impl TaxiiHttp {
         }
     }
 
+    /// Delay before retry `attempt`, or `None` when the server asked for a
+    /// longer wait than [`RetryPolicy::max_delay`].
+    fn retry_delay(&self, err: &TaxiiError, attempt: u32) -> Option<Duration> {
+        match err.retry_after() {
+            Some(requested) if requested > self.retry.max_delay => None,
+            Some(requested) => Some(requested),
+            None => Some(self.retry.delay_for_attempt(attempt)),
+        }
+    }
+
     async fn consume(&self, response: reqwest::Response) -> Result<TaxiiResponse, TaxiiError> {
         let status = response.status();
         let headers = response.headers().clone();
@@ -165,8 +177,19 @@ impl TaxiiHttp {
             .get(reqwest::header::DATE)
             .and_then(|v| v.to_str().ok())
             .and_then(parse_http_date_skew);
-        if let (Some(skew), Ok(mut guard)) = (clock_skew, self.clock_skew.write()) {
-            *guard = Some(skew);
+        match clock_skew {
+            Some(skew) if skew.unsigned_abs() > MAX_CLOCK_SKEW_SECS => {
+                tracing::warn!(
+                    skew_secs = skew,
+                    "TAXII server Date header is more than 24 hours from the local clock; ignoring it"
+                );
+            }
+            Some(skew) => {
+                if let Ok(mut guard) = self.clock_skew.write() {
+                    *guard = Some(skew);
+                }
+            }
+            None => {}
         }
         let body = read_response_body(response, self.max_response_bytes).await?;
         Ok(TaxiiResponse {
@@ -193,7 +216,7 @@ impl TaxiiHttp {
         if !matches!(self.server_trust, ServerTrustPolicy::Dane) || url.scheme() != "https" {
             return Ok(());
         }
-        let Some(host) = url.host_str() else {
+        let Some(host) = self.tls_identity.as_deref().or(url.host_str()) else {
             return Ok(());
         };
         let port = url.port().unwrap_or(443);
@@ -254,11 +277,15 @@ fn is_transport_retryable(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request()
 }
 
-fn parse_http_date_skew(value: &str) -> Option<i64> {
+/// Largest server clock offset, in seconds, applied to `added_after`.
+const MAX_CLOCK_SKEW_SECS: u64 = 24 * 60 * 60;
+
+pub(crate) fn parse_http_date_skew(value: &str) -> Option<i64> {
     let server =
-        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc2822).ok()?;
+        time::OffsetDateTime::parse(value.trim(), &time::format_description::well_known::Rfc2822)
+            .ok()?;
     let now = time::OffsetDateTime::now_utc();
-    Some(server.unix_timestamp() - now.unix_timestamp())
+    server.unix_timestamp().checked_sub(now.unix_timestamp())
 }
 
 fn validate_success_content_type(headers: &HeaderMap) -> Result<(), TaxiiError> {

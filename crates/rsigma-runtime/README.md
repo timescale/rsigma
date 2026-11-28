@@ -97,6 +97,8 @@ use rsigma_runtime::sources::resolve_all_with_state;
 let resolved_map = resolve_all_with_state(&resolver, &pipeline.sources, Some(&mut state)).await?;
 ```
 
+Both resolve up to `MAX_CONCURRENT_RESOLVES` (8) sources at once and return the first required failure in input order. A resolver panic fails only its own source, as `SourceErrorKind::Panic`. `RefreshScheduler` resolves each triggered source in its own task, so a slow source does not hold up the others, and `RefreshResult::resolved` carries the latest value of every source refreshed so far. A TAXII poll is capped by the source's `poll_timeout` (default 5 minutes).
+
 ### Extraction languages
 
 The `extract` module supports three languages for selecting data from resolved sources:

@@ -80,6 +80,11 @@ pub struct ParseOptions {
     /// When true, predefined TLP `marking-definition` ids may be referenced without
     /// being present in the bundle (STIX 2.1 Interoperability §2.3.4).
     pub exempt_predefined_tlp_marking_refs: bool,
+    /// When true (the default), RFC 2047 encoded-words in `email-message` header
+    /// properties are decoded while parsing (STIX §6.6). Turn this off to read STIX
+    /// JSON whose values are already decoded, such as output this crate serialized,
+    /// so a value that itself looks like an encoded-word is kept as written.
+    pub decode_email_encoded_words: bool,
 }
 
 impl Default for ParseOptions {
@@ -92,6 +97,7 @@ impl Default for ParseOptions {
             max_bundle_bytes: 256 * 1_048_576,
             type_registry: TypeRegistry::new(),
             exempt_predefined_tlp_marking_refs: false,
+            decode_email_encoded_words: true,
         }
     }
 }
@@ -121,6 +127,12 @@ impl ParseOptions {
     /// Enable interop bundle reference rules (predefined TLP marking exemption).
     pub fn exempt_predefined_tlp_marking_refs(mut self, value: bool) -> Self {
         self.exempt_predefined_tlp_marking_refs = value;
+        self
+    }
+
+    /// Enable or disable RFC 2047 decoding of `email-message` headers.
+    pub fn decode_email_encoded_words(mut self, value: bool) -> Self {
+        self.decode_email_encoded_words = value;
         self
     }
 

@@ -3079,6 +3079,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tracing",
  "unicode-normalization",
  "url",
  "uuid",

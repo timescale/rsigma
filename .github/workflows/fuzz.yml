@@ -127,6 +127,12 @@ jobs:
             max_len: 4096
           - target: fuzz_taxii_envelope
             max_len: 65536
+          - target: fuzz_taxii_headers
+            max_len: 1024
+          - target: fuzz_taxii_dns_records
+            max_len: 4096
+          - target: fuzz_rstix_email_roundtrip
+            max_len: 8192
           - target: fuzz_stix_source
             max_len: 262144
           - target: fuzz_stix_draft

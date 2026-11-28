@@ -1029,7 +1029,14 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                 .allow_custom(config.stix_store_allow_custom);
             match rstix::store::FsStore::open_with_parse_options(path, parse_options) {
             Ok(store) => {
-                tracing::info!(path = %path.display(), "STIX store opened for enrichment");
+                let report = store.load_report();
+                warn_skipped_stix_files(&report);
+                tracing::info!(
+                    path = %path.display(),
+                    versions = report.versions_loaded,
+                    skipped = report.skipped.len(),
+                    "STIX store opened for enrichment"
+                );
                 std::sync::Arc::new(store)
             }
             Err(e) => {
@@ -1900,14 +1907,17 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             // detection enrichment in production.
             if let Some(path) = reload_enrichers_path.as_deref() {
                 #[cfg(feature = "stix-enrich")]
-                if let Some(store) = reload_stix_fs_store.as_ref()
-                    && let Err(e) = store.reload_from_disk()
-                {
-                    tracing::error!(
-                        error = %e,
-                        "Failed to reload STIX store from disk; keeping previous enrichment index"
-                    );
-                    reload_metrics.reloads_failed.inc();
+                if let Some(store) = reload_stix_fs_store.as_ref() {
+                    match store.reload_from_disk() {
+                        Ok(report) => warn_skipped_stix_files(&report),
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                "Failed to reload STIX store from disk; keeping previous enrichment index"
+                            );
+                            reload_metrics.reloads_failed.inc();
+                        }
+                    }
                 }
                 match super::enrichment::load_enrichers_file(path).and_then(|file| {
                     super::enrichment::build_enrichers_full(
@@ -6109,6 +6119,18 @@ const OTLP_HTTP_MAX_DECOMPRESSED_BYTES: usize = super::otlp::MAX_DECODED_BYTES;
 enum OtlpDecompressError {
     TooLarge,
     Io(std::io::Error),
+}
+
+/// Warn about each STIX store file a load left out.
+#[cfg(feature = "stix-enrich")]
+fn warn_skipped_stix_files(report: &rstix::store::LoadReport) {
+    for skipped in &report.skipped {
+        tracing::warn!(
+            path = %skipped.path.display(),
+            reason = %skipped.reason,
+            "Skipped unreadable STIX store file"
+        );
+    }
 }
 
 #[cfg(feature = "daemon-otlp")]

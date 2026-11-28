@@ -1523,11 +1523,13 @@ pub fn parse_dynamic_source(value: &yaml_serde::Value) -> Result<DynamicSource> 
             };
             let auth = parse_taxii_auth(&id, obj.get(ykey("auth")))?;
             let stix = parse_stix_options(&id, obj.get(ykey("stix")))?;
+            let poll_timeout = parse_poll_timeout(&id, obj.get(ykey("poll_timeout")))?;
             SourceType::Taxii {
                 url,
                 collection: collection.to_string(),
                 auth,
                 page_size,
+                poll_timeout,
                 stix,
             }
         }
@@ -1727,6 +1729,7 @@ fn source_type_keys(type_name: &str) -> Option<&'static [&'static str]> {
             "collection",
             "auth",
             "page_size",
+            "poll_timeout",
             "stix",
         ],
         _ => return None,
@@ -2042,6 +2045,20 @@ fn parse_error_policy(id: &str, value: Option<&yaml_serde::Value>) -> Result<Err
             )));
         }
     })
+}
+
+fn parse_poll_timeout(id: &str, value: Option<&yaml_serde::Value>) -> Result<Duration> {
+    const SUPPORTED: &str = "a positive duration such as 5m";
+    match optional_str(id, "poll_timeout", value, SUPPORTED)? {
+        None => Ok(super::sources::DEFAULT_TAXII_POLL_TIMEOUT),
+        Some(s) => parse_duration_str(s)
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                EvalError::Pipeline(format!(
+                    "source '{id}': invalid poll_timeout '{s}' (supported: {SUPPORTED})"
+                ))
+            }),
+    }
 }
 
 fn parse_timeout(id: &str, value: Option<&yaml_serde::Value>) -> Result<Option<Duration>> {

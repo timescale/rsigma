@@ -36,6 +36,21 @@ path = "fuzz_targets/fuzz_taxii_envelope.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_taxii_headers"
+path = "fuzz_targets/fuzz_taxii_headers.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_taxii_dns_records"
+path = "fuzz_targets/fuzz_taxii_dns_records.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rstix_email_roundtrip"
+path = "fuzz_targets/fuzz_rstix_email_roundtrip.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_stix_source"
 path = "fuzz_targets/fuzz_stix_source.rs"
 doc = false

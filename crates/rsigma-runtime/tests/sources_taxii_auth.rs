@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use common::taxii::{self, Server};
 use rsigma_eval::pipeline::sources::{
-    DynamicSource, ErrorPolicy, RefreshPolicy, SourceType, StixOptions, TaxiiAuthConfig,
+    DEFAULT_TAXII_POLL_TIMEOUT, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType, StixOptions,
+    TaxiiAuthConfig,
 };
 use rsigma_runtime::EgressPolicy;
 use rsigma_runtime::sources::{DefaultSourceResolver, SourceResolver};
@@ -31,6 +32,7 @@ fn source(url: &str, auth: TaxiiAuthConfig) -> DynamicSource {
             collection: COLLECTION.to_owned(),
             auth,
             page_size: 50,
+            poll_timeout: DEFAULT_TAXII_POLL_TIMEOUT,
             stix: StixOptions {
                 min_confidence: None,
                 observables: vec!["ipv4".to_owned()],

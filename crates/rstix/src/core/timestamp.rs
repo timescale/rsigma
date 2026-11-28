@@ -3,8 +3,8 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime};
 
 use crate::core::error::TimestampError;
 
@@ -121,34 +121,92 @@ impl StixTimestamp {
     }
 }
 
+fn rfc3339_min() -> OffsetDateTime {
+    Date::from_calendar_date(0, Month::January, 1)
+        .map(|date| date.midnight().assume_utc())
+        .unwrap_or(PrimitiveDateTime::MIN.assume_utc())
+}
+
+fn rfc3339_max() -> OffsetDateTime {
+    Date::from_calendar_date(9999, Month::December, 31)
+        .and_then(|date| date.with_hms_micro(23, 59, 59, 999_999))
+        .map(PrimitiveDateTime::assume_utc)
+        .unwrap_or(PrimitiveDateTime::MAX.assume_utc())
+}
+
 /// TAXII timestamp normalized to six fractional digits.
+///
+/// Digits past the microsecond are dropped on construction, so a value
+/// compares equal to the one its [`to_rfc3339`](Self::to_rfc3339) form parses to.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TaxiiTimestamp(OffsetDateTime);
+
+fn truncate_to_micros(dt: OffsetDateTime) -> OffsetDateTime {
+    dt.replace_nanosecond(dt.nanosecond() / 1_000 * 1_000)
+        .unwrap_or(dt)
+}
 
 impl TaxiiTimestamp {
     /// Current UTC timestamp.
     pub fn now() -> Self {
-        Self(OffsetDateTime::now_utc())
+        Self::from_datetime(OffsetDateTime::now_utc())
     }
 
-    /// Construct from datetime.
-    pub const fn from_datetime(dt: OffsetDateTime) -> Self {
-        Self(dt)
+    /// Construct from datetime, dropping digits past the microsecond.
+    pub fn from_datetime(dt: OffsetDateTime) -> Self {
+        Self(truncate_to_micros(dt))
     }
 
     /// Parse TAXII timestamp from RFC3339 UTC input.
+    ///
+    /// Fractional digits past the sixth are dropped.
     pub fn parse(s: &str) -> Result<Self, TimestampError> {
-        parse_utc(s).map(Self)
+        parse_utc(s).map(Self::from_datetime)
     }
 
     /// Shift by `delta` whole seconds (for HTTP `Date` clock skew correction).
+    ///
+    /// A result outside the RFC 3339 range (years 0000 to 9999) saturates at
+    /// the nearest end of that range.
     pub fn adjust_seconds(&self, delta: i64) -> Self {
-        Self(self.0 + time::Duration::seconds(delta))
+        self.saturating_shift(time::Duration::seconds(delta))
     }
 
     /// Shift by `delta` microseconds, the precision TAXII timestamps carry.
+    ///
+    /// A result outside the RFC 3339 range saturates like
+    /// [`adjust_seconds`](Self::adjust_seconds).
     pub fn adjust_micros(&self, delta: i64) -> Self {
-        Self(self.0 + time::Duration::microseconds(delta))
+        self.saturating_shift(time::Duration::microseconds(delta))
+    }
+
+    /// Shift by `delta` whole seconds, or `None` when the result falls outside
+    /// the RFC 3339 range (years 0000 to 9999).
+    pub fn checked_adjust_seconds(&self, delta: i64) -> Option<Self> {
+        self.checked_shift(time::Duration::seconds(delta))
+    }
+
+    /// Shift by `delta` microseconds, or `None` when the result falls outside
+    /// the RFC 3339 range.
+    pub fn checked_adjust_micros(&self, delta: i64) -> Option<Self> {
+        self.checked_shift(time::Duration::microseconds(delta))
+    }
+
+    fn checked_shift(&self, delta: time::Duration) -> Option<Self> {
+        let shifted = self.0.checked_add(delta)?;
+        (rfc3339_min()..=rfc3339_max())
+            .contains(&shifted)
+            .then_some(Self(shifted))
+    }
+
+    fn saturating_shift(&self, delta: time::Duration) -> Self {
+        self.checked_shift(delta).unwrap_or_else(|| {
+            if delta.is_negative() {
+                Self(rfc3339_min())
+            } else {
+                Self(rfc3339_max())
+            }
+        })
     }
 
     /// Format with exactly six fractional digits.
@@ -197,6 +255,49 @@ mod tests {
             "2024-01-01T00:00:00.999999Z"
         );
         assert!(ts.adjust_micros(-1) < ts);
+    }
+
+    #[test]
+    fn taxii_timestamp_drops_digits_past_the_microsecond() {
+        let ts = TaxiiTimestamp::parse("9999-12-31T23:59:59.929999999Z").expect("valid");
+        assert_eq!(ts.to_rfc3339(), "9999-12-31T23:59:59.929999Z");
+        assert_eq!(TaxiiTimestamp::parse(&ts.to_rfc3339()).unwrap(), ts);
+        let now = TaxiiTimestamp::now();
+        assert_eq!(TaxiiTimestamp::parse(&now.to_rfc3339()).unwrap(), now);
+    }
+
+    #[test]
+    fn taxii_timestamp_adjust_saturates_at_the_rfc3339_range() {
+        let max = TaxiiTimestamp::parse("9999-12-31T23:59:59.999999Z").expect("valid");
+        let min = TaxiiTimestamp::parse("0000-01-01T00:00:00Z").expect("valid");
+        for delta in [1, 86_400, i64::MAX] {
+            assert_eq!(max.adjust_seconds(delta), max);
+            assert_eq!(max.adjust_micros(delta), max);
+            assert_eq!(max.checked_adjust_seconds(delta), None);
+            assert_eq!(max.checked_adjust_micros(delta), None);
+        }
+        for delta in [-1, -86_400, i64::MIN] {
+            assert_eq!(min.adjust_seconds(delta), min);
+            assert_eq!(min.adjust_micros(delta), min);
+            assert_eq!(min.checked_adjust_seconds(delta), None);
+            assert_eq!(min.checked_adjust_micros(delta), None);
+        }
+        assert_eq!(
+            max.adjust_micros(-1).to_rfc3339(),
+            "9999-12-31T23:59:59.999998Z"
+        );
+        assert_eq!(
+            min.adjust_micros(1).to_rfc3339(),
+            "0000-01-01T00:00:00.000001Z"
+        );
+        assert_eq!(
+            min.adjust_seconds(i64::MAX).to_rfc3339(),
+            "9999-12-31T23:59:59.999999Z"
+        );
+        assert_eq!(
+            max.adjust_seconds(i64::MIN).to_rfc3339(),
+            "0000-01-01T00:00:00.000000Z"
+        );
     }
 
     #[test]

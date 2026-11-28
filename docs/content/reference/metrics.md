@@ -76,7 +76,7 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `rsigma_source_resolves_total` | counter | `source_id`, `source_type` (`file`, `http`, `command`, `nats`, `watchlist`, `taxii`) | Total dynamic source resolution attempts. Counts every attempt, successful or not. |
-| `rsigma_source_resolve_errors_total` | counter | `source_id`, `error_kind` (`Fetch`, `Parse`, `Extract`, `Timeout`, `ResourceLimit`) | Failed dynamic source resolutions. |
+| `rsigma_source_resolve_errors_total` | counter | `source_id`, `error_kind` (`Fetch`, `Parse`, `Extract`, `Timeout`, `ResourceLimit`, `Panic`) | Failed dynamic source resolutions. `Panic` counts a resolver that panicked; the panic fails only that source. {{ added "unreleased" }} |
 | `rsigma_source_resolve_seconds` | histogram | none | Dynamic source resolution latency. Aggregated across all sources. |
 | `rsigma_source_cache_hits_total` | counter | none | Times cached source data was served on resolution failure. Aggregated across all sources. |
 | `rsigma_source_last_resolved_timestamp` | gauge | `source_id` | Unix timestamp of the last successful resolution per source. Alert on staleness. |
@@ -87,7 +87,7 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 | `rsigma_stix_source_objects_total` | counter | `source_id` | STIX objects received while resolving a STIX source. Requires `stix-source`. {{ added "0.28.0" }} |
 | `rsigma_stix_source_skipped_total` | counter | `source_id`, `reason` (`revoked`, `expired`, `not_yet_valid`, `low_confidence`, `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`, `over_limit`) | Indicators or observables left out of a STIX source value on that resolve. An id that stays out is not counted again on later polls. Requires `stix-source`. Each reason is registered at 0. {{ added "0.28.0" }} |
 
-The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, NATS connect-or-read, and TAXII poll failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar.
+The `error_kind` values come from `rsigma_runtime::sources::SourceErrorKind`. `Fetch` covers HTTP, file, command, NATS connect-or-read, and TAXII poll failures (per-protocol details land in the `error_message` log field, not the label). `ResourceLimit` covers the 10 MiB body cap, 30 s command exec cap, and similar. `Timeout` also covers a TAXII poll that reaches `poll_timeout` without moving its cursor.
 
 ## Enrichment (13 metrics)
 

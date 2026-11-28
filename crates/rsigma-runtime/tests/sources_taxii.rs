@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use common::taxii::{self, DateHeader, Server};
 use rsigma_eval::pipeline::sources::{
-    DynamicSource, ErrorPolicy, RefreshPolicy, SourceType, StixOptions, TaxiiAuthConfig,
+    DEFAULT_TAXII_POLL_TIMEOUT, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType, StixOptions,
+    TaxiiAuthConfig,
 };
 use rsigma_runtime::EgressPolicy;
 use rsigma_runtime::sources::{DefaultSourceResolver, SourceResolver};
@@ -43,6 +44,7 @@ fn source(
             collection: COLLECTION.to_owned(),
             auth,
             page_size,
+            poll_timeout: DEFAULT_TAXII_POLL_TIMEOUT,
             stix: options(),
         },
         refresh: RefreshPolicy::Interval(Duration::from_secs(60)),
@@ -426,6 +428,7 @@ fn capped(
             collection: COLLECTION.to_owned(),
             auth: TaxiiAuthConfig::default(),
             page_size,
+            poll_timeout: DEFAULT_TAXII_POLL_TIMEOUT,
             stix,
         },
         refresh: RefreshPolicy::Interval(Duration::from_secs(60)),
@@ -565,5 +568,207 @@ async fn failed_poll_keeps_the_cursor_after_applying_a_page() {
     assert!(
         !requests[2].contains("added_after="),
         "the retry starts from the old cursor: {requests:?}"
+    );
+}
+
+fn with_poll_timeout(mut declared: DynamicSource, limit: Duration) -> DynamicSource {
+    if let SourceType::Taxii { poll_timeout, .. } = &mut declared.source_type {
+        *poll_timeout = limit;
+    }
+    declared
+}
+
+fn prepared(declared: &DynamicSource) -> DefaultSourceResolver {
+    let mut resolver = DefaultSourceResolver::new().with_stix_clock(clock());
+    resolver
+        .prepare_taxii_with(
+            std::slice::from_ref(declared),
+            EgressPolicy::permissive(),
+            true,
+        )
+        .expect("prepare");
+    resolver
+}
+
+#[tokio::test]
+async fn poll_timeout_without_progress_applies_the_error_policy() {
+    let server = Server::start(COLLECTION).await;
+    server.push(
+        &stamp(1),
+        taxii::indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            "",
+        ),
+    );
+    let failing = with_poll_timeout(
+        source(
+            &server.url,
+            ErrorPolicy::Fail,
+            10,
+            TaxiiAuthConfig::default(),
+        ),
+        Duration::from_millis(300),
+    );
+    let cached = with_poll_timeout(
+        source(
+            &server.url,
+            ErrorPolicy::UseCached,
+            10,
+            TaxiiAuthConfig::default(),
+        ),
+        Duration::from_millis(300),
+    );
+    let resolver = prepared(&cached);
+    let first = resolver.resolve(&cached).await.expect("first poll");
+    assert_eq!(ipv4(&first.data), ["198.51.100.7"]);
+
+    server.slow_after(server.hits(), Duration::from_secs(30));
+    let started = std::time::Instant::now();
+    let served = resolver.resolve(&cached).await.expect("cached value");
+    assert!(served.from_cache);
+    assert_eq!(ipv4(&served.data), ["198.51.100.7"]);
+    let err = resolver.resolve(&failing).await.expect_err("timeout");
+    assert!(
+        matches!(err.kind, rsigma_runtime::SourceErrorKind::Timeout),
+        "{err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "poll_timeout bounds the poll: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn poll_timeout_after_progress_keeps_the_pages_and_moves_the_cursor() {
+    let server = Server::start(COLLECTION).await;
+    for n in 1..=3u8 {
+        server.push(
+            &stamp(u32::from(n)),
+            taxii::indicator(
+                n,
+                "2024-01-01T00:00:00.000Z",
+                &format!("[ipv4-addr:value = '198.51.100.{n}']"),
+                "",
+            ),
+        );
+    }
+    server.slow_after(1, Duration::from_secs(30));
+    let declared = with_poll_timeout(
+        source(
+            &server.url,
+            ErrorPolicy::Fail,
+            1,
+            TaxiiAuthConfig::default(),
+        ),
+        Duration::from_millis(500),
+    );
+    let resolver = prepared(&declared);
+    let partial = resolver.resolve(&declared).await.expect("partial poll");
+    assert_eq!(ipv4(&partial.data), ["198.51.100.1"]);
+
+    server.slow_after(usize::MAX, Duration::ZERO);
+    let rest = resolver.resolve(&declared).await.expect("next poll");
+    assert_eq!(
+        ipv4(&rest.data),
+        ["198.51.100.1", "198.51.100.2", "198.51.100.3"]
+    );
+    let resumed = server
+        .object_requests()
+        .into_iter()
+        .rev()
+        .find(|url| url.contains("added_after="))
+        .expect("resumed with a cursor");
+    assert!(
+        resumed.contains("added_after=2024-01-01T00%3A00%3A00.000000Z"),
+        "cursor sits one microsecond before the last page: {resumed}"
+    );
+}
+
+#[tokio::test]
+async fn a_hung_taxii_source_holds_startup_only_until_its_poll_timeout() {
+    use rsigma_eval::pipeline::sources::DataFormat;
+
+    let server = Server::start(COLLECTION).await;
+    server.slow_after(0, Duration::from_secs(60));
+    let mut hung = with_poll_timeout(
+        source(
+            &server.url,
+            ErrorPolicy::Fail,
+            10,
+            TaxiiAuthConfig::default(),
+        ),
+        Duration::from_millis(400),
+    );
+    hung.required = false;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("allow.json");
+    std::fs::write(&path, r#"["10.0.0.1"]"#).unwrap();
+    let file = DynamicSource {
+        id: "allow".to_owned(),
+        source_type: SourceType::File {
+            path,
+            format: DataFormat::Json,
+            extract: None,
+            stix: None,
+        },
+        refresh: RefreshPolicy::OnDemand,
+        timeout: None,
+        on_error: ErrorPolicy::Fail,
+        required: true,
+        default: None,
+    };
+    let resolver = prepared(&hung);
+    let started = std::time::Instant::now();
+    let resolved = rsigma_runtime::sources::resolve_all(&resolver, &[hung, file])
+        .await
+        .expect("startup resolve");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(resolved["allow"], serde_json::json!(["10.0.0.1"]));
+    assert_eq!(resolved["ti"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn a_server_clock_ahead_does_not_shift_the_cursor() {
+    let server = Server::start(COLLECTION).await;
+    server.clock_ahead(3600);
+    server.push(
+        &stamp(1),
+        taxii::indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7']",
+            "",
+        ),
+    );
+    let declared = source(
+        &server.url,
+        ErrorPolicy::Fail,
+        10,
+        TaxiiAuthConfig::default(),
+    );
+    let resolver = prepared(&declared);
+    resolver.resolve(&declared).await.expect("first poll");
+    server.push(
+        &stamp(2),
+        taxii::indicator(
+            2,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.8']",
+            "",
+        ),
+    );
+    let second = resolver.resolve(&declared).await.expect("second poll");
+    assert_eq!(ipv4(&second.data), ["198.51.100.7", "198.51.100.8"]);
+    let last = server.object_requests().pop().unwrap();
+    assert!(
+        last.contains("added_after=2024-01-01T00%3A00%3A00.000001Z"),
+        "the server cursor is sent unchanged: {last}"
     );
 }

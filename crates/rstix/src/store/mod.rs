@@ -8,7 +8,7 @@ mod search;
 
 pub use error::StoreError;
 #[cfg(feature = "store-fs")]
-pub use fs::FsStore;
+pub use fs::{FsStore, LoadReport, SkippedFile};
 pub use memory::{MemoryStore, StoredSco};
 
 use crate::core::{StixId, StixObjectKind, StixTimestamp};

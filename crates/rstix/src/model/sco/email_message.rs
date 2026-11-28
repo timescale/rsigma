@@ -204,6 +204,33 @@ impl EmailMessage {
     /// STIX type name for email messages.
     pub const TYPE_NAME: &'static str = "email-message";
 
+    /// Decode RFC 2047 encoded-words in the header properties (STIX §6.6).
+    ///
+    /// Covers `subject`, `message_id`, `received_lines`, and the values of
+    /// `additional_header_fields`. `body` is message content, not a header, and
+    /// is left alone. Wire parsing calls this when
+    /// [`ParseOptions::decode_email_encoded_words`](crate::model::ParseOptions::decode_email_encoded_words)
+    /// is set; serde deserialization never decodes, so serializing and
+    /// deserializing a message returns it unchanged. Call
+    /// [`validate`](Self::validate) afterwards, since a header can decode to
+    /// empty text beside its `_enc` sibling.
+    #[cfg(feature = "serde")]
+    pub fn decode_encoded_words(&mut self) {
+        use crate::model::rfc2047::decode_header_value;
+        for value in [&mut self.subject, &mut self.message_id]
+            .into_iter()
+            .flatten()
+        {
+            *value = decode_header_value(value);
+        }
+        for line in &mut self.received_lines {
+            *line = decode_header_value(line);
+        }
+        for value in self.additional_header_fields.values_mut().flatten() {
+            *value = decode_header_value(value);
+        }
+    }
+
     /// Check email-message invariants (multipart/body rules; nested MIME-part validation).
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.is_multipart {
@@ -298,12 +325,6 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             raw_email_ref: Option<ArtifactId>,
         }
         let raw = Raw::deserialize(deserializer)?;
-        let mut additional_header_fields = raw.additional_header_fields;
-        for values in additional_header_fields.values_mut() {
-            for value in values {
-                *value = crate::model::rfc2047::decode_header_value(value);
-            }
-        }
         let obj = Self {
             object_type: raw.object_type,
             common: raw.common,
@@ -315,22 +336,12 @@ impl<'de> serde::Deserialize<'de> for EmailMessage {
             to_refs: raw.to_refs,
             cc_refs: raw.cc_refs,
             bcc_refs: raw.bcc_refs,
-            message_id: raw
-                .message_id
-                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
-            subject: raw
-                .subject
-                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
+            message_id: raw.message_id,
+            subject: raw.subject,
             subject_enc: raw.subject_enc,
-            received_lines: raw
-                .received_lines
-                .into_iter()
-                .map(|line| crate::model::rfc2047::decode_header_value(&line))
-                .collect(),
-            additional_header_fields,
-            body: raw
-                .body
-                .map(|value| crate::model::rfc2047::decode_header_value(&value)),
+            received_lines: raw.received_lines,
+            additional_header_fields: raw.additional_header_fields,
+            body: raw.body,
             body_enc: raw.body_enc,
             body_multipart: raw.body_multipart,
             raw_email_ref: raw.raw_email_ref,

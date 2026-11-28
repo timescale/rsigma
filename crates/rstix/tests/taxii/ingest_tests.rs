@@ -162,3 +162,56 @@ async fn ingest_collection_resolves_forward_refs_across_pages() {
         report.import.unresolved_references
     );
 }
+
+#[tokio::test]
+async fn ingest_collection_stops_on_a_repeated_cursor() {
+    let server = wiremock::MockServer::start().await;
+    let api = api_root_url(&server);
+    Mock::given(method("GET"))
+        .and(path(format!("{API_ROOT}collections/col1/objects/")))
+        .respond_with(taxii_json(
+            200,
+            serde_json::json!({ "more": true, "next": "same", "objects": [minimal_indicator()] }),
+        ))
+        .mount(&server)
+        .await;
+    let client = wiremock_client_no_preflight(&server);
+    let store = MemoryStore::new();
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        ingest_collection(&client, &store, &api, "col1", TaxiiFilter::new()),
+    )
+    .await
+    .expect("a repeating cursor must end the ingest")
+    .expect_err("repeated cursor");
+    assert!(matches!(
+        err,
+        rstix::taxii::IngestError::Taxii(rstix::taxii::TaxiiError::RepeatedPaginationCursor)
+    ));
+}
+
+#[tokio::test]
+async fn ingest_collection_stops_when_416_recovery_repeats_the_filter() {
+    let server = wiremock::MockServer::start().await;
+    let api = api_root_url(&server);
+    Mock::given(method("GET"))
+        .and(path(format!("{API_ROOT}collections/col1/objects/")))
+        .respond_with(taxii_json(416, serde_json::json!({ "title": "expired" })))
+        .mount(&server)
+        .await;
+    let client = wiremock_client_no_preflight(&server);
+    let store = MemoryStore::new();
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        ingest_collection(&client, &store, &api, "col1", TaxiiFilter::new()),
+    )
+    .await
+    .expect("416 recovery must end")
+    .expect_err("416");
+    assert!(matches!(
+        err,
+        rstix::taxii::IngestError::Taxii(
+            rstix::taxii::TaxiiError::RequestedRangeNotSatisfiable { .. }
+        )
+    ));
+}

@@ -2,8 +2,8 @@
 //!
 //! Poll state is not persisted. After a restart the next resolve is a full poll.
 //! A failed poll keeps the pages it applied and leaves the cursor unchanged. A
-//! poll that stops at its budget keeps the pages it applied and moves the cursor
-//! to just before the last page's `X-TAXII-Date-Added-Last`.
+//! poll that stops at its budget or at `poll_timeout` keeps the pages it applied
+//! and moves the cursor to just before the last page's `X-TAXII-Date-Added-Last`.
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -31,6 +31,7 @@ pub(crate) struct Prepared {
     url: String,
     collection: String,
     page_size: usize,
+    poll_timeout: Duration,
     options: StixOptions,
 }
 
@@ -61,6 +62,7 @@ impl TaxiiSources {
                 collection,
                 auth,
                 page_size,
+                poll_timeout,
                 stix,
             } = &source.source_type
             else {
@@ -87,6 +89,7 @@ impl TaxiiSources {
                     url: url.clone(),
                     collection: collection.clone(),
                     page_size: *page_size,
+                    poll_timeout: *poll_timeout,
                     options: stix.clone(),
                 },
             );
@@ -123,8 +126,9 @@ impl TaxiiSources {
 ///
 /// Pages applied before a failure stay in the set and the cursor stays where it
 /// was, so the next poll reads them again and the upsert ignores the repeats.
-/// A budget stop is success when it moves the cursor, and the build covers the
-/// pages applied so far.
+/// A budget stop, or reaching `poll_timeout` after at least one page, is
+/// success when it moves the cursor, and the build covers the pages applied so
+/// far. Reaching `poll_timeout` without moving the cursor is a timeout error.
 pub(crate) async fn poll(
     prepared: &Prepared,
     previous: Option<PollState>,
@@ -146,9 +150,9 @@ pub(crate) async fn poll(
     let mut received = 0usize;
     let mut last_page_date = None;
     let mut latest_date = None;
-    let polled = prepared
-        .client
-        .poll_object_pages(
+    let polled = tokio::time::timeout(
+        prepared.poll_timeout,
+        prepared.client.poll_object_pages(
             &prepared.url,
             &prepared.collection,
             filter,
@@ -166,13 +170,15 @@ pub(crate) async fn poll(
                     latest_date = last_page_date.clone();
                 }
             },
-        )
-        .await;
+        ),
+    )
+    .await;
     let kept = |set: IndicatorSet| PollState {
         set,
         added_after: previous_cursor.clone(),
     };
-    let added_after = match polled {
+    let timed_out = polled.is_err();
+    let added_after = match polled.unwrap_or(Ok(PollStop::Budget)) {
         Err(err) => return (kept(set), Err(fetch_error(err.to_string()))),
         Ok(PollStop::Finished) => latest_date.or(previous_cursor.clone()),
         Ok(PollStop::Budget) => {
@@ -185,9 +191,19 @@ pub(crate) async fn poll(
                         source_id = %prepared.source_id,
                         objects = received,
                         added_after = %cursor.to_rfc3339(),
-                        "TAXII poll stopped at its budget; the next refresh continues from the cursor"
+                        timed_out,
+                        "TAXII poll stopped at its budget or poll_timeout; the next refresh continues from the cursor"
                     );
                     Some(cursor)
+                }
+                _ if timed_out => {
+                    return (
+                        kept(set),
+                        Err(SourceError {
+                            source_id: String::new(),
+                            kind: SourceErrorKind::Timeout,
+                        }),
+                    );
                 }
                 _ => {
                     let err = TaxiiError::PollBudgetExceeded {
@@ -242,6 +258,7 @@ fn build_client(
         .allow_insecure_http(allow_insecure_http)
         .max_response_bytes(MAX_RESPONSE_BYTES)
         .parse_options(parse_options)
+        .clock_skew_correction(false)
         .address_filter(Arc::new(permit));
     if let Some(timeout) = timeout {
         config = config.timeout(timeout);

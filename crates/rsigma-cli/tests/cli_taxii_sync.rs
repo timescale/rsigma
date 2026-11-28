@@ -379,3 +379,52 @@ fn basic_auth_accepts_user_and_password_together() {
         .code(3)
         .stderr(predicate::str::contains("invalid --limit"));
 }
+
+#[test]
+fn sync_loads_the_rest_of_a_store_with_a_corrupt_file() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let server = MockServer::start().await;
+        mount_objects(&server, &[minimal_indicator()]).await;
+        let store_dir = tempdir().expect("tempdir");
+        let objects = store_dir.path().join("objects");
+        fs::create_dir_all(&objects).unwrap();
+        let corrupt = objects.join("indicator__00000000-0000-4000-8000-000000000000.json");
+        fs::write(&corrupt, "{not json").unwrap();
+
+        rsigma()
+            .args([
+                "taxii",
+                "sync",
+                "--server",
+                &server.uri(),
+                "--api-root",
+                &api_root_url(&server),
+                "--collection",
+                "col1",
+                "--store",
+                store_dir.path().to_str().unwrap(),
+                "--allow-insecure-http",
+                "--no-preflight",
+                "--disable-capability-check",
+                "--output-format",
+                "json",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"objects_added\":1"))
+            .stderr(predicate::str::contains("warning: skipped store file"))
+            .stderr(predicate::str::contains(
+                "indicator__00000000-0000-4000-8000-000000000000.json",
+            ));
+
+        let store = FsStore::open(store_dir.path()).expect("reopen store");
+        assert_eq!(store.load_report().skipped.len(), 1);
+        assert!(
+            store
+                .get(&StixId::parse("indicator--8e2e2d2b-17d4-4cbf-938f-98ee46b3cd3f").unwrap())
+                .unwrap()
+                .is_some()
+        );
+    });
+}

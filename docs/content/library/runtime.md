@@ -253,6 +253,8 @@ The full reusable-source spec (types, data formats, extract languages, refresh p
 
 With the `stix-source` feature, `DefaultSourceResolver::prepare_taxii` builds the TAXII clients before the first resolve. `with_stix_clock` fixes the clock used for indicator lifecycle. File and HTTP sources with `format: stix` use the same build. Array values escape `\`, `*`, and `?`, and the `indicators` keys stay raw. A TAXII poll reads a `PollBudget` derived from `max_indicators` and `page_size`, and the next refresh continues when that poll stops with an added-date. Indicators past the cap stay while the retained set is under twice `max_indicators`. The feature-off resolver rejects both with an error that names `stix-source`. {{ added "0.28.0" }}
 
+`resolve_all`, `resolve_all_with_state`, and `resolve_all_cache_first` resolve up to `MAX_CONCURRENT_RESOLVES` (8) sources at once and still return the first required failure in input order. `RefreshScheduler` resolves each triggered source in its own task and publishes its value when it lands, so `RefreshResult::resolved` holds the latest value of every source refreshed so far rather than only the last trigger's sources. A panic inside `SourceResolver::resolve` fails only that source, as `SourceErrorKind::Panic`. A TAXII poll is capped by the source's `poll_timeout`. {{ added "unreleased" }}
+
 ## Error handling
 
 `RuntimeError` from `thiserror` wraps `EvalError`, `SigmaParserError`, `io::Error`, and `SourceError`. Per-event errors (failed input parse, sink write) are surfaced through the result types instead of aborting; the daemon's optional DLQ collects them.

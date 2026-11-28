@@ -13,6 +13,8 @@ mod dns;
 mod envelope;
 mod error;
 mod filter;
+#[doc(hidden)]
+pub mod fuzzing;
 mod headers;
 #[cfg(feature = "store")]
 mod ingest;

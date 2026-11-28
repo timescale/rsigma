@@ -49,7 +49,22 @@ fn seed_store(root: &std::path::Path) {
 fn stix_store_enricher_injects_indicator_from_local_fs_store() {
     let store_dir = tempdir().expect("tempdir");
     seed_store(store_dir.path());
+    assert_store_enriches(store_dir.path());
+}
 
+#[test]
+fn stix_store_with_a_corrupt_file_still_starts_and_enriches() {
+    let store_dir = tempdir().expect("tempdir");
+    seed_store(store_dir.path());
+    std::fs::write(
+        store_dir.path().join("objects").join("corrupt.json"),
+        "{not json",
+    )
+    .expect("write corrupt file");
+    assert_store_enriches(store_dir.path());
+}
+
+fn assert_store_enriches(store_dir: &std::path::Path) {
     let rule = temp_file(".yml", HASH_RULE);
     let enrichers = temp_file(".yml", ENRICHERS_YAML);
     let output_file = tempfile::NamedTempFile::new().unwrap();
@@ -61,7 +76,7 @@ fn stix_store_enricher_injects_indicator_from_local_fs_store() {
         "-r",
         rule.path().to_str().unwrap(),
         "--stix-store",
-        store_dir.path().to_str().unwrap(),
+        store_dir.to_str().unwrap(),
         "--enrichers",
         enrichers.path().to_str().unwrap(),
         "--input",

@@ -98,9 +98,22 @@ Each TAXII page is limited to 64 MiB and parsed with a finite depth, string leng
 
 A `stix:` block on a format other than `stix`, `extract` on a STIX source, and `watch` or `push` on `type: taxii` are configuration errors.
 
+{{ added "unreleased" }} A poll is also bounded in time. `poll_timeout` (default `5m`) caps one poll across its pages, preflight requests, and retries, and a server `Retry-After` longer than the client's 60-second retry cap fails the request instead of making it wait. Sources resolve independently, at most eight at once, so a slow or hostile TAXII server holds up only its own source, and a panic in one resolver fails only that source.
+
+### TAXII server trust
+
+{{ added "unreleased" }} The rstix TAXII client behind `type: taxii` and `rsigma taxii sync` verifies servers as follows.
+
+- **DNSSEC.** With DANE and `dane_require_dnssec` (the default for DANE), TLSA and SRV answers are used only when the validating resolver proves them Secure. An Insecure, Bogus, or Indeterminate answer is a trust error before any connection.
+- **PKIX-TA (TLSA usage 0).** The record must match an intermediate or the trust anchor of the chain PKIX actually validated. A matching CA certificate the server appends without using it does not satisfy the record.
+- **SRV discovery.** Unless the SRV record is DNSSEC-validated, the server certificate must be valid for the queried domain, not for the SRV target, so whoever answers the SRV query cannot redirect the client to a host that only holds a certificate for its own name. Credentials are sent only after that check. A caller can name the expected identity with `server_identity`.
+- **Clock skew.** The client shifts only a caller-supplied `added_after` by the server's `Date` offset, ignores an offset over 24 hours, and never shifts a cursor the server returned. Timestamp shifts saturate at the RFC 3339 range instead of overflowing.
+
 ### STIX stores
 
 {{ added "0.28.0" }} `rsigma taxii store` and `rsigma taxii sync` write one file per object id under the store's `objects/` directory, and `--allow-custom` accepts any object type. A STIX id parses only when its type name follows the STIX 2.1 rules (3 to 250 characters of `a-z`, `0-9`, and `-`, starting with a letter) and its UUID is in hyphenated form, so a bundle or TAXII collection cannot name a path outside the store with an id such as `../../x--<uuid>` or `/tmp/x--<uuid>`. The store also checks every file name before it writes or deletes, independent of the parser.
+
+{{ added "unreleased" }} A store write parses each object's stored form back under the store's parse options before anything changes, and refuses the write when it would not load. Opening or reloading a store loads each file on its own: a corrupt file, one that does not parse under the current options (for example a custom object opened without `--allow-custom`), or one whose id does not match its file name is skipped and reported, and the rest of the store still loads. `taxii sync` and `taxii store` print a warning per skipped file, and the daemon logs one at startup and on reload. RFC 2047 encoded-words in `email-message` headers are decoded once, on ingest, so a saved message reloads unchanged.
 
 ### DNS enricher
 
@@ -140,7 +153,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, event values in enricher extract programs, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-eight harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, TAXII response headers, DNS SRV and TLSA records, STIX indicator bundles, `email-message` RFC 2047 round trips, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, event values in enricher extract programs, the `apply_modifiers` pipeline rewrite, and the conversion backends. Forty-one harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 

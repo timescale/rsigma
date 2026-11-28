@@ -7,12 +7,12 @@
 //! - `OnDemand`: only refreshes when explicitly triggered via API/signal
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use rsigma_eval::pipeline::sources::{DynamicSource, RefreshPolicy, SourceType};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Semaphore, mpsc, watch};
 
-use super::{SourceResolver, resolve_all};
+use super::{MAX_CONCURRENT_RESOLVES, SourceResolver, catch_resolver_panic};
 
 /// A message requesting source re-resolution.
 #[derive(Debug, Clone)]
@@ -32,7 +32,10 @@ pub enum RefreshTrigger {
 /// Notification sent when sources have been refreshed.
 #[derive(Debug, Clone)]
 pub struct RefreshResult {
-    /// The newly resolved source data (source_id -> value).
+    /// The latest data of every source refreshed so far (source_id -> value).
+    ///
+    /// Sources refresh independently, and each refresh replaces only its own
+    /// entry, so an entry can be unchanged since the previous notification.
     pub resolved: HashMap<String, serde_json::Value>,
 }
 
@@ -103,8 +106,12 @@ impl RefreshScheduler {
     /// Takes ownership of the trigger receiver and spawns per-source interval tasks.
     /// Returns a `JoinHandle` for the main coordination task.
     ///
-    /// When a refresh occurs (via interval timer or on-demand trigger), all sources
-    /// are re-resolved and the result is published on the watch channel.
+    /// Each triggered source resolves in its own task, at most
+    /// [`MAX_CONCURRENT_RESOLVES`] at a time, and publishes its value on the
+    /// watch channel when it finishes, so a slow or hung source does not hold
+    /// up the others. A trigger for a source that is still resolving runs it
+    /// once more after the current resolve. A panicking resolve is logged and
+    /// fails only that refresh.
     pub fn run(
         mut self,
         sources: Vec<DynamicSource>,
@@ -209,15 +216,15 @@ impl RefreshScheduler {
             }
         }
 
-        // Main loop: wait for triggers and resolve
+        // Main loop: wait for triggers and start a resolve task per source
+        let in_flight = Arc::new(Mutex::new(HashMap::new()));
+        let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_RESOLVES));
         while let Some(trigger) = trigger_rx.recv().await {
             // Handle NATS push with pre-parsed data (no re-resolution needed)
             #[cfg(feature = "nats")]
             if let RefreshTrigger::NatsPush { source_id, data } = trigger {
                 resolver.store_cached(&source_id, data.clone());
-                let mut resolved = HashMap::new();
-                resolved.insert(source_id, data);
-                let _ = result_tx.send(Some(RefreshResult { resolved }));
+                publish(&result_tx, source_id, data);
                 continue;
             }
 
@@ -228,37 +235,109 @@ impl RefreshScheduler {
                 RefreshTrigger::NatsPush { .. } => unreachable!(),
             };
 
-            if to_resolve.is_empty() {
-                continue;
-            }
-
-            let refresh_count = to_resolve.len();
-            let refresh_start = std::time::Instant::now();
-            match resolve_all(
-                resolver.as_ref(),
-                &to_resolve.iter().map(|s| (*s).clone()).collect::<Vec<_>>(),
-            )
-            .await
-            {
-                Ok(resolved) => {
-                    tracing::debug!(
-                        sources = refresh_count,
-                        duration_ms = refresh_start.elapsed().as_millis() as u64,
-                        "Scheduled refresh completed",
-                    );
-                    let _ = result_tx.send(Some(RefreshResult { resolved }));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        sources = refresh_count,
-                        duration_ms = refresh_start.elapsed().as_millis() as u64,
-                        "Background source refresh failed",
-                    );
-                }
+            for source in to_resolve {
+                let refresh = SourceRefresh {
+                    source: source.clone(),
+                    resolver: resolver.clone(),
+                    result_tx: result_tx.clone(),
+                    trigger_tx: trigger_tx.clone(),
+                    in_flight: in_flight.clone(),
+                    permits: permits.clone(),
+                };
+                refresh.spawn();
             }
         }
     }
+}
+
+/// One source refresh, run in its own task.
+struct SourceRefresh {
+    source: DynamicSource,
+    resolver: Arc<dyn SourceResolver>,
+    result_tx: watch::Sender<Option<RefreshResult>>,
+    trigger_tx: mpsc::Sender<RefreshTrigger>,
+    /// Sources resolving now, each with whether another trigger arrived meanwhile.
+    in_flight: Arc<Mutex<HashMap<String, bool>>>,
+    permits: Arc<Semaphore>,
+}
+
+impl SourceRefresh {
+    fn spawn(self) {
+        {
+            let mut in_flight = self
+                .in_flight
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(again) = in_flight.get_mut(&self.source.id) {
+                *again = true;
+                return;
+            }
+            in_flight.insert(self.source.id.clone(), false);
+        }
+        tokio::spawn(self.run());
+    }
+
+    async fn run(self) {
+        let source = &self.source;
+        let started = std::time::Instant::now();
+        let result = {
+            let _permit = self.permits.acquire().await;
+            catch_resolver_panic(source, self.resolver.resolve(source)).await
+        };
+        let again = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&source.id)
+            .unwrap_or(false);
+        let duration_ms = started.elapsed().as_millis() as u64;
+        match result {
+            Ok(value) => {
+                tracing::debug!(source_id = %source.id, duration_ms, "Scheduled refresh completed");
+                publish(&self.result_tx, source.id.clone(), value.data);
+            }
+            Err(e) if !source.required => {
+                tracing::warn!(
+                    source_id = %source.id,
+                    error = %e,
+                    duration_ms,
+                    "Optional source refresh failed, using null"
+                );
+                publish(&self.result_tx, source.id.clone(), serde_json::Value::Null);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    source_id = %source.id,
+                    error = %e,
+                    duration_ms,
+                    "Background source refresh failed",
+                );
+            }
+        }
+        if again {
+            let _ = self
+                .trigger_tx
+                .try_send(RefreshTrigger::Single(source.id.clone()));
+        }
+    }
+}
+
+/// Record `data` as the latest value of `source_id` and notify receivers.
+fn publish(
+    result_tx: &watch::Sender<Option<RefreshResult>>,
+    source_id: String,
+    data: serde_json::Value,
+) {
+    result_tx.send_modify(|current| match current {
+        Some(result) => {
+            result.resolved.insert(source_id, data);
+        }
+        None => {
+            *current = Some(RefreshResult {
+                resolved: HashMap::from([(source_id, data)]),
+            });
+        }
+    });
 }
 
 impl Default for RefreshScheduler {
