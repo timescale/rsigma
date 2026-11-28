@@ -2500,6 +2500,40 @@ sources:
     assert_eq!(sources[1].id, "threat_src");
 }
 
+#[cfg(unix)]
+#[test]
+fn sources_dir_refuses_links_out_of_it_unless_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let source =
+        "sources:\n  - id: linked\n    type: file\n    path: /tmp/x.json\n    format: json\n";
+    std::fs::write(outside.path().join("linked.yml"), source).unwrap();
+    std::fs::write(dir.path().join("own.yml"), source.replace("linked", "own")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("linked.yml"),
+        dir.path().join("linked.yml"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(dir.path().join("own.yml"), dir.path().join("own-again.yml"))
+        .unwrap();
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    std::fs::write(
+        dir.path().join("nested/deep.yml"),
+        source.replace("linked", "deep"),
+    )
+    .unwrap();
+
+    let error = parsing::parse_sources_dir(dir.path())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("linked.yml"), "{error}");
+    assert!(error.contains("--follow-external-links"), "{error}");
+
+    let sources = parsing::parse_sources_dir_with(dir.path(), true).unwrap();
+    let ids: Vec<&str> = sources.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["linked", "own"]);
+}
+
 // =============================================================================
 // validate_source_refs with external IDs
 // =============================================================================

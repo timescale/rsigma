@@ -16,8 +16,8 @@ use rsigma_convert::Backend;
 use rsigma_eval::{MatchDetailLevel, Pipeline, parse_pipeline_file, resolve_builtin_pipeline};
 use rsigma_parser::ruleset::{ResolveOptions, RulesetError, RulesetSpec, resolve_ruleset};
 use rsigma_parser::{
-    CollectionDiagnostic, LintWarning, SigmaCollection, parse_sigma_directory, parse_sigma_file,
-    parse_sigma_yaml,
+    CollectionDiagnostic, LintWarning, SigmaCollection, parse_sigma_directory_with,
+    parse_sigma_file, parse_sigma_yaml,
 };
 use serde_json::{Value, json};
 
@@ -177,7 +177,7 @@ impl RsigmaMcp {
                 let resolved = resolve_confined_path(p, self.root())?;
                 let result = if resolved.is_dir() {
                     ensure_no_symlinks(&resolved, self.root())?;
-                    parse_sigma_directory(&resolved)
+                    parse_sigma_directory_with(&resolved, &self.rule_walk_options())
                 } else {
                     parse_sigma_file(&resolved)
                 };
@@ -240,7 +240,7 @@ impl RsigmaMcp {
         let confined = self.confine_spec(spec).map_err(RulesetFailure::Request)?;
         let options = ResolveOptions {
             confine_to: self.root().map(Path::to_path_buf),
-            ..ResolveOptions::default()
+            follow_external_links: self.follow_external_links,
         };
         let pipelines = confined.pipelines.clone();
         resolve_ruleset(name, &confined, &options)

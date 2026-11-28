@@ -349,7 +349,7 @@ fn build_group(
     let resolved = match rsigma_parser::ruleset::resolve_ruleset(
         ruleset_name,
         spec,
-        &rsigma_parser::ruleset::ResolveOptions::default(),
+        &crate::resolve_options(),
     ) {
         Ok(resolved) => {
             crate::report_load_diagnostics(&resolved.collection);

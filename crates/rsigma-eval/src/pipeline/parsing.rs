@@ -1608,25 +1608,32 @@ pub fn parse_sources_file(path: &Path) -> Result<Vec<DynamicSource>> {
 
 /// Load all `*.yml` and `*.yaml` files from a directory as source files,
 /// sorted alphabetically. Each file must contain a top-level `sources:` block.
+///
+/// Subdirectories are not read. A file that is a link resolving outside
+/// `dir` is an error; see [`parse_sources_dir_with`].
 pub fn parse_sources_dir(dir: &Path) -> Result<Vec<DynamicSource>> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .map_err(|e| EvalError::Pipeline(format!("cannot read sources directory: {e}")))?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            let path = entry.path();
-            matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("yml" | "yaml")
-            )
-        })
-        .collect();
-    entries.sort_by_key(|e| e.path());
+    parse_sources_dir_with(dir, false)
+}
+
+/// [`parse_sources_dir`], following links that resolve outside `dir` when
+/// `follow_external_links` is set. A real file reached through several links
+/// loads once.
+pub fn parse_sources_dir_with(
+    dir: &Path,
+    follow_external_links: bool,
+) -> Result<Vec<DynamicSource>> {
+    let options = rsigma_parser::walk::WalkOptions::new()
+        .max_depth(0)
+        .follow_external_links(follow_external_links);
+    let walk = rsigma_parser::walk::walk_files(dir, &options)
+        .map_err(|e| EvalError::Pipeline(format!("cannot read sources directory: {e}")))?;
+    if let Some(skipped) = walk.skipped.first() {
+        return Err(EvalError::Pipeline(format!("sources directory: {skipped}")));
+    }
 
     let mut all_sources = Vec::new();
-    for entry in entries {
-        let path = entry.path();
-        let sources = parse_sources_file(&path)?;
-        all_sources.extend(sources);
+    for file in walk.files {
+        all_sources.extend(parse_sources_file(&file.real_path)?);
     }
     Ok(all_sources)
 }

@@ -53,6 +53,8 @@ pub struct RuntimeEngine {
     allow_remote_include: bool,
     /// Refuse to load a rule set in which any document failed to parse.
     strict_rules: bool,
+    /// Follow links in rule directories that resolve outside the directory.
+    follow_external_links: bool,
     /// Parse errors in the rule set loaded by the last successful
     /// `load_rules()`.
     parse_errors: usize,
@@ -143,6 +145,7 @@ impl RuntimeEngine {
             external_sources: Vec::new(),
             allow_remote_include: false,
             strict_rules: false,
+            follow_external_links: false,
             parse_errors: 0,
             bloom_prefilter: false,
             bloom_max_bytes: None,
@@ -581,6 +584,20 @@ impl RuntimeEngine {
         self.strict_rules
     }
 
+    /// Follow links in the rules directory (and in ruleset source and
+    /// overlay directories) that resolve outside it, instead of skipping them
+    /// with a warning. Off by default. Cycles are still detected and each
+    /// file still loads once. Applies on the next `load_rules()`; hot-reload
+    /// carries it forward.
+    pub fn set_follow_external_links(&mut self, follow: bool) {
+        self.follow_external_links = follow;
+    }
+
+    /// Whether links outside the rules directory are followed.
+    pub fn follow_external_links(&self) -> bool {
+        self.follow_external_links
+    }
+
     /// Set the pipeline file paths used for hot-reload.
     ///
     /// When paths are set, `load_rules()` re-reads pipeline YAML from disk
@@ -664,7 +681,7 @@ impl RuntimeEngine {
         }
 
         let previous_state = self.export_state();
-        let collection = load_collection(&self.rules_path)?;
+        let collection = load_collection(&self.rules_path, self.follow_external_links)?;
         check_parse_errors(&collection, self.strict_rules)?;
         let parse_errors = collection.error_count();
 
@@ -695,9 +712,12 @@ impl RuntimeEngine {
         let mut identities = std::collections::HashSet::new();
 
         for binding in bindings {
-            let resolved =
-                resolve_ruleset(&binding.name, &binding.spec, &ResolveOptions::default())
-                    .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
+            let options = ResolveOptions {
+                follow_external_links: self.follow_external_links,
+                ..ResolveOptions::default()
+            };
+            let resolved = resolve_ruleset(&binding.name, &binding.spec, &options)
+                .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
             let collection = resolved.collection;
             check_parse_errors(&collection, self.strict_rules)
                 .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
@@ -1162,9 +1182,11 @@ fn variant_stats(variant: &EngineVariant, parse_errors: usize) -> EngineStats {
     }
 }
 
-fn load_collection(path: &Path) -> Result<SigmaCollection, String> {
+fn load_collection(path: &Path, follow_external_links: bool) -> Result<SigmaCollection, String> {
     let collection = if path.is_dir() {
-        rsigma_parser::parse_sigma_directory(path)
+        let options =
+            rsigma_parser::walk::WalkOptions::new().follow_external_links(follow_external_links);
+        rsigma_parser::parse_sigma_directory_with(path, &options)
             .map_err(|e| format!("Error loading rules from {}: {e}", path.display()))?
     } else {
         rsigma_parser::parse_sigma_file(path)

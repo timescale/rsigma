@@ -231,29 +231,29 @@ fn atomics_from_dir(dir: &Path) -> Result<AtomicsSource, String> {
 }
 
 fn walk_atomics(dir: &Path, catalog: &mut AtomicsCatalog) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir)
+    let options = crate::walk_options()
+        .accept(|path| path.extension().and_then(|e| e.to_str()) == Some("yaml"));
+    let walk = rsigma_parser::walk::walk_files(dir, &options)
         .map_err(|e| format!("could not read atomics directory {}: {e}", dir.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("could not read entry in {}: {e}", dir.display()))?;
-        let path = entry.path();
-        if path.is_dir() {
-            walk_atomics(&path, catalog)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if !stem.starts_with('T') && !stem.starts_with('t') {
-                continue;
-            }
-            let raw = std::fs::read_to_string(&path).unwrap_or_default();
-            let doc = yaml_serde::from_str::<AtomicDoc>(&raw).unwrap_or_default();
-            let id = doc
-                .attack_technique
-                .as_deref()
-                .and_then(normalize_technique)
-                .or_else(|| normalize_technique(stem));
-            if let Some(id) = id {
-                let meta = catalog.entry(id).or_default();
-                merge_tests(&mut meta.tests, doc.atomic_tests);
-            }
+    for skipped in &walk.skipped {
+        eprintln!("Warning: {skipped}");
+    }
+    for file in walk.files {
+        let path = file.path;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !stem.starts_with('T') && !stem.starts_with('t') {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        let doc = yaml_serde::from_str::<AtomicDoc>(&raw).unwrap_or_default();
+        let id = doc
+            .attack_technique
+            .as_deref()
+            .and_then(normalize_technique)
+            .or_else(|| normalize_technique(stem));
+        if let Some(id) = id {
+            let meta = catalog.entry(id).or_default();
+            merge_tests(&mut meta.tests, doc.atomic_tests);
         }
     }
     Ok(())

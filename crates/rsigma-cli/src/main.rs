@@ -48,10 +48,12 @@ use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEventMode, Pipeline, parse_pipeline_file,
     resolve_builtin_pipeline,
 };
+use rsigma_parser::walk::WalkOptions;
 use rsigma_parser::{
-    CollectionDiagnostic, SigmaCollection, parse_sigma_directory, parse_sigma_file,
+    CollectionDiagnostic, SigmaCollection, parse_sigma_directory_with, parse_sigma_file,
 };
 use serde_json_path::JsonPath;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(name = "rsigma")]
@@ -99,6 +101,13 @@ struct Cli {
     /// summary footer but the operator still wants to see what happened.
     #[arg(long = "no-stats", global = true)]
     no_stats: bool,
+
+    /// Follow symlinks and junctions in rule, pipeline source, ruleset, and
+    /// corpus directories that resolve outside the directory being loaded,
+    /// instead of skipping them with a warning. Cycles are still detected and
+    /// each file still loads once.
+    #[arg(long = "follow-external-links", global = true)]
+    follow_external_links: bool,
 
     /// Print compiled-in Cargo features and exit.
     #[arg(long = "features")]
@@ -334,6 +343,7 @@ fn main() {
         features::print_enabled();
         return;
     }
+    FOLLOW_EXTERNAL_LINKS.store(cli.follow_external_links, Ordering::Relaxed);
 
     // Daemon installs its own JSON subscriber unconditionally; only init for
     // other subcommands when the user opts in via --log-format.
@@ -651,6 +661,28 @@ fn init_cli_log_subscriber(format: LogFormat) {
 // Shared helpers (used across commands)
 // ---------------------------------------------------------------------------
 
+/// Set from `--follow-external-links` before any command runs.
+static FOLLOW_EXTERNAL_LINKS: AtomicBool = AtomicBool::new(false);
+
+/// Whether `--follow-external-links` was passed.
+pub(crate) fn follow_external_links() -> bool {
+    FOLLOW_EXTERNAL_LINKS.load(Ordering::Relaxed)
+}
+
+/// Walk options for rule and corpus directories, honoring
+/// `--follow-external-links`.
+pub(crate) fn walk_options() -> WalkOptions<'static> {
+    WalkOptions::new().follow_external_links(follow_external_links())
+}
+
+/// Ruleset resolution options, honoring `--follow-external-links`.
+pub(crate) fn resolve_options() -> rsigma_parser::ruleset::ResolveOptions {
+    rsigma_parser::ruleset::ResolveOptions {
+        follow_external_links: follow_external_links(),
+        ..Default::default()
+    }
+}
+
 pub(crate) fn load_pipelines(paths: &[PathBuf]) -> Vec<Pipeline> {
     try_load_pipelines(paths).unwrap_or_else(|message| {
         eprintln!("{message}");
@@ -694,7 +726,7 @@ pub(crate) fn try_load_pipelines(paths: &[PathBuf]) -> Result<Vec<Pipeline>, Str
 
 pub(crate) fn load_collection(path: &std::path::Path) -> SigmaCollection {
     let collection = if path.is_dir() {
-        match parse_sigma_directory(path) {
+        match parse_sigma_directory_with(path, &walk_options()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Error loading rules from {}: {e}", path.display());
@@ -729,7 +761,7 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
     let mut collection = SigmaCollection::new();
     for path in paths {
         if path.is_dir() {
-            match parse_sigma_directory(path) {
+            match parse_sigma_directory_with(path, &walk_options()) {
                 Ok(dir_collection) => {
                     collection.rules.extend(dir_collection.rules);
                     collection.correlations.extend(dir_collection.correlations);
@@ -770,13 +802,32 @@ pub(crate) fn load_collection_multi(paths: &[PathBuf]) -> SigmaCollection {
 /// Print the per-rule parse error and warning counts of a loaded collection
 /// to stderr. Loading continues with the documents that parsed.
 pub(crate) fn report_load_diagnostics(collection: &SigmaCollection) {
+    const SHOWN_ERRORS: usize = 3;
     let errors = collection.error_count();
     if errors > 0 {
         eprintln!("Warning: {errors} parse errors while loading rules");
+        for error in collection.errors().take(SHOWN_ERRORS) {
+            match &error.path {
+                Some(path) if !error.message.starts_with(&*path.to_string_lossy()) => {
+                    eprintln!("  - {}: {error}", path.display());
+                }
+                _ => eprintln!("  - {error}"),
+            }
+        }
+        if errors > SHOWN_ERRORS {
+            eprintln!("  - ... and {} more", errors - SHOWN_ERRORS);
+        }
     }
     let warnings = collection.warning_count();
     if warnings > 0 {
         eprintln!("Warning: {warnings} parse warnings while loading rules");
+    }
+    for skipped in collection
+        .diagnostics
+        .iter()
+        .filter(|d| d.kind == rsigma_parser::DiagnosticKind::SkippedPath)
+    {
+        eprintln!("Warning: {skipped}");
     }
 }
 

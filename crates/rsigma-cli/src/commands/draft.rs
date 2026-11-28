@@ -433,12 +433,15 @@ fn read_grouped(spec: &str, label: &str) -> Result<Vec<GroupedExemplar>, String>
         return Err(format!("{label} path not found: {}", path.display()));
     }
     if path.is_dir() {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&path)
-            .map_err(|error| format!("Error reading {}: {error}", path.display()))?
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.is_file())
-            .collect();
-        files.sort();
+        let options = crate::walk_options()
+            .max_depth(0)
+            .accept(rsigma_parser::walk::any_file);
+        let walk = rsigma_parser::walk::walk_files(&path, &options)
+            .map_err(|error| format!("Error reading {}: {error}", path.display()))?;
+        for skipped in &walk.skipped {
+            eprintln!("Warning: {skipped}");
+        }
+        let files: Vec<PathBuf> = walk.files.into_iter().map(|file| file.path).collect();
         let mut groups = Vec::with_capacity(files.len());
         for file in files {
             let id = file

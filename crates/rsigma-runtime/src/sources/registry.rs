@@ -162,10 +162,19 @@ impl DaemonSourceRegistry {
 pub fn load_external_sources(
     paths: &[PathBuf],
 ) -> Result<Vec<(DynamicSource, PathBuf)>, rsigma_eval::EvalError> {
+    load_external_sources_with(paths, false)
+}
+
+/// [`load_external_sources`], following links in source directories that
+/// resolve outside the directory when `follow_external_links` is set.
+pub fn load_external_sources_with(
+    paths: &[PathBuf],
+    follow_external_links: bool,
+) -> Result<Vec<(DynamicSource, PathBuf)>, rsigma_eval::EvalError> {
     let mut result = Vec::new();
     for path in paths {
         if path.is_dir() {
-            let sources = rsigma_eval::parse_sources_dir(path)?;
+            let sources = rsigma_eval::parse_sources_dir_with(path, follow_external_links)?;
             for source in sources {
                 result.push((source, path.clone()));
             }

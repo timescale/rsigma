@@ -158,8 +158,8 @@ pub use pipeline::{
         builtin_names as builtin_pipeline_names, resolve_builtin as resolve_builtin_pipeline,
     },
     merge_pipelines, parse_pipeline, parse_pipeline_file, parse_sources, parse_sources_dir,
-    parse_sources_file, parse_transformation_items, transform_collection, transform_rule,
-    validate_source_refs,
+    parse_sources_dir_with, parse_sources_file, parse_transformation_items, transform_collection,
+    transform_rule, validate_source_refs,
 };
 pub use result::{
     AbsenceDetail, CorrelationBody, DetectionBody, EvaluationResult, EventSource, FieldMatch,

@@ -272,24 +272,16 @@ fn has_query_extension(path: &Path, extensions: &[&str]) -> bool {
 
 /// Recursively collect regular files under `dir`, skipping dotfiles/dotdirs.
 fn walk_dir(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries =
-        fs::read_dir(dir).map_err(|e| format!("Error reading directory {}: {e}", dir.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Error reading directory {}: {e}", dir.display()))?;
-        let path = entry.path();
-        let hidden = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'));
-        if hidden {
-            continue;
-        }
-        if path.is_dir() {
-            walk_dir(&path, out)?;
-        } else if path.is_file() {
-            out.push(path);
-        }
+    let options = crate::walk_options()
+        .accept(rsigma_parser::walk::any_file)
+        .skip_hidden_dirs(true)
+        .skip_hidden_files(true);
+    let walk = rsigma_parser::walk::walk_files(dir, &options)
+        .map_err(|e| format!("Error reading directory {}: {e}", dir.display()))?;
+    for skipped in &walk.skipped {
+        eprintln!("Warning: {skipped}");
     }
+    out.extend(walk.files.into_iter().map(|file| file.path));
     Ok(())
 }
 

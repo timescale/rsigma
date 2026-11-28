@@ -5,7 +5,7 @@ use rmcp::{
     tool_router,
 };
 use rsigma_parser::{
-    LintWarning, Severity, lint_yaml_directory_with_config, lint_yaml_file_with_config,
+    LintWarning, Severity, lint_yaml_directory_with_options, lint_yaml_file_with_config,
     lint_yaml_str_with_config,
 };
 use serde_json::{Value, json};
@@ -43,7 +43,7 @@ impl RsigmaMcp {
                     let path = resolve_confined_path(p, self.root())?;
                     if path.is_dir() {
                         ensure_no_symlinks(&path, self.root())?;
-                        lint_yaml_directory_with_config(&path, cfg)
+                        lint_yaml_directory_with_options(&path, cfg, self.rule_walk_options())
                             .map_err(|e| invalid(format!("cannot lint '{}': {e}", path.display())))?
                             .into_iter()
                             .map(|r| (r.path.display().to_string(), r.warnings))

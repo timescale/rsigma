@@ -666,6 +666,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     engine.set_pipeline_paths(config.pipeline_paths.clone());
     engine.set_allow_remote_include(config.allow_remote_include);
     engine.set_strict_rules(config.strict_rules);
+    engine.set_follow_external_links(crate::follow_external_links());
     engine.set_match_detail(config.match_detail);
     engine.set_require_tenant(config.tenancy.enabled);
     engine.set_max_state_entries_per_tenant(config.tenancy.quotas.correlation_state);
@@ -1480,9 +1481,10 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         // Optional pull source: load the declared dynamic source(s) and ingest
         // each refreshed payload as dispositions over the Phase 0 seam.
         if let Some(src_path) = config.dispositions.source.as_ref() {
-            match rsigma_runtime::sources::registry::load_external_sources(std::slice::from_ref(
-                src_path,
-            )) {
+            match rsigma_runtime::sources::registry::load_external_sources_with(
+                std::slice::from_ref(src_path),
+                crate::follow_external_links(),
+            ) {
                 Ok(loaded) => {
                     let sources: Vec<_> = loaded.into_iter().map(|(s, _)| s).collect();
                     if sources.is_empty() {

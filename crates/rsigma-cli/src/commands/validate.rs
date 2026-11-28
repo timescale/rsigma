@@ -5,7 +5,7 @@ use std::process;
 use clap::Args;
 use rsigma_eval::Engine;
 use rsigma_parser::{
-    CollectionDiagnostic, SigmaCollection, SigmaParserError, parse_sigma_directory,
+    CollectionDiagnostic, SigmaCollection, SigmaParserError, parse_sigma_directory_with,
     parse_sigma_file,
 };
 use serde::Serialize;
@@ -130,7 +130,7 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
             .as_ref()
             .expect("clap requires a path when no ruleset is selected");
         let parsed = if path.is_dir() {
-            parse_sigma_directory(path)
+            parse_sigma_directory_with(path, &crate::walk_options())
         } else {
             match parse_sigma_file(path) {
                 Err(SigmaParserError::Io(e)) => Err(SigmaParserError::Io(e)),
@@ -408,7 +408,10 @@ fn resolve_validate_sources(
     // Load external sources alongside pipeline-embedded ones (validating that
     // the source files parse, regardless of whether we resolve them).
     let external_sources = if !source_files.is_empty() {
-        match rsigma_runtime::sources::registry::load_external_sources(source_files) {
+        match rsigma_runtime::sources::registry::load_external_sources_with(
+            source_files,
+            crate::follow_external_links(),
+        ) {
             Ok(ext) => ext.into_iter().map(|(s, _)| s).collect::<Vec<_>>(),
             Err(e) => {
                 eprintln!("Error loading external sources: {e}");

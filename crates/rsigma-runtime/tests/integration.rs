@@ -250,6 +250,27 @@ fn reload_keeps_strict_rules() {
     assert_eq!(proc.stats().detection_rules, 1);
 }
 
+#[cfg(unix)]
+#[test]
+fn reload_keeps_following_external_links() {
+    let dir = rules_dir(&[("good.yml", GOOD_RULE)]);
+    let outside = rules_dir(&[(
+        "outside.yml",
+        &GOOD_RULE.replace("title: ", "title: Outside "),
+    )]);
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("vendor")).unwrap();
+
+    let mut confined = engine_for(&dir);
+    assert_eq!(confined.load_rules().unwrap().detection_rules, 1);
+
+    let mut engine = engine_for(&dir);
+    engine.set_follow_external_links(true);
+    assert_eq!(engine.load_rules().unwrap().detection_rules, 2);
+    let proc = LogProcessor::new(engine, Arc::new(NoopMetrics));
+    proc.reload_rules().unwrap();
+    assert_eq!(proc.stats().detection_rules, 2);
+}
+
 #[test]
 fn reload_handles_long_correlation_chain_on_small_stack() {
     // Each correlation references the one after it in the document.
