@@ -17,8 +17,8 @@ Pass options via `-O key=value` on the command line. Unknown keys are silently i
 | `table` | `security_events` | Default table name. Overridden by pipeline `set_state` and per-rule `postgres.table` custom attribute. |
 | `schema` | unset | PostgreSQL schema. Final reference becomes `schema.table`. |
 | `database` | unset | Connection-level metadata used by some output formats. |
-| `timestamp_field` | `time` | Column used for time-windowed queries (correlation `timespan`, `time_bucket` in TimescaleDB mode). |
-| `json_field` | unset | When set, fields are accessed via JSONB extraction. See [JSONB mode](#jsonb-mode). |
+| `timestamp_field` | `time` | Column used for time-windowed queries (correlation `timespan`, `time_bucket` in TimescaleDB mode). It must be a plain SQL identifier and is quoted like a field column, so `EventTime` renders as `"EventTime"` and `user` as `"user"`. {{ added "unreleased" }} |
+| `json_field` | unset | When set, fields are accessed via JSONB extraction. See [JSONB mode](#jsonb-mode). It must be a plain SQL identifier and is quoted like `timestamp_field`. {{ added "unreleased" }} |
 | `correlation_method` | unset | Windowing strategy for correlation rules (`sliding`/`tumbling`/`session`), overriding each rule's own `window`. See [Window modes](#window-modes). |
 | `gap` | unset | Default session gap (e.g. `5m`) used when a session window is requested and the rule declares no `gap`. A rule's own `gap` wins. |
 
@@ -61,6 +61,8 @@ Field names other than plain lowercase identifiers are double-quoted (`"CommandL
 
 A `"` inside a quoted field name is doubled (`"a""b"`), so it cannot end the identifier. {{ added "0.28.0" }}
 
+A lowercase field name that is a reserved PostgreSQL keyword, such as `user`, `group`, `order`, or `current_user`, is double-quoted too, in predicates, `fields`, `GROUP BY`, `PARTITION BY`, and aggregates. Unquoted, `user` and `current_user` read as the session user and `group` and `order` fail to parse. A table or schema name that is a reserved keyword is quoted in its lowercase form (`-O table=User` renders as `"user"`), so it names the same table an unquoted name would. {{ added "unreleased" }}
+
 A `query_expression_placeholders` template can use `{query}`, `{table}`, `{rule.title}`, and `{rule.id}`. Each placeholder is substituted once, so placeholder text inside a rule's values stays literal. The rule title and ID render with single quotes doubled, so place them inside a string literal such as `'{rule.title}'`. {{ added "0.28.0" }}
 
 ## Output formats
@@ -97,15 +99,18 @@ SELECT time_bucket('1 hour', time) AS bucket, *
     FROM security_events WHERE "EventID" = 4625
 ```
 
+When the rule's `fields` include an aggregate call, the query groups by the bucket and the other listed fields. {{ added "unreleased" }}
+
 ### `continuous_aggregate`
 
-Wraps each detection rule in `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) AS ... WITH NO DATA`:
+Wraps each detection rule in `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) AS ... WITH NO DATA`. TimescaleDB requires a continuous aggregate to group by a time bucket, so the query groups by the hourly bucket and the rule's listed fields, and counts the matching events as `event_count` unless `fields` has an aggregate call of its own. A rule without `fields` becomes an hourly event count, and `*` in `fields` fails conversion. {{ added "unreleased" }}
 
 ```sql
 CREATE MATERIALIZED VIEW sigma_9d2e7c48_4a3b_4f99_93c9_1c5f7c8b1a2a
     WITH (timescaledb.continuous) AS
-    SELECT time_bucket('1 hour', time) AS bucket, *
+    SELECT time_bucket('1 hour', time) AS bucket, count(*) AS event_count
     FROM security_events WHERE "EventID" = 4625
+    GROUP BY time_bucket('1 hour', time)
     WITH NO DATA
 ```
 
@@ -137,7 +142,7 @@ Use when you want per-event explanations of why a brute-force correlation fired 
 
 ## JSONB mode
 
-Setting `-O json_field=data` (or pipeline `set_state` `key: json_field`) switches the backend from bare column references to JSONB extraction. Useful when events land in a single JSONB column (Okta logs, CloudTrail, OCSF, any "blob" shape).
+Setting `-O json_field=data` switches the backend from bare column references to JSONB extraction. Useful when events land in a single JSONB column (Okta logs, CloudTrail, OCSF, any "blob" shape).
 
 Top-level fields use `->>` (returns `text`):
 
@@ -169,7 +174,7 @@ Typed values need care because `->>` returns text. {{ added "0.24.0" }}
 - A boolean compares the text case-insensitively (`data->>'Elevated' ILIKE 'true'`), which matches a JSON `true` and the string `"true"`, in a field or a scalar array element.
 - `exists` tests the `->` (jsonb) form, which is SQL NULL only when the key is absent. A key whose value is JSON `null` exists, as Sigma requires. Flat columns cannot make this distinction, because a typed column stores an absent field and a null value as the same SQL NULL.
 
-Each path segment is validated against the SQL identifier regex (`^[A-Za-z_][A-Za-z0-9_$]*$`) before insertion; malformed segments fail conversion. Single quotes inside path segments are doubled (`don''t`). See [Security Hardening](../security.md#sql-injection-prevention).
+Each path segment is validated against `^@?[A-Za-z_][A-Za-z0-9_$]*(-[A-Za-z0-9_$]+)*$` before insertion, which admits identifiers, hyphenated names such as `cs-method` and `c-uri`, and `@timestamp`; malformed and empty segments fail conversion. {{ added "unreleased" }} See [Security Hardening](../security.md#sql-injection-prevention).
 
 ### Array matching
 
@@ -220,6 +225,30 @@ An **extended** block body (a `condition:` plus named element-scoped sub-selecti
 
 Array matching requires JSONB mode; in flat-column mode the backend reports `UnsupportedArrayMatching`.
 
+## Selecting columns
+
+A rule's `fields` list replaces `SELECT *` with the listed columns. Each entry must be one of: {{ added "unreleased" }}
+
+- `*`.
+- A field name: identifier segments joined by `.`, each optionally hyphenated or led by `@` (`CommandLine`, `userIdentity.arn`, `c-uri`, `@timestamp`), plus positional `[N]` indices in [JSONB mode](#jsonb-mode). It is quoted like any other field.
+- A call to `count`, `sum`, `avg`, `min`, or `max` (in any case) over a field, or `count(*)`.
+
+A field or call can end with `AS alias` (in any case), where the alias is a plain SQL identifier. Anything else fails conversion with `InvalidSelectField`, which names the entry: other functions, nested calls, sub-selects, operators, quotes, comments, and `;`. Rule content therefore never reaches the query as SQL. For a projection outside this grammar, set a pipeline `query_expression_template`, which replaces the whole query shape and ignores `fields`.
+
+```yaml
+fields:
+    - CommandLine as cmd
+    - user
+    - count(*) AS hits
+```
+
+```sql
+SELECT "CommandLine" AS cmd, "user", count(*) AS hits
+    FROM security_events WHERE ... GROUP BY "CommandLine", "user"
+```
+
+When the list has an aggregate call, the query groups by the other listed fields, and `*` cannot appear with it. In JSONB mode an extracted field is named after the Sigma field (`data->>'Image' AS "Image"`), so a view over several fields has distinct column names, and `sum` and `avg` aggregate the value cast to `numeric` as numeric comparisons do. A pipeline `query_expression_template` ignores `fields`, and [`hunt run`](../../cli/hunt/run.md) clears them.
+
 ## Correlation rules
 
 The backend handles every aggregation type:
@@ -235,7 +264,7 @@ The backend handles every aggregation type:
 | `temporal` | CTE: the referenced rules' hits selected from the source table in `WITH matched AS (SELECT * FROM <table> WHERE rule_name IN (...))`, then a `SELECT <group-by>, COUNT(DISTINCT rule_name) AS distinct_rules FROM matched HAVING ... >= N`. |
 | `temporal_ordered` | The `temporal` query plus one CTE per referenced rule that takes the earliest hit of that rule at or after the previous rule's step, per group (`MIN(CASE WHEN rule_name = '<rule>' AND <ts> >= __step_<n-1> THEN <ts> END) OVER (PARTITION BY <group-by>)`). `HAVING ... AND MAX(__step_<last>) IS NOT NULL` keeps a group only when the rules hit in `rules` order; equal timestamps count as in order. {{ added "0.24.0" }} |
 
-Non-temporal correlations that reference detection rules in the same collection auto-wrap the detection logic in `WITH combined_events AS (q1 UNION ALL q2 ...)`. A non-temporal correlation that references another correlation, or a detection rule that failed to convert, fails to convert, because there is no detection query to embed. {{ added "0.24.0" }} Multi-table temporal correlations (where referenced detection rules target different tables via pipeline routing) generate `UNION ALL` CTEs with a `rule_name` discriminator column.
+Non-temporal correlations that reference detection rules in the same collection auto-wrap the detection logic in `WITH combined_events AS (q1 UNION ALL q2 ...)`. Each embedded query is the rule's `default` query with every column, whatever the output format and the rule's `fields`, so the correlation can read its group-by and value fields, and `-f view`, `-f continuous_aggregate`, and `-f sliding_window` produce valid correlation SQL. {{ added "unreleased" }} A non-temporal correlation that references another correlation, or a detection rule whose `default` query fails to convert, fails to convert, because there is no detection query to embed. {{ added "0.24.0" }} Multi-table temporal correlations (where referenced detection rules target different tables via pipeline routing) generate `UNION ALL` CTEs with a `rule_name` discriminator column.
 
 ### Window modes
 
@@ -246,6 +275,8 @@ A correlation rule's `window` attribute selects the windowing strategy, independ
 | absent or `sliding` | Unchanged from before the attribute existed: the per-format aggregate (or the window-function form under `sliding_window`). |
 | `tumbling` | Boundary-aligned buckets sized to the rule's `timespan`: `time_bucket('<timespan> seconds', <ts>)` on TimescaleDB, `date_bin('<timespan> seconds', <ts>, TIMESTAMPTZ 'epoch')` on plain PostgreSQL, added to the `GROUP BY`. |
 | `session` | Gaps-and-islands: `LAG` marks the first event of each session (gap larger than `gap`), a running `SUM` assigns a per-group `session_id`, and the aggregate is grouped per session. |
+
+In JSONB mode the group-by columns are named after their Sigma fields (`data->>'User' AS "User"`), and `value_sum`, `value_avg`, `value_percentile`, and `value_median` aggregate the value cast to `numeric`, as numeric comparisons do, since PostgreSQL has no `SUM` or `PERCENTILE_CONT` over text. {{ added "unreleased" }}
 
 Tumbling and session apply to every correlation type. For the aggregate types (`event_count`, `value_count`, `value_sum`, `value_avg`, `value_percentile`, `value_median`) the per-window aggregate is computed over the events; for `temporal`/`temporal_ordered` the combined detections are bucketed (tumbling) or sessionized (session) and each window counts the distinct referenced rules. `temporal_ordered` enforces the order within each bucket or session. {{ added "0.24.0" }}
 
