@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Generated YAML and SQL read back exactly
+### Generated YAML and SQL read back exactly (#819)
 
 `rule draft` and `rule tune` wrote event field names as raw YAML keys and quoted values with single quotes only, so a field name holding `: `, `#`, quotes, `|`, or a line break, or a value with a line break, changed or broke the emitted rule. Keys and values are now quoted so YAML reads them back exactly, a field whose name cannot be a Sigma field (a line break, a control character, `|`, an escaped bracket, a bare `.`, or over 256 bytes) is skipped with a warning, and whole floats stay floats. Every draft, value draft, correlation draft, and tuning filter is parsed back after it is emitted and must be exactly one document of the expected kind with the planned title, id, selections, fields, modifiers, values, and condition, or the command errors; correlation drafts must also carry their exemplar events unchanged, and an event key too long for a plain YAML key is written in the explicit `? key` form.
 
