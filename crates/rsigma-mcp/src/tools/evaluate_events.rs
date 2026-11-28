@@ -78,7 +78,7 @@ pub struct EvaluateInput {
 impl RsigmaMcp {
     /// Evaluate JSON events against Sigma rules (detections and correlations).
     #[tool(
-        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Provide exactly one of inline `yaml`, a file/directory `path`, a named `ruleset`, or several `rulesets` from the server's configuration; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full)."
+        description = "Evaluate JSON events against Sigma rules and return matches. Detection-only rules use the stateless engine; collections with correlations use the stateful correlation engine. Provide exactly one of inline `yaml`, a file/directory `path`, a named `ruleset`, or several `rulesets` from the server's configuration; events via an inline `events` JSON array or an NDJSON `events_path`. Optional `pipelines` and `match_detail` (off/summary/full). Results fired at the end of input, such as an absence correlation that reached its deadline, carry `event_index: null`."
     )]
     async fn evaluate_events(
         &self,
@@ -133,31 +133,116 @@ impl RsigmaMcp {
         let json_events: Vec<JsonEvent> = events.iter().map(JsonEvent::borrow).collect();
         let refs: Vec<&JsonEvent> = json_events.iter().collect();
 
-        let batches: Vec<Vec<EvaluationResult>> = if let Some(names) = &input.rulesets {
-            let mut units = Vec::new();
-            let mut stats = Vec::new();
-            for name in names {
-                let (collection, spec_pipelines) = self.resolve_ruleset(name)?;
+        let batches: Vec<(Option<usize>, Vec<EvaluationResult>)> =
+            if let Some(names) = &input.rulesets {
+                let mut units = Vec::new();
+                let mut stats = Vec::new();
+                for name in names {
+                    let (collection, spec_pipelines) = self.resolve_ruleset(name)?;
+                    let pipeline_specs = if input.pipelines.is_empty() {
+                        spec_pipelines
+                    } else {
+                        input.pipelines.clone()
+                    };
+                    let pipelines = self.load_pipelines(&pipeline_specs)?;
+                    let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
+                    let detection_rules = collection.rules.len();
+                    let correlation_rules = collection.correlations.len();
+                    let engine = if collection.correlations.is_empty() {
+                        let mut engine = Engine::new();
+                        engine.set_match_detail(detail);
+                        engine.set_include_event(retain_event);
+                        for pipeline in &pipelines {
+                            engine.add_pipeline(pipeline.clone());
+                        }
+                        engine
+                            .add_collection(&collection)
+                            .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                        UnitEngine::Detection(Box::new(engine))
+                    } else {
+                        let mut config = CorrelationConfig {
+                            emit_detections: input.emit_detections,
+                            ..Default::default()
+                        };
+                        if !input.timestamp_fields.is_empty() {
+                            let mut fields = input.timestamp_fields.clone();
+                            fields.extend(config.timestamp_fields);
+                            config.timestamp_fields = fields;
+                        }
+                        let mut engine = CorrelationEngine::new(config);
+                        engine.set_match_detail(detail);
+                        engine.set_include_event(retain_event);
+                        for pipeline in &pipelines {
+                            engine.add_pipeline(pipeline.clone());
+                        }
+                        engine
+                            .add_collection(&collection)
+                            .map_err(|e| invalid(format!("rule compile error: {e}")))?;
+                        UnitEngine::Correlation(Box::new(engine))
+                    };
+                    stats.push((name.clone(), detection_rules, correlation_rules));
+                    units.push(RulesetUnit {
+                        name: std::sync::Arc::from(name.as_str()),
+                        when_schemas: Vec::new(),
+                        tenants: Vec::new(),
+                        engine,
+                        field_set,
+                    });
+                }
+                let mut engines = RulesetEngines::new(units, None)
+                    .map_err(|e| invalid(format!("ruleset setup error: {e}")))?;
+                let per_event = engines.process_batch(&refs);
+                let mut batches: Vec<(Option<usize>, Vec<EvaluationResult>)> = per_event
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, batch)| (Some(idx), batch))
+                    .collect();
+                let finalized = engines.finalize();
+                if !finalized.is_empty() {
+                    batches.push((None, finalized));
+                }
+                ruleset_summary = Some(
+                    stats
+                        .into_iter()
+                        .map(|(name, detection_rules, correlation_rules)| {
+                            json!({
+                                "name": name,
+                                "detection_rules": detection_rules,
+                                "correlation_rules": correlation_rules,
+                                "matches": 0,
+                            })
+                        })
+                        .collect(),
+                );
+                batches
+            } else {
+                let (collection, ruleset_pipelines) = self.load_collection(
+                    input.yaml.as_deref(),
+                    input.path.as_deref(),
+                    input.ruleset.as_deref(),
+                )?;
                 let pipeline_specs = if input.pipelines.is_empty() {
-                    spec_pipelines
+                    ruleset_pipelines
                 } else {
-                    input.pipelines.clone()
+                    input.pipelines
                 };
                 let pipelines = self.load_pipelines(&pipeline_specs)?;
-                let field_set = RuleFieldSet::collect(&collection, &pipelines, true);
-                let detection_rules = collection.rules.len();
-                let correlation_rules = collection.correlations.len();
-                let engine = if collection.correlations.is_empty() {
+                if collection.correlations.is_empty() {
                     let mut engine = Engine::new();
                     engine.set_match_detail(detail);
                     engine.set_include_event(retain_event);
-                    for pipeline in &pipelines {
-                        engine.add_pipeline(pipeline.clone());
+                    for p in &pipelines {
+                        engine.add_pipeline(p.clone());
                     }
                     engine
                         .add_collection(&collection)
                         .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-                    UnitEngine::Detection(Box::new(engine))
+                    engine
+                        .evaluate_batch(&refs)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, batch)| (Some(idx), batch))
+                        .collect()
                 } else {
                     let mut config = CorrelationConfig {
                         emit_detections: input.emit_detections,
@@ -171,91 +256,31 @@ impl RsigmaMcp {
                     let mut engine = CorrelationEngine::new(config);
                     engine.set_match_detail(detail);
                     engine.set_include_event(retain_event);
-                    for pipeline in &pipelines {
-                        engine.add_pipeline(pipeline.clone());
+                    for p in &pipelines {
+                        engine.add_pipeline(p.clone());
                     }
                     engine
                         .add_collection(&collection)
                         .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-                    UnitEngine::Correlation(Box::new(engine))
-                };
-                stats.push((name.clone(), detection_rules, correlation_rules));
-                units.push(RulesetUnit {
-                    name: std::sync::Arc::from(name.as_str()),
-                    when_schemas: Vec::new(),
-                    tenants: Vec::new(),
-                    engine,
-                    field_set,
-                });
-            }
-            let mut engines = RulesetEngines::new(units, None)
-                .map_err(|e| invalid(format!("ruleset setup error: {e}")))?;
-            let batches = engines.process_batch(&refs);
-            ruleset_summary = Some(
-                stats
-                    .into_iter()
-                    .map(|(name, detection_rules, correlation_rules)| {
-                        json!({
-                            "name": name,
-                            "detection_rules": detection_rules,
-                            "correlation_rules": correlation_rules,
-                            "matches": 0,
-                        })
-                    })
-                    .collect(),
-            );
-            batches
-        } else {
-            let (collection, ruleset_pipelines) = self.load_collection(
-                input.yaml.as_deref(),
-                input.path.as_deref(),
-                input.ruleset.as_deref(),
-            )?;
-            let pipeline_specs = if input.pipelines.is_empty() {
-                ruleset_pipelines
-            } else {
-                input.pipelines
+                    let per_event: Vec<Vec<EvaluationResult>> = engine
+                        .process_batch(&refs)
+                        .into_iter()
+                        .map(|pr| pr.to_vec())
+                        .collect();
+                    let mut batches: Vec<(Option<usize>, Vec<EvaluationResult>)> = per_event
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, batch)| (Some(idx), batch))
+                        .collect();
+                    let finalized = engine.finalize();
+                    if !finalized.is_empty() {
+                        batches.push((None, finalized));
+                    }
+                    batches
+                }
             };
-            let pipelines = self.load_pipelines(&pipeline_specs)?;
-            if collection.correlations.is_empty() {
-                let mut engine = Engine::new();
-                engine.set_match_detail(detail);
-                engine.set_include_event(retain_event);
-                for p in &pipelines {
-                    engine.add_pipeline(p.clone());
-                }
-                engine
-                    .add_collection(&collection)
-                    .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-                engine.evaluate_batch(&refs)
-            } else {
-                let mut config = CorrelationConfig {
-                    emit_detections: input.emit_detections,
-                    ..Default::default()
-                };
-                if !input.timestamp_fields.is_empty() {
-                    let mut fields = input.timestamp_fields.clone();
-                    fields.extend(config.timestamp_fields);
-                    config.timestamp_fields = fields;
-                }
-                let mut engine = CorrelationEngine::new(config);
-                engine.set_match_detail(detail);
-                engine.set_include_event(retain_event);
-                for p in &pipelines {
-                    engine.add_pipeline(p.clone());
-                }
-                engine
-                    .add_collection(&collection)
-                    .map_err(|e| invalid(format!("rule compile error: {e}")))?;
-                engine
-                    .process_batch(&refs)
-                    .into_iter()
-                    .map(|pr| pr.to_vec())
-                    .collect()
-            }
-        };
 
-        for (idx, mut per_event) in batches.into_iter().enumerate() {
+        for (event_index, mut per_event) in batches {
             if let Some(pipeline) = &enrichment {
                 pipeline.run(&mut per_event).await;
             }
@@ -273,7 +298,7 @@ impl RsigmaMcp {
                 if let Some(name) = &r.header.ruleset {
                     *ruleset_matches.entry(name.to_string()).or_default() += 1;
                 }
-                results.push(json!({ "event_index": idx, "result": to_value(r) }));
+                results.push(json!({ "event_index": event_index, "result": to_value(r) }));
             }
         }
 
@@ -991,5 +1016,117 @@ enrichers:
             .await
             .unwrap_err();
         assert!(format!("{error:?}").contains("unknown ruleset 'nope'"));
+    }
+
+    const ABSENCE_YAML: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#;
+
+    #[tokio::test]
+    async fn evaluate_events_fires_an_absence_at_the_end_of_input() {
+        let enrichers = r#"
+enrichers:
+  - id: runbook
+    kind: correlation
+    type: template
+    inject_field: runbook_url
+    template: "https://wiki/${correlation.rule.id}"
+"#;
+        let v = handler()
+            .run_evaluate_events(EvaluateInput {
+                yaml: Some(ABSENCE_YAML.to_string()),
+                path: None,
+                ruleset: None,
+                rulesets: None,
+                events: Some(vec![json!({
+                    "@timestamp": 1_735_689_600,
+                    "EventType": "login",
+                    "User": "alice",
+                })]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: Some(enrichers.to_string()),
+                enrichers_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["summary"]["correlation_matches"], 1);
+        assert_eq!(v["results"][0]["event_index"], serde_json::Value::Null);
+        assert_eq!(
+            v["results"][0]["result"]["absence"]["missing"][0],
+            "mfa-rule"
+        );
+        assert_eq!(
+            v["results"][0]["result"]["enrichments"]["runbook_url"],
+            "https://wiki/login-without-mfa"
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_events_rulesets_fire_an_absence_at_the_end_of_input() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("absence.yml"), ABSENCE_YAML).unwrap();
+        let rulesets = BTreeMap::from([(
+            "absence".to_string(),
+            ruleset_spec(dir.path(), &["absence.yml"], &[]),
+        )]);
+        let v = ruleset_handler(Some(dir.path().to_path_buf()), rulesets)
+            .run_evaluate_events(EvaluateInput {
+                yaml: None,
+                path: None,
+                ruleset: None,
+                rulesets: Some(vec!["absence".to_string()]),
+                events: Some(vec![json!({
+                    "@timestamp": 1_735_689_600,
+                    "EventType": "login",
+                    "User": "alice",
+                })]),
+                events_path: None,
+                pipelines: vec![],
+                match_detail: None,
+                timestamp_fields: vec![],
+                emit_detections: false,
+                enrichers: None,
+                enrichers_path: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["summary"]["correlation_matches"], 1);
+        assert_eq!(v["results"][0]["event_index"], serde_json::Value::Null);
+        assert_eq!(v["results"][0]["result"]["ruleset"], "absence");
+        assert_eq!(
+            v["results"][0]["result"]["absence"]["missing"][0],
+            "mfa-rule"
+        );
     }
 }
