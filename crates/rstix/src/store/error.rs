@@ -27,6 +27,14 @@ pub enum StoreError {
     /// Object id cannot be mapped to a file name inside the store root.
     #[error("object id `{0}` cannot be stored as a file name")]
     InvalidObjectId(String),
+    /// The stored form of an object would not load back under the store's parse options.
+    #[error("object `{id}` would not load back from the store: {reason}")]
+    NotReloadable {
+        /// Object id.
+        id: String,
+        /// Why the stored form fails to parse.
+        reason: String,
+    },
 }
 
 impl StoreError {

@@ -1,4 +1,4 @@
-//! `rsigma taxii sync`: import a TAXII collection into an on-disk [`FsStore`].
+//! `rsigma taxii sync`: import a TAXII collection into an on-disk [`FsStore`](rstix::store::FsStore).
 
 use std::path::PathBuf;
 use std::process;
@@ -7,7 +7,6 @@ use std::time::Duration;
 use clap::Args;
 use rstix::core::StixId;
 use rstix::model::ParseOptions;
-use rstix::store::FsStore;
 use rstix::taxii::{
     ApiKeyHeader, BasicAuth, BearerAuth, CapabilityPolicy, ClientCertificate,
     DEFAULT_INGEST_BUNDLE_ID, IngestError, IngestOptions, PostSubmitPolicy, PreflightPolicy,
@@ -15,6 +14,7 @@ use rstix::taxii::{
 };
 use serde::Serialize;
 
+use super::store::open_store;
 use crate::exit_code;
 use crate::output::{OutputCtx, Tabular, render_report};
 
@@ -33,7 +33,7 @@ pub struct TaxiiSyncArgs {
     #[arg(long)]
     pub collection: String,
 
-    /// Local [`FsStore`] root directory (created when missing).
+    /// Local [`FsStore`](rstix::store::FsStore) root directory (created when missing).
     #[arg(long, value_name = "DIR")]
     pub store: PathBuf,
 
@@ -266,10 +266,7 @@ pub fn cmd_taxii_sync(args: TaxiiSyncArgs, ctx: OutputCtx) {
         process::exit(exit_code::CONFIG_ERROR);
     });
 
-    let store = FsStore::open(&args.store).unwrap_or_else(|err| {
-        eprintln!("failed to open store at {}: {err}", args.store.display());
-        process::exit(exit_code::CONFIG_ERROR);
-    });
+    let store = open_store(&args.store, args.allow_custom);
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

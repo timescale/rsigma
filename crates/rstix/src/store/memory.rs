@@ -61,6 +61,7 @@ impl MemoryStore {
     /// Used by [`FsStore::reload_from_disk`](super::FsStore::reload_from_disk) after
     /// building a fresh index from disk so a failed reload leaves the previous
     /// corpus intact and queries never observe an empty intermediate state.
+    #[cfg(feature = "store-fs")]
     pub(crate) fn replace_with(&self, other: Self) -> Result<(), StoreError> {
         *self.sdo.write().map_err(|_| StoreError::LockPoisoned)? = other
             .sdo

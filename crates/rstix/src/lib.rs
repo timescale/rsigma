@@ -129,13 +129,13 @@ pub use marking::{
     DisclosureContext, EffectiveMarking, MarkingResolver, StatementMarking, TlpV1Level, TlpV2Level,
 };
 
-#[cfg(feature = "store-fs")]
-pub use store::FsStore;
 #[cfg(feature = "store")]
 pub use store::{
     FingerprintConflict, ImportReport, MemoryStore, QueryCursor, QueryResult, StixQuery, StixStore,
     StoreError, StoredSco,
 };
+#[cfg(feature = "store-fs")]
+pub use store::{FsStore, LoadReport, SkippedFile};
 
 #[cfg(feature = "serde")]
 pub use model::{

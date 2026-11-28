@@ -197,3 +197,94 @@ fn store_reads_bundle_from_stdin() {
         .success()
         .stdout(predicate::str::contains("\"objects_added\":3"));
 }
+
+#[test]
+fn store_loads_the_rest_of_a_store_with_a_corrupt_file() {
+    let store_dir = tempdir().expect("tempdir");
+    let objects = store_dir.path().join("objects");
+    fs::create_dir_all(&objects).unwrap();
+    fs::write(objects.join("broken.json"), "{not json").unwrap();
+
+    rsigma()
+        .args([
+            "taxii",
+            "store",
+            "--bundle",
+            &fixture_bundle("multi-indicators.json"),
+            "--store",
+            store_dir.path().to_str().unwrap(),
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"objects_added\":3"))
+        .stderr(predicate::str::contains("warning: skipped store file"))
+        .stderr(predicate::str::contains("broken.json"));
+
+    let store = FsStore::open(store_dir.path()).expect("reopen store");
+    assert_eq!(store.load_report().skipped.len(), 1);
+    assert_eq!(store.load_report().versions_loaded, 3);
+}
+
+#[test]
+fn store_with_allow_custom_reopens_its_custom_objects() {
+    let store_dir = tempdir().expect("tempdir");
+    let bundle = store_dir.path().join("custom.json");
+    fs::write(
+        &bundle,
+        serde_json::json!({
+            "type": "bundle",
+            "id": "bundle--22222222-2222-4222-8222-222222222222",
+            "objects": [{
+                "type": "x-acme-widget",
+                "spec_version": "2.1",
+                "id": "x-acme-widget--1f9e8c11-73b7-4c39-8f55-4ab2e2a7f5a0",
+                "created": "2024-01-01T00:00:00.000Z",
+                "modified": "2024-01-01T00:00:00.000Z"
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let args = |extra: &[&str]| {
+        let mut args = vec![
+            "taxii".to_owned(),
+            "store".to_owned(),
+            "--bundle".to_owned(),
+            bundle.to_string_lossy().into_owned(),
+            "--store".to_owned(),
+            store_dir.path().to_string_lossy().into_owned(),
+            "--allow-invalid".to_owned(),
+        ];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        args
+    };
+
+    rsigma().args(args(&["--allow-custom"])).assert().success();
+    rsigma()
+        .args(args(&["--allow-custom"]))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("skipped store file").not());
+
+    let plain = store_dir.path().join("plain.json");
+    fs::write(
+        &plain,
+        fs::read_to_string(fixture_bundle("multi-indicators.json")).unwrap(),
+    )
+    .unwrap();
+    rsigma()
+        .args([
+            "taxii",
+            "store",
+            "--bundle",
+            plain.to_str().unwrap(),
+            "--store",
+            store_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("skipped store file"))
+        .stderr(predicate::str::contains("x-acme-widget"));
+}

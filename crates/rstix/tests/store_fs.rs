@@ -97,6 +97,11 @@ fn email_message_round_trips_through_serde_and_the_fs_store() {
         store.import_objects(&accepted).expect("store");
     }
     let store = FsStore::open(&root).expect("reopen");
+    assert!(
+        store.load_report().skipped.is_empty(),
+        "{:?}",
+        store.load_report()
+    );
     store.reload_from_disk().expect("reload");
     for object in &accepted {
         assert_eq!(
