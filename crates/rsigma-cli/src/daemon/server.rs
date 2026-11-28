@@ -1091,29 +1091,45 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                 // pruning entries past their window at boot.
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_alert_pipeline().await {
-                        Ok(Some(snap)) => {
+                        Ok(Some((snap, skips))) => {
                             let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
+                            metrics.record_alert_pipeline_restore_skips(&skips);
+                            if skips.total() > 0 {
+                                tracing::warn!(
+                                    dedup = skips.dedup,
+                                    incidents = skips.incidents,
+                                    silences = skips.silences,
+                                    inhibit_sources = skips.inhibit_sources,
+                                    "Left out unreadable alert-pipeline snapshot entries"
+                                );
+                            }
                             let restored = alert_state
                                 .write()
                                 .map(|mut state| {
-                                    let stats = pipeline.restore_detailed(
+                                    let report = pipeline.restore_report(
                                         &mut state,
                                         snap,
                                         now,
                                         config.tenancy.enabled,
                                     );
-                                    if let Some(stats) = &stats
-                                        && (stats.discarded_untenanted > 0
-                                            || stats.discarded_tenanted > 0)
-                                    {
-                                        tracing::warn!(
-                                            untenanted = stats.discarded_untenanted,
-                                            tenanted = stats.discarded_tenanted,
-                                            "Discarded alert-pipeline entries that do not match the tenancy mode"
-                                        );
+                                    if let Some(report) = &report {
+                                        let stats = &report.stats;
+                                        if stats.discarded_untenanted > 0
+                                            || stats.discarded_tenanted > 0
+                                        {
+                                            tracing::warn!(
+                                                untenanted = stats.discarded_untenanted,
+                                                tenanted = stats.discarded_tenanted,
+                                                "Discarded alert-pipeline entries that do not match the tenancy mode"
+                                            );
+                                        }
+                                        metrics
+                                            .alert_pipeline_restore_skipped_total
+                                            .with_label_values(&["silence", "over_limit"])
+                                            .inc_by(report.silences_skipped as u64);
                                     }
-                                    stats.is_some()
+                                    report.is_some()
                                 })
                                 .unwrap_or(false);
                             if restored {
@@ -1565,6 +1581,12 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         watchlists: watchlists.clone(),
     };
 
+    let silence_routes =
+        get(list_silences)
+            .post(create_silence)
+            .layer(axum::extract::DefaultBodyLimit::max(
+                rsigma_runtime::MAX_SILENCE_REQUEST_BYTES,
+            ));
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -1577,7 +1599,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         .route("/api/v1/incidents/{id}", get(get_incident))
         .route("/api/v1/incidents/{id}/bundle", get(get_incident_bundle))
         .route("/api/v1/risk", get(list_risk_entities))
-        .route("/api/v1/silences", get(list_silences).post(create_silence))
+        .route("/api/v1/silences", silence_routes)
         .route("/api/v1/silences/{id}", delete(delete_silence))
         .route(
             "/api/v1/dispositions",
@@ -5000,7 +5022,19 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
             .into_response();
     };
     let now = chrono::Utc::now().timestamp();
-    match Silence::build_api(spec, &limits, now) {
+    let built = match tokio::task::spawn_blocking(move || Silence::build_api(spec, &limits, now))
+        .await
+    {
+        Ok(built) => built,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("silence compile task failed: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    match built {
         Ok(silence) => {
             let id = silence.id().to_string();
             let added = {
@@ -5031,6 +5065,16 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
                     })),
                 )
                     .into_response(),
+                Err(SilenceRejection::RegexMemory) => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "the regexes of API silences would hold more than {} MiB; delete silences or use `=` matchers",
+                            rsigma_runtime::MAX_SILENCE_REGEX_MEMORY >> 20
+                        )
+                    })),
+                )
+                    .into_response(),
                 Err(SilenceRejection::TenantFull) => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(serde_json::json!({
@@ -5051,6 +5095,9 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
                 SilenceError::TooBroad => Some(
                     "add a `=` matcher on rule, match.<field>, or correlation.group_key.<field>, or set allow_broad_silences: true in the alert pipeline config",
                 ),
+                SilenceError::TooManyMatchers { .. } => {
+                    Some("split the silence into several silences with fewer matchers")
+                }
                 _ => None,
             };
             let mut body = serde_json::json!({ "error": e.to_string() });

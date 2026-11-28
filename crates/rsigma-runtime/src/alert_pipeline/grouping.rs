@@ -874,8 +874,9 @@ impl Incident {
                     let mut sample = result.clone();
                     strip_event_payloads(&mut sample);
                     self.result_uids.resize(self.results.len(), None);
-                    self.results
-                        .push(serde_json::to_value(&sample).unwrap_or(Value::Null));
+                    let mut value = serde_json::to_value(&sample).unwrap_or(Value::Null);
+                    super::snapshot::bound_depth(&mut value);
+                    self.results.push(value);
                     self.result_uids.push(finding_uid.map(str::to_string));
                 }
             }

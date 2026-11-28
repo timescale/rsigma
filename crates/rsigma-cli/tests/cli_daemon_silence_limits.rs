@@ -194,3 +194,130 @@ fn restored_silences_over_the_limits_are_kept_and_logged() {
         "the restored silence stays in effect: {text}"
     );
 }
+
+fn scoped_with(extra: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut matchers = vec![serde_json::json!({
+        "selector": "rule", "op": "=", "value": SIMPLE_RULE_ID
+    })];
+    matchers.extend(extra);
+    serde_json::json!({ "matchers": matchers, "ends_at": in_one_hour() })
+}
+
+#[test]
+fn oversized_silences_are_refused_before_compiling() {
+    let (daemon, _files) = spawn_with_pipeline("{}\n");
+
+    let matcher = serde_json::json!({ "selector": "match.User", "op": "=~", "value": "u.*" });
+    let (status, body) = post_silence(&daemon, scoped_with(vec![matcher.clone(); 32]));
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("at most 32 matchers"),
+        "{body}"
+    );
+
+    let (status, body) = post_silence(
+        &daemon,
+        scoped_with(vec![serde_json::json!({
+            "selector": "match.User", "op": "=", "value": "x".repeat(1025)
+        })]),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("longer than 1024 bytes"),
+        "{body}"
+    );
+
+    let (status, body) = post_silence(
+        &daemon,
+        scoped_with(vec![serde_json::json!({
+            "selector": "match.User", "op": "=~", "value": "a{5000}"
+        })]),
+    );
+    assert_eq!(status, 400, "a large regex is refused: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("size limit"),
+        "{body}"
+    );
+
+    // Thousands of matchers exceed the request body limit before parsing.
+    let (status, text) = http_post(
+        &daemon.url("/api/v1/silences"),
+        &scoped_with(vec![matcher; 5000]).to_string(),
+    );
+    assert_eq!(status, 413, "{text}");
+
+    let (_, listed) = common::http_get(&daemon.url("/api/v1/silences"));
+    assert!(
+        listed.contains("\"count\":0"),
+        "nothing was stored: {listed}"
+    );
+}
+
+#[test]
+fn a_restored_silence_over_the_size_limits_is_skipped() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let pipeline = temp_file(".yml", "{}\n");
+    let dir = tempfile::tempdir().unwrap();
+    let state_db = dir.path().join("state.db");
+    let spawn = |extra: &[&str]| {
+        let mut args = vec![
+            "--alert-pipeline",
+            pipeline.path().to_str().unwrap(),
+            "--state-db",
+            state_db.to_str().unwrap(),
+            "--state-save-interval",
+            "1",
+        ];
+        args.extend_from_slice(extra);
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &args)
+    };
+
+    {
+        let daemon = spawn(&[]);
+        let mut keep = scoped_with(vec![]);
+        keep["id"] = "keep".into();
+        let (status, body) = post_silence(&daemon, keep);
+        assert_eq!(status, 201, "{body}");
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    let conn = rusqlite::Connection::open(&state_db).unwrap();
+    let text: String = conn
+        .query_row(
+            "SELECT snapshot FROM rsigma_alert_pipeline_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut snapshot: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let silences = snapshot["silences"].as_array_mut().unwrap();
+    assert_eq!(silences.len(), 1, "{text}");
+    let mut oversize = silences[0].clone();
+    oversize["id"] = "oversize".into();
+    oversize["matchers"] = serde_json::json!(vec![oversize["matchers"][0].clone(); 40]);
+    silences.push(oversize);
+    conn.execute(
+        "UPDATE rsigma_alert_pipeline_state SET snapshot = ?1 WHERE id = 1",
+        rusqlite::params![snapshot.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+
+    let daemon = spawn(&["--keep-state"]);
+    let (_, listed) = common::http_get(&daemon.url("/api/v1/silences"));
+    assert!(listed.contains("\"keep\""), "{listed}");
+    assert!(!listed.contains("oversize"), "{listed}");
+    let (_, metrics) = common::http_get(&daemon.url("/metrics"));
+    assert!(
+        metrics.contains(
+            "rsigma_alert_pipeline_restore_skipped_total{kind=\"silence\",reason=\"over_limit\"} 1"
+        ),
+        "{metrics}"
+    );
+}

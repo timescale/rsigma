@@ -1,0 +1,1 @@
+{"version":3,"silences":[{"id":"s","matchers":[{"selector":"rule","op":"=","value":"r"}],"starts_at":null,"ends_at":null,"created_by":null,"comment":null},{"id":7}],"dedup":[{"fingerprint":1}],"incidents":["x"],"inhibit_sources":[{"rule":"crit","equal_key":"10.0.0.1","last_seen":1767225600}]}

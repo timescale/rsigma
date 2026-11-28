@@ -940,3 +940,54 @@ fn stream_mode_exits_0_on_a_signal_and_saves_state() {
         "the shutdown save should persist the correlation state"
     );
 }
+
+#[test]
+fn batch_run_restores_around_a_corrupt_alert_pipeline_entry() {
+    let rules = temp_file(".yml", common::SIMPLE_RULE);
+    let pipeline = temp_file(
+        ".yml",
+        "dedup:\n  fingerprint: [match.CommandLine]\n  resolve_timeout: 1h\n",
+    );
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("state.db");
+    let events = concat!(
+        r#"{"CommandLine":"malware a"}"#,
+        "\n",
+        r#"{"CommandLine":"malware b"}"#,
+        "\n"
+    );
+    let run = |stdin: &'static str| {
+        batch(rules.path(), &db)
+            .args(["--alert-pipeline", pipeline.path().to_str().unwrap()])
+            .write_stdin(stdin)
+            .output()
+            .unwrap()
+    };
+    assert!(run(events).status.success());
+    patch_snapshot(&db, "rsigma_alert_pipeline_state", |snapshot| {
+        assert_eq!(snapshot["dedup"].as_array().unwrap().len(), 2);
+        snapshot["dedup"][0] = serde_json::json!({ "fingerprint": 7 });
+    });
+
+    let output = run("");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(
+        stderr.contains("unreadable alert-pipeline snapshot entry"),
+        "the skipped entry should be logged: {stderr}"
+    );
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let snapshot: String = conn
+        .query_row(
+            "SELECT snapshot FROM rsigma_alert_pipeline_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    assert_eq!(
+        value["dedup"].as_array().unwrap().len(),
+        1,
+        "the readable alert survives the run: {value}"
+    );
+}

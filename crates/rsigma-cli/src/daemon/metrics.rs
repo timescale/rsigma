@@ -140,6 +140,8 @@ pub struct Metrics {
     pub capture_events_dropped_total: IntCounterVec,
     pub capture_spool_jobs_total: IntCounterVec,
     pub capture_spool_evictions_total: IntCounterVec,
+    pub capture_spool_bytes: IntGauge,
+    pub alert_pipeline_restore_skipped_total: IntCounterVec,
     pub risk_annotations_total: IntCounterVec,
     pub risk_annotation_score: Histogram,
     pub risk_objects_total: IntCounter,
@@ -157,6 +159,20 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Count the alert-pipeline snapshot entries that could not be read.
+    pub fn record_alert_pipeline_restore_skips(&self, skips: &rsigma_runtime::SnapshotSkips) {
+        for (kind, count) in [
+            ("dedup", skips.dedup),
+            ("incident", skips.incidents),
+            ("silence", skips.silences),
+            ("inhibit_source", skips.inhibit_sources),
+        ] {
+            self.alert_pipeline_restore_skipped_total
+                .with_label_values(&[kind, "unreadable"])
+                .inc_by(count as u64);
+        }
+    }
+
     /// Pre-register a tenant's match-count label so it appears on `/metrics`
     /// from startup.
     pub fn register_tenant(&self, tenant: &str) {
@@ -1511,6 +1527,33 @@ impl Metrics {
         registry
             .register(Box::new(capture_spool_evictions_total.clone()))
             .unwrap();
+        let capture_spool_bytes = IntGauge::with_opts(Opts::new(
+            "rsigma_capture_spool_bytes",
+            "Bytes of completed bundles in the capture spool, across every tenant",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(capture_spool_bytes.clone()))
+            .unwrap();
+        let alert_pipeline_restore_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_alert_pipeline_restore_skipped_total",
+                "Alert-pipeline snapshot entries left out on restore",
+            ),
+            &["kind", "reason"],
+        )
+        .unwrap();
+        for kind in ["dedup", "incident", "silence", "inhibit_source"] {
+            alert_pipeline_restore_skipped_total
+                .with_label_values(&[kind, "unreadable"])
+                .inc_by(0);
+        }
+        alert_pipeline_restore_skipped_total
+            .with_label_values(&["silence", "over_limit"])
+            .inc_by(0);
+        registry
+            .register(Box::new(alert_pipeline_restore_skipped_total.clone()))
+            .unwrap();
 
         // Risk-based alerting (#65). Annotation outcomes, the per-detection
         // score distribution, the risk-object count, and the stage duration.
@@ -1827,6 +1870,8 @@ impl Metrics {
             capture_events_dropped_total,
             capture_spool_jobs_total,
             capture_spool_evictions_total,
+            capture_spool_bytes,
+            alert_pipeline_restore_skipped_total,
             risk_annotations_total,
             risk_annotation_score,
             risk_objects_total,

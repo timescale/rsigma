@@ -1,0 +1,1 @@
+{"matchers":[{"selector":"rule","op":"=","value":"r1"},{"selector":"match.SourceIp","op":"=~","value":"10\\.0\\..*"}],"ends_at":"2026-01-01T01:00:00Z","comment":"maintenance","created_by":"ops"}

@@ -4796,6 +4796,8 @@ dependencies = [
  "rayon",
  "rcgen",
  "regex",
+ "regex-automata",
+ "regex-syntax",
  "reqwest 0.12.28",
  "rsigma-eval",
  "rsigma-parser",

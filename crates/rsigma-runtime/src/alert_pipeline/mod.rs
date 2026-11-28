@@ -39,12 +39,15 @@ pub use grouping::{
     Caps, GroupMode, IncidentRef, IncidentResult, IncidentStore, IncludeMode, SampleMode,
 };
 pub use identity::IdentityKey;
-pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec};
+pub use matcher::{MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec, RegexLimits};
 pub use silence::{
-    DEFAULT_MAX_SILENCE_DURATION, Silence, SilenceError, SilenceLimits, SilenceOrigin,
-    SilenceRejection, SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView,
+    DEFAULT_MAX_SILENCE_DURATION, MAX_SILENCE_COMMENT_BYTES, MAX_SILENCE_MATCHERS,
+    MAX_SILENCE_NAME_BYTES, MAX_SILENCE_REGEX_MEMORY, MAX_SILENCE_REQUEST_BYTES,
+    MAX_SILENCE_SELECTOR_BYTES, MAX_SILENCE_VALUE_BYTES, SILENCE_REGEX_LIMITS, Silence,
+    SilenceError, SilenceLimits, SilenceOrigin, SilenceRejection, SilenceRemoval, SilenceSpec,
+    SilenceState, SilenceStore, SilenceView,
 };
-pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
+pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION, SnapshotSkips};
 pub use state::AlertPipelineState;
 
 use std::sync::Arc;
@@ -608,6 +611,20 @@ impl AlertPipeline {
         now: i64,
         tenancy: bool,
     ) -> Option<rsigma_eval::ImportStats> {
+        self.restore_report(state, snap, now, tenancy)
+            .map(|report| report.stats)
+    }
+
+    /// Like [`restore_detailed`](Self::restore_detailed), also counting the
+    /// silences left out because they exceed the API's size, regex, or count
+    /// limits.
+    pub fn restore_report(
+        &self,
+        state: &mut AlertPipelineState,
+        snap: AlertPipelineSnapshot,
+        now: i64,
+        tenancy: bool,
+    ) -> Option<RestoreReport> {
         if !matches!(snap.version, 1..=SNAPSHOT_VERSION) {
             return None;
         }
@@ -639,7 +656,12 @@ impl AlertPipeline {
                 keep(s.tenant.as_ref())
             })
             .collect();
-        state.silences.restore_api(silences, now);
+        let silences_skipped = state.silences.restore_api(
+            silences,
+            now,
+            self.max_silences,
+            self.tenant_quotas.silences,
+        );
         self.warn_over_limit_silences(state, now, "restore");
 
         let dedup: Vec<_> = snap
@@ -704,7 +726,10 @@ impl AlertPipeline {
             + state.incidents.len().saturating_sub(before.1)
             + state.inhibit.snapshot().len().saturating_sub(before.2);
         trim.log("restore");
-        Some(stats)
+        Some(RestoreReport {
+            stats,
+            silences_skipped,
+        })
     }
 
     /// Trim carried-over state to this pipeline's caps: the least recently
@@ -768,6 +793,16 @@ impl AlertPipeline {
             );
         }
     }
+}
+
+/// What [`AlertPipeline::restore_report`] restored and left out.
+#[derive(Debug, Default, Clone)]
+pub struct RestoreReport {
+    /// Restored and tenancy-discarded counts.
+    pub stats: rsigma_eval::ImportStats,
+    /// Silences left out because they exceed the API's size, regex, or count
+    /// limits.
+    pub silences_skipped: usize,
 }
 
 /// What [`AlertPipeline::enforce_caps`] evicted.
@@ -863,6 +898,7 @@ pub fn strip_auto_retained_event(result: &mut EvaluationResult) {
 
 #[cfg(test)]
 mod tests {
+    use super::silence::SilenceSnap;
     use super::*;
     use crate::NoopMetrics;
     use rsigma_eval::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader};
@@ -1118,6 +1154,139 @@ mod tests {
         assert!(run(&p, "10.0.0.1", Level::High, &mut st, 1).is_empty());
         // High target on a different IP passes.
         assert_eq!(run(&p, "10.0.0.2", Level::High, &mut st, 2).len(), 1);
+    }
+
+    /// The deepest JSON value event ingest parses.
+    fn ingest_maximum_value() -> serde_json::Value {
+        let nest = |depth: usize| {
+            let mut text = String::from("\"leaf\"");
+            for _ in 0..depth {
+                text = format!("{{\"k\":{text}}}");
+            }
+            text
+        };
+        let mut depth = 1;
+        while serde_json::from_str::<serde_json::Value>(&nest(depth + 1)).is_ok() {
+            depth += 1;
+        }
+        serde_json::from_str(&nest(depth)).unwrap()
+    }
+
+    fn snapshot_json(p: &AlertPipeline, st: &AlertPipelineState) -> String {
+        serde_json::to_string(&p.snapshot(st)).unwrap()
+    }
+
+    #[test]
+    fn a_value_nested_at_the_ingest_maximum_survives_save_and_restore() {
+        let p = pipeline(
+            "dedup:\n  fingerprint: [match.Deep]\n  resolve_timeout: 1h\ngroup:\n  by: [match.Deep]\n  include: results\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let deep = ingest_maximum_value();
+        let mut result = detection("10.0.0.1", Level::High);
+        if let ResultBody::Detection(body) = &mut result.body {
+            body.matched_fields
+                .push(FieldMatch::new("Deep", deep.clone()));
+        }
+        let mut st = AlertPipelineState::default();
+        p.process(vec![result], &mut st, 100, &NoopMetrics);
+        assert_eq!((st.dedup.len(), st.incidents.len()), (1, 1));
+
+        let json = snapshot_json(&p, &st);
+        let (snap, skips) = AlertPipelineSnapshot::from_json(&json).unwrap();
+        assert_eq!(skips, SnapshotSkips::default(), "every entry reads back");
+        let mut fresh = AlertPipelineState::default();
+        assert!(p.restore(&mut fresh, snap, 200, false));
+        assert_eq!(
+            snapshot_json(&p, &fresh),
+            json,
+            "the restored state is the saved state"
+        );
+        assert!(
+            json.contains(&deep.to_string()),
+            "the value is not rewritten"
+        );
+    }
+
+    #[test]
+    fn one_corrupt_dedup_entry_leaves_the_rest_restorable() {
+        let p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\ngroup:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        );
+        let mut st = AlertPipelineState::default();
+        let _ = run(&p, "10.0.0.1", Level::High, &mut st, 100);
+        let _ = run(&p, "10.0.0.2", Level::High, &mut st, 100);
+        st.silences.add(
+            Silence::build(
+                SilenceSpec {
+                    id: Some("keep".into()),
+                    matchers: vec![MatcherSpec {
+                        selector: "rule".to_string(),
+                        op: MatchOp::Eq,
+                        value: "other".to_string(),
+                    }],
+                    ..Default::default()
+                },
+                SilenceOrigin::Api,
+            )
+            .unwrap(),
+        );
+        let mut value: serde_json::Value = serde_json::from_str(&snapshot_json(&p, &st)).unwrap();
+        value["dedup"][0] = serde_json::json!({"fingerprint": 7, "alert": "broken"});
+
+        let (snap, skips) = AlertPipelineSnapshot::from_json(&value.to_string()).unwrap();
+        assert_eq!(
+            skips,
+            SnapshotSkips {
+                dedup: 1,
+                ..Default::default()
+            }
+        );
+        let mut fresh = AlertPipelineState::default();
+        assert!(p.restore(&mut fresh, snap, 200, false));
+        assert_eq!(fresh.dedup.len(), 1, "the readable alert restores");
+        assert_eq!(fresh.incidents.len(), 2);
+        assert_eq!(fresh.silences.api_snapshot().len(), 1);
+    }
+
+    #[test]
+    fn restore_applies_the_silence_api_limits() {
+        let p = pipeline("max_silences: 2\n");
+        let silence = |id: &str, value: &str| SilenceSnap {
+            id: id.to_string(),
+            matchers: vec![MatcherSpec {
+                selector: "rule".to_string(),
+                op: MatchOp::ReMatch,
+                value: value.to_string(),
+            }],
+            starts_at: None,
+            ends_at: None,
+            created_by: None,
+            comment: None,
+            tenant: None,
+        };
+        let mut oversize = silence("many", "r");
+        oversize.matchers = vec![oversize.matchers[0].clone(); MAX_SILENCE_MATCHERS + 1];
+        let snap = AlertPipelineSnapshot {
+            silences: vec![
+                oversize,
+                silence("huge", "a{5000}"),
+                silence("a", "a"),
+                silence("a", "dup"),
+                silence("b", "b"),
+                silence("c", "over-cap"),
+            ],
+            ..AlertPipelineSnapshot::empty()
+        };
+        let mut st = AlertPipelineState::default();
+        let report = p.restore_report(&mut st, snap, 0, false).unwrap();
+        let ids: Vec<String> = st
+            .silences
+            .api_snapshot()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(report.silences_skipped, 4);
     }
 
     #[test]
