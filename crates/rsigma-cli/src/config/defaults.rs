@@ -66,7 +66,7 @@ pub(crate) const DISPOSITIONS_ENABLED: bool = false;
 pub(crate) const DISPOSITIONS_WINDOW: &str = "30d";
 pub(crate) const DISPOSITIONS_NUMERATOR: &str = "fp_only";
 pub(crate) const DISPOSITIONS_MIN_SAMPLE: u64 = 5;
-pub(crate) const DISPOSITIONS_MAX_RULES: usize = rsigma_runtime::DEFAULT_MAX_RULES;
+pub(crate) const DISPOSITIONS_MAX_RULES: usize = 10_000;
 /// Verdict-driven evidence capture (`daemon.capture.*`). Off by default and
 /// startup-only: enabling it or changing bounds requires a daemon restart.
 pub(crate) const CAPTURE_ENABLED: bool = false;
