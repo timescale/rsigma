@@ -277,15 +277,16 @@ def while(cond; update): def rec: if cond then ., (update | __rsigma_tick as $_ 
 def until(cond; update): def rec: if cond then . else update | __rsigma_tick as $_ | rec end; rec;
 "#;
 
-fn counted_defs() -> Vec<jaq_core::load::parse::Def<&'static str>> {
-    jaq_core::load::parse(COUNTED_DEFS, |p| p.defs()).unwrap_or_default()
-}
+static COUNTED: std::sync::LazyLock<Vec<jaq_core::load::parse::Def<&'static str>>> =
+    std::sync::LazyLock::new(|| {
+        jaq_core::load::parse(COUNTED_DEFS, |p| p.defs()).unwrap_or_default()
+    });
 
 /// The prelude every extract program compiles against: the jaq core,
 /// standard, and JSON definitions, with the generators counted and the
 /// definitions over excluded natives removed.
 fn jq_defs() -> impl Iterator<Item = jaq_core::load::parse::Def<&'static str>> {
-    let counted = counted_defs();
+    let counted = &*COUNTED;
     let replacement = |def: &jaq_core::load::parse::Def<&'static str>| {
         counted
             .iter()
@@ -741,6 +742,28 @@ mod tests {
 
     fn tight(timeout: Duration) -> ExtractLimits {
         ExtractLimits::enrichment(timeout, Arc::new(AtomicBool::new(false)))
+    }
+
+    #[test]
+    fn every_counted_generator_replaces_a_standard_one() {
+        let names: Vec<_> = COUNTED.iter().map(|d| (d.name, d.args.len())).collect();
+        assert_eq!(
+            names,
+            [
+                ("range", 3),
+                ("repeat", 1),
+                ("recurse", 1),
+                ("while", 2),
+                ("until", 2)
+            ]
+        );
+        let core: Vec<_> = jaq_core::defs().map(|d| (d.name, d.args.len())).collect();
+        for (name, arity) in names.iter().skip(1) {
+            assert!(core.contains(&(*name, *arity)), "{name}/{arity}");
+        }
+        assert!(
+            jaq_core::funs::<JqData>().any(|(name, args, _)| name == "range" && args.len() == 3)
+        );
     }
 
     #[test]
