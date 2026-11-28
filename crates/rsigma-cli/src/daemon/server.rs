@@ -2014,14 +2014,14 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                         new_layer
                             .set_max_open_entities_per_tenant(reload_tenant_quotas.risk_entities);
                         if new_layer.incident_config().is_some()
-                            && let Some(max) = reload_tenant_quotas.risk_entities
                             && let Ok(mut st) = reload_risk_state.write()
                         {
-                            let evicted = st.enforce_tenant_cap(max);
-                            if evicted > 0 {
+                            let trim = new_layer.enforce_caps(&mut st, reload_metrics.as_ref());
+                            if trim.tenant > 0 || trim.global > 0 {
                                 tracing::warn!(
-                                    evicted,
-                                    "Evicted the stalest risk entities to fit the per-tenant quota"
+                                    tenant = trim.tenant,
+                                    global = trim.global,
+                                    "Reclaimed the lowest-scoring risk entities to fit the configured caps"
                                 );
                             }
                         }

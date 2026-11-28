@@ -25,7 +25,7 @@ mod score;
 mod snapshot;
 mod tactics;
 
-pub use accumulator::{IncidentConfig, RiskCaps, RiskState};
+pub use accumulator::{CapTrim, IncidentConfig, RiskCaps, RiskState};
 pub use config::{
     IncidentFile, IncludeLabel, ObjectFile, ReducerLabel, RiskCapsFile, RiskConfigError, RiskFile,
     ScopeConfig, ScoreFile, build_risk_layer, load_risk_file, parse_risk_config,
@@ -33,7 +33,7 @@ pub use config::{
 pub use incident::{IncludeMode, RiskEntityView, RiskIncidentResult, RiskRef};
 pub use object::RiskObject;
 pub use score::DEFAULT_SCORE_ATTRIBUTE;
-pub use snapshot::{EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
+pub use snapshot::{BucketSnapshot, EntitySnapshot, RiskStateSnapshot, SNAPSHOT_VERSION};
 
 use rsigma_eval::{EvaluationResult, ProcessResult};
 use serde::{Deserialize, Serialize};
@@ -296,8 +296,11 @@ impl RiskLayer {
             if outcome.quota_evicted {
                 metrics.on_tenant_quota_eviction("risk_entities");
             }
-            if outcome.evicted {
-                metrics.on_risk_eviction();
+            for _ in 0..outcome.aged_evicted {
+                metrics.on_risk_eviction("aged");
+            }
+            for _ in 0..outcome.cap_evicted {
+                metrics.on_risk_eviction("cap");
             }
             if let Some(incident) = outcome.incident {
                 metrics.on_risk_incident_emitted(incident.trigger);
@@ -315,10 +318,30 @@ impl RiskLayer {
         };
         let evicted = state.tick(cfg, now);
         for _ in 0..evicted {
-            metrics.on_risk_eviction();
+            metrics.on_risk_eviction("aged");
         }
         metrics.set_risk_entities_open(state.len() as i64);
         metrics.set_risk_state_entries(state.total_entries() as i64);
+    }
+
+    /// Reclaim the lowest-scoring entities until `state` is within the
+    /// per-tenant and global entity caps, and trim each entity's samples to
+    /// `max_results_per_incident`. Run after a reload so a lowered cap takes
+    /// effect at once. A no-op when the accumulator is off.
+    pub fn enforce_caps(&self, state: &mut RiskState, metrics: &dyn MetricsHook) -> CapTrim {
+        let Some(cfg) = self.incident.as_ref() else {
+            return CapTrim::default();
+        };
+        let trim = state.enforce_caps(cfg);
+        for _ in 0..trim.tenant {
+            metrics.on_tenant_quota_eviction("risk_entities");
+        }
+        for _ in 0..trim.global {
+            metrics.on_risk_eviction("cap");
+        }
+        metrics.set_risk_entities_open(state.len() as i64);
+        metrics.set_risk_state_entries(state.total_entries() as i64);
+        trim
     }
 
     /// Capture the accumulator into a versioned persistence snapshot.
@@ -327,7 +350,8 @@ impl RiskLayer {
     }
 
     /// Restore a snapshot into `state`, pruning entries past the window at
-    /// `now`. Returns `false` on a version mismatch, or when no accumulator is
+    /// `now` and reclaiming the lowest-scoring entities beyond the caps.
+    /// Returns `false` on a version mismatch, or when no accumulator is
     /// configured to restore into (the caller starts fresh).
     pub fn restore(
         &self,
@@ -349,17 +373,7 @@ impl RiskLayer {
         tenancy: bool,
     ) -> Option<rsigma_eval::ImportStats> {
         let cfg = self.incident.as_ref()?;
-        let stats = state.restore_detailed(
-            snap,
-            cfg.window.as_secs() as i64,
-            cfg.caps.max_open_entities,
-            now,
-            tenancy,
-        )?;
-        if let Some(max) = cfg.caps.max_open_entities_per_tenant {
-            state.enforce_tenant_cap(max);
-        }
-        Some(stats)
+        state.restore_detailed(cfg, snap, now, tenancy)
     }
 }
 
@@ -506,6 +520,123 @@ mod tests {
             out.finding_links[0].results,
             [Some("uid-0".to_string()), Some("uid-1".to_string())]
         );
+    }
+
+    #[derive(Default)]
+    struct EvictionMetrics {
+        reasons: std::sync::Mutex<HashMap<String, u64>>,
+        quota: std::sync::Mutex<u64>,
+    }
+
+    impl EvictionMetrics {
+        fn count(&self, reason: &str) -> u64 {
+            self.reasons
+                .lock()
+                .unwrap()
+                .get(reason)
+                .copied()
+                .unwrap_or(0)
+        }
+    }
+
+    impl MetricsHook for EvictionMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _count: u64) {}
+        fn on_detection_matches(&self, _count: u64) {}
+        fn on_correlation_matches(&self, _count: u64) {}
+        fn observe_processing_latency(&self, _seconds: f64) {}
+        fn observe_batch_size(&self, _size: u64) {}
+        fn on_input_queue_depth_change(&self, _delta: i64) {}
+        fn on_back_pressure(&self) {}
+        fn on_output_queue_depth_change(&self, _delta: i64) {}
+        fn observe_pipeline_latency(&self, _seconds: f64) {}
+        fn set_correlation_state_entries(&self, _count: u64) {}
+        fn on_risk_eviction(&self, reason: &str) {
+            *self
+                .reasons
+                .lock()
+                .unwrap()
+                .entry(reason.to_string())
+                .or_default() += 1;
+        }
+        fn on_tenant_quota_eviction(&self, _store: &'static str) {
+            *self.quota.lock().unwrap() += 1;
+        }
+    }
+
+    /// A store full of single low-score entities: a fresh entity crossing
+    /// either threshold still yields an incident, the cap reason moves, and
+    /// the ageing reason does not.
+    #[test]
+    fn a_fresh_entity_at_the_entity_cap_still_raises_an_incident() {
+        for threshold in ["score_threshold: 100", "tactic_count_threshold: 3"] {
+            let p = layer(&format!(
+                "score:\n  level_scores:\n    low: 1\n    critical: 100\n\
+                 objects:\n  - type: src_ip\n    selector: match.SourceIp\n\
+                 incident:\n  {threshold}\n  caps:\n    max_open_entities: 20\n"
+            ));
+            let metrics = EvictionMetrics::default();
+            let mut st = RiskState::default();
+            let fill: ProcessResult = (0..20)
+                .map(|i| detection(&format!("10.0.0.{i}"), Level::Low, vec![]))
+                .collect();
+            let out = p.process(fill, &mut st, 0, &metrics);
+            assert!(out.incidents.is_empty());
+            assert_eq!(st.len(), 20);
+
+            let fresh = detection(
+                "192.0.2.1",
+                Level::Critical,
+                vec![
+                    "attack.execution",
+                    "attack.persistence",
+                    "attack.privilege_escalation",
+                ],
+            );
+            let out = p.process(vec![fresh], &mut st, 1, &metrics);
+            assert_eq!(out.incidents.len(), 1, "{threshold}");
+            assert_eq!(out.incidents[0].entity_value, "192.0.2.1");
+            assert_eq!(metrics.count("cap"), 1, "{threshold}");
+            assert_eq!(metrics.count("aged"), 0, "{threshold}");
+            assert_eq!(st.len(), 20);
+        }
+    }
+
+    #[test]
+    fn ageing_and_cap_enforcement_report_their_own_reasons() {
+        let p = layer(
+            "score:\n  default_score: 1\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\n\
+             incident:\n  score_threshold: 100\n  window: 1m\n",
+        );
+        let metrics = EvictionMetrics::default();
+        let mut st = RiskState::default();
+        let batch: ProcessResult = (0..4)
+            .map(|i| detection(&format!("10.0.0.{i}"), Level::Low, vec![]))
+            .collect();
+        p.process(batch, &mut st, 0, &metrics);
+        p.tick(&mut st, 61, &metrics);
+        assert_eq!((metrics.count("aged"), metrics.count("cap")), (4, 0));
+
+        let batch: ProcessResult = (0..4)
+            .map(|i| detection(&format!("10.0.1.{i}"), Level::Low, vec![]))
+            .collect();
+        p.process(batch, &mut st, 100, &metrics);
+        let mut lowered = layer(
+            "score:\n  default_score: 1\nobjects:\n  - type: src_ip\n    selector: match.SourceIp\n\
+             incident:\n  score_threshold: 100\n  window: 1m\n  caps:\n    max_open_entities: 1\n",
+        );
+        lowered.set_max_open_entities_per_tenant(Some(2));
+        let trim = lowered.enforce_caps(&mut st, &metrics);
+        assert_eq!(
+            trim,
+            CapTrim {
+                tenant: 2,
+                global: 1
+            }
+        );
+        assert_eq!(metrics.count("cap"), 1);
+        assert_eq!(*metrics.quota.lock().unwrap(), 2);
+        assert_eq!(st.len(), 1);
     }
 
     #[test]

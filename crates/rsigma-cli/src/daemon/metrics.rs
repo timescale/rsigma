@@ -143,7 +143,7 @@ pub struct Metrics {
     pub risk_layer_duration_seconds: Histogram,
     pub risk_entities_open: IntGauge,
     pub risk_state_entries: IntGauge,
-    pub risk_evictions_total: IntCounter,
+    pub risk_evictions_total: IntCounterVec,
     pub risk_incidents_emitted_total: IntCounterVec,
     pub risk_incident_results_total: IntCounter,
     pub audit_records_total: IntCounter,
@@ -1516,10 +1516,13 @@ impl Metrics {
             "Risk contributions currently retained across all entities",
         ))
         .unwrap();
-        let risk_evictions_total = IntCounter::with_opts(Opts::new(
-            "rsigma_risk_evictions_total",
-            "Entities dropped from the risk accumulator (store full or aged out)",
-        ))
+        let risk_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_risk_evictions_total",
+                "Entities dropped from the risk accumulator by reason (aged, cap)",
+            ),
+            &["reason"],
+        )
         .unwrap();
         let risk_incidents_emitted_total = IntCounterVec::new(
             Opts::new(
@@ -1608,6 +1611,9 @@ impl Metrics {
             risk_incidents_emitted_total
                 .with_label_values(&[trigger])
                 .inc_by(0);
+        }
+        for reason in ["aged", "cap"] {
+            risk_evictions_total.with_label_values(&[reason]).inc_by(0);
         }
         risk_entities_open.set(0);
         risk_state_entries.set(0);
@@ -2155,8 +2161,8 @@ impl MetricsHook for Metrics {
         self.risk_state_entries.set(count);
     }
 
-    fn on_risk_eviction(&self) {
-        self.risk_evictions_total.inc();
+    fn on_risk_eviction(&self, reason: &str) {
+        self.risk_evictions_total.with_label_values(&[reason]).inc();
     }
 
     fn observe_processing_latency(&self, seconds: f64) {

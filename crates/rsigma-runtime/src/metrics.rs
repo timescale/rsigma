@@ -228,9 +228,10 @@ pub trait MetricsHook: Send + Sync {
     fn set_risk_entities_open(&self, _count: i64) {}
     /// Report the current number of retained contributions across all entities.
     fn set_risk_state_entries(&self, _count: i64) {}
-    /// A new entity could not be tracked (store full) or an aged-out entity was
-    /// pruned.
-    fn on_risk_eviction(&self) {}
+    /// An entity left the risk accumulator. `reason` is `aged` (its whole
+    /// window elapsed) or `cap` (reclaimed to make room under
+    /// `max_open_entities`).
+    fn on_risk_eviction(&self, _reason: &str) {}
 
     /// A captured event was dropped. `reason` is one of `event_too_large`,
     /// `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, or

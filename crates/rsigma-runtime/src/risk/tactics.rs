@@ -27,6 +27,19 @@ const TACTICS: &[&str] = &[
     "impact",
 ];
 
+/// Number of known tactics.
+pub(super) const COUNT: usize = TACTICS.len();
+
+/// Position of a canonical slug in the tactic list.
+pub(super) fn index(slug: &str) -> Option<usize> {
+    TACTICS.iter().position(|t| *t == slug)
+}
+
+/// The canonical slug at `index`, which must be below [`COUNT`].
+pub(super) fn slug(index: usize) -> &'static str {
+    TACTICS[index]
+}
+
 /// Resolve an `attack.<tactic>` short name to its canonical Navigator slug,
 /// accepting both the hyphen and underscore spellings. Unknown short names
 /// (techniques, ATT&CK groups/software, custom taxonomies) return `None`.
