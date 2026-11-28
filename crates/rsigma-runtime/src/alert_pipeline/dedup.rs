@@ -418,7 +418,9 @@ fn build_record(alert: &ActiveAlert, state: &'static str) -> Value {
 pub(crate) fn sample_of(result: &EvaluationResult) -> Value {
     let mut sample = result.clone();
     strip_event_payloads(&mut sample);
-    serde_json::to_value(&sample).unwrap_or(Value::Null)
+    let mut value = serde_json::to_value(&sample).unwrap_or(Value::Null);
+    super::snapshot::bound_depth(&mut value);
+    value
 }
 
 #[cfg(test)]

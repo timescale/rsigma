@@ -655,3 +655,96 @@ fn restart_keeps_unexpired_indicators() {
     assert_eq!(listed["total"], 1, "{body}");
     assert_eq!(listed["indicators"][0]["value"], "198.51.100.7");
 }
+
+/// An HTTP server that fails every request until `stall` is set, then accepts
+/// each request and never answers it.
+fn spawn_stalling_server(stall: std::sync::Arc<std::sync::atomic::AtomicBool>) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            if stall.load(std::sync::atomic::Ordering::SeqCst) {
+                held.push(stream);
+                continue;
+            }
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(
+                b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    format!("http://{addr}")
+}
+
+#[test]
+fn sources_that_stop_answering_do_not_hold_up_watchlist_pushes() {
+    let stall = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server = spawn_stalling_server(stall.clone());
+    let mut sources = String::from(SOURCES);
+    // More stalled sources than the scheduler resolves at once.
+    for i in 0..9 {
+        sources.push_str(&format!(
+            "  - id: stalled_{i}\n    type: http\n    url: {server}/s{i}\n    format: json\n    refresh: 1s\n    timeout: 1h\n    required: false\n"
+        ));
+    }
+    // A directory of its own, so the hot-reload watcher sees only these files.
+    let dir = tempfile::TempDir::new().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path.to_str().unwrap().to_string()
+    };
+    let rule = write("rule.yml", RULE);
+    let pipeline = write("pipeline.yml", PIPELINE);
+    let sources = write("sources.yml", &sources);
+    let daemon = DaemonProcess::spawn(&[
+        "engine",
+        "daemon",
+        "-r",
+        &rule,
+        "-p",
+        &pipeline,
+        "--source",
+        &sources,
+        "--input",
+        "http",
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+    // From now on every refresh of a stalled source waits forever.
+    stall.store(true, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(Duration::from_secs(3));
+    // A full reload re-fetches sources in the background, so it cannot hold
+    // the rebuild below either.
+    let (status, body) = http_post(&daemon.url("/api/v1/reload"), "");
+    assert_eq!(status, 200, "{body}");
+
+    let mut events = Events::new(&daemon);
+    let (status, body) = push(&daemon, r#"{"indicators":["198.51.100.7"]}"#);
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"revision\":1"), "{body}");
+    wait_for_match(&mut events, r#"{"DestinationIp":"198.51.100.7"}"#);
+
+    let listed = poll_until(Duration::from_secs(10), || {
+        let (_, body) = http_get(&daemon.url("/api/v1/sources/c2_ips/indicators"));
+        body.contains("\"pending\":false").then_some(body)
+    })
+    .expect("the change never showed as applied");
+    assert!(listed.contains("\"applied_revision\":1"), "{listed}");
+    let (_, metrics) = http_get(&daemon.url("/metrics"));
+    assert!(
+        metrics.contains("rsigma_watchlist_refresh_pending{source_id=\"c2_ips\"} 0"),
+        "{metrics}"
+    );
+    assert!(
+        metric(
+            &metrics,
+            "rsigma_watchlist_refresh_delay_seconds_count{source_id=\"c2_ips\"}"
+        ) >= 1,
+        "{metrics}"
+    );
+}

@@ -72,9 +72,12 @@ pub use alert_pipeline::{
     AlertPipeline, AlertPipelineConfigError, AlertPipelineFile, AlertPipelineSnapshot,
     AlertPipelineState, AlertTenantQuotas, CapTrim, Caps, DEFAULT_MAX_DYNAMIC_SILENCES,
     DEFAULT_MAX_SILENCE_DURATION, DedupStore, GroupMode, IdentityKey, IncidentRef, IncidentResult,
-    IncidentStore, IncludeMode, MatchOp, Matcher, MatcherError, MatcherSet, MatcherSpec,
-    SNAPSHOT_VERSION, Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceRejection,
-    SilenceRemoval, SilenceSpec, SilenceState, SilenceStore, SilenceView, TickOutput,
+    IncidentStore, IncludeMode, MAX_SILENCE_COMMENT_BYTES, MAX_SILENCE_MATCHERS,
+    MAX_SILENCE_NAME_BYTES, MAX_SILENCE_REGEX_MEMORY, MAX_SILENCE_REQUEST_BYTES,
+    MAX_SILENCE_SELECTOR_BYTES, MAX_SILENCE_VALUE_BYTES, MatchOp, Matcher, MatcherError,
+    MatcherSet, MatcherSpec, RegexLimits, RestoreReport, SILENCE_REGEX_LIMITS, SNAPSHOT_VERSION,
+    Silence, SilenceError, SilenceLimits, SilenceOrigin, SilenceRejection, SilenceRemoval,
+    SilenceSpec, SilenceState, SilenceStore, SilenceView, SnapshotSkips, TickOutput,
     build_alert_pipeline, load_alert_pipeline_file, parse_alert_pipeline_config,
     strip_auto_retained_event, strip_event_payloads,
 };
@@ -88,9 +91,10 @@ pub use capture_spool::{
     bundle_id, disposition_identity, parse_corpus_events, parse_manifest, parse_provenance,
 };
 pub use dispositions::{
-    Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,
-    DispositionStore, IngestOutcome, Numerator, RawDisposition, RuleSummary, Verdict,
-    parse_dispositions, triage_feed,
+    DEFAULT_MAX_RULES, Disposition, DispositionConfig, DispositionError, DispositionScope,
+    DispositionSnapshot, DispositionStore, IngestOutcome, MAX_DISPOSITION_CLOCK_SKEW_SECS,
+    MAX_DISPOSITION_ID_BYTES, MAX_DISPOSITIONS_PER_REQUEST, Numerator, RawDisposition, RuleSummary,
+    Verdict, parse_dispositions, triage_feed,
 };
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,
@@ -153,11 +157,13 @@ pub use rsigma_eval::{
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
     SchemaObserver, SchemaPruning, TenantId, UnknownShapeEntry, load_schema_signatures,
 };
-pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
+pub use sources::refresh::{
+    RefreshRequests, RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription,
+};
 pub use sources::{
     AddSummary, DefaultSourceResolver, RemoveSummary, ReplaceSummary, ResolvedValue, SourceCache,
     SourceError, SourceErrorKind, SourceResolver, TemplateExpander, WatchlistError, WatchlistItem,
-    WatchlistRegistry, WatchlistRestore,
+    WatchlistRegistry, WatchlistRestore, WatchlistStatus,
 };
 
 #[cfg(feature = "nats")]

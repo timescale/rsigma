@@ -56,6 +56,8 @@ pub struct Metrics {
     pub source_rebuilds_total: IntCounterVec,
     pub watchlist_indicators: IntGaugeVec,
     pub watchlist_changes_total: IntCounterVec,
+    pub watchlist_refresh_pending: IntGaugeVec,
+    pub watchlist_refresh_delay_seconds: prometheus::HistogramVec,
     #[cfg(feature = "stix-source")]
     pub stix_source_indicators: IntGaugeVec,
     #[cfg(feature = "stix-source")]
@@ -133,6 +135,7 @@ pub struct Metrics {
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
     pub disposition_ingest_errors_total: IntCounterVec,
+    pub disposition_tracked_rules: IntGauge,
     pub capture_incidents_open: IntGauge,
     pub capture_events_held: IntGauge,
     pub capture_bytes_held: IntGauge,
@@ -140,6 +143,8 @@ pub struct Metrics {
     pub capture_events_dropped_total: IntCounterVec,
     pub capture_spool_jobs_total: IntCounterVec,
     pub capture_spool_evictions_total: IntCounterVec,
+    pub capture_spool_bytes: IntGauge,
+    pub alert_pipeline_restore_skipped_total: IntCounterVec,
     pub risk_annotations_total: IntCounterVec,
     pub risk_annotation_score: Histogram,
     pub risk_objects_total: IntCounter,
@@ -157,6 +162,20 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Count the alert-pipeline snapshot entries that could not be read.
+    pub fn record_alert_pipeline_restore_skips(&self, skips: &rsigma_runtime::SnapshotSkips) {
+        for (kind, count) in [
+            ("dedup", skips.dedup),
+            ("incident", skips.incidents),
+            ("silence", skips.silences),
+            ("inhibit_source", skips.inhibit_sources),
+        ] {
+            self.alert_pipeline_restore_skipped_total
+                .with_label_values(&[kind, "unreadable"])
+                .inc_by(count as u64);
+        }
+    }
+
     /// Pre-register a tenant's match-count label so it appears on `/metrics`
     /// from startup.
     pub fn register_tenant(&self, tenant: &str) {
@@ -677,6 +696,31 @@ impl Metrics {
         .unwrap();
         registry
             .register(Box::new(watchlist_changes_total.clone()))
+            .unwrap();
+        let watchlist_refresh_pending = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_watchlist_refresh_pending",
+                "1 while a watchlist change has not reached the source cache",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_refresh_pending.clone()))
+            .unwrap();
+        let watchlist_refresh_delay_seconds = prometheus::HistogramVec::new(
+            HistogramOpts::new(
+                "rsigma_watchlist_refresh_delay_seconds",
+                "Time from a watchlist change to the source cache holding it",
+            )
+            .buckets(vec![
+                0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0,
+            ]),
+            &["source_id"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_refresh_delay_seconds.clone()))
             .unwrap();
         #[cfg(feature = "stix-source")]
         let stix_source_indicators = IntGaugeVec::new(
@@ -1393,7 +1437,13 @@ impl Metrics {
                     .inc_by(0);
             }
         }
-        for reason in ["parse", "validation"] {
+        for reason in [
+            "parse",
+            "validation",
+            "unknown_rule",
+            "rule_cap",
+            "batch_size",
+        ] {
             disposition_ingest_errors_total
                 .with_label_values(&[reason])
                 .inc_by(0);
@@ -1409,6 +1459,14 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(disposition_ingest_errors_total.clone()))
+            .unwrap();
+        let disposition_tracked_rules = IntGauge::with_opts(Opts::new(
+            "rsigma_disposition_tracked_rules",
+            "(tenant, rule) pairs the disposition store holds counts for",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(disposition_tracked_rules.clone()))
             .unwrap();
 
         let capture_incidents_open = IntGauge::with_opts(Opts::new(
@@ -1510,6 +1568,33 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(capture_spool_evictions_total.clone()))
+            .unwrap();
+        let capture_spool_bytes = IntGauge::with_opts(Opts::new(
+            "rsigma_capture_spool_bytes",
+            "Bytes of completed bundles in the capture spool, across every tenant",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(capture_spool_bytes.clone()))
+            .unwrap();
+        let alert_pipeline_restore_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_alert_pipeline_restore_skipped_total",
+                "Alert-pipeline snapshot entries left out on restore",
+            ),
+            &["kind", "reason"],
+        )
+        .unwrap();
+        for kind in ["dedup", "incident", "silence", "inhibit_source"] {
+            alert_pipeline_restore_skipped_total
+                .with_label_values(&[kind, "unreadable"])
+                .inc_by(0);
+        }
+        alert_pipeline_restore_skipped_total
+            .with_label_values(&["silence", "over_limit"])
+            .inc_by(0);
+        registry
+            .register(Box::new(alert_pipeline_restore_skipped_total.clone()))
             .unwrap();
 
         // Risk-based alerting (#65). Annotation outcomes, the per-detection
@@ -1743,6 +1828,8 @@ impl Metrics {
             source_rebuilds_total,
             watchlist_indicators,
             watchlist_changes_total,
+            watchlist_refresh_pending,
+            watchlist_refresh_delay_seconds,
             #[cfg(feature = "stix-source")]
             stix_source_indicators,
             #[cfg(feature = "stix-source")]
@@ -1820,6 +1907,7 @@ impl Metrics {
             dispositions_total,
             disposition_ingest_total,
             disposition_ingest_errors_total,
+            disposition_tracked_rules,
             capture_incidents_open,
             capture_events_held,
             capture_bytes_held,
@@ -1827,6 +1915,8 @@ impl Metrics {
             capture_events_dropped_total,
             capture_spool_jobs_total,
             capture_spool_evictions_total,
+            capture_spool_bytes,
+            alert_pipeline_restore_skipped_total,
             risk_annotations_total,
             risk_annotation_score,
             risk_objects_total,
@@ -2524,6 +2614,15 @@ impl MetricsHook for Metrics {
         self.stix_source_indicators
             .with_label_values(&[source_id])
             .set(count as i64);
+    }
+
+    fn on_watchlist_applied(&self, source_id: &str, delay: std::time::Duration) {
+        self.watchlist_refresh_pending
+            .with_label_values(&[source_id])
+            .set(0);
+        self.watchlist_refresh_delay_seconds
+            .with_label_values(&[source_id])
+            .observe(delay.as_secs_f64());
     }
 
     #[cfg(feature = "stix-source")]

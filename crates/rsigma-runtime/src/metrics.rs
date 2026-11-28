@@ -137,6 +137,9 @@ pub trait MetricsHook: Send + Sync {
     fn set_stix_source_indicators(&self, _source_id: &str, _count: u64) {}
     /// Count STIX objects received while resolving `source_id`.
     fn on_stix_source_objects(&self, _source_id: &str, _count: u64) {}
+    /// Every change to watchlist `source_id` reached the source cache,
+    /// `delay` after the oldest of them was made.
+    fn on_watchlist_applied(&self, _source_id: &str, _delay: std::time::Duration) {}
     /// Count indicators or observables skipped for `reason`.
     ///
     /// `reason` is one of `revoked`, `expired`, `not_yet_valid`, `low_confidence`,

@@ -15,12 +15,69 @@ use serde::{Deserialize, Serialize};
 use rsigma_eval::EvaluationResult;
 use rsigma_eval::TenantId;
 
-use super::matcher::{MatchOp, MatcherError, MatcherSet, MatcherSpec};
+use super::matcher::{MatchOp, MatcherError, MatcherSet, MatcherSpec, RegexLimits};
 use crate::selector::Selector;
 
 /// Default for [`SilenceLimits::max_duration`]: an API silence must end
 /// within 30 days of its creation.
 pub const DEFAULT_MAX_SILENCE_DURATION: Duration = Duration::from_secs(720 * 3600);
+
+/// Most matchers an API silence may carry.
+pub const MAX_SILENCE_MATCHERS: usize = 32;
+/// Longest matcher selector in an API silence, in bytes.
+pub const MAX_SILENCE_SELECTOR_BYTES: usize = 256;
+/// Longest matcher value (a literal or a regex) in an API silence, in bytes.
+pub const MAX_SILENCE_VALUE_BYTES: usize = 1024;
+/// Longest API silence `id` and `created_by`, in bytes.
+pub const MAX_SILENCE_NAME_BYTES: usize = 256;
+/// Longest API silence `comment`, in bytes.
+pub const MAX_SILENCE_COMMENT_BYTES: usize = 4096;
+/// Largest `POST /api/v1/silences` request body, in bytes.
+pub const MAX_SILENCE_REQUEST_BYTES: usize = 64 * 1024;
+/// Compile limits for the regexes of API silences.
+pub const SILENCE_REGEX_LIMITS: RegexLimits = RegexLimits {
+    size_limit: 64 * 1024,
+    cache_capacity: 64 * 1024,
+};
+/// Memory the regexes of all API silences may hold together, in bytes. Each
+/// regex counts its compiled size plus its search cache capacity.
+pub const MAX_SILENCE_REGEX_MEMORY: usize = 64 * 1024 * 1024;
+
+/// Check an API silence's sizes before anything is compiled.
+fn check_shape(
+    id: Option<&str>,
+    matchers: &[MatcherSpec],
+    created_by: Option<&str>,
+    comment: Option<&str>,
+) -> Result<(), SilenceError> {
+    if matchers.len() > MAX_SILENCE_MATCHERS {
+        return Err(SilenceError::TooManyMatchers {
+            max: MAX_SILENCE_MATCHERS,
+        });
+    }
+    let too_long = |field: String, max: usize| Err(SilenceError::FieldTooLong { field, max });
+    for (field, value, max) in [
+        ("id", id, MAX_SILENCE_NAME_BYTES),
+        ("created_by", created_by, MAX_SILENCE_NAME_BYTES),
+        ("comment", comment, MAX_SILENCE_COMMENT_BYTES),
+    ] {
+        if value.is_some_and(|v| v.len() > max) {
+            return too_long(field.to_string(), max);
+        }
+    }
+    for (i, m) in matchers.iter().enumerate() {
+        if m.selector.len() > MAX_SILENCE_SELECTOR_BYTES {
+            return too_long(
+                format!("matchers[{i}].selector"),
+                MAX_SILENCE_SELECTOR_BYTES,
+            );
+        }
+        if m.value.len() > MAX_SILENCE_VALUE_BYTES {
+            return too_long(format!("matchers[{i}].value"), MAX_SILENCE_VALUE_BYTES);
+        }
+    }
+    Ok(())
+}
 
 /// Bounds on silences created over the API. Static silences from the config
 /// file are operator-owned and not subject to them.
@@ -188,6 +245,10 @@ pub enum SilenceError {
     /// `match.<field>`, or `correlation.group_key.<field>` while
     /// [`SilenceLimits::allow_broad`] is off.
     TooBroad,
+    /// An API silence has more than [`MAX_SILENCE_MATCHERS`] matchers.
+    TooManyMatchers { max: usize },
+    /// A field of an API silence is longer than `max` bytes.
+    FieldTooLong { field: String, max: usize },
 }
 
 impl std::fmt::Display for SilenceError {
@@ -216,6 +277,12 @@ impl std::fmt::Display for SilenceError {
                 f,
                 "a silence created over the API needs at least one `=` matcher with a non-empty value on rule, match.<field>, or correlation.group_key.<field> (allow_broad_silences is off)"
             ),
+            SilenceError::TooManyMatchers { max } => {
+                write!(f, "a silence accepts at most {max} matchers")
+            }
+            SilenceError::FieldTooLong { field, max } => {
+                write!(f, "{field} is longer than {max} bytes")
+            }
         }
     }
 }
@@ -238,10 +305,19 @@ pub struct Silence {
 impl Silence {
     /// Build and validate a silence from a spec.
     pub fn build(spec: SilenceSpec, origin: SilenceOrigin) -> Result<Self, SilenceError> {
+        Self::build_with(spec, origin, &RegexLimits::DEFAULT)
+    }
+
+    fn build_with(
+        spec: SilenceSpec,
+        origin: SilenceOrigin,
+        regex_limits: &RegexLimits,
+    ) -> Result<Self, SilenceError> {
         if spec.matchers.is_empty() {
             return Err(SilenceError::EmptyMatchers);
         }
-        let matchers = MatcherSet::compile(&spec.matchers).map_err(SilenceError::Matcher)?;
+        let matchers = MatcherSet::compile_limited(&spec.matchers, regex_limits)
+            .map_err(SilenceError::Matcher)?;
         let starts_at = parse_time(spec.starts_at.as_deref(), "starts_at")?;
         let ends_at = parse_time(spec.ends_at.as_deref(), "ends_at")?;
         if let (Some(s), Some(e)) = (starts_at, ends_at)
@@ -262,13 +338,22 @@ impl Silence {
     }
 
     /// Build an API-origin silence and enforce `limits` at unix time `now`.
+    ///
+    /// Sizes are checked before any regex is compiled, and each regex is
+    /// compiled within [`SILENCE_REGEX_LIMITS`].
     pub fn build_api(
         spec: SilenceSpec,
         limits: &SilenceLimits,
         now: i64,
     ) -> Result<Self, SilenceError> {
+        check_shape(
+            spec.id.as_deref(),
+            &spec.matchers,
+            spec.created_by.as_deref(),
+            spec.comment.as_deref(),
+        )?;
         let matchers = spec.matchers.clone();
-        let silence = Silence::build(spec, SilenceOrigin::Api)?;
+        let silence = Silence::build_with(spec, SilenceOrigin::Api, &SILENCE_REGEX_LIMITS)?;
         check_limits(&matchers, silence.ends_at, limits, now)?;
         Ok(silence)
     }
@@ -276,6 +361,14 @@ impl Silence {
     /// The silence id.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Memory this silence's regexes count against
+    /// [`MAX_SILENCE_REGEX_MEMORY`]: their compiled size plus one search
+    /// cache each.
+    pub fn regex_memory(&self) -> usize {
+        self.matchers.regex_bytes()
+            + self.matchers.regex_count() * SILENCE_REGEX_LIMITS.cache_capacity
     }
 
     /// The lifecycle state at `now`.
@@ -321,12 +414,20 @@ impl Silence {
         }
     }
 
-    /// Rebuild an API-origin silence from its persisted form.
+    /// Rebuild an API-origin silence from its persisted form, applying the
+    /// same size and regex limits as the API.
     fn from_snap(snap: SilenceSnap) -> Result<Self, SilenceError> {
         if snap.matchers.is_empty() {
             return Err(SilenceError::EmptyMatchers);
         }
-        let matchers = MatcherSet::compile(&snap.matchers).map_err(SilenceError::Matcher)?;
+        check_shape(
+            Some(&snap.id),
+            &snap.matchers,
+            snap.created_by.as_deref(),
+            snap.comment.as_deref(),
+        )?;
+        let matchers = MatcherSet::compile_limited(&snap.matchers, &SILENCE_REGEX_LIMITS)
+            .map_err(SilenceError::Matcher)?;
         Ok(Silence {
             id: snap.id,
             matchers,
@@ -370,6 +471,9 @@ pub enum SilenceRejection {
     TenantFull,
     /// A silence the new silence's tenant can see already has its id.
     DuplicateId,
+    /// Adding the silence's regexes would take the API silences past
+    /// [`MAX_SILENCE_REGEX_MEMORY`].
+    RegexMemory,
 }
 
 /// The outcome of [`SilenceStore::remove_scoped`].
@@ -442,8 +546,25 @@ impl SilenceStore {
         if self.dynamic_count() >= max_dynamic {
             return Err(SilenceRejection::Full);
         }
+        if self
+            .api_regex_memory()
+            .saturating_add(silence.regex_memory())
+            > MAX_SILENCE_REGEX_MEMORY
+        {
+            return Err(SilenceRejection::RegexMemory);
+        }
         self.silences.push(silence);
         Ok(())
+    }
+
+    /// Memory the regexes of the API silences count against
+    /// [`MAX_SILENCE_REGEX_MEMORY`].
+    pub fn api_regex_memory(&self) -> usize {
+        self.silences
+            .iter()
+            .filter(|s| s.origin == SilenceOrigin::Api)
+            .map(Silence::regex_memory)
+            .sum()
     }
 
     /// Remove a silence by id. Returns whether one was removed.
@@ -551,19 +672,51 @@ impl SilenceStore {
             .collect()
     }
 
-    /// Restore API silences from persisted form, skipping any already expired at
-    /// `now` or that fail to recompile.
-    pub(crate) fn restore_api(&mut self, snaps: Vec<SilenceSnap>, now: i64) {
+    /// Restore API silences from persisted form, skipping any already expired
+    /// at `now`, any over the API's size and regex limits, and any the
+    /// dynamic-silence cap, the tenant quota, or the regex memory budget
+    /// would refuse. Returns how many were skipped for a reason other than
+    /// expiry.
+    pub(crate) fn restore_api(
+        &mut self,
+        snaps: Vec<SilenceSnap>,
+        now: i64,
+        max_dynamic: usize,
+        max_per_tenant: Option<usize>,
+    ) -> usize {
+        let mut skipped = 0;
         for snap in snaps {
-            match Silence::from_snap(snap) {
-                Ok(silence) if silence.state(now) != SilenceState::Expired => {
-                    self.silences.push(silence);
+            let id = shorten(&snap.id).to_string();
+            let silence = match Silence::from_snap(snap) {
+                Ok(silence) => silence,
+                Err(e) => {
+                    tracing::warn!(id = %id, error = %e, "Dropping unrestorable silence");
+                    skipped += 1;
+                    continue;
                 }
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "Dropping unrestorable silence"),
+            };
+            if silence.state(now) == SilenceState::Expired {
+                continue;
+            }
+            if let Err(rejection) = self.insert_api(silence, max_dynamic, max_per_tenant) {
+                tracing::warn!(id = %id, reason = ?rejection, "Dropping restored silence over a limit");
+                skipped += 1;
             }
         }
+        skipped
     }
+}
+
+/// `id` cut to [`MAX_SILENCE_NAME_BYTES`] for logging.
+fn shorten(id: &str) -> &str {
+    if id.len() <= MAX_SILENCE_NAME_BYTES {
+        return id;
+    }
+    let mut end = MAX_SILENCE_NAME_BYTES;
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    &id[..end]
 }
 
 /// Parse an optional RFC 3339 timestamp into unix seconds.
@@ -852,6 +1005,119 @@ mod tests {
             allow_broad: true,
         };
         assert!(store.api_over_limits(&open, NOW).is_empty());
+    }
+
+    fn scoped(extra: Vec<MatcherSpec>) -> SilenceSpec {
+        let mut matchers = vec![matcher("rule", MatchOp::Eq, "r")];
+        matchers.extend(extra);
+        SilenceSpec {
+            matchers,
+            ends_at: Some("2026-01-01T01:00:00Z".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn api_silence_sizes_are_checked_before_compiling() {
+        let limits = SilenceLimits::default();
+        let many = scoped(vec![
+            matcher("rule", MatchOp::ReMatch, "(");
+            MAX_SILENCE_MATCHERS
+        ]);
+        let err = Silence::build_api(many, &limits, NOW).unwrap_err();
+        assert!(matches!(err, SilenceError::TooManyMatchers { .. }), "{err}");
+
+        let long_value = scoped(vec![matcher(
+            "match.User",
+            MatchOp::Eq,
+            &"x".repeat(MAX_SILENCE_VALUE_BYTES + 1),
+        )]);
+        let err = Silence::build_api(long_value, &limits, NOW).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "matchers[1].value is longer than 1024 bytes"
+        );
+
+        let long_selector = scoped(vec![matcher(
+            &format!("match.{}", "x".repeat(MAX_SILENCE_SELECTOR_BYTES)),
+            MatchOp::Eq,
+            "v",
+        )]);
+        let err = Silence::build_api(long_selector, &limits, NOW).unwrap_err();
+        assert!(err.to_string().starts_with("matchers[1].selector"), "{err}");
+
+        for spec in [
+            SilenceSpec {
+                id: Some("i".repeat(MAX_SILENCE_NAME_BYTES + 1)),
+                ..scoped(vec![])
+            },
+            SilenceSpec {
+                created_by: Some("c".repeat(MAX_SILENCE_NAME_BYTES + 1)),
+                ..scoped(vec![])
+            },
+            SilenceSpec {
+                comment: Some("c".repeat(MAX_SILENCE_COMMENT_BYTES + 1)),
+                ..scoped(vec![])
+            },
+        ] {
+            let err = Silence::build_api(spec, &limits, NOW).unwrap_err();
+            assert!(matches!(err, SilenceError::FieldTooLong { .. }), "{err}");
+        }
+
+        let at_limits = SilenceSpec {
+            id: Some("i".repeat(MAX_SILENCE_NAME_BYTES)),
+            comment: Some("c".repeat(MAX_SILENCE_COMMENT_BYTES)),
+            ..scoped(vec![
+                matcher("match.User", MatchOp::Eq, "v");
+                MAX_SILENCE_MATCHERS - 1
+            ])
+        };
+        assert!(Silence::build_api(at_limits, &limits, NOW).is_ok());
+    }
+
+    #[test]
+    fn an_api_regex_over_the_size_limit_is_refused() {
+        let spec = scoped(vec![matcher("match.User", MatchOp::ReMatch, "a{5000}")]);
+        let err = Silence::build_api(spec.clone(), &SilenceLimits::default(), NOW).unwrap_err();
+        assert!(err.to_string().contains("size limit"), "{err}");
+        // A static silence keeps the default regex limits.
+        assert!(Silence::build(spec, SilenceOrigin::Static).is_ok());
+    }
+
+    #[test]
+    fn api_silence_regexes_share_one_memory_budget() {
+        let mut store = SilenceStore::default();
+        let regex = |i: usize| {
+            Silence::build_api(
+                scoped(vec![matcher(
+                    "match.User",
+                    MatchOp::ReMatch,
+                    &format!("u{i}-.*"),
+                )]),
+                &SilenceLimits::default(),
+                NOW,
+            )
+            .unwrap()
+        };
+        let per_silence = regex(0).regex_memory();
+        assert!(per_silence > SILENCE_REGEX_LIMITS.cache_capacity);
+        let mut inserted = 0;
+        let refused = loop {
+            match store.insert_api(regex(inserted), usize::MAX, None) {
+                Ok(()) => inserted += 1,
+                Err(rejection) => break rejection,
+            }
+        };
+        assert_eq!(refused, SilenceRejection::RegexMemory);
+        assert!(
+            inserted >= MAX_SILENCE_REGEX_MEMORY / per_silence / 2,
+            "{inserted}"
+        );
+        assert!(store.api_regex_memory() <= MAX_SILENCE_REGEX_MEMORY);
+        // A silence without a regex still fits.
+        let plain = Silence::build_api(scoped(vec![]), &SilenceLimits::default(), NOW).unwrap();
+        assert_eq!(plain.regex_memory(), 0);
+        store.insert_api(plain, usize::MAX, None).unwrap();
     }
 
     #[test]

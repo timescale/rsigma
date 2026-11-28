@@ -1433,6 +1433,13 @@ fn resolve_disposition_settings(
     let min_sample = d
         .and_then(|d| d.min_sample)
         .unwrap_or(config::defaults::DISPOSITIONS_MIN_SAMPLE);
+    let max_rules = d
+        .and_then(|d| d.max_rules)
+        .unwrap_or(config::defaults::DISPOSITIONS_MAX_RULES);
+    if max_rules == 0 {
+        eprintln!("daemon.dispositions.max_rules must be greater than zero");
+        process::exit(exit_code::CONFIG_ERROR);
+    }
 
     daemon::server::DispositionSettings {
         enabled,
@@ -1441,6 +1448,7 @@ fn resolve_disposition_settings(
             window,
             numerator,
             min_sample,
+            max_rules,
             ..Default::default()
         },
     }

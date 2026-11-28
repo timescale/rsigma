@@ -267,6 +267,15 @@ Create a silence. The body is a JSON object with `matchers` (required; each `{se
 
 Without an alert pipeline (`--alert-pipeline`), the endpoint returns `409`, because no stage would apply the silence.
 
+Size limits are checked before any regex is compiled. A body over 64 KiB returns `413`. These return `400` with an `error` naming the field: {{ added "unreleased" }}
+
+- more than 32 matchers;
+- a `selector` over 256 bytes or a `value` over 1024 bytes;
+- an `id` or `created_by` over 256 bytes, or a `comment` over 4096 bytes;
+- a regex whose compiled form exceeds 64 KiB, or a `value` that is not a regex on its own (such as `x)|(.*`, which would otherwise escape the full-match anchors).
+
+The regexes of all API silences may hold 64 MiB together, each counting its compiled size plus a 64 KiB search cache. A silence that would pass that returns `429`; delete silences or use `=` matchers. Silences restored from the state database go through the same checks; one that fails is left out, logged, and counted in `rsigma_alert_pipeline_restore_skipped_total{kind="silence",reason="over_limit"}`, as is one over `max_silences` or the tenant's silence quota. {{ added "unreleased" }}
+
 ```bash
 curl -sS -X POST http://127.0.0.1:9090/api/v1/silences \
   -d '{"matchers":[{"selector":"rule","op":"=","value":"noisy-rule"}],"ends_at":"2026-11-06T09:00:00Z","comment":"muted"}'
@@ -325,7 +334,7 @@ The triage feedback loop. Disabled by default; both routes return `503` unless t
 
 ### `POST /api/v1/dispositions`
 
-Ingest one or more analyst dispositions. The body is a single JSON object, a JSON array of objects, or NDJSON. Each object carries `rule_id` (required for `detection` scope, with a title fallback), `verdict` (`true_positive`, `false_positive`, or `benign_true_positive`), an optional `scope` (`detection` default, or `incident` with an `incident_id`), optional `fingerprint`/`incident_id` alert identities, an optional RFC 3339 `timestamp`, and optional `analyst` and `note` (`note` max 2048 bytes). Returns `200` with an ingest summary; a whole-body parse failure returns `400`. Requires `dispositions:write` when API authentication is enabled. When capture is also enabled, POST additionally requires `capture:write` and the summary may include a `capture` array (`queued`, `exists`, `miss`, `queue_full`). Disposition accounting stays accepted even if corpus spooling misses. There is no API to read the capture ring or the spool. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md).
+Ingest one or more analyst dispositions. The body is a single JSON object, a JSON array of objects, or NDJSON. Each object carries `rule_id` (required for `detection` scope, with a title fallback), `verdict` (`true_positive`, `false_positive`, or `benign_true_positive`), an optional `scope` (`detection` default, or `incident` with an `incident_id`), optional `fingerprint`/`incident_id` alert identities, an optional RFC 3339 `timestamp`, and optional `analyst` and `note` (`note` max 2048 bytes). Returns `200` with an ingest summary; a whole-body parse failure returns `400`. A body with more than 1000 records returns `413` and nothing is ingested. {{ added "unreleased" }} Requires `dispositions:write` when API authentication is enabled. When capture is also enabled, POST additionally requires `capture:write` and the summary may include a `capture` array (`queued`, `exists`, `miss`, `queue_full`). Disposition accounting stays accepted even if corpus spooling misses. There is no API to read the capture ring or the spool. See [Verdict-Driven Corpora](../guide/verdict-to-corpus.md).
 
 ```bash
 curl -sS -X POST http://127.0.0.1:9090/api/v1/dispositions \
@@ -335,6 +344,15 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/dispositions \
 ```json
 { "accepted": 1, "duplicate": 0, "rejected": 0 }
 ```
+
+A record is counted as `rejected`, with the reason in `errors`, when: {{ added "unreleased" }}
+
+- its `rule_id` is not a loaded detection or correlation rule (the rule's id, or its title when it has none);
+- `rule_id`, `fingerprint`, `incident_id`, or `analyst` is over 256 bytes;
+- its `timestamp` is more than 5 minutes in the future (a timestamp up to 5 minutes ahead is placed at ingest time) or older than the rolling window;
+- it would start counting a new `(tenant, rule)` pair while the store already counts `daemon.dispositions.max_rules` (default 10000).
+
+Rejections count in `rsigma_disposition_ingest_errors_total` by reason. An incident-scoped record reads only its own incident, so a batch costs the same however many incidents are open.
 
 Redelivery is idempotent: records deduplicate on `(fingerprint or incident_id, verdict, rule_id)`, falling back to `(rule_id, timestamp, analyst)`. With tenancy enabled, the tenant is part of the key and each tenant keeps its own bounded set of ids. {{ added "0.28.0" }} The `rule_id` is part of the identity key so an incident-scoped fan-out does not collapse per-rule records. An `incident`-scoped record with no `rule_id` resolves to the incident's contributing rules through the live incident map; an unknown incident is reported in the summary's `errors` and counted as `rejected`.
 

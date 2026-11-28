@@ -155,7 +155,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, TAXII response headers, DNS SRV and TLSA records, STIX indicator bundles, `email-message` RFC 2047 round trips, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, event values in enricher extract programs, the `apply_modifiers` pipeline rewrite, PostgreSQL `fields` entries, absence correlation state, and the conversion backends. Forty-three harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, silence requests, alert-pipeline snapshots, TAXII envelopes, TAXII response headers, DNS SRV and TLSA records, STIX indicator bundles, `email-message` RFC 2047 round trips, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, event values in enricher extract programs, the `apply_modifiers` pipeline rewrite, PostgreSQL `fields` entries, absence correlation state, and the conversion backends. Forty-five harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -280,6 +280,12 @@ A token with `sources:write` can push, replace, and delete watchlist indicators.
 
 A token with `silences:write`, including one held by an MCP client steered by prompt-injected content, can mute detections. {{ added "0.27.0" }} The daemon therefore bounds API silences: each needs an `ends_at` within `max_silence_duration` (default `720h`) and at least one `=` matcher with a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, so a single call cannot mute every rule, or every rule of a severity, indefinitely. API silences created before these limits applied are kept, and the daemon logs their ids at startup and on reload. Silences are refused with `409` when no alert pipeline is loaded, because they would be accepted without effect. See [Alert Pipeline](../guide/alert-pipeline.md#the-silence-api).
 
+The silence API also bounds the work one request can cause. {{ added "unreleased" }} Sizes are checked before anything compiles: a 64 KiB body, 32 matchers, 256-byte selectors, ids, and `created_by`, 1024-byte values, and a 4096-byte comment. Each regex compiles off the async runtime with a 64 KiB size limit and a 64 KiB search cache, and the regexes of all API silences share a 64 MiB budget. A value must be a regex on its own, so it cannot close the full-match anchors and match everything. Silences restored from the state database pass the same checks and the dynamic-silence caps; one that fails is left out and counted.
+
+A token with `dispositions:write` feeds the per-rule false-positive ratio. {{ added "unreleased" }} The daemon refuses a disposition for a rule that is not loaded, so arbitrary rule ids cannot create store entries or metric series, and it counts at most `daemon.dispositions.max_rules` (default 10000) `(tenant, rule)` pairs. A request carries at most 1000 records, identity fields are capped at 256 bytes, and a timestamp more than 5 minutes ahead is refused. Incident-scoped records read only their own incident, and gauge refresh, pruning, and restore take time linear in the rules tracked.
+
+The alert-pipeline snapshot in `--state-db` restores entry by entry. {{ added "unreleased" }} An entry that does not parse is logged, counted in `rsigma_alert_pipeline_restore_skipped_total`, and left out, so one bad dedup alert does not discard the silences, incidents, and other alerts beside it, and it does not abort a batch run. Retained values nest at most 160 levels (deeper subtrees are kept as JSON text), which covers every event ingest parses, so every snapshot the daemon writes reads back.
+
 ## Multi-tenancy
 
 Logical tenancy isolates detections, correlation state, incidents, risk entities, dispositions, silences, and capture bundles per tenant in one daemon. The tenant comes only from an operator binding: the bearer token that authenticated an ingest request, the configured tenant of a pull source, or a NATS subscription declared for one tenant. Event fields, client headers, NATS message headers, and OTLP attributes are never identity. {{ added "0.28.0" }}
@@ -324,6 +330,8 @@ Verdict-driven capture ([Verdict-Driven Corpora](../guide/verdict-to-corpus.md))
 
 - **It is off by default and startup-only.** Enable it with `daemon.capture.enabled: true` or `--enable-capture`. Changing the block requires a restart.
 - **HTTP ingest is permission-gated.** When authentication and capture are both enabled, `POST /api/v1/dispositions` requires `dispositions:write` and `capture:write`. Configured pull sources are trusted operator input.
+- **Bundle identity comes from the evidence.** {{ added "unreleased" }} A rule, fingerprint, or incident id the disposition names counts toward a bundle's identity only when the captured events show it, so a disposition naming made-up values cannot open new bundles. A disposition whose rules never matched a captured event writes no bundle.
+- **The disk budget counts every tenant.** {{ added "unreleased" }} `daemon.capture.max_spool_bytes` covers the untenanted `tp/` and `fp/` directories and each tenant's, and eviction removes the oldest bundles across all of them. With tenancy, `daemon.tenancy.quotas.capture_spool_bytes` caps one tenant's share; a tenant over it evicts its own oldest bundles first.
 - **Filesystem policy.** On Unix, spool directories/files are created as `0700`/`0600`. Staging is under the same parent, symlink traversal is refused, abandoned staging is removed at startup, and completed-bundle eviction never follows links.
 - **The ring is not persisted.** A restart loses capture for open incidents rather than writing raw payloads into `--state-db`.
 - **No read or search API.** The spool is write-only from the daemon.
@@ -408,6 +416,6 @@ RSigma assumes a trusted operator providing rules, pipelines, and source declara
 - [Dynamic Sources: resource limits](dynamic-sources.md#resource-limits) for the per-source enforcement table.
 - [NATS Streaming: authentication](../guide/nats-streaming.md#authentication) for the five NATS auth methods and TLS.
 - [`engine daemon` TLS flags](../cli/engine/daemon.md#tls-requires-the-daemon-tls-build-feature) for the user-facing flag table.
-- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-11-metrics) for observability of limit hits.
+- [Prometheus metrics: dynamic sources](metrics.md#dynamic-sources-13-metrics) for observability of limit hits.
 - [`rsigma_runtime::sources`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-runtime/src/sources) for the implementation of the resource limits.
 - [`rsigma-eval` README: constants and limits](https://github.com/timescale/rsigma/blob/main/crates/rsigma-eval/README.md#constants-and-limits) for the engine-side enforcement.

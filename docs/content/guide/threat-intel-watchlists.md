@@ -58,6 +58,8 @@ detection:
 
 An empty watchlist matches nothing. A value that is pushed, replaced, or deleted rebuilds the rules that reference the source. The HTTP call returns before that rebuild finishes. Expect the new set to be in effect within about a second, and an expiry to take effect within about 10 seconds of the sweeper.
 
+Each change answers with a `revision`, and `GET /api/v1/sources/<id>/indicators` reports `applied_revision` and `pending`: once `applied_revision` reaches your change's revision, the source cache that rule rebuilds and lookup enrichers read holds it. The refresh a change asks for is never dropped, and a change made while the source is resolving is picked up by one more resolve. Watchlists resolve from memory and do not wait for the slots that network sources share, so sources that are slow or never answer do not delay a push. A change still pending after 30 seconds is logged, and `rsigma_watchlist_refresh_pending` and `rsigma_watchlist_refresh_delay_seconds` track the wait. {{ added "unreleased" }}
+
 ## Push indicators
 
 `sources:write` is required. A reader token can list the set and cannot change it.

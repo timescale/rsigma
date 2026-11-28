@@ -259,6 +259,7 @@ See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the 
 | `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.capture_spool_bytes` | unset | Per-tenant share of `daemon.capture.max_spool_bytes`, in bytes. A tenant over it evicts its own oldest bundles first, and a bundle larger than it fails before commit. {{ added "unreleased" }} |
 | `daemon.tenancy.metrics_tenant_allowlist` | empty | Tenants whose match counts get their own metric label. Others count under `other`. {{ added "0.28.0" }} |
 | `daemon.input.tenant` | unset | Tenant to bind to the single selected pull source (`stdin`, `unix://`, or a NATS URL with a subject). {{ added "0.28.0" }} |
 | `daemon.input.nats_tenants` | empty | One tenant-bound NATS subscription per entry (`subject`, `tenant`, optional `credentials_file`). Requires a subject-less `nats://host:port` source. {{ added "0.28.0" }} |
@@ -418,6 +419,7 @@ The tuning keys are config-file-only under `daemon.dispositions`:
 | `daemon.dispositions.window` | `30d` | Rolling window over which dispositions are counted. |
 | `daemon.dispositions.numerator` | `fp_only` | Whether benign true positives count toward the ratio numerator: `fp_only` or `fp_and_btp`. |
 | `daemon.dispositions.min_sample` | `5` | Minimum dispositions a rule needs before its ratio is published. |
+| `daemon.dispositions.max_rules` | `10000` | Most `(tenant, rule)` pairs counted. A disposition that would start a new pair past it is rejected; pairs already counted keep counting. Must be at least 1. {{ added "unreleased" }} |
 
 See the [Triage Feedback Loop](../../guide/triage-feedback.md) guide.
 
@@ -443,7 +445,7 @@ The remaining keys are config-file-only under `daemon.capture`:
 | `daemon.capture.max_bytes_per_incident` | `16777216` | Encoded size of one incident. |
 | `daemon.capture.max_capture_bytes` | `268435456` | Encoded size of the whole ring. |
 | `daemon.capture.ttl` | `24h` | How long a ring generation is kept after last admission. |
-| `daemon.capture.max_spool_bytes` | `10737418240` | Completed-bundle disk budget. A larger bundle fails before commit. |
+| `daemon.capture.max_spool_bytes` | `10737418240` | Completed-bundle disk budget. A larger bundle fails before commit. Every tenant's bundles count against it, and eviction removes the oldest across all of them. {{ added "unreleased" }} |
 | `daemon.capture.spool_queue_capacity` | `128` | In-flight spool jobs. |
 
 When capture is enabled, detection event payloads are retained internally even without `--include-event`, then stripped before sink delivery unless `--include-event` was also set. The strip keeps the event of a rule that sets `rsigma.include_event: "true"` and leaves correlation `events`, `event_refs`, and `event_sources` alone. {{ added "0.28.0" }}

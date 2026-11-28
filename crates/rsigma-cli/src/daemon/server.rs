@@ -226,8 +226,8 @@ struct AppState {
     start_time: Instant,
     /// Channel for HTTP event ingestion. Set when --input is http.
     event_tx: Option<mpsc::Sender<RawEvent>>,
-    /// Channel for on-demand source resolution triggers.
-    sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    /// On-demand source resolution requests.
+    source_requests: Option<rsigma_runtime::RefreshRequests>,
     /// The instrumented source resolver (provides cache access for invalidation API).
     source_resolver: Option<Arc<super::instrumented_resolver::InstrumentedResolver>>,
     /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
@@ -709,9 +709,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // pipeline references external sources.
     let has_dynamic =
         !config.source_registry.is_empty() || config.pipelines.iter().any(|p| p.is_dynamic());
-    let mut sources_trigger_tx_val: Option<
-        mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
-    > = None;
+    let mut source_requests: Option<rsigma_runtime::RefreshRequests> = None;
     let mut source_results: Option<
         tokio::sync::watch::Receiver<Option<rsigma_runtime::RefreshResult>>,
     > = None;
@@ -838,11 +836,11 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
             source_results = Some(scheduler.result_receiver());
-            sources_trigger_tx_val = Some(scheduler.trigger_sender());
+            source_requests = Some(scheduler.requests());
             if !watchlist_ids.is_empty() {
                 super::watchlist_api::spawn_sweeper(
                     watchlist_registry.clone(),
-                    sources_trigger_tx_val.clone(),
+                    source_requests.clone(),
                     metrics.clone(),
                     state_store.clone(),
                 );
@@ -1091,29 +1089,45 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                 // pruning entries past their window at boot.
                 if restore_state && let Some(ref store) = state_store {
                     match store.load_alert_pipeline().await {
-                        Ok(Some(snap)) => {
+                        Ok(Some((snap, skips))) => {
                             let version = snap.version;
                             let now = chrono::Utc::now().timestamp();
+                            metrics.record_alert_pipeline_restore_skips(&skips);
+                            if skips.total() > 0 {
+                                tracing::warn!(
+                                    dedup = skips.dedup,
+                                    incidents = skips.incidents,
+                                    silences = skips.silences,
+                                    inhibit_sources = skips.inhibit_sources,
+                                    "Left out unreadable alert-pipeline snapshot entries"
+                                );
+                            }
                             let restored = alert_state
                                 .write()
                                 .map(|mut state| {
-                                    let stats = pipeline.restore_detailed(
+                                    let report = pipeline.restore_report(
                                         &mut state,
                                         snap,
                                         now,
                                         config.tenancy.enabled,
                                     );
-                                    if let Some(stats) = &stats
-                                        && (stats.discarded_untenanted > 0
-                                            || stats.discarded_tenanted > 0)
-                                    {
-                                        tracing::warn!(
-                                            untenanted = stats.discarded_untenanted,
-                                            tenanted = stats.discarded_tenanted,
-                                            "Discarded alert-pipeline entries that do not match the tenancy mode"
-                                        );
+                                    if let Some(report) = &report {
+                                        let stats = &report.stats;
+                                        if stats.discarded_untenanted > 0
+                                            || stats.discarded_tenanted > 0
+                                        {
+                                            tracing::warn!(
+                                                untenanted = stats.discarded_untenanted,
+                                                tenanted = stats.discarded_tenanted,
+                                                "Discarded alert-pipeline entries that do not match the tenancy mode"
+                                            );
+                                        }
+                                        metrics
+                                            .alert_pipeline_restore_skipped_total
+                                            .with_label_values(&["silence", "over_limit"])
+                                            .inc_by(report.silences_skipped as u64);
                                     }
-                                    stats.is_some()
+                                    report.is_some()
                                 })
                                 .unwrap_or(false);
                             if restored {
@@ -1171,7 +1185,15 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         (true, Some(dir), Some(ring)) => {
             match super::capture::CaptureSpool::start(
                 dir,
-                config.capture.max_spool_bytes,
+                super::capture::SpoolBudget {
+                    max_spool_bytes: config.capture.max_spool_bytes,
+                    max_tenant_bytes: config
+                        .tenancy
+                        .enabled
+                        .then_some(config.tenancy.quotas.capture_spool_bytes)
+                        .flatten()
+                        .map(|bytes| bytes as u64),
+                },
                 config.capture.spool_queue_capacity,
                 ring,
                 metrics.clone(),
@@ -1417,12 +1439,14 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // their contributing rules through the live incident map.
     let disposition_state = if config.dispositions.enabled {
         tracing::info!("Triage feedback loop enabled (POST/GET /api/v1/dispositions)");
-        let state = super::dispositions::DispositionState::with_capture(
+        let mut state = super::dispositions::DispositionState::with_capture(
             config.dispositions.config.clone(),
             metrics.clone(),
             alert_state.clone(),
             capture_spool,
         );
+        let rules = processor.clone();
+        state.set_rule_catalog(Arc::new(move |rule_id: &str| rules.knows_rule(rule_id)));
         // Roll the window forward for idle rules on a timer.
         state.spawn_pruner();
         // Restore persisted disposition state (unless --clear-state), pruning
@@ -1527,7 +1551,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let mut watchlists = super::watchlist_api::WatchlistApi::new(
         watchlist_registry,
         source_registry.clone(),
-        sources_trigger_tx_val.clone(),
+        source_requests.clone(),
         metrics.clone(),
     );
     if let Some(store) = state_store.clone() {
@@ -1544,7 +1568,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
-        sources_trigger_tx: sources_trigger_tx_val.clone(),
+        source_requests: source_requests.clone(),
         source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
@@ -1565,6 +1589,12 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         watchlists: watchlists.clone(),
     };
 
+    let silence_routes =
+        get(list_silences)
+            .post(create_silence)
+            .layer(axum::extract::DefaultBodyLimit::max(
+                rsigma_runtime::MAX_SILENCE_REQUEST_BYTES,
+            ));
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -1577,7 +1607,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         .route("/api/v1/incidents/{id}", get(get_incident))
         .route("/api/v1/incidents/{id}/bundle", get(get_incident_bundle))
         .route("/api/v1/risk", get(list_risk_entities))
-        .route("/api/v1/silences", get(list_silences).post(create_silence))
+        .route("/api/v1/silences", silence_routes)
         .route("/api/v1/silences/{id}", delete(delete_silence))
         .route(
             "/api/v1/dispositions",
@@ -1767,9 +1797,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // same `reload_tx` channel the file watcher and HTTP endpoint
     // use, so every reload trigger funnels through one task).
     let sighup_reload_tx = reload_tx.clone();
-    let sighup_sources_tx = sources_trigger_tx_val.clone();
+    let sighup_sources = source_requests.clone();
     tokio::spawn(async move {
-        reload::sighup_listener(sighup_reload_tx, sighup_sources_tx).await;
+        reload::sighup_listener(sighup_reload_tx, sighup_sources).await;
     });
 
     // Spawn reload handler — uses LogProcessor::reload_rules for atomic hot-reload.
@@ -1785,6 +1815,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
     let reload_applied = applied_sources.clone();
+    let reload_source_requests = source_requests.clone();
     #[cfg(feature = "stix-enrich")]
     let reload_stix_fs_store = stix_fs_store.clone();
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
@@ -1863,7 +1894,18 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             tracing::info!("Reloading rules and pipelines...");
             let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
 
-            match reload_processor.reload_rules() {
+            // With a refresh scheduler, sources are re-fetched in the
+            // background and their new values trigger a rebuild, so a source
+            // that does not answer cannot hold the reload.
+            let reloaded = match &reload_source_requests {
+                Some(requests) => {
+                    let reloaded = reload_processor.rebuild_from_sources();
+                    requests.request_all();
+                    reloaded
+                }
+                None => reload_processor.reload_rules(),
+            };
+            match reloaded {
                 Ok(stats) => {
                     tracing::info!(
                         detection_rules = stats.detection_rules,
@@ -4862,15 +4904,26 @@ async fn ingest_dispositions(
     identity: Option<Extension<AuthIdentity>>,
     body: String,
 ) -> Response {
-    let Some(dispositions) = state.disposition_state.as_ref() else {
+    let Some(dispositions) = state.disposition_state.clone() else {
         return dispositions_disabled();
+    };
+    let raws = match dispositions.parse_request(&body) {
+        Ok(raws) => raws,
+        Err(e) => {
+            let status = match e {
+                super::dispositions::IngestError::Parse(_) => StatusCode::BAD_REQUEST,
+                super::dispositions::IngestError::TooMany { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            };
+            return (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
+        }
     };
     // Every record's `tenant` is checked against the token by `write_tenant`,
     // which refuses a foreign tenant with 403, so a batch may name at most one.
-    let mut body_tenants: Vec<String> = rsigma_runtime::parse_dispositions(&body)
-        .map(|raws| raws.into_iter().filter_map(|raw| raw.tenant).collect())
-        .unwrap_or_default();
-    body_tenants.sort();
+    let mut body_tenants: Vec<&str> = raws
+        .iter()
+        .filter_map(|raw| raw.tenant.as_deref())
+        .collect();
+    body_tenants.sort_unstable();
     body_tenants.dedup();
     if body_tenants.len() > 1 {
         return (
@@ -4881,7 +4934,7 @@ async fn ingest_dispositions(
         )
             .into_response();
     }
-    let body_tenant = body_tenants.pop();
+    let body_tenant = body_tenants.pop().map(str::to_string);
     let tenant = match super::tenancy::write_tenant(
         state.tenancy_enabled,
         identity.as_ref().map(|e| &e.0),
@@ -4891,14 +4944,19 @@ async fn ingest_dispositions(
         Err(response) => return response,
     };
     let target = tenant.clone();
-    let response = match dispositions.ingest_with_tenant(&body, "api", tenant) {
-        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    };
+    let response =
+        match tokio::task::spawn_blocking(move || dispositions.ingest_raws(raws, "api", tenant))
+            .await
+        {
+            Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({ "error": format!("disposition ingest task failed: {e}") }),
+                ),
+            )
+                .into_response(),
+        };
     super::audit::with_audit_target(response, target.as_ref())
 }
 
@@ -5000,7 +5058,19 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
             .into_response();
     };
     let now = chrono::Utc::now().timestamp();
-    match Silence::build_api(spec, &limits, now) {
+    let built = match tokio::task::spawn_blocking(move || Silence::build_api(spec, &limits, now))
+        .await
+    {
+        Ok(built) => built,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("silence compile task failed: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    match built {
         Ok(silence) => {
             let id = silence.id().to_string();
             let added = {
@@ -5031,6 +5101,16 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
                     })),
                 )
                     .into_response(),
+                Err(SilenceRejection::RegexMemory) => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "the regexes of API silences would hold more than {} MiB; delete silences or use `=` matchers",
+                            rsigma_runtime::MAX_SILENCE_REGEX_MEMORY >> 20
+                        )
+                    })),
+                )
+                    .into_response(),
                 Err(SilenceRejection::TenantFull) => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(serde_json::json!({
@@ -5051,6 +5131,9 @@ async fn create_silence_for(state: &AppState, spec: SilenceSpec) -> Response {
                 SilenceError::TooBroad => Some(
                     "add a `=` matcher on rule, match.<field>, or correlation.group_key.<field>, or set allow_broad_silences: true in the alert pipeline config",
                 ),
+                SilenceError::TooManyMatchers { .. } => {
+                    Some("split the silence into several silences with fewer matchers")
+                }
                 _ => None,
             };
             let mut body = serde_json::json!({ "error": e.to_string() });
@@ -5201,50 +5284,40 @@ async fn list_sources(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn resolve_sources(State(state): State<AppState>) -> impl IntoResponse {
-    use rsigma_runtime::sources::refresh::RefreshTrigger;
-
-    let Some(tx) = &state.sources_trigger_tx else {
+    let Some(requests) = &state.source_requests else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no dynamic sources configured" })),
         );
     };
-
-    match tx.try_send(RefreshTrigger::All) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "resolve_triggered" })),
-        ),
-        Err(_) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({ "status": "resolve_already_pending" })),
-        ),
-    }
+    requests.request_all();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "resolve_triggered" })),
+    )
 }
 
 async fn resolve_source_by_id(
     State(state): State<AppState>,
     axum::extract::Path(source_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    use rsigma_runtime::sources::refresh::RefreshTrigger;
-
-    let Some(tx) = &state.sources_trigger_tx else {
+    let Some(requests) = &state.source_requests else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no dynamic sources configured" })),
         );
     };
-
-    match tx.try_send(RefreshTrigger::Single(source_id.clone())) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "resolve_triggered", "source_id": source_id })),
-        ),
-        Err(_) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({ "status": "resolve_already_pending" })),
-        ),
+    if state.source_registry.get(&source_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown source", "source_id": source_id })),
+        );
     }
+    requests.request_source(&source_id);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "resolve_triggered", "source_id": source_id })),
+    )
 }
 
 async fn invalidate_source_cache(

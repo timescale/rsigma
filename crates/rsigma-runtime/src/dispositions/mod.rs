@@ -25,12 +25,14 @@ pub mod snapshot;
 pub mod store;
 
 pub use record::{
-    Disposition, DispositionError, DispositionScope, RawDisposition, Verdict, parse_dispositions,
+    Disposition, DispositionError, DispositionScope, MAX_DISPOSITION_CLOCK_SKEW_SECS,
+    MAX_DISPOSITION_ID_BYTES, MAX_DISPOSITIONS_PER_REQUEST, MAX_NOTE_BYTES, RawDisposition,
+    Verdict, parse_dispositions,
 };
 pub use snapshot::{DispositionSnapshot, RuleBucketsSnapshot, SNAPSHOT_VERSION};
 pub use store::{
-    DEFAULT_BUCKET, DEFAULT_MAX_SEEN_IDS, DEFAULT_MIN_SAMPLE, DEFAULT_WINDOW, DispositionConfig,
-    DispositionStore, IngestOutcome, Numerator, RuleSummary, VerdictCounts,
+    DEFAULT_BUCKET, DEFAULT_MAX_RULES, DEFAULT_MAX_SEEN_IDS, DEFAULT_MIN_SAMPLE, DEFAULT_WINDOW,
+    DispositionConfig, DispositionStore, IngestOutcome, Numerator, RuleSummary, VerdictCounts,
 };
 
 use serde_json::json;

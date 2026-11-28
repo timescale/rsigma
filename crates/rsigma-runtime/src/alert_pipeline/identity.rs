@@ -387,7 +387,11 @@ pub(crate) fn display_values(
     names
         .iter()
         .zip(selectors)
-        .map(|(name, sel)| (name.clone(), sel.resolve(result).unwrap_or(Value::Null)))
+        .map(|(name, sel)| {
+            let mut value = sel.resolve(result).unwrap_or(Value::Null);
+            super::snapshot::bound_depth(&mut value);
+            (name.clone(), value)
+        })
         .collect()
 }
 

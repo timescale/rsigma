@@ -83,7 +83,7 @@ These counters carry labels that identify which rule fired. They surface on `/me
 
 These two families feed the silence and noisy signals of [`rule hygiene`](../cli/rule/hygiene.md) (and the production-volume column of [`rule scorecard`](../cli/rule/scorecard.md)): pass a saved scrape or a live endpoint as `--metrics` and they join per-rule by `rule_title`.
 
-## Dynamic sources (11 metrics)
+## Dynamic sources (13 metrics)
 
 Exposed when one or more dynamic sources are configured. The labelled counters surface after the first resolve attempt for the relevant source; `source_cache_hits_total` and `source_resolve_seconds` are global (no `source_id` label).
 
@@ -97,6 +97,8 @@ Exposed when one or more dynamic sources are configured. The labelled counters s
 | `rsigma_source_rebuilds_total` | counter | `result` (`success`, `error`) | Rule rebuilds triggered by a changed pipeline source value. {{ added "0.28.0" }} |
 | `rsigma_watchlist_indicators` | gauge | `source_id` | Current unexpired indicators in a watchlist. One series per declared watchlist, starting at 0. {{ added "0.28.0" }} |
 | `rsigma_watchlist_changes_total` | counter | `source_id`, `op` (`add`, `update`, `remove`, `expire`) | Watchlist indicator changes. {{ added "0.28.0" }} |
+| `rsigma_watchlist_refresh_pending` | gauge | `source_id` | 1 while a watchlist change has not reached the source cache that rule rebuilds and `lookup` enrichers read, 0 otherwise. One series per declared watchlist, starting at 0. {{ added "unreleased" }} |
+| `rsigma_watchlist_refresh_delay_seconds` | histogram | `source_id` | Time from a watchlist change to the source cache holding it, measured from the oldest change a refresh applies. {{ added "unreleased" }} |
 | `rsigma_stix_source_indicators` | gauge | `source_id` | Active indicators in a STIX source after lifecycle and the cap. An indicator that emits nothing is not included. Requires `stix-source`. One series per declared STIX source, starting at 0. {{ added "0.28.0" }} |
 | `rsigma_stix_source_objects_total` | counter | `source_id` | STIX objects received while resolving a STIX source. Requires `stix-source`. {{ added "0.28.0" }} |
 | `rsigma_stix_source_skipped_total` | counter | `source_id`, `reason` (`revoked`, `expired`, `not_yet_valid`, `low_confidence`, `pattern_type`, `unsupported_pattern`, `unmapped_observable`, `invalid_pattern`, `over_limit`) | Indicators or observables left out of a STIX source value on that resolve. An id that stays out is not counted again on later polls. Requires `stix-source`. Each reason is registered at 0. {{ added "0.28.0" }} |
@@ -130,7 +132,7 @@ DNS counters are per query, not per enrichment call: an `IP` lookup counts two q
 
 The `kind` label is carried even though `enricher_id` typically already encodes it (`asset_lookup_det` vs `asset_lookup_corr`), so dashboards can compute `sum by (kind)` without depending on a naming convention.
 
-## Alert pipeline (14 metrics)
+## Alert pipeline (15 metrics)
 
 Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_dedup_results_total`, `rsigma_incidents_emitted_total`, and `rsigma_incident_overmerge_total`, plus the `rsigma_dedup_store_entries`, `rsigma_incidents_open`, `rsigma_silences_active`, and `rsigma_inhibit_sources_active` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--alert-pipeline` is passed or any event fires. The `rsigma_inhibited_total{rule}` series appears once a rule first inhibits. See the [Alert Pipeline](../guide/alert-pipeline.md) guide.
 
@@ -151,6 +153,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_inhibit_sources_active` | gauge | none | Currently-active inhibition sources. |
 | `rsigma_inhibit_sources_refused_total` | counter | `rule` | Results that would have opened a new inhibition source but were not tracked because `max_inhibit_sources` or the tenant's `daemon.tenancy.quotas.inhibition_sources` was reached, by rule name. Appears once a source is first refused. {{ added "0.25.0" }} |
 | `rsigma_alert_pipeline_duration_seconds` | histogram | none | Alert-pipeline stage duration in seconds. |
+| `rsigma_alert_pipeline_restore_skipped_total` | counter | `kind` (`dedup`, `incident`, `silence`, `inhibit_source`), `reason` (`unreadable`, `over_limit`) | Alert-pipeline snapshot entries left out on restore: `unreadable` for an entry that does not parse, `over_limit` for a silence over the API's size, regex, or count limits. The rest of the snapshot still restores. Every series is registered at startup. {{ added "unreleased" }} |
 
 ## Risk-based alerting (9 metrics)
 
@@ -244,7 +247,7 @@ Exposed unconditionally; values stay at zero unless the tail is enabled (`daemon
 | `rsigma_tail_active_sessions` | gauge | none | Currently active tail sessions. Bounded by `daemon.tail.max_sessions`. |
 | `rsigma_tail_detections_dropped_total` | counter | none | Detections dropped from a tail because a session buffer was full. A positive rate means a tail client could not keep up. |
 
-## Triage feedback loop (4 metrics)
+## Triage feedback loop (5 metrics)
 
 Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: true` or `--enable-dispositions`). The ingest counters pre-register their fixed label sets so they render with zeroed series on the first scrape; `rsigma_rule_false_positive_ratio` is absent for a rule until it reaches `daemon.dispositions.min_sample`. See the [Triage Feedback Loop](../guide/triage-feedback.md) guide and [HTTP API: Dispositions](http-api-state.md#dispositions).
 
@@ -253,9 +256,10 @@ Exposed when the triage feedback loop is enabled (`daemon.dispositions.enabled: 
 | `rsigma_rule_false_positive_ratio` | gauge | `rule_title` | Per-rule false-positive ratio over the rolling window. Absent until the rule reaches `min_sample` dispositions. With tenancy enabled, the ratio sums the rule's dispositions across tenants; per-tenant ratios are in `GET /api/v1/dispositions`. {{ added "0.28.0" }} |
 | `rsigma_dispositions_total` | counter | `rule_title`, `verdict` | Analyst dispositions counted, by rule and verdict (`true_positive`, `false_positive`, `benign_true_positive`). |
 | `rsigma_disposition_ingest_total` | counter | `source`, `result` | Ingest outcomes by source (`api`, `file`, `http`, `nats`) and result (`accepted`, `duplicate`, `rejected`). |
-| `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). |
+| `rsigma_disposition_ingest_errors_total` | counter | `reason` | Ingest errors by reason (`parse`, `validation`). `unknown_rule` counts a record whose `rule_id` is not a loaded rule, `rule_cap` one refused at `daemon.dispositions.max_rules`, and `batch_size` a request over 1000 records. {{ added "unreleased" }} |
+| `rsigma_disposition_tracked_rules` | gauge | none | `(tenant, rule)` pairs the disposition store counts, against `daemon.dispositions.max_rules`. {{ added "unreleased" }} |
 
-## Verdict-driven capture (7 metrics)
+## Verdict-driven capture (8 metrics)
 
 {{ added "0.22.0" }}
 
@@ -270,6 +274,7 @@ Exposed when capture is compiled into the daemon. Counters pre-register their fi
 | `rsigma_capture_events_dropped_total` | counter | `reason` | Event drops (`event_too_large`, `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, `unsupported_result_kind`). |
 | `rsigma_capture_spool_jobs_total` | counter | `result` | Disposition-bundle outcomes (`queued`, `written`, `exists`, `miss`, `queue_full`, `io_error`). |
 | `rsigma_capture_spool_evictions_total` | counter | `reason` | Completed-bundle evictions from the disk budget (`budget`). |
+| `rsigma_capture_spool_bytes` | gauge | none | Bytes of completed bundles in the spool, every tenant's directory included, against `daemon.capture.max_spool_bytes`. {{ added "unreleased" }} |
 
 ## Scrape configuration
 

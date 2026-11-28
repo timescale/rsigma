@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use rsigma_runtime::{
     AlertPipelineState, Disposition, DispositionConfig, DispositionScope, DispositionStore,
-    IncludeMode, IngestOutcome, parse_dispositions,
+    IngestOutcome, MAX_DISPOSITIONS_PER_REQUEST, RawDisposition, parse_dispositions,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -23,6 +23,30 @@ use super::metrics::Metrics;
 /// How often the background pruner rolls the window forward for idle rules.
 const PRUNE_INTERVAL_SECS: u64 = 60;
 
+/// Whether a loaded rule carries a given rule identity.
+pub type RuleCatalog = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Why a batch was refused as a whole.
+#[derive(Debug)]
+pub enum IngestError {
+    /// The payload did not parse.
+    Parse(String),
+    /// The batch has more records than a request may carry.
+    TooMany { records: usize },
+}
+
+impl std::fmt::Display for IngestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IngestError::Parse(message) => f.write_str(message),
+            IngestError::TooMany { records } => write!(
+                f,
+                "a disposition batch accepts at most {MAX_DISPOSITIONS_PER_REQUEST} records, got {records}"
+            ),
+        }
+    }
+}
+
 /// Shared triage-feedback state. Cloneable; all clones share one store.
 #[derive(Clone)]
 pub struct DispositionState {
@@ -30,6 +54,7 @@ pub struct DispositionState {
     metrics: Arc<Metrics>,
     alert_state: Arc<RwLock<AlertPipelineState>>,
     capture: Option<CaptureSpool>,
+    rules: Option<RuleCatalog>,
 }
 
 /// The result of ingesting a batch of dispositions, returned by the endpoint
@@ -70,7 +95,13 @@ impl DispositionState {
             metrics,
             alert_state,
             capture,
+            rules: None,
         }
+    }
+
+    /// Refuse dispositions for rule ids `catalog` does not know.
+    pub fn set_rule_catalog(&mut self, catalog: RuleCatalog) {
+        self.rules = Some(catalog);
     }
 
     /// Capture the store into a versioned snapshot for persistence, or `None`
@@ -109,39 +140,48 @@ impl DispositionState {
 
     /// Ingest a batch from `body` (a single object, a JSON array, or NDJSON),
     /// labeling metrics with `source` (`api`, `file`, `http`, or `nats`).
-    /// Returns `Err` only when the whole payload fails to parse.
+    /// Returns `Err` only when the whole payload fails to parse. A pull
+    /// source may carry any number of records.
     pub fn ingest(&self, body: &str, source: &str) -> Result<IngestSummary, String> {
-        self.ingest_inner(body, source, None)
+        let raws = self.parse(body).map_err(|e| e.to_string())?;
+        Ok(self.ingest_raws(raws, source, None))
     }
 
-    /// Ingest a batch and bind every disposition to `tenant`, replacing any
-    /// `tenant` in the body (`None` clears it).
-    pub fn ingest_with_tenant(
-        &self,
-        body: &str,
-        source: &str,
-        tenant: Option<rsigma_eval::TenantId>,
-    ) -> Result<IngestSummary, String> {
-        self.ingest_inner(body, source, tenant)
+    /// Parse a request body, refusing more than
+    /// [`MAX_DISPOSITIONS_PER_REQUEST`] records.
+    pub fn parse_request(&self, body: &str) -> Result<Vec<RawDisposition>, IngestError> {
+        let raws = self.parse(body)?;
+        if raws.len() > MAX_DISPOSITIONS_PER_REQUEST {
+            self.metrics
+                .disposition_ingest_errors_total
+                .with_label_values(&["batch_size"])
+                .inc();
+            return Err(IngestError::TooMany {
+                records: raws.len(),
+            });
+        }
+        Ok(raws)
     }
 
-    fn ingest_inner(
+    fn parse(&self, body: &str) -> Result<Vec<RawDisposition>, IngestError> {
+        parse_dispositions(body).map_err(|e| {
+            self.metrics
+                .disposition_ingest_errors_total
+                .with_label_values(&["parse"])
+                .inc();
+            IngestError::Parse(e.to_string())
+        })
+    }
+
+    /// Ingest parsed records and bind every disposition to `tenant`,
+    /// replacing any `tenant` in the records (`None` clears it).
+    pub fn ingest_raws(
         &self,
-        body: &str,
+        mut raws: Vec<RawDisposition>,
         source: &str,
         tenant: Option<rsigma_eval::TenantId>,
-    ) -> Result<IngestSummary, String> {
+    ) -> IngestSummary {
         let now = chrono::Utc::now().timestamp();
-        let mut raws = match parse_dispositions(body) {
-            Ok(r) => r,
-            Err(e) => {
-                self.metrics
-                    .disposition_ingest_errors_total
-                    .with_label_values(&["parse"])
-                    .inc();
-                return Err(e.to_string());
-            }
-        };
         // A record's own `tenant` is never identity: only the API principal
         // binds one, and every other source ingests untenanted records.
         for raw in &mut raws {
@@ -151,18 +191,29 @@ impl DispositionState {
         for raw in raws {
             match Disposition::from_raw(raw, now) {
                 Ok(disp) => self.apply(disp, now, source, &mut summary),
-                Err(e) => {
-                    self.metrics
-                        .disposition_ingest_errors_total
-                        .with_label_values(&["validation"])
-                        .inc();
-                    self.count_ingest(source, "rejected");
-                    summary.rejected += 1;
-                    summary.errors.push(e.to_string());
-                }
+                Err(e) => self.reject(source, "validation", e.to_string(), &mut summary),
             }
         }
-        Ok(summary)
+        self.set_tracked_gauge();
+        summary
+    }
+
+    fn reject(&self, source: &str, reason: &str, error: String, summary: &mut IngestSummary) {
+        self.metrics
+            .disposition_ingest_errors_total
+            .with_label_values(&[reason])
+            .inc();
+        self.count_ingest(source, "rejected");
+        summary.rejected += 1;
+        summary.errors.push(error);
+    }
+
+    fn set_tracked_gauge(&self) {
+        if let Ok(store) = self.store.read() {
+            self.metrics
+                .disposition_tracked_rules
+                .set(store.rule_count() as i64);
+        }
     }
 
     /// Apply one validated disposition, expanding an unresolved incident-scoped
@@ -200,6 +251,17 @@ impl DispositionState {
         let mut accepted = 0u64;
         let mut any_duplicate = false;
         for d in targets {
+            if let (Some(rules), Some(rule_id)) = (&self.rules, d.rule_id.as_deref())
+                && !rules(rule_id)
+            {
+                self.reject(
+                    source,
+                    "unknown_rule",
+                    format!("rule_id '{rule_id}' is not a loaded rule"),
+                    summary,
+                );
+                continue;
+            }
             let outcome = self
                 .store
                 .write()
@@ -231,6 +293,21 @@ impl DispositionState {
                     summary.rejected += 1;
                     self.count_ingest(source, "rejected");
                     summary.errors.push(reason);
+                }
+                IngestOutcome::RuleCapReached => {
+                    let max = self
+                        .store
+                        .read()
+                        .map(|s| s.config().max_rules)
+                        .unwrap_or_default();
+                    self.reject(
+                        source,
+                        "rule_cap",
+                        format!(
+                            "the disposition store already counts {max} (tenant, rule) pairs; raise daemon.dispositions.max_rules"
+                        ),
+                        summary,
+                    );
                 }
             }
         }
@@ -329,7 +406,14 @@ impl DispositionState {
                     ingested.insert(id.clone(), value.clone());
                     let label = labels.get(&id).copied().unwrap_or("file");
                     let text = serde_json::to_string(&value).unwrap_or_default();
-                    match this.ingest(&text, label) {
+                    let state = this.clone();
+                    let ingested =
+                        tokio::task::spawn_blocking(move || state.ingest(&text, label)).await;
+                    let Ok(ingested) = ingested else {
+                        tracing::warn!(source_id = %id, "Disposition ingest task failed");
+                        continue;
+                    };
+                    match ingested {
                         Ok(summary) => tracing::debug!(
                             source_id = %id,
                             accepted = summary.accepted,
@@ -344,7 +428,8 @@ impl DispositionState {
                         ),
                     }
                 }
-                this.refresh_all_gauges();
+                let state = this.clone();
+                let _ = tokio::task::spawn_blocking(move || state.refresh_all_gauges()).await;
             }
         });
     }
@@ -360,7 +445,9 @@ impl DispositionState {
             interval.tick().await; // skip the immediate first tick
             loop {
                 interval.tick().await;
-                this.prune(chrono::Utc::now().timestamp());
+                let state = this.clone();
+                let now = chrono::Utc::now().timestamp();
+                let _ = tokio::task::spawn_blocking(move || state.prune(now)).await;
             }
         });
     }
@@ -368,22 +455,12 @@ impl DispositionState {
     /// Drop buckets and rules past the window at `now`, removing the ratio gauge
     /// for any rule that aged out entirely, then refresh the survivors' gauges.
     pub fn prune(&self, now: i64) {
-        let rules_before: std::collections::HashSet<String> = self
+        let gone = self
             .store
-            .read()
-            .ok()
-            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
+            .write()
+            .map(|mut store| store.prune(now))
             .unwrap_or_default();
-        if let Ok(mut store) = self.store.write() {
-            store.prune(now);
-        }
-        let rules_after: std::collections::HashSet<String> = self
-            .store
-            .read()
-            .ok()
-            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
-            .unwrap_or_default();
-        for rule_id in rules_before.difference(&rules_after) {
+        for rule_id in gone {
             let _ = self
                 .metrics
                 .rule_false_positive_ratio
@@ -392,19 +469,32 @@ impl DispositionState {
         self.refresh_all_gauges();
     }
 
-    /// Recompute every rule's ratio gauge (after a bulk source ingest or a
-    /// state restore). The gauge is labeled by rule only, so each value sums
-    /// the rule's dispositions across tenants.
+    /// Recompute every rule's ratio gauge (after a bulk source ingest, a
+    /// prune, or a state restore), in time linear in the rules tracked. The
+    /// gauge is labeled by rule only, so each value sums the rule's
+    /// dispositions across tenants.
     pub fn refresh_all_gauges(&self) {
-        let rules: std::collections::BTreeSet<String> = self
-            .store
-            .read()
-            .ok()
-            .map(|s| s.summaries().into_iter().map(|x| x.rule_id).collect())
-            .unwrap_or_default();
-        for rule_id in rules {
-            self.refresh_gauge(&rule_id);
+        let Ok(store) = self.store.read() else {
+            return;
+        };
+        for rule_id in store.rule_ids() {
+            match store.ratio(&rule_id) {
+                Some(r) => self
+                    .metrics
+                    .rule_false_positive_ratio
+                    .with_label_values(&[rule_id.as_str()])
+                    .set(r),
+                None => {
+                    let _ = self
+                        .metrics
+                        .rule_false_positive_ratio
+                        .remove_label_values(&[rule_id.as_str()]);
+                }
+            }
         }
+        self.metrics
+            .disposition_tracked_rules
+            .set(store.rule_count() as i64);
     }
 
     /// Resolve an incident id to its contributing rule identities through the
@@ -418,12 +508,10 @@ impl DispositionState {
         let Ok(state) = self.alert_state.read() else {
             return Vec::new();
         };
-        for inc in state.incidents.snapshot(IncludeMode::Refs) {
-            if inc.incident_id == incident_id && inc.tenant_id.as_ref() == tenant {
-                return inc.rule_counts.into_keys().collect();
-            }
-        }
-        Vec::new()
+        state
+            .incidents
+            .incident_rule_keys(tenant, incident_id)
+            .unwrap_or_default()
     }
 
     /// The per-rule ratio view served by `GET /api/v1/dispositions`.
@@ -622,20 +710,19 @@ mod tests {
     fn the_ratio_gauge_sums_a_rule_across_tenants() {
         let state = state(1);
         let tenant = |id: &str| Some(rsigma_eval::TenantId::new(id).unwrap());
-        state
-            .ingest_with_tenant(
+        for (body, id) in [
+            (
                 r#"{"rule_id":"r1","verdict":"true_positive","fingerprint":"x"}"#,
-                "api",
-                tenant("a"),
-            )
-            .unwrap();
-        state
-            .ingest_with_tenant(
+                "a",
+            ),
+            (
                 r#"{"rule_id":"r1","verdict":"false_positive","fingerprint":"y"}"#,
-                "api",
-                tenant("b"),
-            )
-            .unwrap();
+                "b",
+            ),
+        ] {
+            let raws = state.parse_request(body).unwrap();
+            state.ingest_raws(raws, "api", tenant(id));
+        }
         state.refresh_all_gauges();
         assert_eq!(
             state
@@ -644,6 +731,153 @@ mod tests {
                 .with_label_values(&["r1"])
                 .get(),
             0.5
+        );
+    }
+
+    fn known_rules(state: &mut DispositionState, ids: &'static [&'static str]) {
+        state.set_rule_catalog(Arc::new(move |id: &str| ids.contains(&id)));
+    }
+
+    #[test]
+    fn unknown_rule_ids_are_refused_and_create_no_entries() {
+        let mut state = state(1);
+        known_rules(&mut state, &["r1"]);
+        let body: String = (0..100_000)
+            .map(|i| format!("{{\"rule_id\":\"bogus-{i}\",\"verdict\":\"false_positive\"}}\n"))
+            .collect();
+        let summary = state.ingest(&body, "file").unwrap();
+        assert_eq!(summary.accepted, 0);
+        assert_eq!(summary.rejected, 100_000);
+        assert!(state.view()["rules"].as_array().unwrap().is_empty());
+        assert_eq!(state.metrics.disposition_tracked_rules.get(), 0);
+        assert_eq!(
+            state
+                .metrics
+                .disposition_ingest_errors_total
+                .with_label_values(&["unknown_rule"])
+                .get(),
+            100_000
+        );
+        let summary = state
+            .ingest(r#"{"rule_id":"r1","verdict":"false_positive"}"#, "api")
+            .unwrap();
+        assert_eq!(summary.accepted, 1);
+    }
+
+    #[test]
+    fn known_rules_past_max_rules_are_refused() {
+        let metrics = Arc::new(Metrics::new());
+        let alert_state = Arc::new(RwLock::new(AlertPipelineState::default()));
+        let config = DispositionConfig {
+            min_sample: 1,
+            max_rules: 2,
+            ..Default::default()
+        };
+        let state = DispositionState::new(config, metrics, alert_state);
+        let body = r#"[{"rule_id":"a","verdict":"true_positive"},{"rule_id":"b","verdict":"true_positive"},{"rule_id":"c","verdict":"true_positive"}]"#;
+        let summary = state.ingest(body, "api").unwrap();
+        assert_eq!((summary.accepted, summary.rejected), (2, 1));
+        assert!(
+            summary.errors[0].contains("max_rules"),
+            "{:?}",
+            summary.errors
+        );
+        assert_eq!(state.metrics.disposition_tracked_rules.get(), 2);
+    }
+
+    #[test]
+    fn a_request_past_the_batch_limit_is_refused_whole() {
+        let state = state(1);
+        let one = r#"{"rule_id":"r1","verdict":"true_positive"}"#;
+        let body = vec![one; MAX_DISPOSITIONS_PER_REQUEST + 1].join("\n");
+        assert!(matches!(
+            state.parse_request(&body),
+            Err(IngestError::TooMany { records }) if records == MAX_DISPOSITIONS_PER_REQUEST + 1
+        ));
+        let body = vec![one; MAX_DISPOSITIONS_PER_REQUEST].join("\n");
+        assert_eq!(
+            state.parse_request(&body).unwrap().len(),
+            MAX_DISPOSITIONS_PER_REQUEST
+        );
+    }
+
+    #[test]
+    fn a_future_timestamp_is_refused() {
+        let state = state(1);
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        let summary = state
+            .ingest(
+                &format!(r#"{{"rule_id":"r1","verdict":"true_positive","timestamp":"{future}"}}"#),
+                "api",
+            )
+            .unwrap();
+        assert_eq!(summary.rejected, 1);
+        assert!(summary.errors[0].contains("future"), "{:?}", summary.errors);
+    }
+
+    fn open_incidents(count: usize) -> Arc<RwLock<AlertPipelineState>> {
+        use rsigma_eval::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader};
+        let pipeline = rsigma_runtime::parse_alert_pipeline_config(
+            "group:\n  by: [match.SourceIp]\n  group_wait: 1h\n  resolve_timeout: 1h\n",
+        )
+        .unwrap();
+        let results = (0..count)
+            .map(|i| EvaluationResult {
+                header: RuleHeader {
+                    rule_title: "r1".into(),
+                    rule_id: Some("r1".into()),
+                    tenant_id: None,
+                    level: None,
+                    tags: vec![],
+                    custom_attributes: Arc::new(std::collections::HashMap::new()),
+                    enrichments: None,
+                    ruleset: None,
+                },
+                body: ResultBody::Detection(DetectionBody {
+                    matched_selections: vec![],
+                    matched_fields: vec![FieldMatch::new("SourceIp", serde_json::json!(i))],
+                    event: None,
+                }),
+            })
+            .collect();
+        let mut st = AlertPipelineState::default();
+        pipeline.process(results, &mut st, 0, &rsigma_runtime::NoopMetrics);
+        assert_eq!(st.incidents.len(), count);
+        Arc::new(RwLock::new(st))
+    }
+
+    #[test]
+    fn incident_scoped_batches_cost_the_same_however_many_incidents_are_open() {
+        let body: String = (0..1000)
+            .map(|i| {
+                format!(
+                    "{{\"verdict\":\"false_positive\",\"scope\":\"incident\",\"incident_id\":\"missing-{i}\"}}\n"
+                )
+            })
+            .collect();
+        let best_of_three = |incidents: usize| {
+            let state = DispositionState::new(
+                DispositionConfig::default(),
+                Arc::new(Metrics::new()),
+                open_incidents(incidents),
+            );
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    let summary = state.ingest(&body, "api").unwrap();
+                    assert_eq!(summary.rejected, 1000);
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let few = best_of_three(10);
+        let many = best_of_three(10_000);
+        // A scan of every open incident per record makes the second run about
+        // a thousand times slower; a keyed lookup keeps the two close.
+        assert!(
+            many < few * 20 + std::time::Duration::from_millis(50),
+            "10 incidents: {few:?}, 10000 incidents: {many:?}"
         );
     }
 

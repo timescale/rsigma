@@ -35,7 +35,7 @@ pub use cache::SourceCache;
 pub use template::TemplateExpander;
 pub use watchlist::{
     AddSummary, RemoveSummary, ReplaceSummary, WatchlistError, WatchlistItem, WatchlistRegistry,
-    WatchlistRestore, WatchlistRow,
+    WatchlistRestore, WatchlistRow, WatchlistStatus,
 };
 
 /// The result of successfully resolving a dynamic source.
@@ -490,6 +490,34 @@ impl SourceResolver for DefaultSourceResolver {
     }
 
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
+        if let (SourceType::Watchlist { .. }, Some(registry)) =
+            (&source.source_type, self.watchlists.as_ref())
+            && let Ok((values, revision)) = registry.values_at(&source.id, watchlist::now_utc())
+        {
+            let data = serde_json::Value::Array(
+                values.into_iter().map(serde_json::Value::String).collect(),
+            );
+            self.cache.store(&source.id, &data);
+            if let Some(delay) =
+                registry.mark_applied(&source.id, revision, std::time::Instant::now())
+            {
+                if delay >= WATCHLIST_SLOW_APPLY {
+                    tracing::warn!(
+                        source_id = %source.id,
+                        delay_ms = delay.as_millis() as u64,
+                        "Watchlist change reached the source cache late"
+                    );
+                }
+                if let Some(metrics) = &self.metrics {
+                    metrics.on_watchlist_applied(&source.id, delay);
+                }
+            }
+            return Ok(ResolvedValue {
+                data,
+                resolved_at: Instant::now(),
+                from_cache: false,
+            });
+        }
         let result = catch_resolver_panic(source, self.dispatch(source)).await;
 
         match result {
@@ -540,6 +568,10 @@ impl SourceResolver for DefaultSourceResolver {
         }
     }
 }
+
+/// A watchlist change that takes this long to reach the source cache is
+/// logged.
+const WATCHLIST_SLOW_APPLY: Duration = Duration::from_secs(5);
 
 /// Most sources one [`resolve_all`] call fetches at the same time.
 pub const MAX_CONCURRENT_RESOLVES: usize = 8;
@@ -603,11 +635,14 @@ pub(crate) async fn resolve_concurrently<'a>(
         .await
 }
 
-/// Resolve sources from the cache, fetching only the ones with no cached value.
+/// Resolve sources from the cache, fetching only required sources with no
+/// cached value.
 ///
-/// A hit is returned as stored. Misses call [`SourceResolver::resolve`]
-/// concurrently, which stores each fetched value. Optional sources that fail
-/// become JSON null.
+/// A hit is returned as stored. Required misses call
+/// [`SourceResolver::resolve`] concurrently, which stores each fetched value.
+/// An optional source with no cached value becomes JSON null without a fetch:
+/// it failed its last refresh, and the refresh scheduler retries it, so a
+/// source that never answers cannot hold up a rebuild.
 pub async fn resolve_all_cache_first(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],
@@ -618,6 +653,9 @@ pub async fn resolve_all_cache_first(
         match resolver.cached(&source.id) {
             Some(cached) => {
                 resolved.insert(source.id.clone(), cached);
+            }
+            None if !source.required => {
+                resolved.insert(source.id.clone(), serde_json::Value::Null);
             }
             None => misses.push(source),
         }

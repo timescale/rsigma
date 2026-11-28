@@ -57,11 +57,13 @@ Every limit must be greater than zero, and `max_event_bytes <= max_bytes_per_inc
 | `max_spool_bytes` | `10GiB` | Completed-bundle disk budget |
 | `spool_queue_capacity` | `128` | In-flight spool jobs |
 
-A bundle larger than `max_spool_bytes` fails before commit. Completed bundles are evicted oldest-first when a new write would exceed the disk budget. Ring occupancy is independent of disk retention.
+A bundle larger than `max_spool_bytes` fails before commit. Completed bundles are evicted oldest-first when a new write would exceed the disk budget. Every tenant's bundles count against the budget and are eviction candidates, and `rsigma_capture_spool_bytes` reports the total. {{ added "unreleased" }} Ring occupancy is independent of disk retention.
 
 ## Bundle layout
 
 One directory per original normalized disposition. The directory name is the SHA-256 hex digest of that identity, so paths never contain raw incident or fingerprint strings.
+
+The identity uses only what the captured events confirm. {{ added "unreleased" }} The bundle holds the accepted rules that matched a captured event, and a disposition whose rules never matched one is a `miss` and writes nothing. An `incident_id` counts when the events were found by it, a `fingerprint` when a contributing rule's match carries it, and a detection-scoped `rule_id` must be among the contributing rules. A value the events do not show is ignored, so a disposition that names made-up fingerprints lands on the same bundle as one that names none.
 
 - `spool_dir/tp/<bundle_id>/` for `true_positive` and `benign_true_positive`
 - `spool_dir/fp/<bundle_id>/` for `false_positive`
@@ -78,6 +80,8 @@ Do not pass `spool_dir` itself to `rule backtest`. Backtest walks every file und
 ## Tenancy
 
 With tenancy enabled, the spool path gains a tenant level: `<spool>/<tenant>/<fp|tp>/<bundle_id>`. The bundle identity and the capture fingerprint index include the tenant, so the same rule and fingerprint in two tenants produce two bundles. See [Multi-tenancy](multi-tenancy.md). {{ added "0.28.0" }}
+
+Tenant directories count against `max_spool_bytes` like the untenanted ones. `daemon.tenancy.quotas.capture_spool_bytes` caps one tenant's share of it: a tenant over its share evicts its own oldest bundles first, so it cannot push out another tenant's evidence. {{ added "unreleased" }}
 
 ## Commands
 

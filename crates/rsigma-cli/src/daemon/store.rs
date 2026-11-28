@@ -274,8 +274,11 @@ impl SqliteStateStore {
         .map_err(|e| format!("spawn_blocking: {e}"))?
     }
 
-    /// Load the most recent alert-pipeline snapshot, if any.
-    pub async fn load_alert_pipeline(&self) -> Result<Option<AlertPipelineSnapshot>, String> {
+    /// Load the most recent alert-pipeline snapshot, if any, with the entries
+    /// that could not be read and were left out.
+    pub async fn load_alert_pipeline(
+        &self,
+    ) -> Result<Option<(AlertPipelineSnapshot, rsigma_runtime::SnapshotSkips)>, String> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().map_err(|_| "state store lock poisoned")?;
@@ -285,9 +288,7 @@ impl SqliteStateStore {
             let mut rows = stmt.query([]).map_err(|e| format!("query: {e}"))?;
             if let Some(row) = rows.next().map_err(|e| format!("next: {e}"))? {
                 let json: String = row.get(0).map_err(|e| format!("get snapshot: {e}"))?;
-                let snapshot: AlertPipelineSnapshot = serde_json::from_str(&json)
-                    .map_err(|e| format!("deserialize alert-pipeline snapshot: {e}"))?;
-                Ok(Some(snapshot))
+                AlertPipelineSnapshot::from_json(&json).map(Some)
             } else {
                 Ok(None)
             }
@@ -792,8 +793,9 @@ mod tests {
             .await
             .unwrap();
 
-        let loaded = store.load_alert_pipeline().await.unwrap().unwrap();
+        let (loaded, skips) = store.load_alert_pipeline().await.unwrap().unwrap();
         assert_eq!(loaded.version, rsigma_runtime::SNAPSHOT_VERSION);
+        assert_eq!(skips.total(), 0);
     }
 
     #[tokio::test]

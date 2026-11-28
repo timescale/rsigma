@@ -240,7 +240,7 @@ curl -sS -X POST http://127.0.0.1:9090/api/v1/sources/resolve/ip_blocklist
 {"status":"resolve_triggered","source_id":"ip_blocklist"}
 ```
 
-Returns `404 {"error":"no dynamic sources configured"}` when no sources are registered, and `429 {"status":"resolve_already_pending"}` if a refresh for the same `source_id` is still in flight.
+Returns `404 {"error":"no dynamic sources configured"}` when no sources are registered, and `404 {"error":"unknown source"}` when no source has that id. {{ added "unreleased" }} A request is never dropped: requests for a source that is still resolving coalesce into one more resolve after the current one, so both resolve endpoints always answer `200` and no longer return `429`. {{ added "unreleased" }}
 
 ### `DELETE /api/v1/sources/cache/{source_id}`
 
@@ -260,7 +260,7 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 
 {{ added "0.28.0" }}
 
-`/api/v1/sources/{source_id}/indicators` reads and changes a `type: watchlist` source. The response is returned before rules finish rebuilding. A body over 4 MiB, or more than 10,000 indicators, is `413`. When `--state-db` enables the audit trail, a body over `daemon.api.audit.max_body_bytes` (default 64 KiB) is also `413`, before this handler runs.
+`/api/v1/sources/{source_id}/indicators` reads and changes a `type: watchlist` source. The response is returned before rules finish rebuilding. Each change gets a `revision`, and its refresh request is never dropped: requests coalesce, and a change made while the source resolves is resolved again afterwards. A watchlist resolves from memory, so sources that are slow or never answer do not hold it up. {{ added "unreleased" }} A body over 4 MiB, or more than 10,000 indicators, is `413`. When `--state-db` enables the audit trail, a body over `daemon.api.audit.max_body_bytes` (default 64 KiB) is also `413`, before this handler runs.
 
 `POST` and `PUT` take:
 
@@ -275,11 +275,11 @@ The endpoint returns `200 OK` for any source ID regardless of whether that ID is
 }
 ```
 
-`ttl` is optional. `POST` answers `{"source_id","added","updated","total"}`. `PUT` answers `{"source_id","total","removed"}` and drops every unexpired value the body does not name.
+`ttl` is optional. `POST` answers `{"source_id","added","updated","total","revision"}`. `PUT` answers `{"source_id","total","removed","revision"}` and drops every unexpired value the body does not name.
 
-`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total"}`. When `--state-db` is set, the audit trail records a SHA-256 digest of that body. The body itself is not stored.
+`DELETE` takes `{"indicators":["198.51.100.7"]}` and answers `{"source_id","removed","not_found","total","revision"}`. When `--state-db` is set, the audit trail records a SHA-256 digest of that body. The body itself is not stored.
 
-`GET` accepts `limit` (default 1000, at most 10000) and `offset` (default 0). The answer is `{"source_id","total","indicators":[{"value","added_at","expires_at"}]}`, sorted by value. `expires_at` is `null` when the indicator does not expire.
+`GET` accepts `limit` (default 1000, at most 10000) and `offset` (default 0). The answer is `{"source_id","total","revision","applied_revision","pending","indicators":[{"value","added_at","expires_at"}]}`, sorted by value. `expires_at` is `null` when the indicator does not expire. `applied_revision` is the latest revision the source cache holds, which rule rebuilds and `lookup` enrichers read; `pending` is `true` while a change has not reached it. A change still pending after 30 seconds is logged, and `rsigma_watchlist_refresh_pending` and `rsigma_watchlist_refresh_delay_seconds` track the wait. {{ added "unreleased" }}
 
 | Status | When |
 |--------|------|

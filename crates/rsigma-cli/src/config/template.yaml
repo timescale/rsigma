@@ -278,6 +278,9 @@ daemon:
     # Minimum dispositions a rule needs in the window before its ratio is
     # published, so a single false positive cannot publish a misleading 100%.
     min_sample: 5
+    # Most (tenant, rule) pairs counted. A disposition for a new pair is
+    # refused once the store holds this many.
+    max_rules: 10000
 
   # Verdict-driven evidence capture. Opt-in and startup-only: changing
   # these keys requires a daemon restart. When enabled, the daemon retains

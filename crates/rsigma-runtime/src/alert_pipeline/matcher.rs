@@ -7,7 +7,8 @@
 //! matchers. A selector that resolves to nothing is treated as the empty
 //! string, matching Alertmanager's absent-label semantics.
 
-use regex::Regex;
+use regex_automata::MatchKind;
+use regex_automata::meta::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -69,6 +70,25 @@ impl std::fmt::Display for MatcherError {
 
 impl std::error::Error for MatcherError {}
 
+/// Bounds on compiling a matcher regex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegexLimits {
+    /// Most heap bytes the compiled regex may hold. A larger regex is
+    /// refused.
+    pub size_limit: usize,
+    /// Capacity of each lazy DFA cache. Searches fall back to a slower engine
+    /// when the cache fills, so this bounds memory without failing a match.
+    pub cache_capacity: usize,
+}
+
+impl RegexLimits {
+    /// The `regex` crate defaults, used for operator-owned config.
+    pub const DEFAULT: RegexLimits = RegexLimits {
+        size_limit: 10 * (1 << 20),
+        cache_capacity: 2 * (1 << 20),
+    };
+}
+
 /// A compiled matcher.
 #[derive(Debug, Clone)]
 pub struct Matcher {
@@ -79,18 +99,16 @@ pub struct Matcher {
 }
 
 impl Matcher {
-    /// Compile a matcher from its spec.
+    /// Compile a matcher from its spec with the default regex limits.
     pub fn compile(spec: &MatcherSpec) -> Result<Self, MatcherError> {
+        Self::compile_limited(spec, &RegexLimits::DEFAULT)
+    }
+
+    /// Compile a matcher from its spec, refusing a regex over `limits`.
+    pub fn compile_limited(spec: &MatcherSpec, limits: &RegexLimits) -> Result<Self, MatcherError> {
         let selector = Selector::parse(&spec.selector).map_err(MatcherError::Selector)?;
         let regex = match spec.op {
-            MatchOp::ReMatch | MatchOp::ReNotMatch => {
-                // Anchor like Alertmanager so `=~ "foo"` is a full match.
-                let anchored = format!("^(?:{})$", spec.value);
-                Some(Regex::new(&anchored).map_err(|e| MatcherError::Regex {
-                    value: spec.value.clone(),
-                    message: e.to_string(),
-                })?)
-            }
+            MatchOp::ReMatch | MatchOp::ReNotMatch => Some(anchored_regex(&spec.value, limits)?),
             MatchOp::Eq | MatchOp::Ne => None,
         };
         Ok(Matcher {
@@ -99,6 +117,11 @@ impl Matcher {
             value: spec.value.clone(),
             regex,
         })
+    }
+
+    /// Heap bytes held by the compiled regex, or 0 for `=` and `!=`.
+    pub fn regex_bytes(&self) -> usize {
+        self.regex.as_ref().map_or(0, Regex::memory_usage)
     }
 
     /// Recover the spec form for serialization (the GET views).
@@ -120,10 +143,46 @@ impl Matcher {
         match self.op {
             MatchOp::Eq => resolved == self.value,
             MatchOp::Ne => resolved != self.value,
-            MatchOp::ReMatch => self.regex.as_ref().is_some_and(|r| r.is_match(&resolved)),
-            MatchOp::ReNotMatch => self.regex.as_ref().is_some_and(|r| !r.is_match(&resolved)),
+            MatchOp::ReMatch => self
+                .regex
+                .as_ref()
+                .is_some_and(|r| r.is_match(resolved.as_str())),
+            MatchOp::ReNotMatch => self
+                .regex
+                .as_ref()
+                .is_some_and(|r| !r.is_match(resolved.as_str())),
         }
     }
+}
+
+/// Compile `value` as a full-match regex, like Alertmanager, so `=~ "foo"`
+/// matches only `foo`.
+fn anchored_regex(value: &str, limits: &RegexLimits) -> Result<Regex, MatcherError> {
+    let invalid = |message: String| MatcherError::Regex {
+        value: value.to_string(),
+        message,
+    };
+    // Parsed on its own first: a value such as `x)|(.*` is not a regex by
+    // itself, and wrapped it would close the anchoring group and match
+    // anything.
+    regex_syntax::ast::parse::Parser::new()
+        .parse(value)
+        .map_err(|e| invalid(e.to_string()))?;
+    let config = Regex::config()
+        .match_kind(MatchKind::LeftmostFirst)
+        .utf8_empty(true)
+        .nfa_size_limit(Some(limits.size_limit))
+        .hybrid_cache_capacity(limits.cache_capacity);
+    Regex::builder()
+        .configure(config)
+        .syntax(regex_automata::util::syntax::Config::new().utf8(true))
+        .build(&format!("^(?:{value})$"))
+        .map_err(|e| match e.size_limit() {
+            Some(limit) => invalid(format!(
+                "the compiled regex exceeds the {limit}-byte size limit"
+            )),
+            None => invalid(e.to_string()),
+        })
 }
 
 /// A conjunction of matchers. Empty sets match nothing (a silence with no
@@ -136,11 +195,29 @@ pub struct MatcherSet {
 impl MatcherSet {
     /// Compile a matcher set from specs. Errors name the offending matcher.
     pub fn compile(specs: &[MatcherSpec]) -> Result<Self, MatcherError> {
+        Self::compile_limited(specs, &RegexLimits::DEFAULT)
+    }
+
+    /// Compile a matcher set, refusing any regex over `limits`.
+    pub fn compile_limited(
+        specs: &[MatcherSpec],
+        limits: &RegexLimits,
+    ) -> Result<Self, MatcherError> {
         let matchers = specs
             .iter()
-            .map(Matcher::compile)
+            .map(|spec| Matcher::compile_limited(spec, limits))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(MatcherSet { matchers })
+    }
+
+    /// Heap bytes held by the set's compiled regexes.
+    pub fn regex_bytes(&self) -> usize {
+        self.matchers.iter().map(Matcher::regex_bytes).sum()
+    }
+
+    /// Number of `=~` and `!~` matchers.
+    pub fn regex_count(&self) -> usize {
+        self.matchers.iter().filter(|m| m.regex.is_some()).count()
     }
 
     /// True when the set is empty.
@@ -245,5 +322,39 @@ mod tests {
     fn bad_regex_is_rejected() {
         let err = Matcher::compile(&spec("rule", MatchOp::ReMatch, "(")).unwrap_err();
         assert!(matches!(err, MatcherError::Regex { .. }));
+    }
+
+    #[test]
+    fn a_value_cannot_close_the_anchoring_group() {
+        for value in [r"x)|(.*", r".*)|(?:x", "a)"] {
+            let err = Matcher::compile(&spec("match.SourceIp", MatchOp::ReMatch, value))
+                .expect_err(value);
+            assert!(matches!(err, MatcherError::Regex { .. }), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_regex_over_the_size_limit_is_refused() {
+        let limits = RegexLimits {
+            size_limit: 64 * 1024,
+            cache_capacity: 64 * 1024,
+        };
+        let big = spec("rule", MatchOp::ReMatch, "a{5000}");
+        let err = Matcher::compile_limited(&big, &limits).unwrap_err();
+        assert!(err.to_string().contains("size limit"), "{err}");
+        // The same regex fits the default limits.
+        assert!(Matcher::compile(&big).is_ok());
+    }
+
+    #[test]
+    fn regex_bytes_counts_only_regex_matchers() {
+        let set = MatcherSet::compile(&[
+            spec("match.SourceIp", MatchOp::Eq, "10.0.0.1"),
+            spec("rule", MatchOp::ReMatch, "r-.*"),
+        ])
+        .unwrap();
+        let eq_only = MatcherSet::compile(&[spec("rule", MatchOp::Eq, "r")]).unwrap();
+        assert_eq!(eq_only.regex_bytes(), 0);
+        assert!(set.regex_bytes() > 0);
     }
 }

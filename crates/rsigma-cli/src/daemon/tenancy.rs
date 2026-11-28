@@ -30,11 +30,12 @@ pub(crate) struct TenantQuotas {
     pub silences: Option<usize>,
     pub inhibition_sources: Option<usize>,
     pub stream_sessions: Option<usize>,
+    pub capture_spool_bytes: Option<usize>,
 }
 
 impl TenantQuotas {
     /// Each quota with its config key.
-    fn named(&self) -> [(&'static str, Option<usize>); 7] {
+    fn named(&self) -> [(&'static str, Option<usize>); 8] {
         [
             ("correlation_state", self.correlation_state),
             ("active_alerts", self.active_alerts),
@@ -43,6 +44,7 @@ impl TenantQuotas {
             ("silences", self.silences),
             ("inhibition_sources", self.inhibition_sources),
             ("stream_sessions", self.stream_sessions),
+            ("capture_spool_bytes", self.capture_spool_bytes),
         ]
     }
 
@@ -67,6 +69,7 @@ impl From<TenantQuotasPartial> for TenantQuotas {
             silences: partial.silences,
             inhibition_sources: partial.inhibition_sources,
             stream_sessions: partial.stream_sessions,
+            capture_spool_bytes: partial.capture_spool_bytes,
         }
     }
 }
