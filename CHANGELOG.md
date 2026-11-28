@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### TAXII client trust, retries, and timestamps hold up against a hostile server, and one bad file no longer stops a STIX store
+### TAXII client trust, retries, and timestamps hold up against a hostile server, and one bad file no longer stops a STIX store (#812)
 
 With DANE and `dane_require_dnssec` (the default), the rstix TAXII client used TLSA and SRV answers whatever their DNSSEC proof state. It now uses only records the resolver proves Secure and fails with a trust error before connecting otherwise. A TLSA usage 0 (PKIX-TA) record matched any certificate the server sent; it must now match an intermediate or the trust anchor of the chain PKIX validated. `discover_via_srv` checked the certificate against the SRV target, so whoever answered the SRV query could steer the client and its credentials to any host with a valid certificate for its own name; unless the SRV record is DNSSEC-validated, the certificate must now be valid for the queried domain, and the new `TaxiiClientConfig::server_identity` names it explicitly.
 
