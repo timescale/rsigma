@@ -869,7 +869,35 @@ async fn http_miss_status_without_cache_ttl_asks_every_time() {
     )
     .with_default(Some(json!({"country": "unknown"})))
     .with_miss_status(vec![404]);
-    run_http(enricher, 2).await;
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 4);
+    for _ in 0..2 {
+        pipeline.run(&mut vec![detection("rule-x", "ps -ef")]).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn identical_requests_in_one_batch_share_one_call() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/geo"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"country": "NL"}))
+                .set_delay(Duration::from_millis(100)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let enricher = http_enricher(
+        format!("{}/geo", server.uri()),
+        None,
+        Duration::ZERO,
+        OnError::Skip,
+    );
+    let results = run_http(enricher, 3).await;
+    for result in &results {
+        assert_eq!(geo_of(result), Some(&json!({"country": "NL"})));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

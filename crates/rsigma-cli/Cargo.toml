@@ -35,6 +35,7 @@ daemon = [
     "dep:tower",
     "tokio-stream",
     "dep:getrandom",
+    "dep:futures-util",
 ]
 # MCP server (`rsigma mcp serve`). Pulls in rmcp via rsigma-mcp and needs a
 # tokio runtime; opt-in, build with --features mcp (the prebuilt binaries and
@@ -142,6 +143,7 @@ rusqlite = { version = "0.43", features = ["bundled"], optional = true }
 tower-http = { version = "0.7", features = ["trace"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 getrandom = { version = "0.4", optional = true }
+futures-util = { version = "0.3", optional = true }
 async-nats = { version = "0.53", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 time = { version = "0.3", optional = true }

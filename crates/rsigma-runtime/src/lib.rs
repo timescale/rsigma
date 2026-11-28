@@ -102,7 +102,8 @@ pub use enrichment::config::{
     build_enrichers_full, load_enrichers_file, parse_enrichers_config,
 };
 pub use enrichment::{
-    CacheKey, CacheOutcome, CommandEnricher, EnrichError, EnrichErrorKind, Enricher, EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher,
+    CacheKey, CacheOutcome, CommandEnricher, DEFAULT_FAILURE_CACHE_TTL, EnrichError,
+    EnrichErrorKind, Enricher, EnricherFactory, EnricherKind, EnrichmentPipeline, HttpEnricher,
     HttpEnricherClient, HttpResponseCache, LookupEnricher, OnError, OutputFormat, Scope,
     TemplateEnricher, TemplateError, build_default_http_client, env_references, lookup_builtin,
     register_builtin, render_webhook_body, validate_template_namespace,

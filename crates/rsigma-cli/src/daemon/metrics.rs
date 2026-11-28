@@ -58,6 +58,7 @@ pub struct Metrics {
     pub enrichment_total: IntCounterVec,
     pub enrichment_duration_seconds: prometheus::HistogramVec,
     pub enrichment_queue_depth: IntGauge,
+    pub enrichment_short_circuits_total: IntCounterVec,
     pub enrichment_http_cache_hits_total: IntCounterVec,
     pub enrichment_http_cache_misses_total: IntCounterVec,
     pub enrichment_http_cache_expirations_total: IntCounterVec,
@@ -659,6 +660,14 @@ impl Metrics {
             "Pending enrichment calls (sum across both kinds)",
         ))
         .unwrap();
+        let enrichment_short_circuits_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_enrichment_short_circuits_total",
+                "Enricher calls skipped because the same request was in flight or recently timed out or failed",
+            ),
+            &["enricher_id"],
+        )
+        .unwrap();
         let enrichment_http_cache_hits_total = IntCounterVec::new(
             Opts::new(
                 "rsigma_enrichment_http_cache_hits_total",
@@ -772,6 +781,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(enrichment_queue_depth.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(enrichment_short_circuits_total.clone()))
             .unwrap();
         registry
             .register(Box::new(enrichment_http_cache_hits_total.clone()))
@@ -1632,6 +1644,7 @@ impl Metrics {
             enrichment_total,
             enrichment_duration_seconds,
             enrichment_queue_depth,
+            enrichment_short_circuits_total,
             enrichment_http_cache_hits_total,
             enrichment_http_cache_misses_total,
             enrichment_http_cache_expirations_total,
@@ -2134,6 +2147,12 @@ impl MetricsHook for Metrics {
             .observe(duration_seconds);
     }
 
+    fn on_enrichment_short_circuit(&self, enricher_id: &str) {
+        self.enrichment_short_circuits_total
+            .with_label_values(&[enricher_id])
+            .inc();
+    }
+
     fn on_enrichment_queue_depth_change(&self, delta: i64) {
         if delta > 0 {
             self.enrichment_queue_depth.add(delta);
@@ -2254,6 +2273,9 @@ impl MetricsHook for Metrics {
         let _ = self
             .enrichment_duration_seconds
             .with_label_values(&[enricher_id, kind]);
+        self.enrichment_short_circuits_total
+            .with_label_values(&[enricher_id])
+            .inc_by(0);
     }
 
     fn register_http_enricher_cache(&self, enricher_id: &str) {
