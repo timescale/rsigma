@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Config discovery checks file ownership, project files cannot name downloads, and dynamic NATS sources use the operator's TLS and credentials
+### Config discovery checks file ownership, project files cannot name downloads, and dynamic NATS sources use the operator's TLS and credentials (#822)
 
 On Windows the system config was read from `/etc/rsigma`, a path relative to the current drive that any user can create. It now lives in `%ProgramData%\rsigma`, read from the `ProgramData` known folder, and `rsigma config path` prints every location it searched (to stderr in text mode, as `searched` in JSON) with whether each file was loaded, missing, or skipped.
 
