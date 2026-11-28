@@ -6,7 +6,7 @@
 
 #![cfg(feature = "mcp")]
 
-mod common;
+use crate::common;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;

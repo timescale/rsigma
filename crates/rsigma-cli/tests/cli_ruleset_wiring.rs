@@ -3,7 +3,7 @@
 //! Every test works on a writable copy of the ruleset fixtures, so a test can
 //! add configs and overlays without disturbing the committed fixtures.
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::path::{Path, PathBuf};

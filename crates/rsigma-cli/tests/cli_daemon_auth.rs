@@ -5,7 +5,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{
     DaemonProcess, SIMPLE_RULE, bounded_silence, http_delete_bearer, http_get, http_get_bearer,

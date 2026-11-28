@@ -4,7 +4,7 @@
 //! `convert:` section, so a group's output and manifest can be compared with
 //! committed goldens.
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::path::{Path, PathBuf};

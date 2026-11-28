@@ -1,7 +1,7 @@
 //! Integration tests for the eval subcommand (detection, pipeline,
 //! jq/jsonpath, correlation, filter, timestamp) and CLI edge cases.
 
-mod common;
+use crate::common;
 
 use common::{PIPELINE_YAML, SIMPLE_RULE, assert_golden, rsigma, temp_file};
 use predicates::prelude::*;

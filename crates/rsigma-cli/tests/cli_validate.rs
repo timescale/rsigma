@@ -1,6 +1,6 @@
 //! Integration tests for the validate subcommand.
 
-mod common;
+use crate::common;
 
 use common::{PIPELINE_YAML, SIMPLE_RULE, rsigma, temp_file};
 use predicates::prelude::*;

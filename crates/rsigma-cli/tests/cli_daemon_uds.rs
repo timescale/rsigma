@@ -6,7 +6,7 @@
 
 #![cfg(all(feature = "daemon", unix))]
 
-mod common;
+use crate::common;
 
 use std::io::{Read, Write};
 // `BufRead`/`BufReader` are only used by the `daemon-tls`-gated test below; gate

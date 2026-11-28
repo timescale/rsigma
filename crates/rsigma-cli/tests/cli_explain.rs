@@ -1,6 +1,6 @@
 //! Integration tests for the `engine explain` subcommand.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use insta::assert_snapshot;

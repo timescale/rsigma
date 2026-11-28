@@ -4,7 +4,7 @@
 //! expectations-parsing logic is unit-tested in the command module; these
 //! tests cover the end-to-end CLI surface only.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

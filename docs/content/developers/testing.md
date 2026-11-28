@@ -77,7 +77,7 @@ E2E tests cross the binary boundary or stand up real external services through c
 
 ### CLI E2E (`crates/rsigma-cli/tests/cli_*.rs`)
 
-There are 51 `cli_*.rs` files under [`crates/rsigma-cli/tests/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-cli/tests). They invoke the freshly built `rsigma` binary via [`assert_cmd`](https://docs.rs/assert_cmd) and exercise stdin, stdout, stderr, exit codes, and (for the daemon tests) the HTTP, NATS, and OTLP wire surface.
+The `cli_*.rs` files under [`crates/rsigma-cli/tests/`](https://github.com/timescale/rsigma/tree/main/crates/rsigma-cli/tests) are modules of one test target, `cli`, rooted at `tests/cli.rs`. The crate sets `autotests = false`, so the suite compiles and links once instead of once per file; a new file needs a `mod` line in `tests/cli.rs` and reaches the shared harness through `crate::common`. The tests invoke the freshly built `rsigma` binary via [`assert_cmd`](https://docs.rs/assert_cmd) and exercise stdin, stdout, stderr, exit codes, and (for the daemon tests) the HTTP, NATS, and OTLP wire surface.
 
 Categories for orientation (not a contract on per-file counts):
 
@@ -86,7 +86,7 @@ Categories for orientation (not a contract on per-file counts):
 - **Detection quality/authoring**: scorecard, backtest, coverage, tune, hygiene, visibility, doc, draft, discover, classify, explain, disposition recipes.
 - **Pipeline/sources**: pipeline diff, migrate-sources, sources deprecation, dump correlation state, logsource/schema routing.
 
-List discovered tests with `cargo test -p rsigma --tests -- --list`. Prefer that over memorizing counts.
+List discovered tests with `cargo test -p rsigma --tests -- --list`. Prefer that over memorizing counts. To run one file's tests, filter on its module: `cargo test -p rsigma --test cli cli_daemon_nats::`.
 
 The shared harness in `crates/rsigma-cli/tests/common/mod.rs` is the canonical reference for spawning a long-running daemon under test: it drains stdout in a background thread to prevent pipe stalls, forwards stderr lines via `mpsc`, probes the actual TCP socket with `TcpStream::connect_timeout` before returning a handle, and wraps the `Child` in a `ChildGuard` RAII type that kills it on drop. Readiness and state changes use `poll_until` to check the observable condition (HTTP status, metric counter) every 50 ms for up to 5 seconds. Do not replace these checks with `std::thread::sleep`, which is unreliable on loaded CI hosts. Use the shared harness for every new daemon-level test.
 

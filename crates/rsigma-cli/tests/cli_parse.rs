@@ -1,6 +1,6 @@
 //! Integration tests for parse, condition, and stdin subcommands.
 
-mod common;
+use crate::common;
 
 use common::{SIMPLE_RULE, rsigma, temp_file};
 use predicates::prelude::*;

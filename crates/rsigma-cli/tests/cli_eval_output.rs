@@ -2,7 +2,7 @@
 //! file in the resolved format while stdout stays empty and the summary stays
 //! on stderr.
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::path::Path;

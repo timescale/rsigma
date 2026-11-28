@@ -1,6 +1,6 @@
 //! Integration tests for `rsigma rule reverse`.
 
-mod common;
+use crate::common;
 
 use common::rsigma;
 

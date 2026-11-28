@@ -3,7 +3,7 @@
 //! delivery metrics. Runs under the default `daemon` feature (HTTP input,
 //! file output) so no external broker is needed.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

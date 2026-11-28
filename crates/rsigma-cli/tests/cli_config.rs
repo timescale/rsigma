@@ -6,7 +6,7 @@
 //! duplicated here. Explicit `--config` keeps every test hermetic (it bypasses
 //! the system/user discovery chain).
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;
