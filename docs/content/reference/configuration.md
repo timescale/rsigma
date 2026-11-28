@@ -19,7 +19,7 @@ From highest to lowest:
 5. **System config**: `/etc/rsigma/config.yaml` on Linux and macOS, `%ProgramData%\rsigma\config.yaml` (usually `C:\ProgramData\rsigma\config.yaml`) on Windows. {{ added "unreleased" }}
 6. **Compiled defaults** baked into the binary.
 
-Every file layer also accepts the `.yml` extension (`config.yml`, `rsigma.yml`); `.yaml` wins when both exist. A discovered file is read only when it passes the [ownership check](#file-ownership).
+The system, user, and `./rsigma.yaml` layers also accept the `.yml` extension (`config.yml`, `rsigma.yml`); `.yaml` wins when both exist. A discovered file is read only when it passes the [ownership check](#file-ownership).
 
 Higher layers override lower ones **per leaf**, not whole sections; a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config. This matches the [clig.dev guidance](https://clig.dev/#configuration) and is what most modern CLIs implement.
 
