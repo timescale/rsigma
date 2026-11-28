@@ -352,12 +352,12 @@ impl DefaultSourceResolver {
         #[cfg(not(feature = "stix-source"))]
         {
             let _ = source;
-            return Err(SourceError {
+            Err(SourceError {
                 source_id: String::new(),
                 kind: SourceErrorKind::Fetch(
                     "TAXII source requires the stix-source feature".into(),
                 ),
-            });
+            })
         }
         #[cfg(feature = "stix-source")]
         {
@@ -453,12 +453,10 @@ impl DefaultSourceResolver {
                 extract,
             } => nats::resolve_nats_initial(url, subject, *format, extract.as_ref()).await,
             #[cfg(not(feature = "nats"))]
-            SourceType::Nats { .. } => {
-                return Err(SourceError {
-                    source_id: source.id.clone(),
-                    kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
-                });
-            }
+            SourceType::Nats { .. } => Err(SourceError {
+                source_id: source.id.clone(),
+                kind: SourceErrorKind::Fetch("NATS source requires the 'nats' feature".into()),
+            }),
             SourceType::Taxii { .. } => self.resolve_taxii(source).await,
             SourceType::Watchlist { .. } => {
                 let data = self
