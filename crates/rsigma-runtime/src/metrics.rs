@@ -158,9 +158,12 @@ pub trait MetricsHook: Send + Sync {
     /// A sink retried a delivery after a retryable failure.
     fn on_sink_retry(&self, _sink: &str) {}
     /// A result was dropped because a lossy sink's queue was full
-    /// (`on_full=drop`).
+    /// (`on_full=drop`). Results outside the sink's scope are never queued,
+    /// so they are never counted here.
     fn on_sink_dropped(&self, _sink: &str) {}
-    /// A sink exhausted its retries and routed the result to the DLQ.
+    /// A sink delivery failed for good (retries exhausted or a permanent
+    /// error) and was routed to the DLQ. A webhook counts each result it
+    /// parks on its own.
     fn on_sink_delivery_failed(&self, _sink: &str) {}
     /// An OTLP collector accepted an export but rejected `count` of its log
     /// records in a partial success. Rejected records are not retried.

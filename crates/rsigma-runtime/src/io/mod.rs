@@ -21,7 +21,8 @@ mod unix_source;
 pub mod webhook;
 
 pub use delivery::{
-    DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher, OnFull,
+    DeadLetters, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliveryScope, DeliverySink,
+    Dispatcher, OnFull,
 };
 pub use file::FileSink;
 pub use line_framer::{FramedLine, LineFramer, MAX_LINE_BYTES};
@@ -762,6 +763,45 @@ impl Sink {
             #[cfg(all(unix, feature = "uds"))]
             Sink::Unix(_) => "unix",
             Sink::FanOut(_) => "fanout",
+        }
+    }
+
+    /// The results and incidents this sink acts on (see
+    /// [`DeliverySink::scope`]). A `FanOut` reports none, since its leaves
+    /// each carry their own.
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        match self {
+            Sink::Stdout(s) => s.delivery_scope(),
+            Sink::File(s) => s.delivery_scope(),
+            #[cfg(feature = "nats")]
+            Sink::Nats(s) => s.delivery_scope(),
+            #[cfg(feature = "otlp")]
+            Sink::Otlp(s) => s.delivery_scope(),
+            Sink::Webhook(s) => Some(s.delivery_scope()),
+            #[cfg(all(unix, feature = "uds"))]
+            Sink::Unix(s) => s.delivery_scope(),
+            Sink::FanOut(_) => None,
+        }
+    }
+
+    /// The results of a delivery the worker gave up on that this sink did
+    /// not deliver (see [`DeliverySink::abandon`]).
+    pub(crate) fn abandon_delivery<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        match self {
+            Sink::Stdout(s) => s.abandon(result, ctx),
+            Sink::File(s) => s.abandon(result, ctx),
+            #[cfg(feature = "nats")]
+            Sink::Nats(s) => s.abandon(result, ctx),
+            #[cfg(feature = "otlp")]
+            Sink::Otlp(s) => s.abandon(result),
+            Sink::Webhook(s) => s.abandon(result, ctx),
+            #[cfg(all(unix, feature = "uds"))]
+            Sink::Unix(s) => s.abandon(result, ctx),
+            Sink::FanOut(_) => result.iter().collect(),
         }
     }
 

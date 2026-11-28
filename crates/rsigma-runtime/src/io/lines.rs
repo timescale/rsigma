@@ -5,9 +5,10 @@
 use std::io::{self, Write};
 
 use parking_lot::Mutex;
-use rsigma_eval::{ProcessResult, TenantId};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
+use crate::io::delivery::TenantScope;
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// The NDJSON lines of one or more deliveries, serialized into a single
@@ -296,6 +297,18 @@ impl<W: Write> LineWriter<W> {
         outcomes
     }
 
+    /// The results of a delivery the worker gave up on whose lines never
+    /// went out, forgetting its progress.
+    pub(crate) fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+        tenant_filter: Option<&TenantId>,
+    ) -> Vec<&'r EvaluationResult> {
+        let written = self.resume.take(ctx).unwrap_or(0);
+        unwritten(result, tenant_filter, written)
+    }
+
     pub(crate) fn write_line(&mut self, json: &str) -> Result<(), RuntimeError> {
         let mut batch = LineBatch::default();
         batch.push(json);
@@ -326,6 +339,19 @@ impl<W: Write> LineWriter<W> {
             }
         }
     }
+}
+
+/// The results of `result` a line sink with `tenant_filter` writes, after the
+/// first `written` of them.
+pub(crate) fn unwritten<'r>(
+    result: &'r ProcessResult,
+    tenant_filter: Option<&TenantId>,
+    written: usize,
+) -> Vec<&'r EvaluationResult> {
+    TenantScope::results(tenant_filter, result)
+        .skip(written)
+        .map(|(_, r)| r)
+        .collect()
 }
 
 /// A batch encoded by [`LineWriter::begin_write`], waiting for its write.
@@ -500,6 +526,13 @@ impl<T> ResumeMap<T> {
             Some((_, slot)) => *slot = progress,
             None => self.entries.push((seq, progress)),
         }
+    }
+
+    /// Forget this delivery, returning the progress recorded for it.
+    pub(crate) fn take(&mut self, ctx: &DeliveryContext) -> Option<T> {
+        let seq = ctx.seq();
+        let index = self.entries.iter().position(|(entry, _)| *entry == seq)?;
+        Some(self.entries.swap_remove(index).1)
     }
 
     /// Forget this delivery.

@@ -367,7 +367,7 @@ impl Metrics {
         let sink_delivery_failures_total = IntCounterVec::new(
             Opts::new(
                 "rsigma_sink_delivery_failures_total",
-                "Sink deliveries that exhausted retries and were routed to the DLQ",
+                "Sink deliveries that failed for good (retries exhausted or a permanent error) and were routed to the DLQ",
             ),
             &["sink"],
         )

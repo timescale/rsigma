@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use rsigma_eval::{EvaluationResult, ProcessResult};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::enrichment::{
     HttpEnricherClient, render_template, render_template_json_with_ocsf, render_template_url,
@@ -15,6 +15,7 @@ use crate::enrichment::{
 };
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
+use crate::io::delivery::{DeadLetters, DeliveryScope};
 use crate::io::lines::ResumeMap;
 use crate::metrics::MetricsHook;
 
@@ -83,6 +84,28 @@ impl TokenBucket {
     }
 }
 
+/// The results a webhook posts: its kind and its scope.
+struct WebhookScope {
+    kind: WebhookKind,
+    scope: Arc<crate::enrichment::Scope>,
+}
+
+impl WebhookScope {
+    fn admits(&self, eval: &EvaluationResult) -> bool {
+        self.kind.matches(&eval.body) && self.scope.matches(eval)
+    }
+}
+
+impl DeliveryScope for WebhookScope {
+    fn accepts_result(&self, result: &EvaluationResult) -> bool {
+        self.admits(result)
+    }
+
+    fn accepts_incident(&self, _tenant: Option<&TenantId>) -> bool {
+        false
+    }
+}
+
 /// One configured webhook. Filters each result by kind and scope, then renders
 /// and posts a templated request, classifying the outcome for the delivery
 /// layer.
@@ -93,13 +116,12 @@ pub struct WebhookSink {
     /// to the webhook-specific `rsigma_webhook_*` series. Bounded by the
     /// configured webhook count, leaked once at startup.
     label: &'static str,
-    kind: WebhookKind,
+    scope: Arc<WebhookScope>,
     method: reqwest::Method,
     url: String,
     headers: Vec<(String, String)>,
     body: Option<String>,
     timeout: Duration,
-    scope: crate::enrichment::Scope,
     limiter: Option<TokenBucket>,
     client: HttpEnricherClient,
     metrics: Arc<dyn MetricsHook>,
@@ -108,8 +130,11 @@ pub struct WebhookSink {
     signer: Option<WebhookSigner>,
     ocsf: crate::ocsf::OcsfOptions,
     /// Index of the result a failed delivery stopped at; every result before
-    /// it was posted.
+    /// it was posted or parked.
     posted: ResumeMap<usize>,
+    /// Where a result that fails for good is parked while the rest of its
+    /// delivery goes on.
+    dead_letters: DeadLetters,
 }
 
 impl WebhookSink {
@@ -129,23 +154,52 @@ impl WebhookSink {
         signer: Option<WebhookSigner>,
     ) -> Self {
         let label: &'static str = Box::leak(id.clone().into_boxed_str());
+        let dead_letters = DeadLetters::new(None, metrics.clone(), label);
         WebhookSink {
             id,
             label,
-            kind,
+            scope: Arc::new(WebhookScope {
+                kind,
+                scope: Arc::new(scope),
+            }),
             method,
             url,
             headers,
             body,
             timeout,
-            scope,
             limiter,
             client,
             metrics,
             signer,
             ocsf: crate::ocsf::OcsfOptions::default(),
             posted: ResumeMap::default(),
+            dead_letters,
         }
+    }
+
+    /// The results this webhook posts, so the dispatcher queues nothing it
+    /// would skip. Webhooks take no incidents.
+    pub(crate) fn delivery_scope(&self) -> Arc<dyn DeliveryScope> {
+        self.scope.clone()
+    }
+
+    pub(crate) fn attach_dead_letters(&mut self, dead_letters: DeadLetters) {
+        self.dead_letters = dead_letters;
+    }
+
+    /// The in-scope results of a delivery the worker gave up on that were
+    /// neither posted nor parked.
+    pub(crate) fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        let start = self.posted.take(ctx).unwrap_or(0);
+        result
+            .iter()
+            .skip(start)
+            .filter(|eval| self.scope.admits(eval))
+            .collect()
     }
 
     #[must_use]
@@ -168,13 +222,13 @@ impl WebhookSink {
 
     /// Deliver every matching result in `result`.
     ///
-    /// Results that do not match this webhook's `kind` or `scope` are skipped
-    /// (a no-op success). On the first delivery error the call short-circuits
-    /// with that error so the shared worker can apply retry/backoff (for a
-    /// retryable error) or route to the DLQ (for a [`RuntimeError::Permanent`]
-    /// or after the retry budget is spent). A retry with the same `ctx` starts
-    /// at the result that failed, so results already posted are not posted
-    /// again.
+    /// Results that do not match this webhook's `kind` or `scope` are skipped.
+    /// A result that fails for good (a render error, a 4xx other than 429)
+    /// is parked on its own (on the DLQ when one is configured) and the rest
+    /// of the results still go out. A retryable failure stops the call with
+    /// that error so the shared worker can apply retry and backoff; a retry
+    /// with the same `ctx` starts at the result that failed, so results
+    /// already posted or parked are not sent again.
     pub async fn send(
         &mut self,
         result: &ProcessResult,
@@ -182,12 +236,18 @@ impl WebhookSink {
     ) -> Result<(), RuntimeError> {
         let start = self.posted.start(Some(ctx));
         for (idx, eval) in result.iter().enumerate().skip(start) {
-            if !self.kind.matches(&eval.body) || !self.scope.matches(eval) {
+            if !self.scope.admits(eval) {
                 continue;
             }
-            if let Err(err) = self.deliver_one(eval, ctx, idx).await {
-                self.posted.record(Some(ctx), idx);
-                return Err(err);
+            match self.deliver_one(eval, ctx, idx).await {
+                Ok(()) => {}
+                Err(err @ RuntimeError::Permanent(_)) => {
+                    self.dead_letters.park_results(&[eval], &err).await;
+                }
+                Err(err) => {
+                    self.posted.record(Some(ctx), idx);
+                    return Err(err);
+                }
             }
         }
         self.posted.clear(Some(ctx));
@@ -437,6 +497,15 @@ mod tests {
         DeliveryContext::new()
     }
 
+    /// Route the results `sink` parks to a channel the test reads.
+    fn park_into_channel(
+        sink: &mut WebhookSink,
+    ) -> tokio::sync::mpsc::Receiver<crate::io::DeliveryFailure> {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        sink.attach_dead_letters(DeadLetters::new(Some(tx), Arc::new(NoopMetrics), "test"));
+        rx
+    }
+
     fn signed_sink_to(url: String, signer: WebhookSigner) -> WebhookSink {
         WebhookSink::new(
             "test".to_string(),
@@ -644,24 +713,28 @@ mod tests {
             .mount(&server)
             .await;
         let mut sink = sink_to(format!("{}/hook", server.uri()));
+        let mut parked = park_into_channel(&mut sink);
         let result: ProcessResult = vec![detection("hi")];
-        match sink.send(&result, &ctx()).await {
-            Err(RuntimeError::Permanent(_)) => {}
-            other => panic!("expected permanent error, got {other:?}"),
-        }
+        sink.send(&result, &ctx()).await.unwrap();
+        let failure = parked.try_recv().expect("the result is parked");
+        assert!(failure.error.contains("HTTP 400"), "{}", failure.error);
+        assert!(parked.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn denied_ip_literal_url_is_permanent() {
         let mut sink = sink_to("http://169.254.169.254/hook".to_string());
+        let mut parked = park_into_channel(&mut sink);
         let result: ProcessResult = vec![detection("hi")];
-        match sink.send(&result, &ctx()).await {
-            Err(RuntimeError::Permanent(msg)) => assert!(
-                msg.contains("egress policy denied link-local address 169.254.169.254"),
-                "{msg}"
-            ),
-            other => panic!("expected permanent error, got {other:?}"),
-        }
+        sink.send(&result, &ctx()).await.unwrap();
+        let failure = parked.try_recv().expect("the result is parked");
+        assert!(
+            failure
+                .error
+                .contains("egress policy denied link-local address 169.254.169.254"),
+            "{}",
+            failure.error
+        );
     }
 
     #[tokio::test]
@@ -946,6 +1019,296 @@ mod tests {
             .unwrap();
 
         assert_eq!(server.received_requests().await.unwrap().len(), 3);
+    }
+
+    fn detection_at(title: &str, level: Level) -> EvaluationResult {
+        let mut r = detection(title);
+        r.header.level = Some(level);
+        r
+    }
+
+    #[derive(Default)]
+    struct DeliveryCounters {
+        dropped: std::sync::atomic::AtomicUsize,
+        failed: std::sync::atomic::AtomicUsize,
+    }
+
+    impl MetricsHook for DeliveryCounters {
+        fn on_sink_dropped(&self, _sink: &str) {
+            self.dropped
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_sink_delivery_failed(&self, _sink: &str) {
+            self.failed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+    }
+
+    fn scoped_sink(url: String, scope: crate::enrichment::Scope) -> WebhookSink {
+        WebhookSink::new(
+            "scoped".to_string(),
+            WebhookKind::Detection,
+            reqwest::Method::POST,
+            url,
+            vec![("Content-Type".to_string(), "application/json".to_string())],
+            Some(r#"{"text":"${detection.rule.title}"}"#.to_string()),
+            Duration::from_secs(5),
+            scope,
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            None,
+        )
+    }
+
+    fn fast_delivery(queue_depth: usize) -> crate::io::DeliveryConfig {
+        crate::io::DeliveryConfig {
+            queue_depth,
+            batch_max: 1,
+            batch_flush: Duration::ZERO,
+            retry_max: 2,
+            backoff_base: Duration::from_millis(1),
+            backoff_max: Duration::from_millis(5),
+        }
+    }
+
+    async fn posted_titles(server: &MockServer) -> Vec<String> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|req| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                body["text"].as_str().unwrap().to_string()
+            })
+            .collect()
+    }
+
+    fn parked_titles(failure: &crate::io::DeliveryFailure) -> Vec<String> {
+        let parked: Vec<serde_json::Value> = serde_json::from_str(&failure.serialized).unwrap();
+        parked
+            .iter()
+            .map(|r| r["rule_title"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn out_of_scope_results_never_take_a_webhook_queue_slot() {
+        use crate::io::{AckToken, Dispatcher, OnFull, Sink};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(300)))
+            .mount(&server)
+            .await;
+        let scope =
+            crate::enrichment::Scope::new(vec![], vec![], vec!["critical".to_string()]).unwrap();
+        let sink = scoped_sink(format!("{}/hook", server.uri()), scope);
+        let counters = Arc::new(DeliveryCounters::default());
+        let (ack_tx, mut ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let queue_size = 2;
+        let dispatcher = Dispatcher::spawn(
+            vec![(
+                Sink::Webhook(Box::new(sink)),
+                OnFull::Drop,
+                fast_delivery(queue_size),
+            )],
+            None,
+            ack_tx,
+            counters.clone(),
+        );
+
+        dispatcher
+            .dispatch(
+                vec![detection_at("busy", Level::Critical)],
+                vec![AckToken::Noop],
+            )
+            .await;
+        for _ in 0..queue_size * 5 {
+            dispatcher
+                .dispatch(
+                    vec![detection_at("noise", Level::Low)],
+                    vec![AckToken::Noop],
+                )
+                .await;
+        }
+        dispatcher
+            .dispatch(
+                vec![detection_at("page", Level::Critical)],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(
+            counters.dropped.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "out-of-scope results never reach the queue, so nothing is dropped"
+        );
+        assert_eq!(posted_titles(&server).await, ["busy", "page"]);
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, queue_size * 5 + 2, "every event is still acked");
+    }
+
+    #[tokio::test]
+    async fn a_permanent_failure_does_not_stop_the_other_results() {
+        use crate::io::{AckToken, Dispatcher, OnFull, Sink};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let sink = sink_to(format!("{}/hook", server.uri()));
+        let counters = Arc::new(DeliveryCounters::default());
+        let (dlq_tx, mut dlq_rx) = tokio::sync::mpsc::channel(8);
+        let (ack_tx, mut ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let dispatcher = Dispatcher::spawn(
+            vec![(
+                Sink::Webhook(Box::new(sink)),
+                OnFull::Drop,
+                fast_delivery(8),
+            )],
+            Some(dlq_tx),
+            ack_tx,
+            counters.clone(),
+        );
+
+        dispatcher
+            .dispatch(
+                vec![detection("first"), detection("second")],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(
+            posted_titles(&server).await,
+            ["first", "second"],
+            "the second result is delivered exactly once"
+        );
+        let failure = dlq_rx.try_recv().expect("the rejected result is parked");
+        assert_eq!(parked_titles(&failure), ["first"]);
+        assert!(failure.error.contains("HTTP 400"), "{}", failure.error);
+        assert!(dlq_rx.try_recv().is_err(), "nothing else is parked");
+        assert_eq!(counters.failed.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(ack_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_retry_after_a_parked_result_resends_neither_it_nor_what_went_out() {
+        use crate::io::{AckToken, Dispatcher, OnFull, Sink};
+
+        let server = MockServer::start().await;
+        for status in [400, 503] {
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(status))
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let sink = sink_to(format!("{}/hook", server.uri()));
+        let (dlq_tx, mut dlq_rx) = tokio::sync::mpsc::channel(8);
+        let (ack_tx, _ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let dispatcher = Dispatcher::spawn(
+            vec![(
+                Sink::Webhook(Box::new(sink)),
+                OnFull::Drop,
+                fast_delivery(8),
+            )],
+            Some(dlq_tx),
+            ack_tx,
+            Arc::new(NoopMetrics),
+        );
+
+        dispatcher
+            .dispatch(
+                vec![detection("first"), detection("second"), detection("third")],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher.shutdown().await;
+
+        assert_eq!(
+            posted_titles(&server).await,
+            ["first", "second", "second", "third"]
+        );
+        assert_eq!(parked_titles(&dlq_rx.try_recv().unwrap()), ["first"]);
+        assert!(dlq_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn giving_up_parks_only_the_in_scope_results_not_yet_posted() {
+        use crate::io::{AckToken, Dispatcher, OnFull, Sink};
+        use wiremock::matchers::body_string_contains;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("second"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let scope =
+            crate::enrichment::Scope::new(vec![], vec![], vec!["high".to_string()]).unwrap();
+        let sink = scoped_sink(format!("{}/hook", server.uri()), scope);
+        let (dlq_tx, mut dlq_rx) = tokio::sync::mpsc::channel(8);
+        let (ack_tx, _ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let cfg = fast_delivery(8);
+        let dispatcher = Dispatcher::spawn(
+            vec![(Sink::Webhook(Box::new(sink)), OnFull::Drop, cfg)],
+            Some(dlq_tx),
+            ack_tx,
+            Arc::new(NoopMetrics),
+        );
+
+        dispatcher
+            .dispatch(
+                vec![
+                    detection("first"),
+                    detection("second"),
+                    detection_at("quiet", Level::Low),
+                    detection("third"),
+                ],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher.shutdown().await;
+
+        let attempts = cfg.retry_max as usize + 1;
+        let mut expected = vec!["first".to_string()];
+        expected.extend(std::iter::repeat_n("second".to_string(), attempts));
+        assert_eq!(posted_titles(&server).await, expected);
+        let failure = dlq_rx.try_recv().expect("the delivery is parked");
+        assert_eq!(parked_titles(&failure), ["second", "third"]);
+        assert!(failure.error.contains("HTTP 503"), "{}", failure.error);
     }
 
     #[tokio::test]

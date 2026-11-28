@@ -8,14 +8,16 @@
 //! delivery layer retries the result.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
-use rsigma_eval::{ProcessResult, TenantId};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineBatch, LineEncoding, ResumeMap, encode_batch, settle_batch};
+use crate::io::delivery::{DeliveryScope, IncidentScope, TenantScope};
+use crate::io::lines::{LineBatch, LineEncoding, ResumeMap, encode_batch, settle_batch, unwritten};
 use crate::io::{DeliveryContext, SinkFormat};
 
 /// Writes one line per result to a Unix domain socket, reconnecting on
@@ -142,6 +144,21 @@ impl UnixSocketSink {
         let mut batch = LineBatch::default();
         batch.push(json);
         self.write_batch(&batch).await.map_err(|(_, err)| err)
+    }
+
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        TenantScope::of(self.tenant_filter.as_ref(), IncidentScope::SameTenant)
+    }
+
+    /// The results of a delivery the worker gave up on that never reached
+    /// the socket.
+    pub(crate) fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        let written = self.resume.take(ctx).unwrap_or(0);
+        unwritten(result, self.tenant_filter.as_ref(), written)
     }
 
     /// Write a pre-serialized line when it belongs to `tenant`.
@@ -348,6 +365,50 @@ mod tests {
             lines[1..],
             "the retry starts at the cut-off line and skips the delivered one"
         );
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_delivery_reports_the_lines_that_never_went_out() {
+        use tokio::io::AsyncReadExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collector.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let titles: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|c| c.repeat(4 * 1024 * 1024))
+            .collect();
+        let result = titled(&titles);
+        let first_line = serialize_result(
+            &result[0],
+            SinkFormat::default(),
+            false,
+            None,
+            &crate::ocsf::OcsfOptions::default(),
+        )
+        .unwrap();
+        let first_len = first_line.len() + 1 + 1024;
+        let unlink = path.clone();
+        let collector = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut read = vec![0_u8; first_len];
+            stream.read_exact(&mut read).await.unwrap();
+            drop(listener);
+            std::fs::remove_file(&unlink).unwrap();
+        });
+
+        let mut sink = UnixSocketSink::connect(&path).await.unwrap();
+        let ctx = DeliveryContext::new();
+        assert!(sink.send_with_context(&result, &ctx).await.is_err());
+        collector.await.unwrap();
+
+        let owed: Vec<&str> = sink
+            .abandon(&result, &ctx)
+            .iter()
+            .map(|r| &r.header.rule_title[..1])
+            .collect();
+        assert_eq!(owed, ["b", "c"], "the delivered first line is not owed");
+        assert_eq!(sink.resume.len(), 0, "the progress is forgotten");
     }
 
     #[tokio::test]

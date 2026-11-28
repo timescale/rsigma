@@ -1,13 +1,15 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_nats::jetstream;
 use async_nats::subject::Subject;
 use futures::future::join_all;
 use parking_lot::Mutex;
 
-use rsigma_eval::{ProcessResult, TenantId};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
+use crate::io::delivery::{DeliveryScope, IncidentScope, TenantScope};
 use crate::io::lines::ResumeMap;
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
@@ -163,6 +165,24 @@ impl NatsSink {
 
     pub fn ocsf_options(&self) -> &crate::ocsf::OcsfOptions {
         &self.ocsf
+    }
+
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        TenantScope::of(self.tenant_filter.as_ref(), IncidentScope::SameTenant)
+    }
+
+    /// The results of a delivery the worker gave up on whose publish the
+    /// server never confirmed.
+    pub(crate) fn abandon<'r>(
+        &self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        let done = self.acked.lock().take(ctx).unwrap_or_default();
+        TenantScope::results(self.tenant_filter.as_ref(), result)
+            .filter(|(index, _)| !done.contains(index))
+            .map(|(_, r)| r)
+            .collect()
     }
 
     /// Serialize and publish a ProcessResult to the configured JetStream subject.
@@ -590,6 +610,47 @@ mod tests {
             ["a0", "a1", "a2", "b0"],
             "confirmed messages are not published again"
         );
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_delivery_reports_only_the_unconfirmed_messages() {
+        use testcontainers::ImageExt;
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers_modules::nats::{Nats, NatsServerCmd};
+
+        if !can_run_linux_containers() {
+            eprintln!("Skipping: Docker with Linux container support is not available");
+            return;
+        }
+        let cmd = NatsServerCmd::default().with_jetstream();
+        let container = Nats::default().with_cmd(&cmd).start().await.unwrap();
+        let port = container.get_host_port_ipv4(4222).await.unwrap();
+        let cfg = NatsConnectConfig::new(format!("nats://127.0.0.1:{port}"));
+        let subject = "rsigma.abandon";
+        let js = jetstream::new(cfg.connect().await.unwrap());
+        let (name, stream_subject) = SubjectTemplate::parse(subject).unwrap().stream();
+        js.create_stream(jetstream::stream::Config {
+            name,
+            subjects: vec![stream_subject],
+            max_messages: 2,
+            discard: jetstream::stream::DiscardPolicy::New,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let sink = NatsSink::connect(&cfg, subject).await.unwrap();
+        let result = titled(&["a0", "a1", "a2"]);
+        let ctx = DeliveryContext::new();
+        assert!(sink.send_with_context(&result, &ctx).await.is_err());
+
+        let owed: Vec<&str> = sink
+            .abandon(&result, &ctx)
+            .iter()
+            .map(|r| r.header.rule_title.as_str())
+            .collect();
+        assert_eq!(owed, ["a2"]);
+        assert_eq!(sink.acked.lock().len(), 0, "the progress is forgotten");
     }
 
     #[tokio::test]

@@ -12,10 +12,11 @@ use prost::Message;
 use tonic::codec::CompressionEncoding;
 use tonic::transport::Channel;
 
-use rsigma_eval::ProcessResult;
+use rsigma_eval::{EvaluationResult, ProcessResult};
 
 use super::convert::{evaluation_results_to_logs_request, ocsf_findings_to_logs_request};
 use crate::error::RuntimeError;
+use crate::io::delivery::{DeliveryScope, IncidentScope, TenantScope};
 use crate::io::{DeliveryContext, SinkFormat, ocsf_finding};
 use crate::log_throttle::WarnThrottle;
 use crate::metrics::{MetricsHook, NoopMetrics};
@@ -208,6 +209,21 @@ impl OtlpSink {
     pub fn with_tenant_filter(mut self, tenant: Option<rsigma_eval::TenantId>) -> Self {
         self.tenant_filter = tenant;
         self
+    }
+
+    /// OTLP carries no incidents, and a tenant filter keeps one tenant's
+    /// results.
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        TenantScope::of(self.tenant_filter.as_ref(), IncidentScope::None)
+    }
+
+    /// The results of a delivery the worker gave up on. An export request
+    /// succeeds or fails as a whole, so that is every result this sink
+    /// exports.
+    pub(crate) fn abandon<'r>(&self, result: &'r ProcessResult) -> Vec<&'r EvaluationResult> {
+        TenantScope::results(self.tenant_filter.as_ref(), result)
+            .map(|(_, r)| r)
+            .collect()
     }
 
     /// Serialize and export a batch of results to the collector.
@@ -786,6 +802,33 @@ mod tests {
         };
         let finding: serde_json::Value = serde_json::from_str(raw).unwrap();
         assert_eq!(finding["finding_info"]["uid"], ctx.finding_uid(1));
+    }
+
+    #[tokio::test]
+    async fn the_scope_takes_no_incidents_and_keeps_the_tenant_filter() {
+        let tenanted = |tenant: &str| {
+            let mut r = one_detection().remove(0);
+            r.header.tenant_id = Some(rsigma_eval::TenantId::new(tenant).unwrap());
+            r
+        };
+        let b = rsigma_eval::TenantId::new("b").unwrap();
+        let open = OtlpSink::new(OtlpProtocol::Grpc, "127.0.0.1:4317", false, None).unwrap();
+        let scope = open.delivery_scope().expect("incidents are filtered out");
+        assert!(scope.accepts_result(&tenanted("a")));
+        assert!(!scope.accepts_incident(None));
+
+        let filtered = OtlpSink::new(OtlpProtocol::Grpc, "127.0.0.1:4317", false, None)
+            .unwrap()
+            .with_tenant_filter(Some(b.clone()));
+        let scope = filtered.delivery_scope().unwrap();
+        assert!(!scope.accepts_result(&tenanted("a")));
+        assert!(scope.accepts_result(&tenanted("b")));
+        assert!(!scope.accepts_incident(Some(&b)));
+
+        let batch = vec![tenanted("a"), tenanted("b")];
+        let owed = filtered.abandon(&batch);
+        assert_eq!(owed.len(), 1);
+        assert_eq!(owed[0].header.tenant_id.as_ref(), Some(&b));
     }
 
     #[tokio::test]

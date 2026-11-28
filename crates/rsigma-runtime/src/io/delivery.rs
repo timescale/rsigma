@@ -9,22 +9,28 @@
 //! failure to the DLQ channel, so the at-least-once contract survives fan-out.
 //! The ack does not wait for whoever drains the DLQ channel to persist the
 //! failure.
+//!
+//! A sink that acts on only part of the traffic (a scoped webhook, a
+//! tenant-filtered sink) reports a [`DeliveryScope`], and the dispatcher
+//! queues only the items that scope admits, so traffic a sink would skip
+//! never takes one of its queue slots.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use rsigma_eval::ProcessResult;
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::io::{AckToken, FormattedIncidentEnvelope, IncidentEnvelope, Sink};
+use crate::log_throttle::WarnThrottle;
 use crate::metrics::MetricsHook;
 
 type DeliveryFuture<'a> = Pin<Box<dyn Future<Output = Result<(), RuntimeError>> + Send + 'a>>;
@@ -100,6 +106,175 @@ pub trait DeliverySink: Send + 'static {
     }
     /// Short, stable label used for structured logs and per-sink metrics.
     fn label(&self) -> &'static str;
+    /// The results and incidents this sink acts on. The dispatcher queues
+    /// an item only when the scope admits it (a result batch when it admits
+    /// at least one of the results), so traffic the sink would skip never
+    /// takes a queue slot. `None`, the default, queues everything.
+    fn scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        None
+    }
+    /// Hand the sink the place where it can park one result it cannot
+    /// deliver and go on with the rest of a delivery. Called once, before
+    /// the first delivery. The default ignores it.
+    fn attach_dead_letters(&mut self, _dead_letters: DeadLetters) {}
+    /// The worker has stopped retrying a delivery. Returns the results of it
+    /// the sink did not deliver, for the dead-letter record, and forgets any
+    /// progress kept for the delivery. The default returns every result.
+    fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        _ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        result.iter().collect()
+    }
+}
+
+/// Which results and incidents a sink acts on. See [`DeliverySink::scope`].
+pub trait DeliveryScope: Send + Sync {
+    /// Whether the sink delivers this result.
+    fn accepts_result(&self, result: &EvaluationResult) -> bool;
+    /// Whether the sink delivers an incident of this tenant.
+    fn accepts_incident(&self, tenant: Option<&TenantId>) -> bool;
+}
+
+/// How a tenant-filtered sink treats incidents.
+#[derive(Clone, Copy)]
+pub(crate) enum IncidentScope {
+    /// Every incident, whatever its tenant.
+    All,
+    /// Incidents of the sink's tenant.
+    SameTenant,
+    /// No incidents.
+    None,
+}
+
+/// The scope of a sink that keeps the results of one tenant (every result
+/// when unset) and handles incidents as `incidents` says.
+pub(crate) struct TenantScope {
+    pub(crate) tenant: Option<TenantId>,
+    pub(crate) incidents: IncidentScope,
+}
+
+impl TenantScope {
+    /// The scope for `tenant`, or `None` when it restricts nothing.
+    pub(crate) fn of(
+        tenant: Option<&TenantId>,
+        incidents: IncidentScope,
+    ) -> Option<Arc<dyn DeliveryScope>> {
+        if tenant.is_none() && !matches!(incidents, IncidentScope::None) {
+            return None;
+        }
+        Some(Arc::new(TenantScope {
+            tenant: tenant.cloned(),
+            incidents,
+        }))
+    }
+
+    /// The results of `result` this scope admits.
+    pub(crate) fn results<'r>(
+        tenant: Option<&TenantId>,
+        result: &'r ProcessResult,
+    ) -> impl Iterator<Item = (usize, &'r EvaluationResult)> {
+        result
+            .iter()
+            .enumerate()
+            .filter(move |(_, r)| tenant.is_none_or(|t| r.header.tenant_id.as_ref() == Some(t)))
+    }
+}
+
+impl DeliveryScope for TenantScope {
+    fn accepts_result(&self, result: &EvaluationResult) -> bool {
+        self.tenant
+            .as_ref()
+            .is_none_or(|t| result.header.tenant_id.as_ref() == Some(t))
+    }
+
+    fn accepts_incident(&self, tenant: Option<&TenantId>) -> bool {
+        match self.incidents {
+            IncidentScope::All => true,
+            IncidentScope::SameTenant => self.tenant.as_ref().is_none_or(|t| tenant == Some(t)),
+            IncidentScope::None => false,
+        }
+    }
+}
+
+/// Where a sink's undeliverable work goes: the DLQ channel when one is
+/// configured, a `warn` log otherwise. Each parked delivery counts once on
+/// the sink's delivery-failure metric.
+#[derive(Clone)]
+pub struct DeadLetters {
+    tx: Option<mpsc::Sender<DeliveryFailure>>,
+    metrics: Arc<dyn MetricsHook>,
+    label: &'static str,
+}
+
+impl DeadLetters {
+    pub(crate) fn new(
+        tx: Option<mpsc::Sender<DeliveryFailure>>,
+        metrics: Arc<dyn MetricsHook>,
+        label: &'static str,
+    ) -> Self {
+        DeadLetters { tx, metrics, label }
+    }
+
+    /// Park `results`, which the sink could not deliver because of `error`.
+    /// Waits for room on the DLQ channel.
+    pub(crate) async fn park_results(&self, results: &[&EvaluationResult], error: &RuntimeError) {
+        self.metrics.on_sink_delivery_failed(self.label);
+        let failure = DeliveryFailure {
+            serialized: serde_json::to_string(results).unwrap_or_default(),
+            error: format!("sink delivery failure: {error}"),
+            tenant: results.iter().find_map(|r| r.header.tenant_id.clone()),
+        };
+        self.send(failure, error).await;
+    }
+
+    /// Park an incident line, which the sink could not deliver because of
+    /// `error`. Waits for room on the DLQ channel.
+    async fn park_line(&self, line: String, tenant: Option<TenantId>, error: &RuntimeError) {
+        self.metrics.on_sink_delivery_failed(self.label);
+        let failure = DeliveryFailure {
+            serialized: line,
+            error: format!("sink delivery failure: {error}"),
+            tenant,
+        };
+        self.send(failure, error).await;
+    }
+
+    async fn send(&self, failure: DeliveryFailure, error: &RuntimeError) {
+        match &self.tx {
+            Some(dlq) => {
+                if dlq.send(failure).await.is_err() {
+                    tracing::warn!(
+                        sink = self.label,
+                        error = %error,
+                        "Sink delivery failed and the DLQ channel is closed; dropping result",
+                    );
+                }
+            }
+            None => {
+                tracing::warn!(
+                    sink = self.label,
+                    error = %error,
+                    "Sink delivery failed and no DLQ is configured; dropping result",
+                );
+            }
+        }
+    }
+
+    /// Record a queue-full drop on the DLQ channel without waiting. Returns
+    /// whether a record was queued.
+    fn try_park_dropped(&self, serialized: String, tenant: Option<TenantId>) -> bool {
+        let Some(dlq) = &self.tx else {
+            return false;
+        };
+        dlq.try_send(DeliveryFailure {
+            serialized,
+            error: format!("sink {} queue full; dropped before delivery", self.label),
+            tenant,
+        })
+        .is_ok()
+    }
 }
 
 impl DeliverySink for Sink {
@@ -133,6 +308,21 @@ impl DeliverySink for Sink {
     }
     fn label(&self) -> &'static str {
         self.kind_label()
+    }
+    fn scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        self.delivery_scope()
+    }
+    fn attach_dead_letters(&mut self, dead_letters: DeadLetters) {
+        if let Sink::Webhook(s) = self {
+            s.attach_dead_letters(dead_letters);
+        }
+    }
+    fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        self.abandon_delivery(result, ctx)
     }
 }
 
@@ -330,11 +520,14 @@ struct SinkWorker {
     on_full: OnFull,
     label: &'static str,
     metrics: Arc<dyn MetricsHook>,
+    scope: Option<Arc<dyn DeliveryScope>>,
+    dead_letters: DeadLetters,
+    drop_log: Mutex<WarnThrottle>,
 }
 
 impl SinkWorker {
     fn spawn<S: DeliverySink>(
-        sink: S,
+        mut sink: S,
         on_full: OnFull,
         cfg: DeliveryConfig,
         dlq_tx: Option<mpsc::Sender<DeliveryFailure>>,
@@ -342,20 +535,38 @@ impl SinkWorker {
     ) -> Self {
         let label = sink.label();
         metrics.register_sink(label);
+        let scope = sink.scope();
+        let dead_letters = DeadLetters::new(dlq_tx, metrics.clone(), label);
+        sink.attach_dead_letters(dead_letters.clone());
         let (tx, rx) = mpsc::channel(cfg.queue_depth.max(1));
-        let worker_metrics = metrics.clone();
-        let handle = tokio::spawn(worker_loop(sink, rx, cfg, dlq_tx, worker_metrics, label));
+        let handle = tokio::spawn(worker_loop(sink, rx, cfg, dead_letters.clone()));
         SinkWorker {
             tx,
             handle,
             on_full,
             label,
             metrics,
+            scope,
+            dead_letters,
+            drop_log: Mutex::new(WarnThrottle::default()),
         }
     }
 
-    /// Enqueue an item, honoring the full-queue policy. Returns whether the
-    /// item was accepted (always true under `Block` unless the worker is gone).
+    /// Whether this sink acts on any of the results in `result`.
+    fn wants_results(&self, result: &ProcessResult) -> bool {
+        self.scope
+            .as_ref()
+            .is_none_or(|scope| result.iter().any(|r| scope.accepts_result(r)))
+    }
+
+    /// Whether this sink acts on an incident of `tenant`.
+    fn wants_incident(&self, tenant: Option<&TenantId>) -> bool {
+        self.scope
+            .as_ref()
+            .is_none_or(|scope| scope.accepts_incident(tenant))
+    }
+
+    /// Enqueue an item, honoring the full-queue policy.
     async fn enqueue(&self, item: DeliveryItem) {
         match self.on_full {
             OnFull::Block => {
@@ -368,13 +579,71 @@ impl SinkWorker {
             }
             OnFull::Drop => match self.tx.try_send(item) {
                 Ok(()) => self.metrics.on_sink_queue_depth_change(self.label, 1),
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    // Dropped: the item's guard clone drops here, so the ack
-                    // still fires (best-effort for this lossy sink).
+                Err(mpsc::error::TrySendError::Full(item)) => {
+                    // Dropped: the item's guard clone drops after the drop is
+                    // recorded, so the ack still fires (best-effort for this
+                    // lossy sink).
                     self.metrics.on_sink_dropped(self.label);
+                    self.record_drop(&item);
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             },
+        }
+    }
+
+    /// Log a queue-full drop (rate limited) and record what was dropped on
+    /// the DLQ channel when one is configured, without waiting for room.
+    fn record_drop(&self, item: &DeliveryItem) {
+        let (serialized, tenant, first) = match &item.payload {
+            DeliveryPayload::Result(result) => {
+                let dropped: Vec<&EvaluationResult> = result
+                    .iter()
+                    .filter(|r| self.scope.as_ref().is_none_or(|s| s.accepts_result(r)))
+                    .collect();
+                let tenant = dropped.iter().find_map(|r| r.header.tenant_id.clone());
+                let first = dropped.first().map(|r| {
+                    (
+                        r.header.rule_id.clone().unwrap_or_default(),
+                        r.header.level.map_or("", |l| l.as_str()),
+                        dropped.len(),
+                    )
+                });
+                (
+                    serde_json::to_string(&dropped).unwrap_or_default(),
+                    tenant,
+                    first,
+                )
+            }
+            DeliveryPayload::Incident(incident) => {
+                (incident.json.clone(), incident.tenant.clone(), None)
+            }
+            DeliveryPayload::FormattedIncident(incident) => (
+                incident.native().json.clone(),
+                incident.native().tenant.clone(),
+                None,
+            ),
+        };
+        let parked = self.dead_letters.try_park_dropped(serialized, tenant);
+        let Some(occurrences) = self.drop_log.lock().record(Instant::now()) else {
+            return;
+        };
+        let suppressed = occurrences - 1;
+        match first {
+            Some((rule_id, level, results)) => tracing::warn!(
+                sink = self.label,
+                rule_id,
+                level,
+                results,
+                dlq = parked,
+                suppressed,
+                "Sink queue full; dropped a result before delivery",
+            ),
+            None => tracing::warn!(
+                sink = self.label,
+                dlq = parked,
+                suppressed,
+                "Sink queue full; dropped an incident before delivery",
+            ),
         }
     }
 }
@@ -409,8 +678,9 @@ impl Dispatcher {
         Dispatcher { workers, ack_tx }
     }
 
-    /// Fan one result and its ack tokens into every worker. Awaits queue space
-    /// for `Block` sinks; never blocks for `Drop` sinks.
+    /// Fan one result and its ack tokens into every worker whose scope admits
+    /// any of its results. Awaits queue space for `Block` sinks; never blocks
+    /// for `Drop` sinks.
     pub async fn dispatch(&self, result: ProcessResult, tokens: Vec<AckToken>) {
         self.dispatch_with_context(result, tokens, DeliveryContext::new())
             .await;
@@ -437,6 +707,9 @@ impl Dispatcher {
         let result = Arc::new(result);
         let context = Arc::new(context);
         for worker in &self.workers {
+            if !worker.wants_results(&result) {
+                continue;
+            }
             worker
                 .enqueue(DeliveryItem {
                     payload: DeliveryPayload::Result(result.clone()),
@@ -460,6 +733,9 @@ impl Dispatcher {
         let incident = Arc::new(incident);
         let context = Arc::new(DeliveryContext::new());
         for worker in &self.workers {
+            if !worker.wants_incident(incident.tenant.as_ref()) {
+                continue;
+            }
             worker
                 .enqueue(DeliveryItem {
                     payload: DeliveryPayload::Incident(incident.clone()),
@@ -482,6 +758,9 @@ impl Dispatcher {
         let incident = Arc::new(incident);
         let context = Arc::new(DeliveryContext::new());
         for worker in &self.workers {
+            if !worker.wants_incident(incident.native().tenant.as_ref()) {
+                continue;
+            }
             worker
                 .enqueue(DeliveryItem {
                     payload: DeliveryPayload::FormattedIncident(incident.clone()),
@@ -513,10 +792,9 @@ async fn worker_loop<S: DeliverySink>(
     mut sink: S,
     mut rx: mpsc::Receiver<DeliveryItem>,
     cfg: DeliveryConfig,
-    dlq_tx: Option<mpsc::Sender<DeliveryFailure>>,
-    metrics: Arc<dyn MetricsHook>,
-    label: &'static str,
+    dead_letters: DeadLetters,
 ) {
+    let label = dead_letters.label;
     while let Some(first) = rx.recv().await {
         let mut batch = Vec::with_capacity(cfg.batch_max.clamp(1, 64));
         batch.push(first);
@@ -533,7 +811,9 @@ async fn worker_loop<S: DeliverySink>(
                 }
             }
         }
-        metrics.on_sink_queue_depth_change(label, -(batch.len() as i64));
+        dead_letters
+            .metrics
+            .on_sink_queue_depth_change(label, -(batch.len() as i64));
         let backlog = !rx.is_empty();
         let mut start = 0;
         while start < batch.len() {
@@ -543,16 +823,8 @@ async fn worker_loop<S: DeliverySink>(
                         .iter()
                         .position(|item| !matches!(item.payload, DeliveryPayload::Result(_)))
                         .map_or(batch.len(), |len| start + len);
-                    deliver_results(
-                        &mut sink,
-                        &batch[start..end],
-                        backlog,
-                        &cfg,
-                        dlq_tx.as_ref(),
-                        &metrics,
-                        label,
-                    )
-                    .await;
+                    deliver_results(&mut sink, &batch[start..end], backlog, &cfg, &dead_letters)
+                        .await;
                     start = end;
                     continue;
                 }
@@ -564,9 +836,7 @@ async fn worker_loop<S: DeliverySink>(
                 target,
                 &batch[start].context,
                 &cfg,
-                dlq_tx.as_ref(),
-                &metrics,
-                label,
+                &dead_letters,
                 None,
             )
             .await;
@@ -599,9 +869,7 @@ async fn deliver_results<S: DeliverySink>(
     run: &[DeliveryItem],
     backlog: bool,
     cfg: &DeliveryConfig,
-    dlq_tx: Option<&mpsc::Sender<DeliveryFailure>>,
-    metrics: &Arc<dyn MetricsHook>,
-    label: &'static str,
+    dead_letters: &DeadLetters,
 ) {
     let items: Vec<(&ProcessResult, &DeliveryContext)> = run
         .iter()
@@ -623,9 +891,7 @@ async fn deliver_results<S: DeliverySink>(
             DeliverTarget::Result(result),
             ctx,
             cfg,
-            dlq_tx,
-            metrics,
-            label,
+            dead_letters,
             first_failure,
         )
         .await;
@@ -642,17 +908,15 @@ enum DeliverTarget<'a> {
 /// Deliver one item with retries. `first_failure` is the error of a first
 /// attempt already made (in a batch); the loop then starts at the retry
 /// decision for that error.
-#[allow(clippy::too_many_arguments)]
 async fn deliver_one<S: DeliverySink>(
     sink: &mut S,
     target: DeliverTarget<'_>,
     ctx: &DeliveryContext,
     cfg: &DeliveryConfig,
-    dlq_tx: Option<&mpsc::Sender<DeliveryFailure>>,
-    metrics: &Arc<dyn MetricsHook>,
-    label: &'static str,
+    dead_letters: &DeadLetters,
     mut first_failure: Option<RuntimeError>,
 ) {
+    let label = dead_letters.label;
     let mut attempt: u32 = 0;
     loop {
         let outcome = match first_failure.take() {
@@ -673,50 +937,31 @@ async fn deliver_one<S: DeliverySink>(
                 // rather than burning the retry budget.
                 let permanent = matches!(e, RuntimeError::Permanent(_));
                 if permanent || attempt >= cfg.retry_max {
-                    metrics.on_sink_delivery_failed(label);
-                    match dlq_tx {
-                        Some(dlq) => {
-                            let serialized = match target {
-                                DeliverTarget::Result(r) => {
-                                    serde_json::to_string(r).unwrap_or_default()
-                                }
-                                // The native line, so a DLQ replay stays in
-                                // the format the rest of the DLQ speaks.
-                                DeliverTarget::Incident(e) => e.json.clone(),
-                                DeliverTarget::FormattedIncident(e) => e.native().json.clone(),
-                            };
-                            let tenant = match target {
-                                DeliverTarget::Result(r) => {
-                                    r.iter().find_map(|result| result.header.tenant_id.clone())
-                                }
-                                DeliverTarget::Incident(e) => e.tenant.clone(),
-                                DeliverTarget::FormattedIncident(e) => e.native().tenant.clone(),
-                            };
-                            let failure = DeliveryFailure {
-                                serialized,
-                                error: format!("sink delivery failure: {e}"),
-                                tenant,
-                            };
-                            if dlq.send(failure).await.is_err() {
-                                tracing::warn!(
-                                    sink = label,
-                                    error = %e,
-                                    "Sink delivery failed and the DLQ channel is closed; dropping result",
-                                );
-                            }
+                    match target {
+                        // Only what the sink still owed, so a DLQ replay does
+                        // not repeat results it already delivered.
+                        DeliverTarget::Result(r) => {
+                            let pending = sink.abandon(r, ctx);
+                            dead_letters.park_results(&pending, &e).await;
                         }
-                        None => {
-                            tracing::warn!(
-                                sink = label,
-                                error = %e,
-                                "Sink delivery failed and no DLQ is configured; dropping result",
-                            );
+                        // The native line, so a DLQ replay stays in the
+                        // format the rest of the DLQ speaks.
+                        DeliverTarget::Incident(incident) => {
+                            dead_letters
+                                .park_line(incident.json.clone(), incident.tenant.clone(), &e)
+                                .await;
+                        }
+                        DeliverTarget::FormattedIncident(incident) => {
+                            let native = incident.native();
+                            dead_letters
+                                .park_line(native.json.clone(), native.tenant.clone(), &e)
+                                .await;
                         }
                     }
                     return;
                 }
                 attempt += 1;
-                metrics.on_sink_retry(label);
+                dead_letters.metrics.on_sink_retry(label);
                 let delay = backoff_delay(cfg.backoff_base, cfg.backoff_max, attempt);
                 tracing::debug!(sink = label, attempt, error = %e, "Sink delivery retry");
                 tokio::time::sleep(delay).await;
@@ -1720,6 +1965,301 @@ mod tests {
         wait_for_batches(&log, 1).await;
         assert!(started.elapsed() < Duration::from_secs(5));
         dispatcher.shutdown().await;
+    }
+
+    fn titled(title: &str, tenant: Option<&str>) -> EvaluationResult {
+        EvaluationResult {
+            header: rsigma_eval::result::RuleHeader {
+                rule_title: title.to_string(),
+                rule_id: Some(format!("{title}-id")),
+                tenant_id: tenant.map(|t| TenantId::new(t).unwrap()),
+                level: Some(rsigma_parser::Level::High),
+                tags: vec![],
+                custom_attributes: Arc::new(std::collections::HashMap::new()),
+                enrichments: None,
+                ruleset: None,
+            },
+            body: rsigma_eval::result::ResultBody::Detection(rsigma_eval::result::DetectionBody {
+                matched_selections: vec![],
+                matched_fields: vec![],
+                event: None,
+            }),
+        }
+    }
+
+    /// Admits results whose title starts with `keep` and incidents only when
+    /// `incidents` is set.
+    struct TitleScope {
+        keep: &'static str,
+        incidents: bool,
+    }
+
+    impl DeliveryScope for TitleScope {
+        fn accepts_result(&self, result: &EvaluationResult) -> bool {
+            result.header.rule_title.starts_with(self.keep)
+        }
+        fn accepts_incident(&self, _tenant: Option<&TenantId>) -> bool {
+            self.incidents
+        }
+    }
+
+    /// Records the titles of every result it delivers and counts incidents.
+    struct ScopedSink {
+        scope: Option<Arc<dyn DeliveryScope>>,
+        delivered: Arc<std::sync::Mutex<Vec<String>>>,
+        incidents: Arc<AtomicUsize>,
+        gate: Option<tokio::sync::watch::Receiver<bool>>,
+    }
+
+    impl ScopedSink {
+        fn new(scope: Option<Arc<dyn DeliveryScope>>) -> Self {
+            ScopedSink {
+                scope,
+                delivered: Arc::default(),
+                incidents: Arc::default(),
+                gate: None,
+            }
+        }
+    }
+
+    impl DeliverySink for ScopedSink {
+        fn deliver<'a>(
+            &'a mut self,
+            result: &'a ProcessResult,
+            _ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
+            Box::pin(async move {
+                if let Some(mut rx) = self.gate.clone() {
+                    while !*rx.borrow() {
+                        if rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                self.delivered
+                    .lock()
+                    .unwrap()
+                    .extend(result.iter().map(|r| r.header.rule_title.clone()));
+                Ok(())
+            })
+        }
+        fn deliver_incident<'a>(
+            &'a mut self,
+            _incident: &'a IncidentEnvelope,
+            _ctx: &'a DeliveryContext,
+        ) -> DeliveryFuture<'a> {
+            self.incidents.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+        fn label(&self) -> &'static str {
+            "scoped"
+        }
+        fn scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+            self.scope.clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct DropCounter(AtomicUsize);
+
+    impl MetricsHook for DropCounter {
+        fn on_sink_dropped(&self, _sink: &str) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _: u64) {}
+        fn on_detection_matches(&self, _: u64) {}
+        fn on_correlation_matches(&self, _: u64) {}
+        fn observe_processing_latency(&self, _: f64) {}
+        fn on_input_queue_depth_change(&self, _: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _: u64) {}
+        fn on_output_queue_depth_change(&self, _: i64) {}
+        fn observe_pipeline_latency(&self, _: f64) {}
+        fn set_correlation_state_entries(&self, _: u64) {}
+    }
+
+    #[tokio::test]
+    async fn a_scoped_sink_never_queues_what_it_would_skip() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
+        let mut sink = ScopedSink::new(Some(Arc::new(TitleScope {
+            keep: "page",
+            incidents: false,
+        })));
+        sink.gate = Some(gate_rx);
+        let delivered = sink.delivered.clone();
+        let incidents = sink.incidents.clone();
+        let drops = Arc::new(DropCounter::default());
+        let cfg = DeliveryConfig {
+            queue_depth: 1,
+            batch_max: 1,
+            ..fast_cfg()
+        };
+        let dispatcher =
+            Dispatcher::spawn(vec![(sink, OnFull::Drop, cfg)], None, ack_tx, drops.clone());
+
+        for _ in 0..10 {
+            dispatcher
+                .dispatch(vec![titled("noise", None)], vec![AckToken::Noop])
+                .await;
+            dispatcher
+                .dispatch_incident(IncidentEnvelope::new("{}".to_string(), None))
+                .await;
+        }
+        dispatcher.dispatch(Vec::new(), vec![AckToken::Noop]).await;
+        dispatcher
+            .dispatch(
+                vec![titled("noise", None), titled("page", None)],
+                vec![AckToken::Noop],
+            )
+            .await;
+        gate_tx.send(true).unwrap();
+        dispatcher.shutdown().await;
+
+        assert_eq!(drops.0.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            ["noise", "page"],
+            "a batch with one in-scope result is queued whole"
+        );
+        assert_eq!(incidents.load(Ordering::SeqCst), 0);
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, 12, "skipped results are acked at once");
+    }
+
+    #[tokio::test]
+    async fn a_queue_full_drop_is_recorded_on_the_dlq_with_only_in_scope_results() {
+        let (ack_tx, mut ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
+        let mut sink = ScopedSink::new(Some(Arc::new(TitleScope {
+            keep: "page",
+            incidents: true,
+        })));
+        sink.gate = Some(gate_rx);
+        let drops = Arc::new(DropCounter::default());
+        let cfg = DeliveryConfig {
+            queue_depth: 1,
+            batch_max: 1,
+            ..fast_cfg()
+        };
+        let dispatcher = Dispatcher::spawn(
+            vec![(sink, OnFull::Drop, cfg)],
+            Some(dlq_tx),
+            ack_tx,
+            drops.clone(),
+        );
+
+        // The first is taken by the gated worker and the second fills the
+        // queue, so the third is dropped.
+        dispatcher
+            .dispatch(vec![titled("page-1", None)], vec![AckToken::Noop])
+            .await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        dispatcher
+            .dispatch(vec![titled("page-2", None)], vec![AckToken::Noop])
+            .await;
+        dispatcher
+            .dispatch(
+                vec![titled("noise", Some("t1")), titled("page-3", Some("t1"))],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher
+            .dispatch_incident(IncidentEnvelope::new(
+                "{\"incident_id\":\"i\"}".to_string(),
+                None,
+            ))
+            .await;
+
+        assert_eq!(drops.0.load(Ordering::SeqCst), 2);
+        let dropped = dlq_rx.try_recv().expect("the dropped result is recorded");
+        let parked: Vec<serde_json::Value> = serde_json::from_str(&dropped.serialized).unwrap();
+        assert_eq!(parked.len(), 1);
+        assert_eq!(parked[0]["rule_title"], "page-3");
+        assert!(dropped.error.contains("queue full"), "{}", dropped.error);
+        assert_eq!(dropped.tenant.as_ref().map(TenantId::as_str), Some("t1"));
+        let incident = dlq_rx.try_recv().expect("the dropped incident is recorded");
+        assert_eq!(incident.serialized, "{\"incident_id\":\"i\"}");
+
+        gate_tx.send(true).unwrap();
+        dispatcher.shutdown().await;
+        let mut acks = 0;
+        while ack_rx.try_recv().is_ok() {
+            acks += 1;
+        }
+        assert_eq!(acks, 3);
+    }
+
+    #[test]
+    fn a_tenant_scope_follows_the_sink_tenant_filter() {
+        let t1 = TenantId::new("t1").unwrap();
+        assert!(TenantScope::of(None, IncidentScope::SameTenant).is_none());
+        assert!(TenantScope::of(None, IncidentScope::All).is_none());
+
+        let scope = TenantScope::of(Some(&t1), IncidentScope::SameTenant).unwrap();
+        assert!(scope.accepts_result(&titled("a", Some("t1"))));
+        assert!(!scope.accepts_result(&titled("a", Some("t2"))));
+        assert!(!scope.accepts_result(&titled("a", None)));
+        assert!(scope.accepts_incident(Some(&t1)));
+        assert!(!scope.accepts_incident(None));
+
+        let all = TenantScope::of(Some(&t1), IncidentScope::All).unwrap();
+        assert!(all.accepts_incident(None));
+
+        let none = TenantScope::of(None, IncidentScope::None).unwrap();
+        assert!(none.accepts_result(&titled("a", Some("t2"))));
+        assert!(!none.accepts_incident(Some(&t1)));
+    }
+
+    #[tokio::test]
+    async fn giving_up_parks_what_the_sink_reports_undelivered() {
+        struct PartialSink;
+        impl DeliverySink for PartialSink {
+            fn deliver<'a>(
+                &'a mut self,
+                _result: &'a ProcessResult,
+                _ctx: &'a DeliveryContext,
+            ) -> DeliveryFuture<'a> {
+                Box::pin(async { Err(RuntimeError::Io(std::io::Error::other("down"))) })
+            }
+            fn label(&self) -> &'static str {
+                "partial"
+            }
+            fn abandon<'r>(
+                &mut self,
+                result: &'r ProcessResult,
+                _ctx: &DeliveryContext,
+            ) -> Vec<&'r EvaluationResult> {
+                result.iter().skip(1).collect()
+            }
+        }
+
+        let (ack_tx, _ack_rx) = mpsc::unbounded_channel();
+        let (dlq_tx, mut dlq_rx) = mpsc::channel(8);
+        let dispatcher = Dispatcher::spawn(
+            vec![(PartialSink, OnFull::Block, fast_cfg())],
+            Some(dlq_tx),
+            ack_tx,
+            noop_metrics(),
+        );
+        dispatcher
+            .dispatch(
+                vec![titled("sent", Some("t1")), titled("owed", Some("t2"))],
+                vec![AckToken::Noop],
+            )
+            .await;
+        dispatcher.shutdown().await;
+
+        let failure = dlq_rx.try_recv().unwrap();
+        let parked: Vec<serde_json::Value> = serde_json::from_str(&failure.serialized).unwrap();
+        assert_eq!(parked.len(), 1);
+        assert_eq!(parked[0]["rule_title"], "owed");
+        assert_eq!(failure.tenant.as_ref().map(TenantId::as_str), Some("t2"));
     }
 
     #[test]
