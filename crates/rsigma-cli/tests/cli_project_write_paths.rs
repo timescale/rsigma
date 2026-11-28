@@ -33,6 +33,8 @@ tags:
     - attack.t1033
 "#;
 
+const FIXABLE_RULE: &str = "title: Test\nstatus: expreimental\nlogsource:\n    category: test\ndetection:\n    sel:\n        field: value\n    condition: sel\n";
+
 const VICTIM: &str = "operator data\n";
 
 struct Layout {
@@ -476,4 +478,43 @@ fn ruleset_build_replaces_linked_files_instead_of_following_them() {
         let metadata = fs::symlink_metadata(path).unwrap();
         assert!(metadata.is_file(), "{} is still a link", path.display());
     }
+}
+
+#[test]
+fn lint_fix_skips_files_that_resolve_outside_the_linted_directory() {
+    let layout = layout();
+    let tree = layout.project.join("lint");
+    fs::create_dir_all(&tree).unwrap();
+    let inside = tree.join("inside.yml");
+    fs::write(&inside, FIXABLE_RULE).unwrap();
+
+    let victim = layout.outside.join("victim.yml");
+    fs::write(&victim, FIXABLE_RULE).unwrap();
+    let file_linked = link_file(&victim, &tree.join("linked.yml"));
+    let shared = layout.outside.join("shared");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("rule.yml"), FIXABLE_RULE).unwrap();
+    link_dir(&shared, &tree.join("shared"));
+
+    let output = rsigma()
+        .current_dir(&layout.project)
+        .env("XDG_CONFIG_HOME", &layout.xdg)
+        .args(["rule", "lint", "lint", "--fix"])
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("Applied"), "{out}");
+    assert!(
+        fs::read_to_string(&inside)
+            .unwrap()
+            .contains("status: experimental")
+    );
+    assert_eq!(
+        fs::read_to_string(shared.join("rule.yml")).unwrap(),
+        FIXABLE_RULE
+    );
+    if file_linked {
+        assert_eq!(fs::read_to_string(&victim).unwrap(), FIXABLE_RULE);
+    }
+    assert!(out.contains("resolve outside"), "{out}");
 }

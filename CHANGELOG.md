@@ -10,7 +10,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 The project-path check behind these keys and the existing `mcp.rules_dir`, `daemon.state.db`, `eval.output`, and `scorecard.report` checks now resolves symlinks in every existing component, so `missing/../link/out` can no longer reach a symlinked directory after a component that does not exist yet, and on Windows it normalizes paths the way Win32 opens them (drive-relative forms, `\\?\` and `\\.\` prefixes, device names). `daemon.state.db` is also ignored when its SQLite `-wal`, `-shm`, or `-journal` file resolves outside the project.
 
-`ruleset build` now refuses a generated `rules/`, `correlations/`, or `filters/` directory that is a symlink, and replaces a symlinked rule file or `ruleset.lock.json` instead of writing through it.
+`ruleset build` now refuses a generated `rules/`, `correlations/`, or `filters/` directory that is a symlink, and replaces a symlinked rule file or `ruleset.lock.json` instead of writing through it. `rule lint --fix` skips files that resolve outside the linted path, such as a symlinked rule or a file under a symlinked directory, and reports how many it skipped.
 
 ### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL (#813)
 

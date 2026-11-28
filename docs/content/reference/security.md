@@ -378,8 +378,7 @@ The daemon never writes outside the paths it is explicitly given:
 
 Rules and pipeline files are read-only. The `notify` file-watcher does not write. The docmd documentation build is local and never touches `~/`.
 
-Commands that rewrite a tree only touch entries physically inside it. `ruleset build` refuses a generated `rules/`, `correlations/`, or `filters/` directory that is a symlink, and replaces a symlinked rule file or `ruleset.lock.json` with a regular file instead of writing through it. `rule fmt --write` skips symlinks while walking a directory. {{ added "unreleased" }}
-
+Commands that rewrite a tree only touch entries physically inside it. `ruleset build` refuses a generated `rules/`, `correlations/`, or `filters/` directory that is a symlink, and replaces a symlinked rule file or `ruleset.lock.json` with a regular file instead of writing through it. `rule lint --fix` skips files that resolve outside the linted path, such as a symlinked rule or a file under a symlinked directory. `rule fmt --write` skips symlinks while walking a directory. {{ added "unreleased" }}
 
 `rule lint --fix` does write rule files in place. Always commit changes first, then run `--fix`, then diff.
 
