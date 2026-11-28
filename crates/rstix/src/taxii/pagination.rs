@@ -85,6 +85,8 @@ pub(crate) struct ObjectPaginationState {
     pub baseline_added_after: Option<TaxiiTimestamp>,
     pub pending_objects: std::collections::VecDeque<crate::model::StixObject>,
     pub finished: bool,
+    /// The filter's cursor came from a server response, not from the caller.
+    pub server_cursor: bool,
     /// Latest `X-TAXII-Date-Added-Last` seen on a page of this poll.
     pub date_added_last: Option<TaxiiTimestamp>,
 }
@@ -97,6 +99,7 @@ impl ObjectPaginationState {
             baseline_added_after,
             pending_objects: std::collections::VecDeque::new(),
             finished: false,
+            server_cursor: false,
             date_added_last: None,
         }
     }
@@ -117,6 +120,7 @@ impl ObjectPaginationState {
         }
         self.pending_objects.extend(objects);
         self.finished = advance_more_page(&mut self.filter, more, next, date_added_last, false)?;
+        self.server_cursor |= !self.finished;
         Ok(())
     }
 }
@@ -128,6 +132,8 @@ pub(crate) struct ManifestPaginationState {
     pub baseline_added_after: Option<TaxiiTimestamp>,
     pub pending_records: std::collections::VecDeque<super::envelope::ManifestRecord>,
     pub finished: bool,
+    /// The filter's cursor came from a server response, not from the caller.
+    pub server_cursor: bool,
 }
 
 impl ManifestPaginationState {
@@ -138,6 +144,7 @@ impl ManifestPaginationState {
             baseline_added_after,
             pending_records: std::collections::VecDeque::new(),
             finished: false,
+            server_cursor: false,
         }
     }
 
@@ -154,6 +161,7 @@ impl ManifestPaginationState {
         }
         self.pending_records.extend(records);
         self.finished = advance_more_page(&mut self.filter, more, next, date_added_last, false)?;
+        self.server_cursor |= !self.finished;
         Ok(())
     }
 }
@@ -165,6 +173,8 @@ pub(crate) struct ObjectByIdPaginationState {
     pub baseline_added_after: Option<TaxiiTimestamp>,
     pub pending_objects: std::collections::VecDeque<crate::model::StixObject>,
     pub finished: bool,
+    /// The filter's cursor came from a server response, not from the caller.
+    pub server_cursor: bool,
 }
 
 impl ObjectByIdPaginationState {
@@ -175,6 +185,7 @@ impl ObjectByIdPaginationState {
             baseline_added_after,
             pending_objects: std::collections::VecDeque::new(),
             finished: false,
+            server_cursor: false,
         }
     }
 
@@ -191,6 +202,7 @@ impl ObjectByIdPaginationState {
         }
         self.pending_objects.extend(objects);
         self.finished = advance_more_page(&mut self.filter, more, next, date_added_last, false)?;
+        self.server_cursor |= !self.finished;
         Ok(())
     }
 }
@@ -202,6 +214,8 @@ pub(crate) struct VersionsPaginationState {
     pub baseline_added_after: Option<TaxiiTimestamp>,
     pub pending_versions: std::collections::VecDeque<String>,
     pub finished: bool,
+    /// The filter's cursor came from a server response, not from the caller.
+    pub server_cursor: bool,
 }
 
 impl VersionsPaginationState {
@@ -212,6 +226,7 @@ impl VersionsPaginationState {
             baseline_added_after,
             pending_versions: std::collections::VecDeque::new(),
             finished: false,
+            server_cursor: false,
         }
     }
 
@@ -228,6 +243,7 @@ impl VersionsPaginationState {
         }
         self.pending_versions.extend(versions);
         self.finished = advance_more_page(&mut self.filter, more, next, date_added_last, false)?;
+        self.server_cursor |= !self.finished;
         Ok(())
     }
 }

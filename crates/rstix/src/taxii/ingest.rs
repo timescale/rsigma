@@ -188,10 +188,12 @@ pub async fn ingest_collection_with_bundle_id(
     let mut report = IngestReport::default();
     let mut ingested_ids = Vec::new();
     let mut page_index = 0usize;
+    let mut server_cursor = false;
 
     while !finished {
+        let sent = filter.clone();
         match client
-            .fetch_objects_page(api_root_url, collection_id, &filter)
+            .fetch_objects_page(api_root_url, collection_id, &filter, server_cursor)
             .await
         {
             Ok((envelope, response)) => {
@@ -214,9 +216,17 @@ pub async fn ingest_collection_with_bundle_id(
                 } else {
                     advance_more_page(&mut filter, more, next, date_added_last, false)?
                 };
+                if !finished && filter == sent {
+                    return Err(TaxiiError::RepeatedPaginationCursor.into());
+                }
+                server_cursor = true;
             }
-            Err(TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
+            Err(err @ TaxiiError::RequestedRangeNotSatisfiable { .. }) => {
                 recover_from_range_not_satisfiable(&mut filter, baseline_added_after.clone());
+                if filter == sent {
+                    return Err(err.into());
+                }
+                server_cursor = false;
             }
             Err(err) => return Err(err.into()),
         }
