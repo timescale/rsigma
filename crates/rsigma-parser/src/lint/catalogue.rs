@@ -16,7 +16,7 @@
 //! use rsigma_parser::lint::catalogue::catalogue;
 //!
 //! let entries = catalogue();
-//! assert_eq!(entries.len(), 99);
+//! assert_eq!(entries.len(), 100);
 //! let invalid_status = entries.iter().find(|e| e.name == "invalid_status").unwrap();
 //! assert!(invalid_status.fix.is_some()); // has a safe auto-fix
 //! ```
@@ -151,6 +151,7 @@ lint_catalogue! {
     SingleValueAllModifier => (Severity::Warning, SAFE, "|all is used with a single value."),
     AllWithRe => (Severity::Warning, SAFE, "|all combined with |re is redundant."),
     IncompatibleModifiers => (Severity::Error, NONE, "A field uses an incompatible combination of modifiers."),
+    WindashExpansionTooLarge => (Severity::Error, NONE, "The |windash variants of a detection item or a rule exceed the expansion budget, so loading and conversion reject the rule."),
     EmptyValueList => (Severity::Warning, NONE, "A field has an empty value list."),
     WildcardOnlyValue => (Severity::Warning, SAFE, "A value is a lone wildcard; consider |exists instead."),
     FlattenedArrayCorrelation => (Severity::Warning, NONE, "A correlation references a flattened array field."),
@@ -339,6 +340,10 @@ const LINT_RULE_NAMES: &[(LintRule, &str)] = &[
     ),
     (LintRule::AllWithRe, "all_with_re"),
     (LintRule::IncompatibleModifiers, "incompatible_modifiers"),
+    (
+        LintRule::WindashExpansionTooLarge,
+        "windash_expansion_too_large",
+    ),
     (LintRule::EmptyValueList, "empty_value_list"),
     (LintRule::WildcardOnlyValue, "wildcard_only_value"),
     (
@@ -387,13 +392,13 @@ mod tests {
 
     #[test]
     fn catalogue_covers_every_rule() {
-        // 99 LintRule variants. The exhaustive `describe` match guarantees a
+        // 100 LintRule variants. The exhaustive `describe` match guarantees a
         // metadata entry per variant at compile time; this asserts the count
         // and the `ALL_LINT_RULES`/`LINT_RULE_NAMES` lists stay in sync.
         let entries = catalogue();
-        assert_eq!(entries.len(), 99, "expected 99 catalogue entries");
-        assert_eq!(ALL_LINT_RULES.len(), 99);
-        assert_eq!(LINT_RULE_NAMES.len(), 99);
+        assert_eq!(entries.len(), 100, "expected 100 catalogue entries");
+        assert_eq!(ALL_LINT_RULES.len(), 100);
+        assert_eq!(LINT_RULE_NAMES.len(), 100);
     }
 
     #[test]

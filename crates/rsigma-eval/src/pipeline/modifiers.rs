@@ -9,6 +9,7 @@
 
 use rsigma_ir::encoding::{check_encodable, expand_encoded};
 use rsigma_ir::{IrEncoding, IrPattern, IrPatternPart, IrStrOp};
+use rsigma_parser::validate::check_windash_budget;
 use rsigma_parser::value::{SpecialChar, StringPart};
 use rsigma_parser::{
     Detection, DetectionItem, FieldSpec, Modifier, SigmaRule, SigmaString, SigmaValue,
@@ -32,7 +33,13 @@ pub enum ApplyModifiers {
 
 /// Rewrite every detection item of `rule` whose modifiers can be expressed
 /// in its values. Items that cannot are left for compilation to handle.
+///
+/// A rule over the `windash` budget is left as it is, so lowering rejects it
+/// with the budget error instead of the pipeline expanding it first.
 pub(super) fn apply_to_rule(rule: &mut SigmaRule) {
+    if check_windash_budget(&rule.detection).is_err() {
+        return;
+    }
     for detection in rule.detection.named.values_mut() {
         apply_to_detection(detection);
     }

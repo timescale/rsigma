@@ -154,6 +154,7 @@ pub enum LintRule {
     SingleValueAllModifier,
     AllWithRe,
     IncompatibleModifiers,
+    WindashExpansionTooLarge,
     EmptyValueList,
     WildcardOnlyValue,
     FlattenedArrayCorrelation,
@@ -262,6 +263,7 @@ impl fmt::Display for LintRule {
             LintRule::SingleValueAllModifier => "single_value_all_modifier",
             LintRule::AllWithRe => "all_with_re",
             LintRule::IncompatibleModifiers => "incompatible_modifiers",
+            LintRule::WindashExpansionTooLarge => "windash_expansion_too_large",
             LintRule::EmptyValueList => "empty_value_list",
             LintRule::WildcardOnlyValue => "wildcard_only_value",
             LintRule::FlattenedArrayCorrelation => "flattened_array_correlation",
@@ -807,6 +809,16 @@ fn lint_yaml_value_ext(
         DocType::Correlation => rules::correlation::lint_correlation_rule(m, &mut warnings),
         DocType::Filter => rules::filter::lint_filter_rule(m, &mut warnings),
     }
+    if doc_type != DocType::Correlation
+        && let Some(problem) = crate::parser::windash_budget_problem(value)
+    {
+        let pointer = if doc_type == DocType::Filter {
+            "/filter"
+        } else {
+            "/detection"
+        };
+        warnings.push(err(LintRule::WindashExpansionTooLarge, problem, pointer));
+    }
 
     rules::version::lint_sigma_version(m, doc_type, &mut warnings);
     rules::shared::lint_unknown_keys(m, doc_type, &mut warnings);
@@ -844,6 +856,7 @@ fn lint_yaml_str_indexed(
 ) -> Vec<LintWarning> {
     let mut all_warnings = Vec::new();
     let mut docs: Vec<Value> = Vec::new();
+    let mut windash_flagged: Vec<bool> = Vec::new();
 
     for doc in yaml_serde::Deserializer::from_str(text) {
         let value: Value = match Value::deserialize(doc) {
@@ -867,11 +880,39 @@ fn lint_yaml_str_indexed(
             }
         };
 
+        let mut flagged = false;
         for mut w in lint_yaml_value_ext(&value, extra_ns, ads) {
+            flagged |= w.rule == LintRule::WindashExpansionTooLarge;
             w.span = resolve_path_to_span(text, &w.path);
             all_warnings.push(w);
         }
+        windash_flagged.push(flagged);
         docs.push(value);
+    }
+
+    // `action: global` and `action: repeat` build documents the per-document
+    // pass never sees, so ask the parser about the merged documents too.
+    if text.contains("windash")
+        && let Ok(collection) = crate::parse_sigma_yaml(text)
+    {
+        for diagnostic in collection.errors() {
+            let Some(index) = diagnostic.document else {
+                continue;
+            };
+            if windash_flagged.get(index).copied().unwrap_or(true)
+                || !diagnostic
+                    .message
+                    .contains(crate::validate::WINDASH_BUDGET_MARKER)
+            {
+                continue;
+            }
+            windash_flagged[index] = true;
+            all_warnings.push(err(
+                LintRule::WindashExpansionTooLarge,
+                diagnostic.message.clone(),
+                "/",
+            ));
+        }
     }
 
     // Cross-document checks resolve references against the directory-global index

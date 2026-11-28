@@ -11,7 +11,10 @@ mod value;
 
 use std::collections::HashMap;
 
-use rsigma_parser::validate::{check_detection_item, check_regex, exists_flag};
+use rsigma_parser::validate::{
+    MAX_WINDASH_VARIANTS_PER_RULE, check_detection_item, check_detection_windash_budget,
+    check_item_windash_budget, check_regex, check_windash_budget, exists_flag,
+};
 use rsigma_parser::{
     ConditionExpr, CorrelationRule, Detection, DetectionItem, Detections, FilterRule, Modifier,
     SigmaParserError, SigmaRule, SigmaValue,
@@ -38,6 +41,8 @@ pub struct LowerOptions {
 
 /// Lower a single parsed `SigmaRule` into its HIR form.
 pub fn lower_rule(rule: &SigmaRule, opts: &LowerOptions) -> Result<IrRule> {
+    check_windash_budget(&rule.detection)
+        .map_err(|e| IrError::InvalidModifiers(format!("rule '{}': {e}", rule.title)))?;
     let mut detections = HashMap::new();
     for (name, detection) in &rule.detection.named {
         detections.insert(name.clone(), lower_detection(detection, opts)?);
@@ -75,6 +80,13 @@ pub fn lower_conditions(section: &Detections) -> Result<Vec<IrCondition>> {
 
 /// Lower a parsed detection into `IrDetection`.
 pub fn lower_detection(detection: &Detection, opts: &LowerOptions) -> Result<IrDetection> {
+    let total = check_detection_windash_budget(detection).map_err(IrError::InvalidModifiers)?;
+    if total > MAX_WINDASH_VARIANTS_PER_RULE {
+        return Err(IrError::InvalidModifiers(format!(
+            "|windash expands the detection into {total} variants, more than the limit of \
+             {MAX_WINDASH_VARIANTS_PER_RULE} for one rule"
+        )));
+    }
     lower_detection_in(detection, opts, false)
 }
 
@@ -171,6 +183,7 @@ fn lower_detection_in(
 
 /// Lower a detection item — absorbs modifier interpretation.
 pub fn lower_detection_item(item: &DetectionItem, opts: &LowerOptions) -> Result<IrDetectionItem> {
+    check_item_windash_budget(item).map_err(IrError::InvalidModifiers)?;
     lower_item(item, opts, false)
 }
 
@@ -361,6 +374,8 @@ pub fn lower_correlation(corr: &CorrelationRule) -> Result<IrCorrelation> {
 
 /// Lower a filter rule into `IrFilter`.
 pub fn lower_filter(filter: &FilterRule, opts: &LowerOptions) -> Result<IrFilter> {
+    check_windash_budget(&filter.detection)
+        .map_err(|e| IrError::InvalidModifiers(format!("filter '{}': {e}", filter.title)))?;
     let mut detections = HashMap::new();
     for (name, detection) in &filter.detection.named {
         detections.insert(name.clone(), lower_detection(detection, opts)?);

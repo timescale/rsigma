@@ -10,12 +10,10 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 
+use rsigma_parser::validate::WINDASH_CHARS;
+
 use crate::error::IrError;
 use crate::hir::{IrDetection, IrEncoding, IrMatcher, IrPattern, IrPatternPart, IrStrOp};
-
-/// Replacement characters for the `windash` modifier per Sigma spec:
-/// `-`, `/`, `–` (en dash U+2013), `—` (em dash U+2014), `―` (horizontal bar U+2015).
-const WINDASH_CHARS: [char; 5] = ['-', '/', '\u{2013}', '\u{2014}', '\u{2015}'];
 
 /// Maximum number of dash positions allowed in windash expansion.
 /// 5^8 = 390,625 variants; beyond this the expansion is too large.

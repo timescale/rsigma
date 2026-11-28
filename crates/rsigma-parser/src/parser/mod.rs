@@ -237,6 +237,29 @@ pub fn parse_sigma_directory_with(
     Ok(collection)
 }
 
+/// The `|windash` budget problem of a detection rule or filter document, as
+/// [`check_windash_budget`](crate::validate::check_windash_budget) reports
+/// it. `None` when the document is within the budget, is a correlation, or
+/// has a detection that does not parse (other checks report that).
+pub(crate) fn windash_budget_problem(value: &Value) -> Option<String> {
+    let m = value.as_mapping()?;
+    if m.contains_key(val_key("correlation")) {
+        return None;
+    }
+    let array_matching =
+        crate::version::array_matching_enabled(parse_sigma_version(m, &mut Vec::new()));
+    let detections = if m.contains_key(val_key("filter")) {
+        filter::parse_filter_detections(
+            m.get(val_key("filter")).and_then(Value::as_mapping),
+            array_matching,
+        )
+    } else {
+        detection::parse_detections(m.get(val_key("detection"))?, array_matching)
+    }
+    .ok()?;
+    crate::validate::check_windash_budget(&detections).err()
+}
+
 // =============================================================================
 // Document type detection and dispatch
 // =============================================================================

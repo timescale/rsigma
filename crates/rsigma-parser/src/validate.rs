@@ -8,10 +8,12 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use crate::ast::{ConditionExpr, Detection, DetectionItem, Modifier, Quantifier, SelectorPattern};
+use crate::ast::{
+    ConditionExpr, Detection, DetectionItem, Detections, Modifier, Quantifier, SelectorPattern,
+};
 use crate::emit::modifier_str;
 use crate::error::{Result, SigmaParserError};
-use crate::value::SigmaValue;
+use crate::value::{SigmaValue, StringPart};
 
 use Modifier::*;
 
@@ -393,6 +395,148 @@ fn check_event_keyword(item: &DetectionItem) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// The characters `|windash` treats as interchangeable: `-`, `/`, `–` (en
+/// dash U+2013), `—` (em dash U+2014), and `―` (horizontal bar U+2015).
+pub const WINDASH_CHARS: [char; 5] = ['-', '/', '\u{2013}', '\u{2014}', '\u{2015}'];
+
+/// The text every `|windash` budget error contains.
+pub const WINDASH_BUDGET_MARKER: &str = "|windash expands";
+
+/// Most string variants `|windash` may expand one detection item into.
+pub const MAX_WINDASH_VARIANTS_PER_ITEM: u64 = 4_096;
+
+/// Most string variants `|windash` may expand the detection items of one rule
+/// or filter into, all items together.
+pub const MAX_WINDASH_VARIANTS_PER_RULE: u64 = 16_384;
+
+/// The number of string variants `|windash` expands `item` into.
+///
+/// A string value with `k` of the [`WINDASH_CHARS`] outside wildcards stands
+/// for `5^k` variants, and `|base64offset` encodes each variant at three
+/// offsets. Values without a dash character are not counted, and an item
+/// without `|windash` counts as 0. Evaluation and conversion reject a rule
+/// whose counts exceed [`MAX_WINDASH_VARIANTS_PER_ITEM`] or
+/// [`MAX_WINDASH_VARIANTS_PER_RULE`] (see [`check_windash_budget`]).
+///
+/// # Examples
+///
+/// ```
+/// use rsigma_parser::{DetectionItem, FieldSpec, Modifier, SigmaString, SigmaValue};
+/// use rsigma_parser::validate::windash_variant_count;
+///
+/// let item = DetectionItem {
+///     field: FieldSpec::new(Some("CommandLine".into()), vec![Modifier::WindAsh, Modifier::Contains]),
+///     values: vec![
+///         SigmaValue::String(SigmaString::new(" -enc ")),
+///         SigmaValue::String(SigmaString::new(" -a -b ")),
+///         SigmaValue::String(SigmaString::new("plain")),
+///     ],
+/// };
+/// assert_eq!(windash_variant_count(&item), 5 + 25);
+/// ```
+pub fn windash_variant_count(item: &DetectionItem) -> u64 {
+    let modifiers = &item.field.modifiers;
+    if !modifiers.contains(&WindAsh) {
+        return 0;
+    }
+    let per_variant: u64 = if modifiers.contains(&Base64Offset) {
+        3
+    } else {
+        1
+    };
+    item.values
+        .iter()
+        .map(|value| match value {
+            SigmaValue::String(s) => {
+                let dashes: usize = s
+                    .parts
+                    .iter()
+                    .map(|part| match part {
+                        StringPart::Plain(text) => {
+                            text.chars().filter(|c| WINDASH_CHARS.contains(c)).count()
+                        }
+                        StringPart::Special(_) => 0,
+                    })
+                    .sum();
+                if dashes == 0 {
+                    0
+                } else {
+                    5u64.saturating_pow(u32::try_from(dashes).unwrap_or(u32::MAX))
+                        .saturating_mul(per_variant)
+                }
+            }
+            _ => 0,
+        })
+        .fold(0, u64::saturating_add)
+}
+
+/// Check one detection item against [`MAX_WINDASH_VARIANTS_PER_ITEM`] and
+/// return its variant count.
+pub fn check_item_windash_budget(item: &DetectionItem) -> std::result::Result<u64, String> {
+    let count = windash_variant_count(item);
+    if count > MAX_WINDASH_VARIANTS_PER_ITEM {
+        let subject = match &item.field.name {
+            Some(name) => format!("field '{name}'"),
+            None => "keyword".to_string(),
+        };
+        return Err(format!(
+            "{subject}: |windash expands into {count} variants, more than the limit of \
+             {MAX_WINDASH_VARIANTS_PER_ITEM} for one detection item; split the values or \
+             use fewer dash characters per value"
+        ));
+    }
+    Ok(count)
+}
+
+/// Check every detection item of a rule or filter against
+/// [`MAX_WINDASH_VARIANTS_PER_ITEM`], and their sum against
+/// [`MAX_WINDASH_VARIANTS_PER_RULE`].
+///
+/// The parser, IR lowering (after pipelines), and the linter all run this
+/// check, so `rule lint` and `rule validate` reject exactly the rules that
+/// evaluation and conversion would. The error describes the first item over
+/// its limit, or the rule total.
+pub fn check_windash_budget(detections: &Detections) -> std::result::Result<(), String> {
+    let mut names: Vec<&String> = detections.named.keys().collect();
+    names.sort();
+    let mut total: u64 = 0;
+    for name in names {
+        total = total.saturating_add(check_detection_windash_budget(&detections.named[name])?);
+    }
+    if total > MAX_WINDASH_VARIANTS_PER_RULE {
+        return Err(format!(
+            "|windash expands the rule into {total} variants, more than the limit of \
+             {MAX_WINDASH_VARIANTS_PER_RULE} for one rule; split the rule or use fewer dash \
+             characters per value"
+        ));
+    }
+    Ok(())
+}
+
+/// Check every detection item of one detection against
+/// [`MAX_WINDASH_VARIANTS_PER_ITEM`] and return their summed variant count.
+pub fn check_detection_windash_budget(detection: &Detection) -> std::result::Result<u64, String> {
+    match detection {
+        Detection::AllOf(items) => items.iter().try_fold(0u64, |total, item| {
+            Ok(total.saturating_add(check_item_windash_budget(item)?))
+        }),
+        Detection::AnyOf(subs) | Detection::And(subs) => {
+            subs.iter().try_fold(0u64, |total, sub| {
+                Ok(total.saturating_add(check_detection_windash_budget(sub)?))
+            })
+        }
+        Detection::ArrayMatch { body, .. } => check_detection_windash_budget(body),
+        Detection::Conditional { named, .. } => {
+            let mut names: Vec<&String> = named.keys().collect();
+            names.sort();
+            names.into_iter().try_fold(0u64, |total, name| {
+                Ok(total.saturating_add(check_detection_windash_budget(&named[name])?))
+            })
+        }
+        Detection::Keywords(_) => Ok(0),
+    }
 }
 
 /// Check that every identifier in a condition names a detection and every
