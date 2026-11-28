@@ -1,0 +1,27 @@
+title: Reserved Word Fields
+id: reserved-words
+logsource:
+    category: test
+detection:
+    selection:
+        user: alice
+        group: admins
+        order|startswith: '42'
+        current_user: postgres
+    condition: selection
+fields:
+    - user
+    - group AS grp
+---
+title: Logins Per User
+generate: true
+correlation:
+    type: value_count
+    rules:
+        - reserved-words
+    group-by:
+        - user
+    timespan: 10m
+    condition:
+        gte: 3
+        field: order

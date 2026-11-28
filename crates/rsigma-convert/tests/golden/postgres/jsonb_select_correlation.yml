@@ -1,0 +1,25 @@
+title: JSONB Columns From Fields
+id: jsonb-columns
+logsource:
+    category: test
+detection:
+    selection:
+        action: transfer
+    condition: selection
+fields:
+    - user
+    - actor.alternateId
+    - CommandLine as cmd
+---
+title: Bytes Per User
+generate: true
+correlation:
+    type: value_sum
+    rules:
+        - jsonb-columns
+    group-by:
+        - user
+    timespan: 1h
+    condition:
+        gte: 1000000
+        field: bytes

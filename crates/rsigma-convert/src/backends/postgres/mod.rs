@@ -1070,6 +1070,22 @@ impl Backend for PostgresBackend {
         "sliding"
     }
 
+    /// The rule's `default` query with every column, whatever the output
+    /// format and the rule's `fields`.
+    fn correlation_source_query(
+        &self,
+        rule: &SigmaRule,
+        _output_format: &str,
+        pipeline_state: &PipelineState,
+    ) -> Result<Option<String>> {
+        let mut rule = rule.clone();
+        rule.fields.clear();
+        Ok(self
+            .convert_rule(&rule, "default", pipeline_state)?
+            .into_iter()
+            .next())
+    }
+
     fn convert_correlation_rule_with_warnings(
         &self,
         rule: &CorrelationRule,

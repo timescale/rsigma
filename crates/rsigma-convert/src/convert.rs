@@ -81,17 +81,35 @@ pub fn convert_collection(
             rule_schema_map.insert(rule.title.clone(), schema.to_string());
         }
 
-        match backend.convert_rule(&rule, output_format, &pipeline_state) {
+        let converted = backend.convert_rule(&rule, output_format, &pipeline_state);
+        let source = if backend.supports_correlation() && !collection.correlations.is_empty() {
+            backend.correlation_source_query(&rule, output_format, &pipeline_state)
+        } else {
+            Ok(None)
+        };
+        let source = match (source, &converted) {
+            (Ok(Some(q)), _) => Some(q),
+            (Ok(None), Ok(queries)) => queries.first().cloned(),
+            (Ok(None), Err(_)) => None,
+            (Err(e), Ok(_)) => {
+                output.errors.push((rule.title.clone(), e));
+                None
+            }
+            // The rule's own error is reported below.
+            (Err(_), Err(_)) => None,
+        };
+        if let Some(q) = &source {
+            if let Some(id) = &rule.id {
+                rule_query_map.insert(id.clone(), q.clone());
+            }
+            if let Some(name) = &rule.name {
+                rule_query_map.insert(name.clone(), q.clone());
+            }
+            rule_query_map.insert(rule.title.clone(), q.clone());
+        }
+
+        match converted {
             Ok(queries) => {
-                if let Some(q) = queries.first() {
-                    if let Some(id) = &rule.id {
-                        rule_query_map.insert(id.clone(), q.clone());
-                    }
-                    if let Some(name) = &rule.name {
-                        rule_query_map.insert(name.clone(), q.clone());
-                    }
-                    rule_query_map.insert(rule.title.clone(), q.clone());
-                }
                 if emit_standalone {
                     output.queries.push(ConversionResult {
                         rule_title: rule.title.clone(),
@@ -442,6 +460,45 @@ correlation:
             .map(|result| result.rule_title.as_str())
             .collect();
         assert_eq!(titles, ["Base", "Count"]);
+    }
+
+    #[test]
+    fn postgres_correlation_embeds_every_column_of_the_rule_in_any_format() {
+        let yaml = r#"
+title: Base
+name: base
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+fields:
+    - EventID
+---
+title: Count
+correlation:
+    type: value_count
+    rules: [base]
+    group-by: [User]
+    timespan: 1m
+    condition:
+        gte: 2
+        field: Host
+"#;
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        for format in ["default", "view", "timescaledb", "continuous_aggregate"] {
+            let output =
+                convert_collection(&PostgresBackend::new(), &collection, &[], format).unwrap();
+            assert!(output.errors.is_empty(), "{format}: {:?}", output.errors);
+            let query = &output.queries[0].queries[0];
+            assert!(
+                query.starts_with(
+                    "WITH combined_events AS (SELECT * FROM security_events WHERE \"EventID\" = 1) "
+                ),
+                "{format}: {query}"
+            );
+        }
     }
 
     #[test]

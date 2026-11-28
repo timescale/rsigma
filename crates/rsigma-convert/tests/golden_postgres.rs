@@ -177,3 +177,17 @@ fn golden_quoted_identifiers() {
 fn golden_select_fields() {
     run_golden("select_fields");
 }
+
+#[test]
+fn golden_reserved_words() {
+    run_golden("reserved_words");
+}
+
+#[test]
+fn golden_jsonb_select_correlation() {
+    let options = [("json_field".to_string(), "data".to_string())].into();
+    run_golden_with(
+        "jsonb_select_correlation",
+        &PostgresBackend::from_options(&options),
+    );
+}
