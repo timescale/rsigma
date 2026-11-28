@@ -345,6 +345,77 @@ fn scenario_tenants(n_tenants: usize, n_events: usize, per_tenant_cap: Option<us
     }
 }
 
+// ---------------------------------------------------------------------------
+// Scenario E: absence obligations and armed deadmen at 100k groups
+// ---------------------------------------------------------------------------
+
+fn absence_rules_yaml(timespan: &str, deadman: bool) -> String {
+    let (corr_type, condition) = if deadman {
+        ("temporal", "    condition: not a-rule\n".to_string())
+    } else {
+        (
+            "temporal_ordered",
+            "    condition: a-rule and not b-rule\n".to_string(),
+        )
+    };
+    format!(
+        r#"title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: Absence Memory Bench
+correlation:
+    type: {corr_type}
+    rules: [a-rule, b-rule]
+    group-by: [User]
+    timespan: {timespan}
+{condition}"#
+    )
+}
+
+fn scenario_absence(n_groups: usize, deadman: bool) -> RunStats {
+    let yaml = absence_rules_yaml("7d", deadman);
+    let mut engine = engine_for(&yaml, 1_000_000);
+
+    let baseline = live_bytes();
+    reset_peak();
+    let start = Instant::now();
+    let base_ts = 1_000_000i64;
+    let mut alerts = 0usize;
+    for i in 0..n_groups {
+        let v = serde_json::json!({
+            "Action": "a",
+            "User": format!("user_{i:08}"),
+        });
+        let event = JsonEvent::borrow(&v);
+        let result = engine.process_event_at(&event, base_ts + i as i64);
+        alerts += result.correlation_count();
+    }
+
+    RunStats {
+        events: n_groups,
+        secs: start.elapsed().as_secs_f64(),
+        peak_delta: peak_bytes().saturating_sub(baseline),
+        settled_delta: live_bytes().saturating_sub(baseline),
+        groups: engine.state_count(),
+        alerts,
+    }
+}
+
 fn main() {
     println!(
         "\n=== A. High-cardinality session windows (1 event/key, event_count, gap 5m, cap 2h) ==="
@@ -458,6 +529,12 @@ fn main() {
         let stats = scenario_mode(mode);
         report(&format!("{mode:<8} 10k groups, 100 ev/group"), &stats);
     }
+
+    println!("\n=== E. Absence obligations and armed deadmen (100k groups) ===");
+    let stats = scenario_absence(100_000, false);
+    report("absence 100k pending obligations", &stats);
+    let stats = scenario_absence(100_000, true);
+    report("absence 100k armed deadmen", &stats);
 
     println!();
 }
