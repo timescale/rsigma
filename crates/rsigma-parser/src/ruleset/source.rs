@@ -1,6 +1,5 @@
 //! Loading ruleset sources with per-document provenance.
 
-use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +16,22 @@ pub struct ResolveOptions {
     /// Reject any source or overlay path outside this root. Pipelines are not
     /// resolved here, so callers confine pipeline paths themselves.
     pub confine_to: Option<PathBuf>,
+    /// Follow links inside source and overlay directories that resolve
+    /// outside the directory instead of skipping them. Has no effect when
+    /// [`confine_to`](Self::confine_to) is set: links never leave that root.
+    pub follow_external_links: bool,
+}
+
+impl ResolveOptions {
+    /// The walk options for a source or overlay directory: confined to
+    /// [`confine_to`](Self::confine_to) when set, otherwise to the directory.
+    pub(crate) fn walk_options(&self) -> crate::walk::WalkOptions<'_> {
+        let options = crate::walk::WalkOptions::new().skip_hidden_dirs(true);
+        match &self.confine_to {
+            Some(root) => options.confine_to(root),
+            None => options.follow_external_links(self.follow_external_links),
+        }
+    }
 }
 
 /// A rule document together with where it came from.
@@ -219,29 +234,37 @@ pub fn load_sources(
 
         let mut paths = Vec::new();
         if source.is_dir() {
-            // Per source, so overlapping sources each see their full tree and
-            // the uniqueness check reports the overlap.
-            let mut visited = HashSet::new();
-            crate::walk::collect_yaml_files(&root, &root, None, &mut paths, &mut visited).map_err(
-                |e| RulesetError::Io {
-                    ruleset: None,
-                    path: root.clone(),
-                    source: std::io::Error::other(e.to_string()),
-                },
-            )?;
-        } else {
-            paths.push(source.clone());
-        }
-
-        for path in paths {
-            let canonical = path.canonicalize().map_err(|e| RulesetError::Io {
+            let canonical = root.canonicalize().map_err(|e| RulesetError::Io {
                 ruleset: None,
-                path: path.clone(),
+                path: root.clone(),
                 source: e,
             })?;
             confine(&canonical, opts)?;
+            // Per source, so overlapping sources each see their full tree and
+            // the uniqueness check reports the overlap.
+            let walk = crate::walk::walk_files(&root, &opts.walk_options()).map_err(|e| {
+                RulesetError::Io {
+                    ruleset: None,
+                    path: root.clone(),
+                    source: e,
+                }
+            })?;
+            loaded
+                .diagnostics
+                .extend(walk.skipped.iter().map(CollectionDiagnostic::skipped));
+            paths.extend(walk.files.into_iter().map(|f| (f.path, f.real_path)));
+        } else {
+            let canonical = source.canonicalize().map_err(|e| RulesetError::Io {
+                ruleset: None,
+                path: source.clone(),
+                source: e,
+            })?;
+            confine(&canonical, opts)?;
+            paths.push((source.clone(), canonical));
+        }
 
-            let bytes = std::fs::read(&path).map_err(|e| RulesetError::Io {
+        for (path, real_path) in paths {
+            let bytes = std::fs::read(&real_path).map_err(|e| RulesetError::Io {
                 ruleset: None,
                 path: path.clone(),
                 source: e,
@@ -518,6 +541,7 @@ mod tests {
 
         let opts = ResolveOptions {
             confine_to: Some(inside.clone()),
+            ..ResolveOptions::default()
         };
         let spec = RulesetSpec {
             sources: vec![outside.clone()],

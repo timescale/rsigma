@@ -60,7 +60,8 @@ pub fn resolve_ruleset(
     if !problems.is_empty() {
         return Err(RulesetError::InvalidSpec(problems));
     }
-    let loader = FsOverlayLoader::new(opts.confine_to.clone());
+    let loader = FsOverlayLoader::new(opts.confine_to.clone())
+        .with_follow_external_links(opts.follow_external_links);
     let loaded = load_sources(spec, opts).map_err(|e| e.named(name))?;
     resolve_validated(name, spec, loaded, &loader)
 }

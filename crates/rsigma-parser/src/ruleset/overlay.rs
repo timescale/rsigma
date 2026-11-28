@@ -14,6 +14,7 @@ use yaml_serde::Value;
 use crate::ads::{ADS_PREFIX, AdsContent, EXEMPT_KEY};
 use crate::ast::{Level, Status};
 use crate::exemplar::{EXEMPLARS_KEY, ExemplarRuleKind, exemplars_from_attrs};
+use crate::walk::SkipReason;
 
 use super::closure;
 use super::error::RulesetError;
@@ -83,6 +84,10 @@ pub trait OverlayLoader {
 pub struct FsOverlayLoader {
     /// Reject overlay paths outside this root.
     pub confine_to: Option<PathBuf>,
+    /// Follow links in overlay directories that resolve outside the
+    /// directory instead of rejecting them (see
+    /// [`ResolveOptions::follow_external_links`]).
+    pub follow_external_links: bool,
     files: Mutex<Vec<SourceFile>>,
 }
 
@@ -91,8 +96,15 @@ impl FsOverlayLoader {
     pub fn new(confine_to: Option<PathBuf>) -> Self {
         Self {
             confine_to,
+            follow_external_links: false,
             files: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Set [`follow_external_links`](Self::follow_external_links).
+    pub fn with_follow_external_links(mut self, follow: bool) -> Self {
+        self.follow_external_links = follow;
+        self
     }
 
     fn load_file(
@@ -157,17 +169,30 @@ impl FsOverlayLoader {
             source: e,
         })?;
         confine(&canonical, opts)?;
-        let mut paths = Vec::new();
-        let mut visited = HashSet::new();
-        crate::walk::collect_yaml_files(dir, dir, None, &mut paths, &mut visited).map_err(|e| {
-            RulesetError::Io {
+        let walk =
+            crate::walk::walk_files(dir, &opts.walk_options()).map_err(|e| RulesetError::Io {
                 ruleset: None,
                 path: dir.to_path_buf(),
-                source: std::io::Error::other(e.to_string()),
-            }
-        })?;
-        for path in paths {
-            self.load_file(&path, opts, out)?;
+                source: e,
+            })?;
+        if let Some(skipped) = walk.skipped.into_iter().next() {
+            return Err(match skipped.reason {
+                SkipReason::OutsideRoot => RulesetError::Confinement {
+                    ruleset: None,
+                    path: skipped.path,
+                },
+                _ => RulesetError::Io {
+                    ruleset: None,
+                    path: skipped.path,
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "the link target cannot be resolved",
+                    ),
+                },
+            });
+        }
+        for file in walk.files {
+            self.load_file(&file.path, opts, out)?;
         }
         Ok(())
     }
@@ -185,6 +210,7 @@ impl OverlayLoader for FsOverlayLoader {
         }
         let opts = ResolveOptions {
             confine_to: self.confine_to.clone(),
+            follow_external_links: self.follow_external_links,
         };
         let mut out = Vec::new();
         if let Some(file) = &entry.file {

@@ -229,7 +229,7 @@ async fn resources_list_and_read_round_trip() {
         })
         .expect("text resource");
     let catalogue: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(catalogue.as_array().unwrap().len(), 98);
+    assert_eq!(catalogue.as_array().unwrap().len(), 99);
 
     let ads = client
         .read_resource(ReadResourceRequestParams::new("rsigma://ads/schema"))

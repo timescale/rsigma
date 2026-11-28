@@ -240,6 +240,7 @@ impl RsigmaMcp {
         let confined = self.confine_spec(spec).map_err(RulesetFailure::Request)?;
         let options = ResolveOptions {
             confine_to: self.root().map(Path::to_path_buf),
+            ..ResolveOptions::default()
         };
         let pipelines = confined.pipelines.clone();
         resolve_ruleset(name, &confined, &options)

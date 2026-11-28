@@ -16,7 +16,7 @@
 //! use rsigma_parser::lint::catalogue::catalogue;
 //!
 //! let entries = catalogue();
-//! assert_eq!(entries.len(), 98);
+//! assert_eq!(entries.len(), 99);
 //! let invalid_status = entries.iter().find(|e| e.name == "invalid_status").unwrap();
 //! assert!(invalid_status.fix.is_some()); // has a safe auto-fix
 //! ```
@@ -67,6 +67,7 @@ lint_catalogue! {
     NotAMapping => (Severity::Error, NONE, "The document root is not a YAML mapping."),
     FileReadError => (Severity::Error, NONE, "The file could not be read from disk."),
     SchemaViolation => (Severity::Error, NONE, "Reserved for JSON-schema validation failures."),
+    SkippedPath => (Severity::Warning, NONE, "A link under the linted directory resolves outside it or cannot be resolved, so it was not read."),
 
     // ── Shared (all document types) ──────────────────────────────────────
     MissingTitle => (Severity::Error, NONE, "Required field 'title' is missing."),
@@ -213,6 +214,7 @@ const LINT_RULE_NAMES: &[(LintRule, &str)] = &[
     (LintRule::NotAMapping, "not_a_mapping"),
     (LintRule::FileReadError, "file_read_error"),
     (LintRule::SchemaViolation, "schema_violation"),
+    (LintRule::SkippedPath, "skipped_path"),
     (LintRule::MissingTitle, "missing_title"),
     (LintRule::EmptyTitle, "empty_title"),
     (LintRule::TitleTooLong, "title_too_long"),
@@ -385,13 +387,13 @@ mod tests {
 
     #[test]
     fn catalogue_covers_every_rule() {
-        // 98 LintRule variants. The exhaustive `describe` match guarantees a
+        // 99 LintRule variants. The exhaustive `describe` match guarantees a
         // metadata entry per variant at compile time; this asserts the count
         // and the `ALL_LINT_RULES`/`LINT_RULE_NAMES` lists stay in sync.
         let entries = catalogue();
-        assert_eq!(entries.len(), 98, "expected 98 catalogue entries");
-        assert_eq!(ALL_LINT_RULES.len(), 98);
-        assert_eq!(LINT_RULE_NAMES.len(), 98);
+        assert_eq!(entries.len(), 99, "expected 99 catalogue entries");
+        assert_eq!(ALL_LINT_RULES.len(), 99);
+        assert_eq!(LINT_RULE_NAMES.len(), 99);
     }
 
     #[test]
