@@ -1,0 +1,5 @@
+count(*) AS hits
+max(EventID)
+SUM(bytes) as total
+avg(bytes)
+min(user)

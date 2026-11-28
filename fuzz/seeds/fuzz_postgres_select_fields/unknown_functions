@@ -1,0 +1,3 @@
+pg_sleep(10)
+version()
+current_setting(x)
