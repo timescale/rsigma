@@ -9,6 +9,8 @@ mod health;
 mod instrumented_resolver;
 pub(crate) mod listen;
 mod metrics;
+#[cfg(feature = "daemon-otlp")]
+mod otlp;
 mod reload;
 pub(crate) mod server;
 mod store;

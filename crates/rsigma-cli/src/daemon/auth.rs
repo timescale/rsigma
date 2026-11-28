@@ -212,6 +212,78 @@ pub(crate) fn tenancy_class(method: &Method, path: &str) -> TenancyClass {
     }
 }
 
+/// Whether a route of `class` refuses `identity` while tenancy is enabled.
+fn tenancy_denied(class: TenancyClass, identity: &AuthIdentity) -> bool {
+    match class {
+        TenancyClass::Open | TenancyClass::TenantScoped => false,
+        TenancyClass::Ingest => identity.tenant.is_none(),
+        TenancyClass::OperatorOnly => !identity.all_tenants,
+    }
+}
+
+/// Why [`authorize_ingest`] refused a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IngestRefusal {
+    /// No credentials, or a token that is not recognized.
+    Unauthorized,
+    /// A token without `events:ingest`.
+    Forbidden { token: String },
+    /// Tenancy is enabled and the token is not bound to exactly one tenant.
+    NoTenant,
+}
+
+/// Authorize an ingest request that does not pass through
+/// [`api_auth_middleware`] (OTLP/gRPC) from its `Authorization` value, with
+/// the same permission and tenancy checks and the same failure counters.
+/// `channel` labels a tenancy refusal in `rsigma_tenant_rejected_total`.
+pub(crate) fn authorize_ingest(
+    auth: &ApiAuth,
+    tenancy: bool,
+    metrics: &Metrics,
+    channel: &'static str,
+    authorization: Option<&str>,
+) -> Result<AuthIdentity, IngestRefusal> {
+    match auth.check(authorization, EVENTS_INGEST) {
+        Decision::Allowed(identity) => {
+            if tenancy && tenancy_denied(TenancyClass::Ingest, &identity) {
+                metrics
+                    .api_auth_failures
+                    .with_label_values(&["forbidden"])
+                    .inc();
+                metrics.on_tenant_rejected(channel, "no_tenant");
+                tracing::warn!(
+                    channel,
+                    token = ?identity.token,
+                    "API auth failure: tenancy route class denied"
+                );
+                return Err(IngestRefusal::NoTenant);
+            }
+            Ok(identity)
+        }
+        Decision::Unauthorized => {
+            metrics
+                .api_auth_failures
+                .with_label_values(&["unauthorized"])
+                .inc();
+            tracing::warn!(channel, "API auth failure: missing or invalid bearer token");
+            Err(IngestRefusal::Unauthorized)
+        }
+        Decision::Forbidden { token } => {
+            metrics
+                .api_auth_failures
+                .with_label_values(&["forbidden"])
+                .inc();
+            tracing::warn!(
+                channel,
+                token = %token,
+                required = %EVENTS_INGEST,
+                "API auth failure: token lacks required permission"
+            );
+            Err(IngestRefusal::Forbidden { token })
+        }
+    }
+}
+
 /// The built-in role names and their permission sets.
 pub const BUILTIN_ROLES: &[(&str, &[&str])] = &[
     ("reader", &["*:read"]),
@@ -546,12 +618,7 @@ pub async fn api_auth_middleware(
             request.extensions_mut().insert(identity.clone());
             if state.tenancy {
                 let class = tenancy_class(request.method(), &path);
-                let denied = match class {
-                    TenancyClass::Open | TenancyClass::TenantScoped => false,
-                    TenancyClass::Ingest => identity.tenant.is_none(),
-                    TenancyClass::OperatorOnly => !identity.all_tenants,
-                };
-                if denied {
+                if tenancy_denied(class, &identity) {
                     state
                         .metrics
                         .api_auth_failures

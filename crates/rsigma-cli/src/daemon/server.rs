@@ -217,6 +217,9 @@ struct AppState {
     /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
     #[cfg(feature = "daemon-otlp")]
     otlp_event_tx: mpsc::Sender<RawEvent>,
+    /// Limits on how far one OTLP request may expand.
+    #[cfg(feature = "daemon-otlp")]
+    otlp_limits: rsigma_runtime::OtlpLimits,
     /// The daemon-wide source registry for API endpoints.
     source_registry: Arc<rsigma_runtime::sources::registry::DaemonSourceRegistry>,
     /// Opt-in field observer. `Some` when the daemon was started with
@@ -291,6 +294,9 @@ pub struct DaemonConfig {
     pub state_save_interval: u64,
     pub input: String,
     pub stdin_mode: StdinMode,
+    /// Limits on how far one OTLP logs request may expand into events.
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_limits: rsigma_runtime::OtlpLimits,
     pub output: Vec<String>,
     pub buffer_size: usize,
     pub batch_size: usize,
@@ -1517,6 +1523,8 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
+        #[cfg(feature = "daemon-otlp")]
+        otlp_limits: config.otlp_limits,
         source_registry,
         field_observer: field_observer.clone(),
         schema_observer: schema_observer.clone(),
@@ -1573,8 +1581,19 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         .route("/api/v1/audit", get(list_audit))
         .merge(super::watchlist_api::routes());
 
+    // One set of request slots for both OTLP transports.
     #[cfg(feature = "daemon-otlp")]
-    let app = app.route("/v1/logs", post(otlp_http_logs));
+    let otlp_permits = Arc::new(tokio::sync::Semaphore::new(
+        super::otlp::MAX_CONCURRENT_REQUESTS,
+    ));
+    #[cfg(feature = "daemon-otlp")]
+    let app = app.route(
+        "/v1/logs",
+        post(otlp_http_logs).route_layer(axum::middleware::from_fn_with_state(
+            otlp_permits.clone(),
+            super::otlp::admit,
+        )),
+    );
 
     // Control-plane audit trail (opt-in via `--state-db`). Mounted before auth
     // so auth stays outermost and can reject before body buffering.
@@ -1591,8 +1610,8 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // routing, where `MatchedPath` carries the route pattern into the
     // permission lookup. The TraceLayer added below wraps it, so rejected
     // requests are traced too. OTLP/gRPC does not pass through this layer;
-    // the gRPC service checks its own request metadata (see
-    // `OtlpLogsGrpcService::export`).
+    // its server checks the same credentials from the request headers before
+    // reading the body (see `otlp::OtlpGrpcServer`).
     let app = match config.api_auth.as_ref() {
         Some(auth) => {
             tracing::info!("API authentication enabled");
@@ -1677,14 +1696,16 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
     #[cfg(feature = "daemon-otlp")]
     let otlp_routes = {
-        let grpc_service = rsigma_runtime::LogsServiceServer::new(OtlpLogsGrpcService {
-            event_tx: event_tx.clone(),
-            metrics: metrics.clone(),
-            auth: config.api_auth.clone(),
-            tenancy: config.tenancy.enabled,
-        })
-        .accept_compressed(tonic::codec::CompressionEncoding::Gzip)
-        .send_compressed(tonic::codec::CompressionEncoding::Gzip);
+        let grpc_service = super::otlp::OtlpGrpcServer::new(
+            super::otlp::OtlpLogsGrpcService {
+                event_tx: event_tx.clone(),
+                metrics: metrics.clone(),
+                limits: config.otlp_limits,
+                tenancy: config.tenancy.enabled,
+            },
+            config.api_auth.clone(),
+            otlp_permits,
+        );
         tonic::service::Routes::from(app).add_service(grpc_service)
     };
 
@@ -5790,9 +5811,12 @@ async fn ingest_events(
 /// Always mounted on `/v1/logs` when the `daemon-otlp` feature is compiled in.
 ///
 /// Per the OTLP/HTTP spec, both `application/x-protobuf` and
-/// `application/json` content types are supported. When no Content-Type is
-/// provided, protobuf is assumed (spec default). Gzip content encoding is
-/// supported and transparently decompressed.
+/// `application/json` content types are supported, and the response is
+/// encoded like the request. When no Content-Type is provided, protobuf is
+/// assumed (spec default). Gzip content encoding is supported and
+/// transparently decompressed. A request with more log records than
+/// `OtlpLimits::max_records` is refused before it is decoded, and records
+/// rejected during conversion are reported as a partial success.
 #[cfg(feature = "daemon-otlp")]
 async fn otlp_http_logs(
     State(state): State<AppState>,
@@ -5872,6 +5896,30 @@ async fn otlp_http_logs(
             }
         };
 
+        let limits = state.otlp_limits;
+        let records = if is_proto {
+            rsigma_runtime::count_log_records(&body)
+        } else {
+            rsigma_runtime::count_log_records_json(&body)
+        };
+        if let Some(records) = records
+            && records > limits.max_records
+        {
+            state
+                .metrics
+                .otlp_errors
+                .with_label_values(&["http", "too_many_records"])
+                .inc();
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(serde_json::json!({
+                    "error": super::otlp::too_many_records_message(records, limits.max_records),
+                    "max_records": limits.max_records,
+                })),
+            )
+                .into_response();
+        }
+
         let request = if is_proto {
             use prost::Message;
             match rsigma_runtime::ExportLogsServiceRequest::decode(body) {
@@ -5917,70 +5965,67 @@ async fn otlp_http_logs(
             .with_label_values(&["http", encoding])
             .inc();
 
-        let raw_events = rsigma_runtime::logs_request_to_raw_events_for(&request, tenant.as_ref());
-        let record_count = raw_events.len();
-        state.metrics.otlp_log_records.inc_by(record_count as u64);
-        tracing::debug!(record_count, "OTLP logs ingested");
-
-        for event in raw_events {
-            if send_counting_back_pressure(&state.otlp_event_tx, event, &state.metrics)
-                .await
-                .is_err()
-            {
-                state
-                    .metrics
-                    .otlp_errors
-                    .with_label_values(&["http", "channel_closed"])
-                    .inc();
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(serde_json::json!({
-                        "error": "event channel closed"
-                    })),
-                )
-                    .into_response();
-            }
-            state.metrics.on_input_queue_depth_change(1);
-        }
-
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "partialSuccess": {
-                    "rejectedLogRecords": 0,
-                    "errorMessage": ""
-                }
-            })),
+        let Ok(forwarded) = super::otlp::forward_records(
+            &request,
+            tenant.as_ref(),
+            limits,
+            &state.otlp_event_tx,
+            &state.metrics,
+            "http",
         )
-            .into_response()
+        .await
+        else {
+            state
+                .metrics
+                .otlp_errors
+                .with_label_values(&["http", "channel_closed"])
+                .inc();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "event channel closed"
+                })),
+            )
+                .into_response();
+        };
+        tracing::debug!(record_count = forwarded.accepted, "OTLP logs ingested");
+
+        let partial = super::otlp::partial_success(forwarded.rejected, &limits);
+        if is_proto {
+            use prost::Message;
+            let response = rsigma_runtime::ExportLogsServiceResponse {
+                partial_success: partial,
+            };
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/x-protobuf")],
+                response.encode_to_vec(),
+            )
+                .into_response()
+        } else {
+            let (rejected, message) = partial
+                .map(|p| (p.rejected_log_records, p.error_message))
+                .unwrap_or_default();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "partialSuccess": {
+                        "rejectedLogRecords": rejected,
+                        "errorMessage": message,
+                    }
+                })),
+            )
+                .into_response()
+        }
     }
     .instrument(span)
     .await
 }
 
-/// Forward one OTLP event to the engine, counting a full channel as
-/// back-pressure before waiting for room.
+/// Upper bound on a gzip-decoded OTLP/HTTP body, the same as the gRPC
+/// decoded-message limit.
 #[cfg(feature = "daemon-otlp")]
-async fn send_counting_back_pressure(
-    tx: &mpsc::Sender<RawEvent>,
-    event: RawEvent,
-    metrics: &Metrics,
-) -> Result<(), mpsc::error::SendError<RawEvent>> {
-    match tx.try_send(event) {
-        Ok(()) => Ok(()),
-        Err(mpsc::error::TrySendError::Full(event)) => {
-            metrics.on_back_pressure();
-            tx.send(event).await
-        }
-        Err(mpsc::error::TrySendError::Closed(event)) => Err(mpsc::error::SendError(event)),
-    }
-}
-
-/// Upper bound on a gzip-decoded OTLP/HTTP body. Matches tonic's default
-/// decoded-message limit on the gRPC path (4 MiB), so both transports bound
-/// decoded requests the same way.
-#[cfg(feature = "daemon-otlp")]
-const OTLP_HTTP_MAX_DECOMPRESSED_BYTES: usize = 4 * 1024 * 1024;
+const OTLP_HTTP_MAX_DECOMPRESSED_BYTES: usize = super::otlp::MAX_DECODED_BYTES;
 
 #[cfg(feature = "daemon-otlp")]
 #[derive(Debug)]
@@ -6021,120 +6066,6 @@ fn otlp_gunzip_bounded(body: &[u8], max: usize) -> Result<Vec<u8>, OtlpDecompres
         return Err(OtlpDecompressError::TooLarge);
     }
     Ok(decompressed)
-}
-
-#[cfg(feature = "daemon-otlp")]
-struct OtlpLogsGrpcService {
-    event_tx: mpsc::Sender<RawEvent>,
-    metrics: Arc<Metrics>,
-    /// API auth table shared with the HTTP layer. The gRPC service is folded
-    /// into the router after the axum auth middleware is applied, so it
-    /// authenticates its own request metadata and answers with proper gRPC
-    /// status codes instead of bare HTTP 401/403.
-    auth: Option<super::auth::ApiAuth>,
-    /// Whether tenancy is enabled, so a missing tenant is refused.
-    tenancy: bool,
-}
-
-#[cfg(feature = "daemon-otlp")]
-#[tonic::async_trait]
-impl rsigma_runtime::LogsService for OtlpLogsGrpcService {
-    async fn export(
-        &self,
-        request: tonic::Request<rsigma_runtime::ExportLogsServiceRequest>,
-    ) -> Result<tonic::Response<rsigma_runtime::ExportLogsServiceResponse>, tonic::Status> {
-        let mut identity = None;
-        if let Some(auth) = &self.auth {
-            let authorization = request
-                .metadata()
-                .get("authorization")
-                .and_then(|v| v.to_str().ok());
-            match auth.check(authorization, super::auth::EVENTS_INGEST) {
-                super::auth::Decision::Allowed(allowed) => {
-                    identity = Some(allowed);
-                }
-                super::auth::Decision::Unauthorized => {
-                    self.metrics
-                        .api_auth_failures
-                        .with_label_values(&["unauthorized"])
-                        .inc();
-                    return Err(tonic::Status::unauthenticated(
-                        "missing or invalid bearer token",
-                    ));
-                }
-                super::auth::Decision::Forbidden { token } => {
-                    self.metrics
-                        .api_auth_failures
-                        .with_label_values(&["forbidden"])
-                        .inc();
-                    tracing::warn!(
-                        token = %token,
-                        "OTLP gRPC auth failure: token lacks events:ingest"
-                    );
-                    return Err(tonic::Status::permission_denied(
-                        "token lacks required permission 'events:ingest'",
-                    ));
-                }
-            }
-        }
-        let tenant = if self.tenancy {
-            match identity.as_ref().and_then(|identity| {
-                if identity.all_tenants {
-                    None
-                } else {
-                    identity.tenant.clone()
-                }
-            }) {
-                Some(tenant) => Some(tenant),
-                None => {
-                    self.metrics
-                        .api_auth_failures
-                        .with_label_values(&["forbidden"])
-                        .inc();
-                    self.metrics.on_tenant_rejected("otlp_grpc", "no_tenant");
-                    return Err(tonic::Status::permission_denied(
-                        "tenancy is enabled; the token must name exactly one tenant to ingest",
-                    ));
-                }
-            }
-        } else {
-            None
-        };
-        let span = tracing::debug_span!("otlp_ingest", transport = "grpc", encoding = "protobuf");
-        async move {
-            self.metrics
-                .otlp_requests
-                .with_label_values(&["grpc", "protobuf"])
-                .inc();
-
-            let raw_events = rsigma_runtime::logs_request_to_raw_events_for(
-                &request.into_inner(),
-                tenant.as_ref(),
-            );
-            let record_count = raw_events.len();
-            self.metrics.otlp_log_records.inc_by(record_count as u64);
-            tracing::debug!(record_count, "OTLP logs ingested");
-
-            for event in raw_events {
-                send_counting_back_pressure(&self.event_tx, event, &self.metrics)
-                    .await
-                    .map_err(|_| {
-                        self.metrics
-                            .otlp_errors
-                            .with_label_values(&["grpc", "channel_closed"])
-                            .inc();
-                        tonic::Status::unavailable("event channel closed")
-                    })?;
-                self.metrics.on_input_queue_depth_change(1);
-            }
-
-            Ok(tonic::Response::new(
-                rsigma_runtime::ExportLogsServiceResponse::default(),
-            ))
-        }
-        .instrument(span)
-        .await
-    }
 }
 
 #[cfg(test)]
@@ -6329,133 +6260,6 @@ mod tests {
             assert!(parse("otlp://c:4317?timeout=soon").is_err());
             assert!(parse("otlp://c:4317?timeout=").is_err());
             assert!(parse("otlp://c:4317?timeout=1s&timeout=2s").is_err());
-        }
-    }
-
-    #[cfg(feature = "daemon-otlp")]
-    mod otlp_grpc_auth {
-        use super::super::OtlpLogsGrpcService;
-        use super::*;
-        use crate::daemon::auth::{ApiAuth, TokenSpec};
-
-        fn auth_table() -> ApiAuth {
-            let tokens = [
-                TokenSpec {
-                    name: "shipper".into(),
-                    role: Some("ingest".into()),
-                    permissions: None,
-                    token_env: "SHIPPER".into(),
-                    tenant: None,
-                    all_tenants: false,
-                },
-                TokenSpec {
-                    name: "viewer".into(),
-                    role: Some("reader".into()),
-                    permissions: None,
-                    token_env: "VIEWER".into(),
-                    tenant: None,
-                    all_tenants: false,
-                },
-            ];
-            ApiAuth::build(&[], &tokens, &[], |key| match key {
-                "SHIPPER" => Some("ship-secret".into()),
-                "VIEWER" => Some("view-secret".into()),
-                _ => None,
-            })
-            .unwrap()
-        }
-
-        fn service(auth: Option<ApiAuth>) -> (OtlpLogsGrpcService, mpsc::Receiver<RawEvent>) {
-            let (event_tx, event_rx) = mpsc::channel(8);
-            (
-                OtlpLogsGrpcService {
-                    event_tx,
-                    metrics: Arc::new(Metrics::new()),
-                    auth,
-                    tenancy: false,
-                },
-                event_rx,
-            )
-        }
-
-        fn request_with_token(
-            token: Option<&str>,
-        ) -> tonic::Request<rsigma_runtime::ExportLogsServiceRequest> {
-            let mut request =
-                tonic::Request::new(rsigma_runtime::ExportLogsServiceRequest::default());
-            if let Some(token) = token {
-                request
-                    .metadata_mut()
-                    .insert("authorization", format!("Bearer {token}").parse().unwrap());
-            }
-            request
-        }
-
-        #[tokio::test]
-        async fn grpc_export_rejects_missing_token_as_unauthenticated() {
-            use rsigma_runtime::LogsService;
-            let (svc, _rx) = service(Some(auth_table()));
-            let status = svc.export(request_with_token(None)).await.unwrap_err();
-            assert_eq!(status.code(), tonic::Code::Unauthenticated);
-        }
-
-        #[tokio::test]
-        async fn grpc_export_rejects_read_token_as_permission_denied() {
-            use rsigma_runtime::LogsService;
-            let (svc, _rx) = service(Some(auth_table()));
-            let status = svc
-                .export(request_with_token(Some("view-secret")))
-                .await
-                .unwrap_err();
-            assert_eq!(status.code(), tonic::Code::PermissionDenied);
-        }
-
-        #[tokio::test]
-        async fn grpc_export_accepts_ingest_token() {
-            use rsigma_runtime::LogsService;
-            let (svc, _rx) = service(Some(auth_table()));
-            let response = svc.export(request_with_token(Some("ship-secret"))).await;
-            assert!(response.is_ok(), "{response:?}");
-        }
-
-        #[tokio::test]
-        async fn grpc_export_into_a_full_channel_counts_back_pressure() {
-            use rsigma_runtime::LogsService;
-            let (event_tx, mut event_rx) = mpsc::channel(1);
-            let metrics = Arc::new(Metrics::new());
-            let svc = OtlpLogsGrpcService {
-                event_tx,
-                metrics: metrics.clone(),
-                auth: None,
-                tenancy: false,
-            };
-            let request: rsigma_runtime::ExportLogsServiceRequest =
-                serde_json::from_value(serde_json::json!({
-                    "resourceLogs": [{"scopeLogs": [{"logRecords": [
-                        {"body": {"stringValue": "a"}},
-                        {"body": {"stringValue": "b"}},
-                        {"body": {"stringValue": "c"}}
-                    ]}]}]
-                }))
-                .unwrap();
-            let export =
-                tokio::spawn(async move { svc.export(tonic::Request::new(request)).await });
-            let mut received = 0;
-            while received < 3 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                event_rx.recv().await.expect("event");
-                received += 1;
-            }
-            assert!(export.await.unwrap().is_ok());
-            assert!(metrics.back_pressure_events.get() >= 1);
-        }
-
-        #[tokio::test]
-        async fn grpc_export_open_without_auth_table() {
-            use rsigma_runtime::LogsService;
-            let (svc, _rx) = service(None);
-            let response = svc.export(request_with_token(None)).await;
-            assert!(response.is_ok(), "{response:?}");
         }
     }
 

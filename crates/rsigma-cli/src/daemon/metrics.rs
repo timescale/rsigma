@@ -77,6 +77,8 @@ pub struct Metrics {
     pub otlp_log_records: IntCounter,
     #[cfg(feature = "daemon-otlp")]
     pub otlp_errors: IntCounterVec,
+    #[cfg(feature = "daemon-otlp")]
+    pub otlp_rejected_log_records: IntCounterVec,
     #[cfg(feature = "daemon-tls")]
     pub tls_certificate_expiry_seconds: Gauge,
     #[cfg(feature = "daemon-tls")]
@@ -821,7 +823,7 @@ impl Metrics {
         #[cfg(feature = "daemon-otlp")]
         let otlp_log_records = IntCounter::with_opts(Opts::new(
             "rsigma_otlp_log_records_total",
-            "Log records ingested via OTLP",
+            "Log records ingested via OTLP and forwarded to the engine",
         ))
         .unwrap();
         #[cfg(feature = "daemon-otlp")]
@@ -830,6 +832,22 @@ impl Metrics {
             &["transport", "reason"],
         )
         .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        let otlp_rejected_log_records = IntCounterVec::new(
+            Opts::new(
+                "rsigma_otlp_rejected_log_records_total",
+                "OTLP log records rejected and reported as a partial success, by transport \
+                 and reason (too_large, over_budget)",
+            ),
+            &["transport", "reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "daemon-otlp")]
+        for transport in ["http", "grpc"] {
+            for reason in ["too_large", "over_budget"] {
+                otlp_rejected_log_records.with_label_values(&[transport, reason]);
+            }
+        }
 
         #[cfg(feature = "daemon-otlp")]
         {
@@ -838,6 +856,9 @@ impl Metrics {
                 .register(Box::new(otlp_log_records.clone()))
                 .unwrap();
             registry.register(Box::new(otlp_errors.clone())).unwrap();
+            registry
+                .register(Box::new(otlp_rejected_log_records.clone()))
+                .unwrap();
         }
 
         #[cfg(feature = "daemon-tls")]
@@ -1611,6 +1632,8 @@ impl Metrics {
             otlp_log_records,
             #[cfg(feature = "daemon-otlp")]
             otlp_errors,
+            #[cfg(feature = "daemon-otlp")]
+            otlp_rejected_log_records,
             #[cfg(feature = "daemon-tls")]
             tls_certificate_expiry_seconds,
             #[cfg(feature = "daemon-tls")]
