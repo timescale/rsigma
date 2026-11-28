@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Event values reach enricher programs, request bodies, and commands as data
+### Event values reach enricher programs, request bodies, and commands as data (#811)
 
 `lookup` and `stix` enrichers pasted `${detection.*}` and `${correlation.*}` values into their `extract` program text unescaped, so a field value containing a quote, a backslash, or an operator rewrote the jq, JSONPath, or CEL program: it could return other records, the whole source, or a compile error that sent every such detection down the `on_error` path. A reference now becomes a variable the program reads (`$__v0` in jq, `__v0` in CEL, as an interpolation or a concatenation inside a string literal), and JSONPath, which has no variables, receives each value as an escaped string literal. Every value is a string. Expressions that quote their references, like the documented ones, behave as before; one that relied on a value being pasted in as code, such as an array index or a numeric comparison, now converts it (`tonumber` in jq, `int()` in CEL). A JSONPath reference outside a string literal is valid only where a JSONPath literal is, and a CEL reference right after `.` fails at load. jq and CEL extracts are compiled once when the enricher is built, so an extract that does not compile fails at load, and lookup extracts got four to five times faster for jq and CEL in the crate benchmarks.
 
