@@ -266,6 +266,9 @@ pub trait MetricsHook: Send + Sync {
     /// `count` absence hits were refused. `reason` is `global_cap`,
     /// `tenant_quota`, or `group_cap`.
     fn on_correlation_absence_refused(&self, _reason: &'static str, _count: u64) {}
+    /// `count` pending absence groups were dropped to make room for a group
+    /// that fires sooner. `reason` is `global_cap`.
+    fn on_correlation_absence_evicted(&self, _reason: &'static str, _count: u64) {}
     /// `count` negated hits arrived after their obligation fired, or late
     /// deadman heartbeats arrived.
     fn on_correlation_absence_late_negatives(&self, _count: u64) {}

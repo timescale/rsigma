@@ -303,6 +303,10 @@ impl LogProcessor {
             self.metrics
                 .on_correlation_absence_refused("group_cap", counters.refused_group_cap);
         }
+        if counters.evicted_global_cap > 0 {
+            self.metrics
+                .on_correlation_absence_evicted("global_cap", counters.evicted_global_cap);
+        }
         if counters.late_negatives > 0 {
             self.metrics
                 .on_correlation_absence_late_negatives(counters.late_negatives);
@@ -2649,6 +2653,7 @@ correlation:
         fired: std::sync::atomic::AtomicU64,
         cancelled: std::sync::atomic::AtomicU64,
         matches: std::sync::atomic::AtomicU64,
+        evicted: std::sync::atomic::AtomicU64,
         tenant_matches: Mutex<Vec<String>>,
     }
 
@@ -2677,6 +2682,11 @@ correlation:
         }
         fn on_correlation_absence_cancelled(&self, count: u64) {
             self.cancelled
+                .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_correlation_absence_evicted(&self, reason: &'static str, count: u64) {
+            assert_eq!(reason, "global_cap");
+            self.evicted
                 .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
         }
         fn on_tenant_match(&self, tenant: &str) {
@@ -2882,6 +2892,38 @@ correlation:
         let fired = proc.advance_idle_at(now + std::time::Duration::from_secs(61), 0);
         assert_eq!(fired.len(), 1);
         assert_eq!(*metrics.tenant_matches.lock(), ["acme"]);
+    }
+
+    #[test]
+    fn absence_cap_evictions_land_on_the_hook() {
+        let mut rules = String::new();
+        for (id, action) in [("a", "a"), ("b", "b"), ("c", "c"), ("d", "d")] {
+            rules.push_str(&format!(
+                "title: {id}\nid: {id}\nlogsource:\n    category: test\ndetection:\n    selection:\n        Action: {action}\n    condition: selection\n---\n"
+            ));
+        }
+        rules.push_str(
+            "title: Slow\ncorrelation:\n    type: temporal\n    rules: [a, b]\n    group-by: [User]\n    timespan: 1h\n    condition: a and not b\n---\n\
+             title: Fast\ncorrelation:\n    type: temporal\n    rules: [c, d]\n    group-by: [User]\n    timespan: 60s\n    condition: c and not d\n",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rules.yml");
+        std::fs::write(&rule_path, rules).unwrap();
+        let config = CorrelationConfig {
+            max_absence_entries: 1,
+            ..CorrelationConfig::default()
+        };
+        let mut engine = RuntimeEngine::new(rule_path, vec![], config, false);
+        engine.load_rules().unwrap();
+        let metrics = Arc::new(CollectingMetrics::default());
+        let proc = LogProcessor::new(engine, metrics.clone());
+        let lines = [
+            r#"{"@timestamp": 1000, "Action": "a", "User": "alice"}"#.to_string(),
+            r#"{"@timestamp": 1000, "Action": "c", "User": "bob"}"#.to_string(),
+        ];
+        proc.process_batch_with_format(&lines, &InputFormat::Json, None);
+        assert_eq!(metrics.evicted.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(metrics.pending.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

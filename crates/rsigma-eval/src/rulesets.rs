@@ -744,6 +744,7 @@ impl RulesetEngines {
             total.refused_global_cap += counters.refused_global_cap;
             total.refused_tenant_quota += counters.refused_tenant_quota;
             total.refused_group_cap += counters.refused_group_cap;
+            total.evicted_global_cap += counters.evicted_global_cap;
             total.late_negatives += counters.late_negatives;
         }
         total

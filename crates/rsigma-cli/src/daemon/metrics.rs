@@ -20,6 +20,7 @@ pub struct Metrics {
     pub correlation_absence_fired_total: IntCounter,
     pub correlation_absence_cancelled_total: IntCounter,
     pub correlation_absence_refused_total: IntCounterVec,
+    pub correlation_absence_evicted_total: IntCounterVec,
     pub correlation_absence_late_negatives_total: IntCounter,
     pub correlation_state_evictions_total: IntCounter,
     pub reloads_total: IntCounter,
@@ -245,6 +246,17 @@ impl Metrics {
                 .with_label_values(&[reason])
                 .inc_by(0);
         }
+        let correlation_absence_evicted_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_correlation_absence_evicted_total",
+                "Pending absence groups dropped to make room for a group that fires sooner, by reason (global_cap)",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        correlation_absence_evicted_total
+            .with_label_values(&["global_cap"])
+            .inc_by(0);
         correlation_absence_pending.set(0);
         let correlation_state_evictions_total = IntCounter::with_opts(Opts::new(
             "rsigma_correlation_state_evictions_total",
@@ -500,6 +512,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(correlation_absence_refused_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_evicted_total.clone()))
             .unwrap();
         registry
             .register(Box::new(correlation_absence_late_negatives_total.clone()))
@@ -1692,6 +1707,7 @@ impl Metrics {
             correlation_absence_fired_total,
             correlation_absence_cancelled_total,
             correlation_absence_refused_total,
+            correlation_absence_evicted_total,
             correlation_absence_late_negatives_total,
             correlation_state_evictions_total,
             reloads_total,
@@ -2001,6 +2017,12 @@ impl MetricsHook for Metrics {
 
     fn on_correlation_absence_cancelled(&self, count: u64) {
         self.correlation_absence_cancelled_total.inc_by(count);
+    }
+
+    fn on_correlation_absence_evicted(&self, reason: &'static str, count: u64) {
+        self.correlation_absence_evicted_total
+            .with_label_values(&[reason])
+            .inc_by(count);
     }
 
     fn on_correlation_absence_refused(&self, reason: &'static str, count: u64) {
@@ -2730,6 +2752,7 @@ mod tests {
             "rsigma_correlation_absence_fired_total",
             "rsigma_correlation_absence_cancelled_total",
             "rsigma_correlation_absence_refused_total",
+            "rsigma_correlation_absence_evicted_total",
             "rsigma_correlation_absence_late_negatives_total",
         ] {
             assert!(output.contains(family), "missing {family}");

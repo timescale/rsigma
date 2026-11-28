@@ -18,9 +18,11 @@ Library changes: `RiskState::restore` and `restore_detailed` take the `IncidentC
 
 Correlation windows dropped by the `max_state_entries` hard cap were visible only as a warning log, and results that could not open a dedup alert or an incident because `dedup.max_active_alerts` or `group.caps.max_open_incidents` was full only as a plateauing gauge. They now count in `rsigma_correlation_state_evictions_total` and `rsigma_alert_pipeline_cap_refused_total{store}` (`active_alerts`, `incidents`). Correlation quota and cap evictions are also reported when events go through `LogProcessor::process_batch_lines`, which reported neither.
 
+At `max_absence_entries`, a hit that would make an absence group pending is no longer refused when a pending group would fire later than it: that group is dropped and counted in `rsigma_correlation_absence_evicted_total{reason="global_cap"}`, so a short-window obligation or deadman is not locked out by long-window ones. A newcomer that would fire last is still refused. Absence cap refusals and evictions now log a warning at most once per minute of event time.
+
 With `daemon.tenancy.quotas.active_alerts` set, a tenant at its quota could not reclaim its own oldest alert while the global `dedup.max_active_alerts` was full, so its new fingerprints went through un-deduplicated. The tenant now evicts its own least recently seen alert first, as incident grouping already did.
 
-New library surface: `CorrelationEngine::take_cap_evictions` (also on `SchemaRouter` and `RulesetEngines`), `RuntimeEngine::take_correlation_cap_evictions`, and the `MetricsHook` methods `on_correlation_cap_evictions` and `on_alert_pipeline_cap_refused`, which default to no-ops.
+New library surface: `CorrelationEngine::take_cap_evictions` (also on `SchemaRouter` and `RulesetEngines`), `RuntimeEngine::take_correlation_cap_evictions`, and `AbsenceCounters::evicted_global_cap`, and the `MetricsHook` methods `on_correlation_cap_evictions`, `on_alert_pipeline_cap_refused`, and `on_correlation_absence_evicted`, which default to no-ops.
 
 ### Absence and missing-event correlations (#816)
 
