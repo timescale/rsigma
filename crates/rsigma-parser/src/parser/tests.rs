@@ -2922,6 +2922,47 @@ correlation:
 "#;
     let collection = parse_sigma_yaml(yaml).unwrap();
     assert!(collection.correlations[0].rules.is_empty());
+
+    let yaml = r#"
+title: Empty
+correlation:
+    type: temporal
+    rules: []
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(collection.correlations.is_empty());
+    assert!(
+        collection.diagnostics.iter().any(|d| d
+            .message
+            .contains("condition references 'a', which is not in correlation.rules")),
+        "{:?}",
+        collection.diagnostics
+    );
+}
+
+#[test]
+fn correlation_selector_does_not_hide_an_undefined_identifier() {
+    let yaml = r#"
+title: Selector
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: b and 1 of a*
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    assert!(collection.correlations.is_empty());
+    assert!(
+        collection.diagnostics.iter().any(|d| d
+            .message
+            .contains("condition references 'b', which is not in correlation.rules")),
+        "{:?}",
+        collection.diagnostics
+    );
 }
 
 #[test]

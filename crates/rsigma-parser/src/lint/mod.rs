@@ -391,7 +391,6 @@ impl FileLintResult {
 static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
     [
         "action",
-        "absence_grace",
         "author",
         "category",
         "condition",

@@ -381,18 +381,14 @@ fn parse_correlation_condition(
     }
 }
 
-/// A string condition contains a selector, whose identifiers cannot be
-/// enumerated without the detection set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SelectorFound;
-
-/// Identifiers a condition references, in order of first appearance.
+/// Identifiers a condition references, in order of first appearance, and
+/// whether it also uses a selector, whose identifiers cannot be enumerated
+/// without the detection set.
 ///
 /// Iterative, so a tree built through the API cannot overflow the stack.
-pub(crate) fn condition_identifiers(
-    expr: &ConditionExpr,
-) -> std::result::Result<Vec<String>, SelectorFound> {
+pub(crate) fn condition_identifiers(expr: &ConditionExpr) -> (Vec<String>, bool) {
     let mut out: Vec<String> = Vec::new();
+    let mut selector = false;
     let mut stack: Vec<&ConditionExpr> = vec![expr];
     while let Some(node) = stack.pop() {
         match node {
@@ -405,10 +401,10 @@ pub(crate) fn condition_identifiers(
                 stack.extend(children.iter().rev());
             }
             ConditionExpr::Not(child) => stack.push(child),
-            ConditionExpr::Selector { .. } => return Err(SelectorFound),
+            ConditionExpr::Selector { .. } => selector = true,
         }
     }
-    Ok(out)
+    (out, selector)
 }
 
 /// Resolve `rules:` against a string condition: derive the references when the
@@ -421,18 +417,13 @@ fn resolve_condition_rules(
     let CorrelationCondition::Extended(expr) = condition else {
         return Ok(rules);
     };
-    let identifiers = match condition_identifiers(expr) {
-        Ok(identifiers) => identifiers,
-        // A selector's identifiers come from the detection set, so only a
-        // condition without `rules:` cannot derive them.
-        Err(SelectorFound) if !rules_present => {
+    let (identifiers, selector) = condition_identifiers(expr);
+    if !rules_present {
+        if selector {
             return Err(SigmaParserError::InvalidCorrelation(
                 "rules is required when the condition uses a selector".into(),
             ));
         }
-        Err(SelectorFound) => return Ok(rules),
-    };
-    if !rules_present {
         rules = identifiers;
         return Ok(rules);
     }

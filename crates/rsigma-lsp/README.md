@@ -17,7 +17,7 @@ cargo install --path crates/rsigma-lsp
 | Capability | Details |
 |------------|---------|
 | Text document sync | Full (entire document on every change) |
-| Diagnostics | Lint (91 rules), parse errors, compile errors |
+| Diagnostics | Lint (97 rules), parse errors, compile errors |
 | Code actions | Quick-fix actions for auto-fixable lint warnings |
 | Completions | Context-aware; trigger characters: `\|`, `:`, ` `, `\n` |
 | Hover | Field modifiers, MITRE ATT&CK tactics and techniques |

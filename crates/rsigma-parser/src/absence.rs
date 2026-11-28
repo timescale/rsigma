@@ -262,11 +262,12 @@ pub fn analyze_absence_parts(
         [single] => (*single).clone(),
         many => ConditionExpr::And(many.iter().map(|node| (*node).clone()).collect()),
     };
-    let positive_refs = rules
-        .iter()
-        .filter(|rule| positive_ids.iter().any(|name| name == *rule))
-        .cloned()
-        .collect();
+    let mut positive_refs: Vec<String> = Vec::new();
+    for rule in rules {
+        if positive_ids.contains(rule) && !positive_refs.contains(rule) {
+            positive_refs.push(rule.clone());
+        }
+    }
 
     Ok(Some(AbsenceShape {
         kind: AbsenceKind::Obligation,
@@ -455,6 +456,54 @@ mod tests {
         assert_eq!(shape.kind, AbsenceKind::Obligation);
         assert_eq!(shape.positive_refs, ["a", "c"]);
         assert_eq!(shape.negated, ["b"]);
+    }
+
+    #[test]
+    fn positive_refs_follow_rules_order_and_negated_follow_the_condition() {
+        let shape = obligation("(c or a) and not d and not b");
+        assert_eq!(shape.positive_refs, ["a", "c"]);
+        assert_eq!(shape.negated, ["d", "b"]);
+    }
+
+    #[test]
+    fn duplicate_rules_entries_count_once() {
+        let shape = analyze(
+            "a and b and not c",
+            CorrelationType::TemporalOrdered,
+            WindowMode::Sliding,
+            &["a", "a", "b", "c"],
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(shape.positive_refs, ["a", "b"]);
+    }
+
+    #[test]
+    fn selector_inside_a_negated_disjunction_is_rejected() {
+        assert_eq!(
+            obligation_error("a and not (b or 1 of x*)"),
+            AbsenceShapeError::Selector
+        );
+    }
+
+    #[test]
+    fn rule_used_both_ways_through_a_disjunction_is_rejected() {
+        assert_eq!(
+            obligation_error("(a or b) and not b"),
+            AbsenceShapeError::RefBothWays("b".into())
+        );
+    }
+
+    fn obligation_error(condition: &str) -> AbsenceShapeError {
+        analyze(
+            condition,
+            CorrelationType::Temporal,
+            WindowMode::Sliding,
+            &["a", "b", "c", "d"],
+            true,
+        )
+        .unwrap_err()
     }
 
     #[test]
