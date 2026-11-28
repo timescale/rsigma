@@ -11,6 +11,7 @@ use rsigma_eval::{EvaluationResult, ProcessResult};
 
 use crate::enrichment::{
     HttpEnricherClient, render_template, render_template_json_with_ocsf, render_template_url,
+    sanitize_header_value,
 };
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
@@ -234,7 +235,7 @@ impl WebhookSink {
         let signing_headroom = if self.signer.is_some() { 3 } else { 0 };
         let mut header_map = HeaderMap::with_capacity(self.headers.len() + signing_headroom);
         for (name, value_template) in &self.headers {
-            let rendered = render_template(value_template, eval);
+            let rendered = sanitize_header_value(render_template(value_template, eval));
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
                 RuntimeError::Permanent(format!(
                     "webhook {}: invalid header name '{name}': {e}",
@@ -562,6 +563,62 @@ mod tests {
         let mut sink = sink_to(format!("{}/hook/${{detection.rule.title}}", server.uri()));
         let result: ProcessResult = vec![detection("../../admin")];
         assert!(sink.send(&result, &ctx()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn control_characters_in_a_header_value_cannot_add_a_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut sink = WebhookSink::new(
+            "test".to_string(),
+            WebhookKind::Detection,
+            reqwest::Method::POST,
+            format!("{}/hook", server.uri()),
+            vec![(
+                "X-Command".to_string(),
+                "cmd=${detection.fields.CommandLine}".to_string(),
+            )],
+            Some(r#"{"text":"${detection.rule.title}"}"#.to_string()),
+            Duration::from_secs(5),
+            crate::enrichment::Scope::default(),
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            None,
+        );
+        let mut r = detection("hi");
+        if let ResultBody::Detection(d) = &mut r.body {
+            d.matched_fields.push(rsigma_eval::result::FieldMatch::new(
+                "CommandLine",
+                serde_json::json!("whoami\r\nX-Injected: 1\u{0}\u{7f}\tend"),
+            ));
+        }
+
+        sink.send(&vec![r], &ctx()).await.unwrap();
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1);
+        let headers = &reqs[0].headers;
+        assert!(headers.get("x-injected").is_none(), "{headers:?}");
+        assert_eq!(
+            headers.get("x-command").unwrap().to_str().unwrap(),
+            "cmd=whoami  X-Injected: 1  \tend"
+        );
+    }
+
+    #[test]
+    fn header_sanitising_keeps_tabs_and_non_ascii_text() {
+        assert_eq!(
+            sanitize_header_value("a\tb é\u{1b}[0m\r\n".to_string()),
+            "a\tb é [0m  "
+        );
+        let clean = "plain value".to_string();
+        assert_eq!(sanitize_header_value(clean.clone()), clean);
     }
 
     #[tokio::test]

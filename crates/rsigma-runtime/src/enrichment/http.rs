@@ -34,7 +34,7 @@ use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope,
     http_cache::{CacheKey, CacheOutcome, HttpResponseCache},
     inject_enrichment, render_enricher_template, render_enricher_template_json,
-    render_enricher_template_url,
+    render_enricher_template_url, sanitize_header_value,
 };
 use crate::egress::{
     EgressDenial, EgressPolicy, default_egress_policy, egress_client_builder, error_chain,
@@ -145,6 +145,28 @@ pub fn build_default_http_client() -> Result<HttpEnricherClient, String> {
         .build()
         .map(|c| HttpEnricherClient::with_egress_policy(c, policy))
         .map_err(|e| format!("reqwest client build failed: {e}"))
+}
+
+/// Check configured header names: each must be a valid HTTP header name, and
+/// no two may differ only in case, since HTTP header names are
+/// case-insensitive and one would silently replace the other.
+pub(crate) fn validate_header_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let mut names: Vec<&str> = names.into_iter().collect();
+    names.sort_unstable();
+    let mut seen: Vec<HeaderName> = Vec::new();
+    for name in names {
+        let parsed = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|e| format!("invalid header name '{name}': {e}"))?;
+        if seen.contains(&parsed) {
+            return Err(format!(
+                "header '{name}' is configured more than once (header names are case-insensitive)"
+            ));
+        }
+        seen.push(parsed);
+    }
+    Ok(())
 }
 
 impl HttpEnricher {
@@ -291,7 +313,9 @@ impl Enricher for HttpEnricher {
             key.push('\n');
             key.push_str(name);
             key.push(':');
-            key.push_str(&render_enricher_template(value, result));
+            key.push_str(&sanitize_header_value(render_enricher_template(
+                value, result,
+            )));
         }
         Some(key)
     }
@@ -309,7 +333,7 @@ impl Enricher for HttpEnricher {
             .map(|(name, value_template)| {
                 (
                     name.clone(),
-                    render_enricher_template(value_template, result),
+                    sanitize_header_value(render_enricher_template(value_template, result)),
                 )
             })
             .collect();

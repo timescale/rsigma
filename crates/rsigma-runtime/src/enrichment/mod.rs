@@ -89,6 +89,7 @@ pub use crate::scope::Scope;
 pub use command::{CommandEnricher, OutputFormat};
 #[cfg(feature = "dns-enrich")]
 pub use dns::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
+pub(crate) use http::validate_header_names;
 pub use http::{
     DEFAULT_ENRICHER_MAX_RESPONSE_BYTES, HttpEnricher, HttpEnricherClient,
     build_default_http_client,
@@ -108,7 +109,8 @@ pub use template::{
 };
 pub(crate) use template::{
     references_detection_payload, render_enricher_template, render_enricher_template_json,
-    render_enricher_template_url, render_template_json_with_ocsf, validate_webhook_body_template,
+    render_enricher_template_url, render_template_json_with_ocsf, sanitize_header_value,
+    validate_webhook_body_template,
 };
 
 /// The kind of [`EvaluationResult`] an [`Enricher`] applies to.
