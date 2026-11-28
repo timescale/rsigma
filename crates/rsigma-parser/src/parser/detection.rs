@@ -84,7 +84,7 @@ pub(super) fn parse_detection_rule(
     // dedicated `custom_attributes:` mapping. Entries in `custom_attributes:`
     // win over a top-level key of the same name (last-write-wins).
     // Mirrors pySigma's `SigmaRule.custom_attributes` dict.
-    let custom_attributes = collect_custom_attributes(m, STANDARD_RULE_KEYS);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_RULE_KEYS, warnings);
 
     Ok(SigmaRule {
         title,

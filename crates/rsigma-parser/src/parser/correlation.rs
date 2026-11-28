@@ -136,7 +136,7 @@ pub(super) fn parse_correlation_rule(
     // Aliases
     let aliases = parse_correlation_aliases(corr);
 
-    let custom_attributes = collect_custom_attributes(m, STANDARD_CORRELATION_KEYS);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_CORRELATION_KEYS, warnings);
 
     let mut rule = CorrelationRule {
         title,

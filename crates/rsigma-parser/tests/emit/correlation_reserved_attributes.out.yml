@@ -1,0 +1,21 @@
+title: Burst with reserved custom attributes
+id: 3f6b1c2e-0000-4000-8000-000000000002
+correlation:
+    type: event_count
+    rules:
+        - failed_login
+    group-by:
+        - User
+    timespan: 5m
+    condition:
+        gte: 10
+level: high
+rsigma.action: reset
+custom_attributes:
+    action: global
+    detection:
+        selection:
+            a: b
+    filter: 'not a filter'
+    logsource:
+        product: windows

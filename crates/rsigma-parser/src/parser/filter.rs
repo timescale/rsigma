@@ -106,7 +106,7 @@ pub(super) fn parse_filter_rule(
             .ok_or_else(|| SigmaParserError::MissingField("logsource".into()))?,
     )?);
 
-    let custom_attributes = collect_custom_attributes(m, STANDARD_FILTER_KEYS);
+    let custom_attributes = collect_custom_attributes(m, STANDARD_FILTER_KEYS, warnings);
 
     Ok(FilterRule {
         title,
