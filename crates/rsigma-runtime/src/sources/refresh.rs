@@ -496,7 +496,12 @@ async fn nats_push_loop(
     );
 
     while let Some(msg) = subscriber.next().await {
-        match super::nats::parse_nats_message(&msg.payload, format, extract_expr) {
+        let extract_expr = extract_expr.cloned();
+        let parsed = super::run_blocking(move || {
+            super::nats::parse_nats_message(&msg.payload, format, extract_expr.as_ref())
+        })
+        .await;
+        match parsed {
             Ok(data) => {
                 let trigger = RefreshTrigger::NatsPush {
                     source_id: source_id.to_string(),
