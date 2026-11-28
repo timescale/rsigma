@@ -255,7 +255,7 @@ See [Multi-tenancy](../../guide/multi-tenancy.md) for the binding model and the 
 | `daemon.tenancy.quotas.correlation_state` | unset | Per-tenant correlation state cap. Also set by `--max-tenant-state`. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.active_alerts` | unset | Per-tenant active-alert cap. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.incidents` | unset | Per-tenant open-incident cap. {{ added "0.28.0" }} |
-| `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "0.28.0" }} |
+| `daemon.tenancy.quotas.risk_entities` | unset | Per-tenant risk-entity cap. {{ added "0.28.0" }} At the cap a new entity reclaims the tenant's lowest-scoring entity. {{ added "unreleased" }} |
 | `daemon.tenancy.quotas.silences` | unset | Per-tenant dynamic (API) silence cap. At the cap, `POST /api/v1/silences` returns `429`. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.inhibition_sources` | unset | Per-tenant inhibition-source cap. At the cap, a new source is not tracked and counts in `rsigma_inhibit_sources_refused_total`. {{ added "0.28.0" }} |
 | `daemon.tenancy.quotas.stream_sessions` | unset | Per-tenant concurrent tap and tail session cap, applied to each stream separately. At the cap, a new session returns `409`. {{ added "0.28.0" }} |

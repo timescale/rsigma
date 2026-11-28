@@ -151,7 +151,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 
 ## Risk-based alerting (9 metrics)
 
-Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_risk_annotations_total` and `rsigma_risk_incidents_emitted_total`, plus the `rsigma_risk_entities_open` and `rsigma_risk_state_entries` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--risk` is passed or any event fires. See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
+Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_risk_annotations_total`, `rsigma_risk_evictions_total`, and `rsigma_risk_incidents_emitted_total`, plus the `rsigma_risk_entities_open` and `rsigma_risk_state_entries` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--risk` is passed or any event fires. See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -159,8 +159,8 @@ Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_r
 | `rsigma_risk_annotation_score` | histogram | none | Distribution of the per-detection resolved risk score. |
 | `rsigma_risk_objects_total` | counter | none | Risk objects extracted from firing detections. |
 | `rsigma_risk_entities_open` | gauge | none | Entities currently tracked by the risk accumulator. |
-| `rsigma_risk_state_entries` | gauge | none | Risk contributions currently retained across all entities. |
-| `rsigma_risk_evictions_total` | counter | none | Entities dropped from the accumulator (store full or aged out). |
+| `rsigma_risk_state_entries` | gauge | none | Sample contributions currently kept across all entities for embedding in incidents (at most `max_results_per_incident` per entity). |
+| `rsigma_risk_evictions_total` | counter | `reason` (`aged`, `cap`) | Entities dropped from the accumulator: `aged` when an entity's whole window elapsed, `cap` when a tracked entity was reclaimed to make room for a new one under `max_open_entities`. The `reason` label and both series are registered at startup. {{ added "unreleased" }} |
 | `rsigma_risk_incidents_emitted_total` | counter | `trigger` (`score`, `tactic_count`) | Risk incidents emitted by trigger. |
 | `rsigma_risk_incident_results_total` | counter | none | Total risk incident records emitted. |
 | `rsigma_risk_layer_duration_seconds` | histogram | none | Risk-layer stage duration in seconds. |

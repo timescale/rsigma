@@ -45,7 +45,17 @@ When an `incident:` block is configured, a per-entity sliding-window accumulator
 
 The incident is one flat NDJSON object disambiguated by a `risk_incident_id` (UUIDv4). It carries the entity, the window score, the contributing tactics and sources, the window bounds, the `trigger` (`score` or `tactic_count`), and the top contributing detections (`include: refs` for lightweight references, the default, or `include: results` for full event-stripped results), bounded by the caps. It is delivered through the same sink path as the alert pipeline's incidents, optionally to a dedicated NATS subject.
 
-The accumulator is bounded by `max_open_entities` (a new entity past the cap is not tracked, bounding memory), `max_sources_per_entity` (distinct sources listed per incident), and `max_results_per_incident` (contributions retained per entity and embedded per incident). Entries age out of the window on a one-second tick.
+The window score and the tactic, source, and result counts are exact over the window. Each entity folds its contributions into time buckets, one second wide for a window of up to 1440 seconds and `window / 1440` seconds wide for a longer one, and a bucket leaves the window when its newest contribution does. On a `24h` window, a contribution can keep counting for up to a minute after it passes the window edge, and it never stops counting early. {{ added "unreleased" }}
+
+Three caps bound memory:
+
+- `max_open_entities` (default `100000`): at the cap, a new entity reclaims the tracked entity with the lowest window score, then the fewest distinct tactics, then the least recently seen. Entities at or above `score_threshold` or `tactic_count_threshold` are reclaimed only when every tracked entity is, so a flood of new low-risk entities cannot push out an entity that is about to fire or has fired. Each reclaim counts in `rsigma_risk_evictions_total{reason="cap"}`, and the daemon logs a rate-limited warning with the count. {{ added "unreleased" }}
+- `max_sources_per_entity` (default `1000`): distinct sources listed per incident. `source_count` is always the true total.
+- `max_results_per_incident` (default `1000`): sample contributions kept per entity and embedded per incident as refs or results. Past the cap the lowest-score older sample is dropped (the oldest on ties), and the newest is always kept so the incident shows the firing that triggered it. Dropping a sample does not change the window score or counts, so `result_count` can be larger than the number of embedded refs or results. {{ added "unreleased" }}
+
+With tenancy, `daemon.tenancy.quotas.risk_entities` caps each tenant the same way: at a tenant's quota, its own lowest-ranked entity is reclaimed. `max_open_entities` must be at least `1`, `window` at least `1s`, and `tactic_count_threshold` between `1` and `14` (the number of ATT&CK tactics); other values reject the config. {{ added "unreleased" }}
+
+Entities whose whole window has aged out are dropped on a one-second tick and count as `reason="aged"`. A reload that lowers a cap or changes a threshold re-ranks the entities and reclaims down to the new caps at once.
 
 ## Configuration
 
@@ -100,11 +110,13 @@ Point the daemon at it with `--risk /etc/rsigma/risk.yml` or `daemon.risk: /etc/
 
 ## Persistence
 
-When `--state-db` is set, a versioned risk snapshot is saved to the SQLite store in its own `rsigma_risk_state` table on the periodic and shutdown hooks beside the correlation and alert-pipeline snapshots, and restored on boot with window-aware pruning (contributions already past the window are dropped, entities left empty are skipped). `--clear-state` skips the restore and `--keep-state` forces it, matching the other state domains; a snapshot-version mismatch starts fresh with a warning.
+When `--state-db` is set, a versioned risk snapshot is saved to the SQLite store in its own `rsigma_risk_state` table on the periodic and shutdown hooks beside the correlation and alert-pipeline snapshots, and restored on boot with window-aware pruning (contributions already past the window are dropped, entities left empty are skipped). `--clear-state` skips the restore and `--keep-state` forces it, matching the other state domains; a snapshot written by a newer release starts fresh with a warning.
+
+The snapshot holds each entity's window buckets as well as its samples, so the score and counts after a restart match those before it. A snapshot from an earlier release holds only the samples, and the restored aggregates are rebuilt from them. A restore that would exceed `max_open_entities` or a tenant's quota keeps the highest-ranked entities, in the same order the caps use. {{ added "unreleased" }}
 
 ## Observability
 
-The open entities, each with its current window score, distinct tactic count, source count, and window bounds, are readable at `GET /api/v1/risk` when an `incident:` block is configured (annotation-only configs return an empty list). The layer exposes nine Prometheus metrics: `rsigma_risk_annotations_total{action}`, `rsigma_risk_annotation_score`, `rsigma_risk_objects_total`, `rsigma_risk_entities_open`, `rsigma_risk_state_entries`, `rsigma_risk_evictions_total`, `rsigma_risk_incidents_emitted_total{trigger}`, `rsigma_risk_incident_results_total`, and `rsigma_risk_layer_duration_seconds`.
+The open entities, each with its current window score, distinct tactic count, source count, and window bounds, are readable at `GET /api/v1/risk` when an `incident:` block is configured (annotation-only configs return an empty list). The layer exposes nine Prometheus metrics: `rsigma_risk_annotations_total{action}`, `rsigma_risk_annotation_score`, `rsigma_risk_objects_total`, `rsigma_risk_entities_open`, `rsigma_risk_state_entries` (samples kept across all entities), `rsigma_risk_evictions_total{reason}` (`aged` or `cap`), `rsigma_risk_incidents_emitted_total{trigger}`, `rsigma_risk_incident_results_total`, and `rsigma_risk_layer_duration_seconds`.
 
 ## Relationship to the alert pipeline
 
