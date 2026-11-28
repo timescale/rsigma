@@ -12,9 +12,9 @@ Webhooks compose with the other `--output` sinks. The daemon fans each result in
 
 ## Reliability model: best-effort, at-most-once
 
-A webhook is a notification channel, not a durable record. It runs in the lossy `on_full=drop` mode of the [async delivery layer](../cli/engine/daemon.md): a full webhook queue drops the result for that sink (counted on `rsigma_sink_dropped_total`) instead of backpressuring the dispatcher, and undeliverable results after retries land in the `--dlq`. Keep your durable record on NATS or a file.
+A webhook is a notification channel, not a durable record. It runs in the lossy `on_full=drop` mode of the [async delivery layer](../cli/engine/daemon.md): a full webhook queue drops the result for that sink (counted on `rsigma_sink_dropped_total`) instead of backpressuring the dispatcher, and undeliverable results land in the `--dlq`. Keep your durable record on NATS or a file.
 
-Source acknowledgment still joins every sink. An accepted webhook item holds its share of the ack-join until the worker finishes (HTTP success, permanent failure, or retry exhaustion to the DLQ); only a full-queue drop releases that share immediately. Independent per-sink queues mean a slow webhook does not stall the NATS or file worker's own progress, but it can still delay the source ack until that HTTP attempt completes.
+Source acknowledgment still joins every sink. An accepted webhook item holds its share of the ack-join until the worker finishes (HTTP success, permanent failure, or retry exhaustion to the DLQ); only a full-queue drop releases that share immediately, and a result outside the webhook's `kind` and `scope` is never queued, so it never holds one. Independent per-sink queues mean a slow webhook does not stall the NATS or file worker's own progress, but it can still delay the source ack until that HTTP attempt completes.
 
 ## Enabling webhooks
 
@@ -36,7 +36,7 @@ daemon:
       - /etc/rsigma/webhooks/
 ```
 
-Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. An unknown key at any level, such as `retires:` for `retry:`, is rejected the same way. {{ added "0.28.0" }} Hot reload is not supported: webhook changes take effect on restart.
+Webhook configs are loaded and validated once at startup. A config that references the wrong template namespace, declares an unknown `kind`, omits `url`, or sets a malformed retry or rate-limit value rejects the daemon with a field-scoped error. An unknown key at any level, such as `retires:` for `retry:`, is rejected the same way. {{ added "0.28.0" }} Settings that would fail every request are rejected at startup too: an empty `id`, a `timeout` or `queue_size` of zero, a header name (configured or a custom signing header) that is not a valid HTTP header name or repeats another one regardless of case, and a `signing.custom.value_format` with control characters. {{ added "unreleased" }} Hot reload is not supported: webhook changes take effect on restart.
 
 ## Config reference
 
@@ -85,7 +85,7 @@ webhooks:
 | `retry.max_backoff` | no | `30s` | Backoff ceiling. |
 | `rate_limit.requests` / `rate_limit.per` | no | unlimited | Token-bucket budget; burst equals `requests`. |
 | `scope.rules` / `scope.tags` / `scope.levels` | no | unrestricted | Same axes as enricher [scopes](enrichers.md); each populated axis must match. |
-| `queue_size` | no | `1024` | Bounded queue depth between the dispatcher and the worker. |
+| `queue_size` | no | `1024` | Bounded queue depth between the dispatcher and the worker. Minimum 1. Only results the webhook's `kind` and `scope` admit take a slot. {{ added "unreleased" }} |
 | `tls.ca` / `tls.client_cert` / `tls.client_key` | no | system roots | PEM file paths. `ca` trusts a private CA in addition to the system roots; `client_cert` and `client_key` (set together) enable mutual TLS. See [TLS to internal endpoints](#tls-to-internal-endpoints). |
 | `signing.secret_env` | yes (if signing) | none | Environment variable holding the HMAC key. The secret is never stored in the YAML. |
 | `signing.secret_encoding` | no | `utf8` | `utf8` (raw bytes) or `base64` (decoded, stripping an optional `whsec_` prefix) for a svix-issued secret. |
@@ -107,7 +107,9 @@ The `retry.*` and `queue_size` settings override the daemon's global `--sink-*` 
 - `${ENV_VAR}` (single segment, no dot) for secrets. Resolved from the daemon process environment at render time, so secrets live in the environment, never in the webhook YAML.
 - `${detection.ocsf}` or `${correlation.ocsf}` in `body` only: the result's [OCSF Detection Finding](ocsf-findings.md#webhook-bodies) as raw JSON. {{ added "0.28.0" }}
 
-The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload. Header values are not escaped (CR and LF are rejected).
+The `body` is JSON-string-escaped: interpolated values (rule titles, event field strings) that land inside a JSON string literal have their quotes, backslashes, and control characters escaped, so a rule title containing a quote cannot break the payload.
+
+Header values are not escaped, but every rendered header value has CR, LF, every other ASCII control character except horizontal tab, and DEL replaced with a space before the request is built. An event value cannot end the header and start another one, and a control character in event data no longer makes the request fail. {{ added "unreleased" }}
 
 When the body is a JSON object or array, a placeholder outside a string literal receives one JSON value: the value itself when it is a JSON number, `true`, `false`, or `null`, and a quoted JSON string otherwise. `{"count": ${correlation.aggregated_value}}` still sends a number, and a value such as `1, "admin": true` arrives as one string instead of adding a key. A placeholder right after a backslash inside a string literal keeps that backslash as a literal character, so the value cannot finish the escape. {{ added "unreleased" }}
 
@@ -133,12 +135,14 @@ webhooks:
 
 Each webhook is driven by one bounded queue and worker. The worker owns the queue, the retry schedule, DLQ routing, and drain on shutdown; the webhook owns the per-request behavior:
 
-- **Classification.** Connection and timeout errors, HTTP `429` (honoring a numeric `Retry-After`, capped), and `5xx` are retryable. Other `4xx` are permanent: a misrendered payload will not heal on retry, so it routes straight to the DLQ without spending the retry budget.
+- **Scope before the queue.** The dispatcher checks the webhook's `kind` and `scope` before it queues a result, so detections a webhook would skip never take a queue slot. A busy stream of low-severity detections cannot fill a `levels: [critical]` webhook's queue and push out the critical alert. {{ added "unreleased" }}
+- **Classification.** Connection and timeout errors, HTTP `429` (honoring a numeric `Retry-After`, capped), and `5xx` are retryable. Other `4xx` are permanent: a misrendered payload will not heal on retry, so the result routes straight to the DLQ without spending the retry budget.
+- **One result at a time.** One delivery can post several requests, one per matching result. A result that fails for good (a permanent `4xx`, or a request that cannot be built) is parked on the DLQ on its own, and the remaining results of the delivery are still posted. {{ added "unreleased" }}
 - **Backoff.** Retryable failures use capped exponential backoff (`backoff * 2^attempt`, up to `max_backoff`). Retries delay only this webhook's own queue.
-- **No repeats.** One delivery can post several requests, one per matching result. A retry starts at the result whose request failed, so results that already went out are not posted again, and each request keeps its signing id and timestamp across retries. {{ added "0.28.0" }}
+- **No repeats.** A retry starts at the result whose request failed, so results that already went out or were parked are not posted again, and each request keeps its signing id and timestamp across retries. {{ added "0.28.0" }}
 - **Rate limiting.** When a per-entry token bucket is configured, the worker waits for a token before each request, so traffic is delayed rather than dropped. A wait increments `rate_limited_wait` and the subsequent POST still records `success` or `permanent_failure`, so those labels are not mutually exclusive on one attempt.
-- **Full queue.** When the bounded queue is full, the result is dropped for this webhook (`rsigma_sink_dropped_total`) and never reaches HTTP or the DLQ.
-- **DLQ.** Permanent failures and retry exhaustion route to the daemon's `--dlq`, reusing the same record shape as parse errors and other sink failures. The underlying error string is prefixed `webhook <id>:`.
+- **Full queue.** When the bounded queue is full, the result is dropped for this webhook (`rsigma_sink_dropped_total`). The daemon logs a rate-limited warning naming the webhook, rule id, and level, and records the dropped in-scope results on the `--dlq` when there is room, without waiting for it. {{ added "unreleased" }}
+- **DLQ.** Permanent failures and retry exhaustion route to the daemon's `--dlq`, reusing the same record shape as parse errors and other sink failures. The underlying error string is prefixed `webhook <id>:`. When retries run out, the record holds only the in-scope results the webhook had not posted, so replaying it does not repeat alerts that went out. {{ added "unreleased" }}
 
 ## Egress policy and secrets
 
@@ -250,6 +254,8 @@ webhooks:
 
 `value_format` accepts the `{signature}`, `{timestamp}`, and `{id}` tokens and must contain `{signature}`; `signed_payload` accepts `{body}`, `{timestamp}`, and `{id}`. Optional `timestamp_header` and `id_header` emit those values as separate headers.
 
+Each template is expanded in one pass: a substituted value is never scanned for tokens again, so a body that contains the text `{timestamp}` or `{id}` is signed exactly as it is sent. A receiver verifies by rebuilding `signed_payload` with the raw body inserted verbatim. {{ added "unreleased" }}
+
 ### Key rotation
 
 To rotate a secret without dropping deliveries, set `rotate_secret_env` to the previous key's variable. RSigma emits a signature for each key (space-separated for the `standard` and `custom` schemes), so a receiver that accepts either verifies throughout the rollover. Drop `rotate_secret_env` once every receiver trusts the new key. Rotation is not available for `github`, which carries a single signature value.
@@ -261,7 +267,7 @@ Per-webhook request metrics:
 - `rsigma_webhook_requests_total{webhook_id,outcome}` with outcomes `success`, `permanent_failure`, and `rate_limited_wait` (`rate_limited_wait` counts token waits and can co-occur with a later `success` or `permanent_failure` on the same attempt).
 - `rsigma_webhook_request_duration_seconds{webhook_id}`.
 
-Queue depth, retries, drops, and DLQ routing are read from the shared per-sink series (`rsigma_sink_queue_depth`, `rsigma_sink_retries_total`, `rsigma_sink_dropped_total`, ...), keyed by `sink=<webhook id>` so the two series join one-to-one. Labels are pre-seeded from config at startup, so panels render before any traffic.
+Queue depth, retries, drops, and DLQ routing are read from the shared per-sink series (`rsigma_sink_queue_depth`, `rsigma_sink_retries_total`, `rsigma_sink_dropped_total`, ...), keyed by `sink=<webhook id>` so the two series join one-to-one. Labels are pre-seeded from config at startup, so panels render before any traffic. `rsigma_sink_dropped_total` counts only in-scope results, and `rsigma_sink_delivery_failures_total` counts each result a webhook parks on its own. {{ added "unreleased" }}
 
 ## Recipe catalog
 
