@@ -17,8 +17,14 @@ pub use buffers::{EventBuffer, EventRef, EventRefBuffer};
 pub(crate) use buffers::{RefEntry, Retained};
 pub use compiler::compile_correlation;
 pub use keys::GroupKey;
+pub(crate) use types::CompiledAbsence;
 pub use types::{CompiledCondition, CompiledCorrelation, GroupByField};
-pub use window::{WindowDecision, WindowState, apply_window_open, sliding_cutoff};
+pub use window::{
+    Deadman, Obligation, WindowDecision, WindowState, apply_window_open, sliding_cutoff,
+};
+pub(crate) use window::{
+    bucket_start, obligation_for, satisfying_set_ordered, satisfying_set_unordered,
+};
 
 #[cfg(test)]
 use buffers::{compress_event, decompress_event, extract_event_id};

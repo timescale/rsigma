@@ -125,12 +125,12 @@ pub use compiler::{
     evaluate_rule,
 };
 pub use correlation::{
-    CompiledCondition, CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupByField,
-    GroupKey, WindowState,
+    CompiledCondition, CompiledCorrelation, Deadman, EventBuffer, EventRef, EventRefBuffer,
+    GroupByField, GroupKey, Obligation, WindowState,
 };
 pub use correlation_engine::{
-    CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode, CorrelationInfo,
-    CorrelationSnapshot, CorrelationStateSnapshot, DEFAULT_MAX_FUTURE_SKEW_SECS,
+    AbsenceCounters, CorrelationAction, CorrelationConfig, CorrelationEngine, CorrelationEventMode,
+    CorrelationInfo, CorrelationSnapshot, CorrelationStateSnapshot, DEFAULT_MAX_FUTURE_SKEW_SECS,
     DEFAULT_MAX_GROUP_ENTRIES, GroupKeyPart, GroupStateInfo, ImportStats, ProcessResult,
     TenantStateSnapshot, TimestampFallback,
 };

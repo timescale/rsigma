@@ -26,11 +26,14 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use rsigma_parser::{CorrelationRule, CorrelationType, SigmaCollection, SigmaRule, WindowMode};
+use rsigma_parser::{
+    AbsenceKind, CorrelationRule, CorrelationType, SigmaCollection, SigmaRule, WindowMode,
+};
 
 use crate::correlation::{
     CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, RefEntry, Retained,
-    WindowDecision, WindowState, apply_window_open, compile_correlation, sliding_cutoff,
+    WindowDecision, WindowState, apply_window_open, bucket_start, compile_correlation,
+    obligation_for, satisfying_set_ordered, satisfying_set_unordered, sliding_cutoff,
 };
 use crate::engine::{Engine, IdentifiedEvaluation};
 use crate::error::{EvalError, Result};
@@ -57,6 +60,10 @@ pub(crate) const SNAPSHOT_VERSION: u32 = 2;
 /// and emitted through this many hops, then leftover parents are dropped
 /// with a `WARN`.
 const MAX_CHAIN_DEPTH: usize = 10;
+
+/// Pending obligations one absence group may hold when neither the
+/// correlation nor [`CorrelationConfig::max_group_entries`] sets a cap.
+const DEFAULT_ABSENCE_GROUP_ENTRIES: usize = 1_000;
 
 /// Event retention a correlation needs for itself and for the chain above it.
 #[derive(Debug, Clone, Default)]
@@ -173,6 +180,11 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     retention: Vec<Retention>,
     /// Whether `retention` needs recomputing before the next event.
     retention_dirty: bool,
+    /// Absence groups that currently have a pending obligation or an armed
+    /// deadman, which is the quantity `max_absence_entries` bounds.
+    absence_groups: usize,
+    /// Absence outcome counters, drained by `take_absence_counters`.
+    absence_counters: AbsenceCounters,
 }
 
 impl CorrelationEngine {
@@ -213,6 +225,8 @@ impl<L> CorrelationEngine<L> {
             next_event_seq: 1,
             retention: Vec::new(),
             retention_dirty: true,
+            absence_groups: 0,
+            absence_counters: AbsenceCounters::default(),
         }
     }
 
@@ -1165,6 +1179,26 @@ impl<L> CorrelationEngine<L> {
             )
         };
 
+        // An absence correlation tracks positive hits, negated hits, and
+        // deadlines instead of a threshold window, so it takes its own path.
+        if self.correlations[corr_idx].absence.is_some() {
+            let event_json = (self.retention[corr_idx].mode != CorrelationEventMode::None)
+                .then(|| event.to_json());
+            return self.apply_absence_hit(
+                corr_idx,
+                ts,
+                tenant,
+                &group_key,
+                &rule_ref,
+                source_rule,
+                event_seq,
+                event_json,
+                None,
+                None,
+                out,
+            );
+        }
+
         // Get or create window state
         let state_key = StateKey {
             tenant: tenant.cloned(),
@@ -1361,8 +1395,15 @@ impl<L> CorrelationEngine<L> {
 
         // Action on match
         if action == CorrelationAction::Reset {
+            let was_pending = self
+                .state
+                .get(key)
+                .is_some_and(WindowState::absence_pending);
             if let Some(state) = self.state.get_mut(key) {
                 state.clear();
+            }
+            if was_pending {
+                self.absence_groups = self.absence_groups.saturating_sub(1);
             }
             if let Some(buf) = self.event_buffers.get_mut(key) {
                 buf.clear();
@@ -1377,6 +1418,308 @@ impl<L> CorrelationEngine<L> {
             corr_idx,
             retained,
         })
+    }
+
+    /// Apply one hit to an absence correlation.
+    ///
+    /// Positive hits open obligations, negated hits cancel them or arm a
+    /// deadman, and every cap refusal is counted. Firing happens from the
+    /// tenant clock path.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_absence_hit(
+        &mut self,
+        corr_idx: usize,
+        ts: i64,
+        tenant: Option<&TenantId>,
+        group_key: &GroupKey,
+        rule_ref: &str,
+        source_rule: Option<Arc<str>>,
+        event_seq: u64,
+        event_json: Option<serde_json::Value>,
+        retained: Option<&Retained>,
+        via: Option<&Arc<str>>,
+        _out: &mut Vec<EvaluationResult>,
+    ) -> Option<Retained> {
+        let Some(absence) = self.correlations[corr_idx].absence.clone() else {
+            return None;
+        };
+        let timespan = self.correlations[corr_idx].timespan_secs;
+        let window_mode = self.correlations[corr_idx].window_mode;
+        let gap_secs = self.correlations[corr_idx].gap_secs;
+        let correlation_type = self.correlations[corr_idx].correlation_type;
+        let retention_mode = self.retention[corr_idx].mode;
+        let retention_cap = self.retention[corr_idx].cap;
+        let max_group_entries = self.correlations[corr_idx]
+            .max_group_entries
+            .or(self.config.max_group_entries)
+            .unwrap_or(DEFAULT_ABSENCE_GROUP_ENTRIES);
+        let is_negated = absence.negated.iter().any(|rule| rule == rule_ref);
+        let is_positive = absence.positive_refs.iter().any(|rule| rule == rule_ref);
+        if !is_negated && !is_positive {
+            return None;
+        }
+
+        let state_key = StateKey {
+            tenant: tenant.cloned(),
+            corr_idx,
+            group_key: group_key.clone(),
+        };
+        let is_new = !self.state.contains_key(&state_key);
+        if is_new
+            && let Some(cap) = self.config.max_state_entries_per_tenant
+            && self.tenant_len(&state_key.tenant) >= cap
+        {
+            self.evict_tenant(tenant, ts);
+            if self.tenant_len(&state_key.tenant) >= cap {
+                self.absence_counters.refused_tenant_quota += 1;
+                return None;
+            }
+        }
+        if is_new {
+            self.note_tenant_insert(&state_key);
+        }
+        self.state
+            .entry(state_key.clone())
+            .or_insert_with(WindowState::new_absence);
+
+        let was_pending = self
+            .state
+            .get(&state_key)
+            .is_some_and(WindowState::absence_pending);
+
+        if is_negated {
+            if absence.kind == AbsenceKind::Deadman {
+                // Until the tenant clock exists, a heartbeat is compared with
+                // the event's own timestamp, so it is never late.
+                let late = ts
+                    .saturating_add(timespan as i64)
+                    .saturating_add(absence.grace_secs as i64)
+                    < ts;
+                if late {
+                    self.absence_counters.late_negatives += 1;
+                } else if !was_pending && self.absence_groups >= self.config.max_absence_entries {
+                    self.absence_counters.refused_global_cap += 1;
+                    if is_new {
+                        self.state.remove(&state_key);
+                        self.note_tenant_removal(&state_key);
+                    }
+                    return None;
+                } else {
+                    let last = match self.state.get(&state_key) {
+                        Some(WindowState::Absence {
+                            deadman: Some(deadman),
+                            ..
+                        }) => deadman.last_heartbeat.max(ts),
+                        _ => ts,
+                    };
+                    let deadline = last.saturating_add(timespan as i64);
+                    if let Some(state) = self.state.get_mut(&state_key) {
+                        state.arm_deadman(last, deadline);
+                    }
+                    self.buffer_absence_hit(
+                        &state_key,
+                        ts,
+                        ts.saturating_sub(timespan as i64)
+                            .saturating_sub(absence.grace_secs as i64),
+                        false,
+                        event_seq,
+                        event_json.as_ref(),
+                        source_rule,
+                        retained,
+                        via,
+                        retention_mode,
+                        retention_cap,
+                    );
+                }
+            } else {
+                let cancelled = match self.state.get_mut(&state_key) {
+                    Some(state) => {
+                        state.set_last_negative(rule_ref, ts);
+                        state.cancel_obligations_at(ts)
+                    }
+                    None => 0,
+                };
+                self.absence_counters.cancelled += cancelled as u64;
+                let late = match self.state.get(&state_key) {
+                    Some(state) => state
+                        .last_fired()
+                        .is_some_and(|(lo, hi)| ts >= lo && ts <= hi),
+                    None => false,
+                };
+                if late {
+                    self.absence_counters.late_negatives += 1;
+                }
+            }
+            let now_pending = self
+                .state
+                .get(&state_key)
+                .is_some_and(WindowState::absence_pending);
+            if !was_pending && now_pending {
+                self.absence_groups += 1;
+            }
+            return None;
+        }
+
+        // Positive hit: open a deadline obligation when the positive condition
+        // is satisfied over the group's retained hits.
+        let decision = match self.state.get_mut(&state_key) {
+            Some(state) => apply_window_open(state, ts, timespan, window_mode, gap_secs),
+            None => WindowDecision::Extend,
+        };
+        if decision == WindowDecision::Discard {
+            return None;
+        }
+        let reset = decision == WindowDecision::Reset;
+        if let Some(state) = self.state.get_mut(&state_key) {
+            state.push_positive_hit(ts, rule_ref);
+            state.truncate_oldest(max_group_entries, false);
+        }
+
+        let cutoff = ts
+            .saturating_sub(timespan as i64)
+            .saturating_sub(absence.grace_secs as i64);
+        self.buffer_absence_hit(
+            &state_key,
+            ts,
+            cutoff,
+            reset,
+            event_seq,
+            event_json.as_ref(),
+            source_rule,
+            retained,
+            via,
+            retention_mode,
+            retention_cap,
+        );
+
+        let satisfying = match self.state.get(&state_key) {
+            Some(WindowState::Absence { positive_hits, .. }) => {
+                if correlation_type == CorrelationType::TemporalOrdered {
+                    satisfying_set_ordered(&absence.positive_refs, positive_hits)
+                } else {
+                    absence.positive.as_ref().and_then(|positive| {
+                        satisfying_set_unordered(positive, positive_hits, rule_ref)
+                    })
+                }
+            }
+            _ => None,
+        };
+        let Some((s_min, s_max, positives)) = satisfying else {
+            return None;
+        };
+
+        let tumbling = window_mode == WindowMode::Tumbling;
+        let bucket = if tumbling {
+            bucket_start(ts, timespan as i64)
+        } else {
+            0
+        };
+        let obligation = obligation_for(
+            correlation_type == CorrelationType::TemporalOrdered,
+            tumbling,
+            timespan,
+            bucket,
+            s_min,
+            s_max,
+            positives,
+        );
+
+        let pre_empted = match self.state.get(&state_key) {
+            Some(WindowState::Absence { last_negative, .. }) => last_negative
+                .values()
+                .any(|&hit| hit >= obligation.cancel_lo && hit <= obligation.deadline),
+            _ => false,
+        };
+        if pre_empted {
+            return None;
+        }
+
+        let pending = match self.state.get(&state_key) {
+            Some(WindowState::Absence { obligations, .. }) => obligations.len(),
+            _ => 0,
+        };
+        if pending >= max_group_entries {
+            self.absence_counters.refused_group_cap += 1;
+            return None;
+        }
+        if !was_pending && self.absence_groups >= self.config.max_absence_entries {
+            self.absence_counters.refused_global_cap += 1;
+            return None;
+        }
+        let inserted = match self.state.get_mut(&state_key) {
+            Some(state) => state.push_obligation(obligation),
+            None => false,
+        };
+        if inserted && !was_pending {
+            self.absence_groups += 1;
+        }
+        None
+    }
+
+    /// Buffer a positive absence hit or a deadman heartbeat, evicting or
+    /// clearing in step with the window state. Negated hits in the obligation
+    /// form are not buffered.
+    #[allow(clippy::too_many_arguments)]
+    fn buffer_absence_hit(
+        &mut self,
+        key: &StateKey,
+        ts: i64,
+        cutoff: i64,
+        reset: bool,
+        event_seq: u64,
+        event_json: Option<&serde_json::Value>,
+        source_rule: Option<Arc<str>>,
+        retained: Option<&Retained>,
+        via: Option<&Arc<str>>,
+        retention_mode: CorrelationEventMode,
+        retention_cap: usize,
+    ) {
+        match retention_mode {
+            CorrelationEventMode::Full => {
+                let buf = self
+                    .event_buffers
+                    .entry(key.clone())
+                    .or_insert_with(|| EventBuffer::new(retention_cap));
+                if reset {
+                    buf.clear();
+                } else {
+                    buf.evict(cutoff);
+                }
+                if let Some(json) = event_json {
+                    buf.push_seq(event_seq, ts, json, source_rule);
+                }
+            }
+            CorrelationEventMode::Refs => {
+                let buf = self
+                    .event_ref_buffers
+                    .entry(key.clone())
+                    .or_insert_with(|| EventRefBuffer::new(retention_cap));
+                if reset {
+                    buf.clear();
+                } else {
+                    buf.evict(cutoff);
+                }
+                if let Some(json) = event_json {
+                    buf.push_seq(event_seq, ts, json, source_rule);
+                }
+            }
+            CorrelationEventMode::None => {}
+        }
+        if let Some(entries) = retained {
+            self.merge_retained(key, entries, via);
+            if reset {
+                if let Some(buf) = self.event_buffers.get_mut(key) {
+                    buf.clear();
+                }
+                if let Some(buf) = self.event_ref_buffers.get_mut(key) {
+                    buf.clear();
+                }
+            } else if let Some(buf) = self.event_buffers.get_mut(key) {
+                buf.evict(cutoff);
+            } else if let Some(buf) = self.event_ref_buffers.get_mut(key) {
+                buf.evict(cutoff);
+            }
+        }
     }
 
     /// Events or references a correlation reports for one group: the newest
@@ -1717,6 +2060,30 @@ impl<L> CorrelationEngine<L> {
                         group_key,
                     )
                 };
+                if self.correlations[corr_idx].absence.is_some() {
+                    let (entries, via) = match slot {
+                        Some(slot) => {
+                            let (entries, via) = &retained[slot];
+                            (Some(entries), via.as_ref())
+                        }
+                        None => (None, None),
+                    };
+                    self.apply_absence_hit(
+                        corr_idx,
+                        ts,
+                        tenant.as_ref(),
+                        &group_key,
+                        &fired_ref,
+                        None,
+                        0,
+                        None,
+                        entries,
+                        via,
+                        out,
+                    );
+                    continue;
+                }
+
                 let state_key = StateKey {
                     tenant: tenant.clone(),
                     corr_idx,
@@ -1890,6 +2257,13 @@ impl<L> CorrelationEngine<L> {
 
     /// Remove one state entry and every sidecar keyed by it.
     fn remove_state_entry(&mut self, key: &StateKey) -> bool {
+        if self
+            .state
+            .get(key)
+            .is_some_and(WindowState::absence_pending)
+        {
+            self.absence_groups = self.absence_groups.saturating_sub(1);
+        }
         let existed = self.state.remove(key).is_some();
         if existed {
             self.note_tenant_removal(key);
@@ -1925,7 +2299,7 @@ impl<L> CorrelationEngine<L> {
                 let timespan = correlation.timespan_secs as i64;
                 match correlation.window_mode {
                     WindowMode::Sliding => {
-                        state.evict(now_secs - timespan);
+                        state.evict(now_secs - timespan, timespan as u64);
                     }
                     mode @ (WindowMode::Tumbling | WindowMode::Session) => {
                         let staleness = if mode == WindowMode::Session {
@@ -1943,6 +2317,9 @@ impl<L> CorrelationEngine<L> {
                 }
             }
             if state.is_empty() {
+                if state.absence_pending() {
+                    self.absence_groups = self.absence_groups.saturating_sub(1);
+                }
                 self.state.remove(key);
                 self.note_tenant_removal(key);
                 self.event_buffers.remove(key);
@@ -1963,9 +2340,11 @@ impl<L> CorrelationEngine<L> {
                 .into_iter()
                 .flatten()
                 .filter_map(|key| {
-                    self.state
-                        .get(key)
-                        .map(|state| (key, state.latest_timestamp().unwrap_or(i64::MIN)))
+                    let state = self.state.get(key)?;
+                    if matches!(state, WindowState::Absence { .. }) {
+                        return None;
+                    }
+                    Some((key, state.latest_timestamp().unwrap_or(i64::MIN)))
                 })
                 .collect();
             if excess < by_staleness.len() {
@@ -2015,7 +2394,7 @@ impl<L> CorrelationEngine<L> {
             if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
                 match mode {
                     WindowMode::Sliding => {
-                        state.evict(now_secs - timespan as i64);
+                        state.evict(now_secs - timespan as i64, timespan);
                     }
                     WindowMode::Tumbling | WindowMode::Session => {
                         let staleness = if mode == WindowMode::Session {
@@ -2097,6 +2476,7 @@ impl<L> CorrelationEngine<L> {
             let mut by_staleness: Vec<_> = self
                 .state
                 .iter()
+                .filter(|(_, state)| !matches!(state, WindowState::Absence { .. }))
                 .map(|(k, v)| (k, v.latest_timestamp().unwrap_or(i64::MIN)))
                 .collect();
             if excess < by_staleness.len() {
@@ -2143,6 +2523,28 @@ impl<L> CorrelationEngine<L> {
     /// Number of correlation rules loaded.
     pub fn correlation_rule_count(&self) -> usize {
         self.correlations.len()
+    }
+
+    /// Whether at least one correlation uses deferred absence semantics.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.correlations
+            .iter()
+            .any(|correlation| correlation.absence.is_some())
+    }
+
+    /// Number of absence groups with a pending obligation or an armed deadman.
+    pub fn absence_pending(&self) -> usize {
+        self.absence_groups
+    }
+
+    /// Drain the absence outcome counters.
+    pub fn take_absence_counters(&mut self) -> AbsenceCounters {
+        std::mem::take(&mut self.absence_counters)
+    }
+
+    /// Set the cap on absence groups with pending deadlines.
+    pub fn set_max_absence_entries(&mut self, max: usize) {
+        self.config.max_absence_entries = max;
     }
 
     /// Number of active event buffers (for monitoring).
@@ -2401,6 +2803,11 @@ impl<L> CorrelationEngine<L> {
         }
 
         self.resequence_imported_buffers();
+        self.absence_groups = self
+            .state
+            .values()
+            .filter(|state| state.absence_pending())
+            .count();
 
         Some(stats)
     }

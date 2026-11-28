@@ -190,6 +190,13 @@ pub struct CorrelationConfig {
     /// bound in force.
     pub max_state_entries_per_tenant: Option<usize>,
 
+    /// Maximum number of absence groups with a pending obligation or an armed
+    /// deadman across all tenants. A hit that would make a group pending at the
+    /// cap is refused and counted, so pending deadlines are never evicted.
+    ///
+    /// Default: 100_000.
+    pub max_absence_entries: usize,
+
     /// Skip correlation for events that carry no tenant, counting them in
     /// [`crate::CorrelationEngine::untenanted_skipped`].
     ///
@@ -238,6 +245,7 @@ impl Default for CorrelationConfig {
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
             max_state_entries_per_tenant: None,
+            max_absence_entries: 100_000,
             require_tenant: false,
             max_future_skew: DEFAULT_MAX_FUTURE_SKEW_SECS,
         }
@@ -324,6 +332,25 @@ impl TenantStateSnapshot {
     pub fn window_entries(&self) -> usize {
         self.windows.values().map(Vec::len).sum::<usize>()
     }
+}
+
+/// Counters for absence correlation outcomes, drained by
+/// [`crate::CorrelationEngine::take_absence_counters`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AbsenceCounters {
+    /// Obligations and deadmen that fired without cancellation.
+    pub fired: u64,
+    /// Obligations cancelled by a negated hit.
+    pub cancelled: u64,
+    /// Hits refused because the global absence cap was reached.
+    pub refused_global_cap: u64,
+    /// Hits refused because their tenant was at its state quota.
+    pub refused_tenant_quota: u64,
+    /// Obligations refused because the group's pending cap was reached.
+    pub refused_group_cap: u64,
+    /// Negated hits that arrived after their obligation fired, and late
+    /// deadman heartbeats.
+    pub late_negatives: u64,
 }
 
 /// Outcome of importing a snapshot.

@@ -5952,3 +5952,337 @@ rsigma.action: reset
     assert_eq!(direct_fires, 1);
     assert_eq!(fires(&chained, "Parent"), direct_fires);
 }
+
+// =========================================================================
+// Absence state
+// =========================================================================
+
+fn absence_detections() -> &'static str {
+    r#"
+title: A
+id: a
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: C
+id: c
+logsource:
+    category: test
+detection:
+    selection:
+        Action: c
+    condition: selection
+---
+title: D
+id: d
+logsource:
+    category: test
+detection:
+    selection:
+        Action: d
+    condition: selection
+"#
+}
+
+fn absence_engine(correlation: &str, config: CorrelationConfig) -> CorrelationEngine {
+    let yaml = format!("{}{correlation}", absence_detections());
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+    assert!(
+        collection.diagnostics.is_empty(),
+        "{:?}",
+        collection.diagnostics
+    );
+    let mut engine = CorrelationEngine::new(config);
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+fn hit(engine: &mut CorrelationEngine, action: &str, user: &str, ts: i64) {
+    let event = json!({"Action": action, "User": user});
+    let results = engine.process_event_at(&JsonEvent::borrow(&event), ts);
+    assert!(
+        results
+            .iter()
+            .all(|r| r.is_detection() || r.is_correlation())
+    );
+}
+
+fn absence_state<'a>(
+    engine: &'a CorrelationEngine,
+    title: &str,
+    user: &str,
+) -> Option<&'a WindowState> {
+    let corr_idx = engine
+        .correlations
+        .iter()
+        .position(|c| c.title == title)
+        .unwrap();
+    let key = StateKey {
+        tenant: None,
+        corr_idx,
+        group_key: GroupKey(vec![Some(user.to_string())]),
+    };
+    engine.state.get(&key)
+}
+
+fn obligations(engine: &CorrelationEngine, title: &str, user: &str) -> Vec<crate::Obligation> {
+    match absence_state(engine, title, user) {
+        Some(WindowState::Absence { obligations, .. }) => obligations.iter().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn deadman(engine: &CorrelationEngine, title: &str, user: &str) -> Option<crate::Deadman> {
+    match absence_state(engine, title, user) {
+        Some(WindowState::Absence { deadman, .. }) => deadman.clone(),
+        _ => None,
+    }
+}
+
+const TEMPORAL: &str = r#"---
+title: Missing
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and not b
+"#;
+
+#[test]
+fn absence_obligation_cancellation_boundaries() {
+    for (b_ts, cancelled) in [(40, true), (39, false), (160, true), (161, false)] {
+        let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+        hit(&mut engine, "a", "alice", 100);
+        let pending = obligations(&engine, "Missing", "alice");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].cancel_lo, 40);
+        assert_eq!(pending[0].deadline, 160);
+        hit(&mut engine, "b", "alice", b_ts);
+        assert_eq!(
+            obligations(&engine, "Missing", "alice").is_empty(),
+            cancelled,
+            "b at {b_ts}"
+        );
+    }
+}
+
+#[test]
+fn negated_hit_before_a_is_pre_empted_for_temporal() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "b", "alice", 50);
+    hit(&mut engine, "a", "alice", 100);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn ordered_negated_hit_before_a_does_not_cancel() {
+    let ordered = TEMPORAL.replace("type: temporal", "type: temporal_ordered");
+    let mut engine = absence_engine(&ordered, CorrelationConfig::default());
+    hit(&mut engine, "b", "alice", 50);
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].cancel_lo, 101);
+}
+
+#[test]
+fn each_positive_hit_opens_its_own_obligation() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "a", "alice", 4);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].key, 0);
+    assert_eq!(pending[1].key, 4);
+}
+
+#[test]
+fn duplicate_positive_hit_dedupes_by_key() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "a", "alice", 10);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+}
+
+#[test]
+fn positive_disjunction_minimizes_the_satisfying_set() {
+    let yaml = r#"---
+title: Either
+correlation:
+    type: temporal
+    rules: [a, b, c]
+    group-by: [User]
+    timespan: 60s
+    condition: (a or c) and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "c", "alice", 90);
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Either", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[1].s_min, 100);
+    assert_eq!(pending[1].s_max, 100);
+    assert_eq!(pending[1].positives, 1);
+}
+
+#[test]
+fn ordered_satisfying_set_uses_the_latest_start() {
+    let yaml = r#"---
+title: Sequence
+correlation:
+    type: temporal_ordered
+    rules: [a, c, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and c and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "c", "alice", 20);
+    hit(&mut engine, "a", "alice", 30);
+    hit(&mut engine, "c", "alice", 40);
+    let pending = obligations(&engine, "Sequence", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[1].s_min, 30);
+    assert_eq!(pending[1].s_max, 40);
+    assert_eq!(pending[1].positives, 2);
+}
+
+#[test]
+fn tumbling_obligation_cancels_until_the_bucket_end() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending[0].key, 60);
+    assert_eq!(pending[0].cancel_lo, 60);
+    assert_eq!(pending[0].deadline, 119);
+    hit(&mut engine, "b", "alice", 119);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn late_negated_hit_cancels_an_earlier_bucket() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 130);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 2);
+    hit(&mut engine, "b", "alice", 110);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].key, 120);
+}
+
+#[test]
+fn deadman_arms_and_slides() {
+    let yaml = r#"---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let armed = deadman(&engine, "Silent", "alice").expect("armed");
+    assert_eq!(armed.last_heartbeat, 100);
+    assert_eq!(armed.deadline, 160);
+    hit(&mut engine, "a", "alice", 120);
+    let armed = deadman(&engine, "Silent", "alice").expect("slid");
+    assert_eq!(armed.last_heartbeat, 120);
+    assert_eq!(armed.deadline, 180);
+    assert_eq!(engine.absence_pending(), 1);
+}
+
+#[test]
+fn global_absence_cap_refuses_a_new_pending_group() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_absence_entries: 1,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "bob", 100);
+    let counters = engine.take_absence_counters();
+    assert_eq!(counters.refused_global_cap, 1);
+    assert_eq!(engine.absence_pending(), 1);
+}
+
+#[test]
+fn tenant_quota_refuses_a_new_absence_group() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries_per_tenant: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t1").unwrap();
+    let alice = json!({"Action": "a", "User": "alice"});
+    let bob = json!({"Action": "a", "User": "bob"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&alice), 100, Some(&tenant));
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&bob), 100, Some(&tenant));
+    let counters = engine.take_absence_counters();
+    assert_eq!(counters.refused_tenant_quota, 1);
+}
+
+#[test]
+fn group_cap_refuses_another_obligation() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_group_entries: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "a", "alice", 20);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.take_absence_counters().refused_group_cap, 1);
+}
+
+#[test]
+fn absence_group_cap_defaults_to_one_thousand() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    for i in 0..=DEFAULT_ABSENCE_GROUP_ENTRIES as i64 {
+        hit(&mut engine, "a", "alice", i);
+    }
+    assert_eq!(
+        obligations(&engine, "Missing", "alice").len(),
+        DEFAULT_ABSENCE_GROUP_ENTRIES
+    );
+    assert_eq!(engine.take_absence_counters().refused_group_cap, 1);
+}
+
+#[test]
+fn stalest_eviction_skips_pending_absence_groups() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries: 1,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "bob", 101);
+    assert!(absence_state(&engine, "Missing", "alice").is_some());
+    assert_eq!(engine.absence_pending(), 2);
+}
