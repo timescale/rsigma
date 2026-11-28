@@ -3015,6 +3015,7 @@ dependencies = [
  "jaq-std",
  "jsonpath-rust",
  "maxminddb",
+ "memchr",
  "notify",
  "opentelemetry-proto",
  "parking_lot 0.13.0",

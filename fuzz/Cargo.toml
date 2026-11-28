@@ -195,6 +195,21 @@ path = "fuzz_targets/fuzz_otlp_logs_decode.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_otlp_logs_json"
+path = "fuzz_targets/fuzz_otlp_logs_json.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_line_framer"
+path = "fuzz_targets/fuzz_line_framer.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_field_keys"
+path = "fuzz_targets/fuzz_field_keys.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_rule_fmt"
 path = "fuzz_targets/fuzz_rule_fmt.rs"
 doc = false

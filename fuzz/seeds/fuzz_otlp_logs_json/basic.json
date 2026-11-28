@@ -1,0 +1,1 @@
+{"resourceLogs": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "svc"}}]}, "scopeLogs": [{"scope": {"name": "s", "version": "1"}, "logRecords": [{"body": {"stringValue": "hello"}, "attributes": [{"key": "user", "value": {"stringValue": "alice"}}]}]}]}]}
