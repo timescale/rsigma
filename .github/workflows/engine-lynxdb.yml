@@ -58,6 +58,9 @@ jobs:
       - uses: $/.github/actions/setup-rust
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # The engine workflows all build `rsigma-convert` tests with default
+          # features, so they share one cache entry instead of saving three.
+          shared-key: rsigma-convert-engines
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Fetch SigmaHQ rules at pinned SHA
         run: |
