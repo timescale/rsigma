@@ -63,7 +63,8 @@ pub struct RiskIncidentResult {
     /// First and last contributing-detection timestamps (unix seconds).
     pub window_start: i64,
     pub window_end: i64,
-    /// Number of contributing detections retained over the window.
+    /// Number of contributing detections in the window, including those whose
+    /// samples were dropped by `max_results_per_incident`.
     pub result_count: u64,
     /// Contributing references (`include: refs`), bounded by
     /// `max_results_per_incident`.
@@ -91,7 +92,8 @@ pub struct RiskEntityView {
     pub tactic_count: u64,
     /// The distinct contributing-source count over the window.
     pub source_count: u64,
-    /// Number of contributing detections retained over the window.
+    /// Number of contributing detections in the window, including those whose
+    /// samples were dropped by `max_results_per_incident`.
     pub result_count: u64,
     /// First and last contributing-detection timestamps (unix seconds).
     pub window_start: i64,

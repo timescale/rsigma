@@ -354,6 +354,9 @@ pub struct AbsenceCounters {
     pub refused_tenant_quota: u64,
     /// Obligations refused because the group's pending cap was reached.
     pub refused_group_cap: u64,
+    /// Pending groups dropped to make room under the global absence cap for
+    /// a group that fires sooner.
+    pub evicted_global_cap: u64,
     /// Negated hits that arrived after their obligation fired, and late
     /// deadman heartbeats.
     pub late_negatives: u64,

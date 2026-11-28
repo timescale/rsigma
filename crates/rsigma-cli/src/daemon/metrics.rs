@@ -20,7 +20,9 @@ pub struct Metrics {
     pub correlation_absence_fired_total: IntCounter,
     pub correlation_absence_cancelled_total: IntCounter,
     pub correlation_absence_refused_total: IntCounterVec,
+    pub correlation_absence_evicted_total: IntCounterVec,
     pub correlation_absence_late_negatives_total: IntCounter,
+    pub correlation_state_evictions_total: IntCounter,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
     pub api_auth_failures: IntCounterVec,
@@ -126,6 +128,7 @@ pub struct Metrics {
     pub inhibited_total: IntCounterVec,
     pub inhibit_sources_active: IntGauge,
     pub inhibit_sources_refused_total: IntCounterVec,
+    pub alert_pipeline_cap_refused_total: IntCounterVec,
     pub rule_false_positive_ratio: GaugeVec,
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
@@ -143,7 +146,7 @@ pub struct Metrics {
     pub risk_layer_duration_seconds: Histogram,
     pub risk_entities_open: IntGauge,
     pub risk_state_entries: IntGauge,
-    pub risk_evictions_total: IntCounter,
+    pub risk_evictions_total: IntCounterVec,
     pub risk_incidents_emitted_total: IntCounterVec,
     pub risk_incident_results_total: IntCounter,
     pub audit_records_total: IntCounter,
@@ -243,7 +246,23 @@ impl Metrics {
                 .with_label_values(&[reason])
                 .inc_by(0);
         }
+        let correlation_absence_evicted_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_correlation_absence_evicted_total",
+                "Pending absence groups dropped to make room for a group that fires sooner, by reason (global_cap)",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        correlation_absence_evicted_total
+            .with_label_values(&["global_cap"])
+            .inc_by(0);
         correlation_absence_pending.set(0);
+        let correlation_state_evictions_total = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_state_evictions_total",
+            "Correlation windows dropped because the state store hit max_state_entries",
+        ))
+        .unwrap();
         let reloads_total = IntCounter::with_opts(Opts::new(
             "rsigma_reloads_total",
             "Total rule reload attempts",
@@ -495,7 +514,13 @@ impl Metrics {
             .register(Box::new(correlation_absence_refused_total.clone()))
             .unwrap();
         registry
+            .register(Box::new(correlation_absence_evicted_total.clone()))
+            .unwrap();
+        registry
             .register(Box::new(correlation_absence_late_negatives_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_state_evictions_total.clone()))
             .unwrap();
         registry.register(Box::new(reloads_total.clone())).unwrap();
         registry.register(Box::new(reloads_failed.clone())).unwrap();
@@ -1306,6 +1331,22 @@ impl Metrics {
         registry
             .register(Box::new(inhibit_sources_refused_total.clone()))
             .unwrap();
+        let alert_pipeline_cap_refused_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_alert_pipeline_cap_refused_total",
+                "Results that passed through without a new dedup alert or incident because the store's global cap was full, by store (active_alerts, incidents)",
+            ),
+            &["store"],
+        )
+        .unwrap();
+        for store in ["active_alerts", "incidents"] {
+            alert_pipeline_cap_refused_total
+                .with_label_values(&[store])
+                .inc_by(0);
+        }
+        registry
+            .register(Box::new(alert_pipeline_cap_refused_total.clone()))
+            .unwrap();
 
         // Triage feedback loop (#70). The gauge and the per-rule disposition
         // counter label on `rule_title` to line up with
@@ -1516,10 +1557,13 @@ impl Metrics {
             "Risk contributions currently retained across all entities",
         ))
         .unwrap();
-        let risk_evictions_total = IntCounter::with_opts(Opts::new(
-            "rsigma_risk_evictions_total",
-            "Entities dropped from the risk accumulator (store full or aged out)",
-        ))
+        let risk_evictions_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_risk_evictions_total",
+                "Entities dropped from the risk accumulator by reason (aged, cap)",
+            ),
+            &["reason"],
+        )
         .unwrap();
         let risk_incidents_emitted_total = IntCounterVec::new(
             Opts::new(
@@ -1609,6 +1653,9 @@ impl Metrics {
                 .with_label_values(&[trigger])
                 .inc_by(0);
         }
+        for reason in ["aged", "cap"] {
+            risk_evictions_total.with_label_values(&[reason]).inc_by(0);
+        }
         risk_entities_open.set(0);
         risk_state_entries.set(0);
         registry
@@ -1660,7 +1707,9 @@ impl Metrics {
             correlation_absence_fired_total,
             correlation_absence_cancelled_total,
             correlation_absence_refused_total,
+            correlation_absence_evicted_total,
             correlation_absence_late_negatives_total,
+            correlation_state_evictions_total,
             reloads_total,
             reloads_failed,
             api_auth_failures,
@@ -1766,6 +1815,7 @@ impl Metrics {
             inhibited_total,
             inhibit_sources_active,
             inhibit_sources_refused_total,
+            alert_pipeline_cap_refused_total,
             rule_false_positive_ratio,
             dispositions_total,
             disposition_ingest_total,
@@ -1969,6 +2019,12 @@ impl MetricsHook for Metrics {
         self.correlation_absence_cancelled_total.inc_by(count);
     }
 
+    fn on_correlation_absence_evicted(&self, reason: &'static str, count: u64) {
+        self.correlation_absence_evicted_total
+            .with_label_values(&[reason])
+            .inc_by(count);
+    }
+
     fn on_correlation_absence_refused(&self, reason: &'static str, count: u64) {
         self.correlation_absence_refused_total
             .with_label_values(&[reason])
@@ -1977,6 +2033,10 @@ impl MetricsHook for Metrics {
 
     fn on_correlation_absence_late_negatives(&self, count: u64) {
         self.correlation_absence_late_negatives_total.inc_by(count);
+    }
+
+    fn on_correlation_cap_evictions(&self, count: u64) {
+        self.correlation_state_evictions_total.inc_by(count);
     }
 
     fn on_tenant_quota_eviction(&self, store: &'static str) {
@@ -2098,6 +2158,12 @@ impl MetricsHook for Metrics {
             .inc();
     }
 
+    fn on_alert_pipeline_cap_refused(&self, store: &'static str) {
+        self.alert_pipeline_cap_refused_total
+            .with_label_values(&[store])
+            .inc();
+    }
+
     fn on_capture_event_dropped(&self, reason: &str) {
         self.capture_events_dropped_total
             .with_label_values(&[reason])
@@ -2155,8 +2221,8 @@ impl MetricsHook for Metrics {
         self.risk_state_entries.set(count);
     }
 
-    fn on_risk_eviction(&self) {
-        self.risk_evictions_total.inc();
+    fn on_risk_eviction(&self, reason: &str) {
+        self.risk_evictions_total.with_label_values(&[reason]).inc();
     }
 
     fn observe_processing_latency(&self, seconds: f64) {
@@ -2686,6 +2752,7 @@ mod tests {
             "rsigma_correlation_absence_fired_total",
             "rsigma_correlation_absence_cancelled_total",
             "rsigma_correlation_absence_refused_total",
+            "rsigma_correlation_absence_evicted_total",
             "rsigma_correlation_absence_late_negatives_total",
         ] {
             assert!(output.contains(family), "missing {family}");

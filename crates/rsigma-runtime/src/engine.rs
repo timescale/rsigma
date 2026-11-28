@@ -364,6 +364,17 @@ impl RuntimeEngine {
         }
     }
 
+    /// Correlation entries evicted because a store hit `max_state_entries`
+    /// since the previous call, summed across engine variants.
+    pub fn take_correlation_cap_evictions(&mut self) -> u64 {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.take_cap_evictions(),
+            EngineVariant::Routed(router) => router.take_cap_evictions(),
+            EngineVariant::Rulesets(engines) => engines.take_cap_evictions(),
+        }
+    }
+
     /// Events skipped by `require_tenant` since the previous call, summed across
     /// engine variants.
     pub fn take_untenanted_skipped(&mut self) -> u64 {

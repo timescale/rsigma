@@ -676,6 +676,8 @@ fn test_hard_cap_evicts_the_stalest_groups() {
     // the two groups with the oldest latest timestamps go.
     let v = json!({"action": "click", "User": "newcomer"});
     engine.process_event_at(&JsonEvent::borrow(&v), 200);
+    assert_eq!(engine.take_cap_evictions(), 2);
+    assert_eq!(engine.take_cap_evictions(), 0, "the counter drains");
 
     let users: std::collections::HashSet<String> = engine
         .state
@@ -6267,6 +6269,90 @@ fn group_cap_refuses_another_obligation() {
     hit(&mut engine, "a", "alice", 20);
     assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
     assert_eq!(engine.take_absence_counters().refused_group_cap, 1);
+}
+
+const SLOW_AND_FAST: &str = r#"---
+title: Slow
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 1h
+    condition: a and not b
+---
+title: Fast
+correlation:
+    type: temporal
+    rules: [c, d]
+    group-by: [User]
+    timespan: 60s
+    condition: c and not d
+"#;
+
+#[test]
+fn global_absence_cap_reclaims_the_group_that_fires_last() {
+    let config = CorrelationConfig {
+        max_absence_entries: 1,
+        ..CorrelationConfig::default()
+    };
+    let mut engine = absence_engine(SLOW_AND_FAST, config.clone());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "c", "bob", 100);
+    let counters = engine.take_absence_counters();
+    assert_eq!(
+        (counters.evicted_global_cap, counters.refused_global_cap),
+        (1, 0)
+    );
+    assert_eq!(engine.absence_pending(), 1);
+    assert!(obligations(&engine, "Slow", "alice").is_empty());
+    assert_eq!(obligations(&engine, "Fast", "bob").len(), 1);
+    engine.assert_absence_index_consistent();
+
+    // The other way round, the newcomer fires last and is refused.
+    let mut engine = absence_engine(SLOW_AND_FAST, config);
+    hit(&mut engine, "c", "bob", 100);
+    hit(&mut engine, "a", "alice", 100);
+    let counters = engine.take_absence_counters();
+    assert_eq!(
+        (counters.evicted_global_cap, counters.refused_global_cap),
+        (0, 1)
+    );
+    assert_eq!(obligations(&engine, "Fast", "bob").len(), 1);
+    engine.assert_absence_index_consistent();
+}
+
+#[test]
+fn a_deadman_that_fires_sooner_reclaims_a_global_absence_slot() {
+    let yaml = r#"---
+title: Slow
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 1h
+    condition: a and not b
+---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not c
+"#;
+    let mut engine = absence_engine(
+        yaml,
+        CorrelationConfig {
+            max_absence_entries: 1,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "c", "host", 100);
+    assert_eq!(engine.take_absence_counters().evicted_global_cap, 1);
+    assert!(deadman(&engine, "Silent", "host").is_some());
+    assert!(obligations(&engine, "Slow", "alice").is_empty());
+    assert_eq!(engine.absence_pending(), 1);
+    engine.assert_absence_index_consistent();
 }
 
 #[test]

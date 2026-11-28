@@ -368,27 +368,30 @@ impl AlertPipeline {
                 );
             }
 
-            // Dedup: fold duplicates into the active alert. When the store is at
-            // its cap, a first-fire for a new fingerprint passes through
-            // un-deduped rather than opening another alert, bounding memory; the
-            // store-entries gauge plateauing at the cap signals saturation.
+            // Dedup: fold duplicates into the active alert. A tenant at its
+            // quota first makes room by evicting its own oldest alert. When the
+            // store is still at its global cap, a first-fire for a new
+            // fingerprint passes through un-deduped rather than opening another
+            // alert, bounding memory, and counts as a cap refusal.
             if let (Some(cfg), Some(key)) = (self.dedup.as_ref(), dedup_key) {
                 if state.dedup.fold(&key, now) {
                     metrics.on_alert_pipeline_result("folded");
                     continue;
                 }
-                if state.dedup.len() < cfg.max_active_alerts {
-                    if let Some(cap) = self.tenant_quotas.active_alerts
-                        && state
-                            .dedup
-                            .count_for_tenant(result.header.tenant_id.as_ref())
-                            >= cap
-                        && state
-                            .dedup
-                            .evict_tenant_oldest(result.header.tenant_id.as_ref())
-                    {
-                        metrics.on_tenant_quota_eviction("active_alerts");
-                    }
+                if let Some(cap) = self.tenant_quotas.active_alerts
+                    && state
+                        .dedup
+                        .count_for_tenant(result.header.tenant_id.as_ref())
+                        >= cap
+                    && state
+                        .dedup
+                        .evict_tenant_oldest(result.header.tenant_id.as_ref())
+                {
+                    metrics.on_tenant_quota_eviction("active_alerts");
+                }
+                if state.dedup.len() >= cfg.max_active_alerts {
+                    metrics.on_alert_pipeline_cap_refused("active_alerts");
+                } else {
                     let fingerprint =
                         new_fingerprint.unwrap_or_else(|| state.dedup.allocate_fingerprint(&key));
                     let fields = identity::display_values(key.names(), &cfg.fingerprint, &result);
@@ -425,6 +428,7 @@ impl AlertPipeline {
                     keep(result, finding_uid);
                     continue;
                 }
+                metrics.on_alert_pipeline_cap_refused("incidents");
             }
 
             if self.strip_event {
@@ -1731,6 +1735,70 @@ mod tests {
                 .all(|inc| inc.first_seen != 0),
             "the least recently seen incident of tenant a went first"
         );
+    }
+
+    #[derive(Default)]
+    struct RefusalMetrics(std::sync::Mutex<Vec<&'static str>>);
+
+    impl MetricsHook for RefusalMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _count: u64) {}
+        fn on_detection_matches(&self, _count: u64) {}
+        fn on_correlation_matches(&self, _count: u64) {}
+        fn observe_processing_latency(&self, _seconds: f64) {}
+        fn observe_batch_size(&self, _size: u64) {}
+        fn on_input_queue_depth_change(&self, _delta: i64) {}
+        fn on_back_pressure(&self) {}
+        fn on_output_queue_depth_change(&self, _delta: i64) {}
+        fn observe_pipeline_latency(&self, _seconds: f64) {}
+        fn set_correlation_state_entries(&self, _count: u64) {}
+        fn on_alert_pipeline_cap_refused(&self, store: &'static str) {
+            self.0.lock().unwrap().push(store);
+        }
+    }
+
+    #[test]
+    fn results_refused_by_a_full_global_cap_are_counted_per_store() {
+        let p = capped();
+        let metrics = RefusalMetrics::default();
+        let mut st = AlertPipelineState::default();
+        for i in 0..3 {
+            p.process(vec![detection(&ip(i), Level::High)], &mut st, i, &metrics);
+        }
+        assert!(metrics.0.lock().unwrap().is_empty());
+        let out = p.process(vec![detection(&ip(9), Level::High)], &mut st, 5, &metrics);
+        assert_eq!(out.len(), 1, "the refused result is still delivered");
+        assert_eq!(*metrics.0.lock().unwrap(), ["active_alerts", "incidents"]);
+        // Joining an open alert and incident refuses nothing.
+        p.process(vec![detection(&ip(0), Level::High)], &mut st, 6, &metrics);
+        assert_eq!(metrics.0.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_tenant_at_its_quota_reclaims_its_own_alert_when_the_global_cap_is_full() {
+        let mut p = pipeline(
+            "dedup:\n  fingerprint: [match.SourceIp]\n  resolve_timeout: 1h\n  max_active_alerts: 2\n",
+        );
+        p.set_tenant_quotas(AlertTenantQuotas {
+            active_alerts: Some(1),
+            ..Default::default()
+        });
+        let mut st = AlertPipelineState::default();
+        tenant_run(&p, &ip(0), "a", &mut st, 0);
+        tenant_run(&p, &ip(1), "b", &mut st, 1);
+        assert_eq!(st.dedup.len(), 2);
+        assert_eq!(tenant_run(&p, &ip(2), "a", &mut st, 2).len(), 1);
+        assert_eq!(
+            tenant_run(&p, &ip(2), "a", &mut st, 3).len(),
+            0,
+            "tenant a's new alert is tracked and folds"
+        );
+        assert_eq!(
+            tenant_run(&p, &ip(1), "b", &mut st, 4).len(),
+            0,
+            "tenant b keeps its alert"
+        );
+        assert_eq!(st.dedup.len(), 2);
     }
 
     #[test]

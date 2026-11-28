@@ -4,6 +4,26 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Risk accumulator caps no longer discard real risk (#817)
+
+At `max_open_entities` the risk accumulator refused every new entity until tracked ones aged out, so a flood of cheap entities kept a real one from ever reaching its threshold for a whole window. A new entity now reclaims the tracked entity with the lowest window score (then the fewest distinct tactics, then the least recently seen), and an entity at or above `score_threshold` or `tactic_count_threshold` is reclaimed only when every tracked entity is. `daemon.tenancy.quotas.risk_entities` reclaims in the same order within a tenant instead of dropping the tenant's stalest entity. `rsigma_risk_evictions_total` now has a `reason` label, `aged` or `cap`, so reclaims no longer hide among normal ageing, and the daemon logs a rate-limited warning when it reclaims.
+
+Each entity's window score and tactic, source, and result counts were recomputed from its retained contributions, a first-in, first-out list capped by `max_results_per_incident`, so a run of zero-score firings pushed a high-score firing out of the score and the tactic count. Entities now keep exact window aggregates in time buckets (one second wide for windows up to 1440 seconds, `window / 1440` otherwise) apart from the sample list, which drops the lowest-score older sample first and always keeps the newest. `result_count` counts every contribution in the window. Expired buckets leave the aggregates before a victim is chosen, `GET /api/v1/risk` leaves out buckets that expired since the last tick, and a reload that lowers a cap or changes a threshold re-ranks and trims at once.
+
+The risk snapshot moves to version 3 and stores the window buckets, so scores survive a restart intact; version 1 and 2 snapshots still restore from their contributions, and a restore over the caps keeps the highest-scoring entities rather than an arbitrary subset. The risk config now rejects `tactic_count_threshold` outside 1 to 14, a `window` under one second, and `max_open_entities: 0`. The state-entries gauge is now kept incrementally rather than summed over every entity on each batch.
+
+Library changes: `RiskState::restore` and `restore_detailed` take the `IncidentConfig`; `RiskState::enforce_caps` and `RiskLayer::enforce_caps` replace `enforce_tenant_cap` and `evict_tenant_oldest` and return a `RiskCapTrim`; `MetricsHook::on_risk_eviction` takes a `reason`; `RiskConfigError` has an `Incident` variant.
+
+### Correlation and alert-pipeline caps report what they drop (#817)
+
+Correlation windows dropped by the `max_state_entries` hard cap were visible only as a warning log, and results that could not open a dedup alert or an incident because `dedup.max_active_alerts` or `group.caps.max_open_incidents` was full only as a plateauing gauge. They now count in `rsigma_correlation_state_evictions_total` and `rsigma_alert_pipeline_cap_refused_total{store}` (`active_alerts`, `incidents`). Correlation quota and cap evictions are also reported when events go through `LogProcessor::process_batch_lines`, which reported neither.
+
+At `max_absence_entries`, a hit that would make an absence group pending is no longer refused when a pending group would fire later than it: that group is dropped and counted in `rsigma_correlation_absence_evicted_total{reason="global_cap"}`, so a short-window obligation or deadman is not locked out by long-window ones. A newcomer that would fire last is still refused. Absence cap refusals and evictions now log a warning at most once per minute of event time.
+
+With `daemon.tenancy.quotas.active_alerts` set, a tenant at its quota could not reclaim its own oldest alert while the global `dedup.max_active_alerts` was full, so its new fingerprints went through un-deduplicated. The tenant now evicts its own least recently seen alert first, as incident grouping already did.
+
+New library surface: `CorrelationEngine::take_cap_evictions` (also on `SchemaRouter` and `RulesetEngines`), `RuntimeEngine::take_correlation_cap_evictions`, and `AbsenceCounters::evicted_global_cap`, and the `MetricsHook` methods `on_correlation_cap_evictions`, `on_alert_pipeline_cap_refused`, and `on_correlation_absence_evicted`, which default to no-ops.
+
 ### Absence and missing-event correlations (#816)
 
 Correlation rules can now express "A without B within T" and entity deadman detection, "no heartbeat from host X for T". A negated rule reference in the string `condition:` of a `temporal` or `temporal_ordered` correlation is evaluated at an event-time deadline instead of the moment the positive rule matches: a negated hit inside the obligation's window cancels it, and the alert fires when the tenant clock passes the deadline. A condition made only of one negated rule is the deadman form, which arms on a heartbeat, slides on a later heartbeat, and fires once when the clock passes the deadline. `rsigma.absence_grace` delays firing past the deadline. Late negated hits cannot retract an alert.

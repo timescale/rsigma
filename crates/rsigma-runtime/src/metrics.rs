@@ -228,9 +228,10 @@ pub trait MetricsHook: Send + Sync {
     fn set_risk_entities_open(&self, _count: i64) {}
     /// Report the current number of retained contributions across all entities.
     fn set_risk_state_entries(&self, _count: i64) {}
-    /// A new entity could not be tracked (store full) or an aged-out entity was
-    /// pruned.
-    fn on_risk_eviction(&self) {}
+    /// An entity left the risk accumulator. `reason` is `aged` (its whole
+    /// window elapsed) or `cap` (reclaimed to make room under
+    /// `max_open_entities`).
+    fn on_risk_eviction(&self, _reason: &str) {}
 
     /// A captured event was dropped. `reason` is one of `event_too_large`,
     /// `incident_event_cap`, `incident_byte_cap`, `global_byte_cap`, or
@@ -243,6 +244,14 @@ pub trait MetricsHook: Send + Sync {
     /// engine skipped an untenanted event. `channel` is `rest`, `otlp_http`,
     /// `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`.
     fn on_tenant_rejected(&self, _channel: &'static str, _reason: &'static str) {}
+    /// `count` correlation windows were dropped because the state store hit
+    /// `max_state_entries`.
+    fn on_correlation_cap_evictions(&self, _count: u64) {}
+    /// A result could not open a new entry because a global alert-pipeline
+    /// cap was full, and passed through without one. `store` is
+    /// `active_alerts` (`dedup.max_active_alerts`) or `incidents`
+    /// (`group.caps.max_open_incidents`).
+    fn on_alert_pipeline_cap_refused(&self, _store: &'static str) {}
     /// `count` events were skipped for correlation because their timestamp
     /// was further ahead of the wall clock than `max_future_skew`.
     fn on_correlation_future_skipped(&self, _count: u64) {}
@@ -257,6 +266,9 @@ pub trait MetricsHook: Send + Sync {
     /// `count` absence hits were refused. `reason` is `global_cap`,
     /// `tenant_quota`, or `group_cap`.
     fn on_correlation_absence_refused(&self, _reason: &'static str, _count: u64) {}
+    /// `count` pending absence groups were dropped to make room for a group
+    /// that fires sooner. `reason` is `global_cap`.
+    fn on_correlation_absence_evicted(&self, _reason: &'static str, _count: u64) {}
     /// `count` negated hits arrived after their obligation fired, or late
     /// deadman heartbeats arrived.
     fn on_correlation_absence_late_negatives(&self, _count: u64) {}

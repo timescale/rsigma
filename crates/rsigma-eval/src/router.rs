@@ -823,6 +823,14 @@ impl<L> SchemaRouter<L> {
             .map_or(0, |c| c.take_tenant_quota_evictions())
     }
 
+    /// Entries evicted because the correlation store hit `max_state_entries`
+    /// since the previous call, draining the counter.
+    pub fn take_cap_evictions(&mut self) -> u64 {
+        self.correlation
+            .as_mut()
+            .map_or(0, |c| c.take_cap_evictions())
+    }
+
     /// Events skipped by `require_tenant` since the previous call, draining the
     /// counter.
     pub fn take_untenanted_skipped(&mut self) -> u64 {

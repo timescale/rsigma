@@ -143,7 +143,7 @@ Absence correlations, including deadman alerts, fire from a per-tenant event-tim
 
 A streaming daemon never finalizes, including on a shutdown signal: pending obligations wait for their deadline on the clock. A stdin batch run that reads to end of input without `--state-db` finalizes pending obligations the way `engine eval` does, and armed deadmen stay armed. Any other end of input, such as a lost connection or a failed stdin read, leaves them pending. With `--state-db`, pending obligations, armed deadmen, and tenant clocks persist across runs, which covers the documented cron-style `--input stdin --state-db` workflow. Restoring state and hot-reloading reset the idle reference to now, so downtime does not count and a restart does not cause an alert storm.
 
-Five metrics report absence behavior: `rsigma_correlation_absence_pending`, `rsigma_correlation_absence_fired_total`, `rsigma_correlation_absence_cancelled_total`, `rsigma_correlation_absence_refused_total`, and `rsigma_correlation_absence_late_negatives_total`. A rising `late_negatives_total` means negated hits are arriving after their deadline fired, so increase `rsigma.absence_grace` or widen the window:
+Six metrics report absence behavior: `rsigma_correlation_absence_pending`, `rsigma_correlation_absence_fired_total`, `rsigma_correlation_absence_cancelled_total`, `rsigma_correlation_absence_refused_total`, `rsigma_correlation_absence_evicted_total`, and `rsigma_correlation_absence_late_negatives_total`. A rising `late_negatives_total` means negated hits are arriving after their deadline fired, so increase `rsigma.absence_grace` or widen the window:
 
 ```yaml
 - alert: RsigmaAbsenceLateNegatives

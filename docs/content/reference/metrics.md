@@ -23,6 +23,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "0.26.0" }} |
 | `rsigma_cross_rule_ac_unindexed_fields` | gauge | none | Fields the cross-rule Aho-Corasick prefilter (`--cross-rule-ac`) left without an automaton in the current rule set, because a field had more than 100,000 distinct substring patterns or its automaton failed to build. Rules matching on such a field are always evaluated, so this only means the prefilter is doing less work. Zero without `--cross-rule-ac`. Refreshed on every scrape. {{ added "unreleased" }} |
 | `rsigma_correlation_state_entries` | gauge | none | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
+| `rsigma_correlation_state_evictions_total` | counter | none | Correlation windows dropped because the state store hit `max_state_entries`: the stalest entries down to 90% of the cap. A rising count means correlations can miss matches whose windows were dropped; raise the cap or shorten the windows. {{ added "unreleased" }} |
 | `rsigma_correlation_future_events_skipped_total` | counter | none | Events that fed a correlation but were skipped for it because their timestamp was further ahead of the wall clock than `max_future_skew`. A rising count points at a source with a skewed clock or a timezone parsed wrong. {{ added "unreleased" }} |
 | `rsigma_reloads_total` | counter | none | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | none | Reload attempts that were refused, for example a compile error, every rule failing to parse, or any parse error under `--strict-rules`. The previous rules stay active. |
@@ -56,9 +57,9 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_webhook_requests_total` | counter | `webhook_id`, `outcome` (`success`, `permanent_failure`, `rate_limited_wait`) | Webhook requests by outcome. `rate_limited_wait` counts token-bucket waits and can co-occur with a later `success` or `permanent_failure` on the same attempt. Queue depth, retries, drops, and DLQ routing are read from the shared per-sink series above, keyed by `sink=<webhook id>` (one-to-one with `webhook_id`). |
 | `rsigma_webhook_request_duration_seconds` | histogram | `webhook_id` | Per-webhook HTTP request latency. |
 
-## Absence correlations (5 metrics)
+## Absence correlations (6 metrics)
 
-Exposed unconditionally. The pending gauge and the refused counter's `reason` label set are pre-registered so they appear on the first scrape; the other counters surface after their first increment. See [Missing events and silent entities](../guide/correlations.md#missing-events-and-silent-entities).
+Exposed unconditionally. The pending gauge and the `reason` label sets of the refused and evicted counters are pre-registered so they appear on the first scrape; the other counters surface after their first increment. See [Missing events and silent entities](../guide/correlations.md#missing-events-and-silent-entities).
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -66,6 +67,7 @@ Exposed unconditionally. The pending gauge and the refused counter's `reason` la
 | `rsigma_correlation_absence_fired_total` | counter | none | Absence obligations and deadmen that fired without cancellation, including alerts that suppression then dropped. Emitted alerts also count in `rsigma_correlation_matches_total` and `rsigma_correlation_matches_by_rule_total`. {{ added "unreleased" }} |
 | `rsigma_correlation_absence_cancelled_total` | counter | none | Absence obligations cancelled by a negated hit. A deadman slide is not a cancellation, and an obligation never opened because of the pre-check is not counted. {{ added "unreleased" }} |
 | `rsigma_correlation_absence_refused_total` | counter | `reason` (`global_cap`, `tenant_quota`, `group_cap`) | Absence hits refused because the global absence cap, a tenant's state quota, or the group's pending cap was reached. {{ added "unreleased" }} |
+| `rsigma_correlation_absence_evicted_total` | counter | `reason` (`global_cap`) | Pending absence groups dropped at the global absence cap to make room for a group whose next deadline is sooner. The group that would fire last goes first. {{ added "unreleased" }} |
 | `rsigma_correlation_absence_late_negatives_total` | counter | none | Negated hits that arrived after their obligation fired, and late deadman heartbeats. A rising count is how to size `rsigma.absence_grace`. {{ added "unreleased" }} |
 
 ## Per-rule labels (2 metrics)
@@ -137,6 +139,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_dedup_results_total` | counter | `action` (`emitted`, `folded`, `repeat`, `resolved`) | Dedup outcomes: first fires emitted, duplicates folded, repeat re-emits, and resolved records. |
 | `rsigma_dedup_store_entries` | gauge | none | Active dedup alerts currently tracked. |
 | `rsigma_dedup_evictions_total` | counter | none | Active alerts evicted after resolving. |
+| `rsigma_alert_pipeline_cap_refused_total` | counter | `store` (`active_alerts`, `incidents`) | Results that passed through without opening a new dedup alert (`dedup.max_active_alerts` full) or a new incident (`group.caps.max_open_incidents` full). They are still delivered, un-deduplicated or without an `incident_id`. Both series are registered at startup. {{ added "unreleased" }} |
 | `rsigma_dedup_summaries_emitted_total` | counter | none | Dedup summary records emitted (repeat re-emits plus resolved records). |
 | `rsigma_incidents_open` | gauge | none | Open incidents currently tracked by the grouping stage. |
 | `rsigma_incidents_emitted_total` | counter | `trigger` (`group_wait`, `group_interval`, `repeat`, `resolved`) | Incident emissions by trigger. |
@@ -151,7 +154,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 
 ## Risk-based alerting (9 metrics)
 
-Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_risk_annotations_total` and `rsigma_risk_incidents_emitted_total`, plus the `rsigma_risk_entities_open` and `rsigma_risk_state_entries` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--risk` is passed or any event fires. See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
+Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_risk_annotations_total`, `rsigma_risk_evictions_total`, and `rsigma_risk_incidents_emitted_total`, plus the `rsigma_risk_entities_open` and `rsigma_risk_state_entries` gauges, are pre-registered at startup, so they render with their `# HELP` and `# TYPE` lines and zeroed series on the first scrape, even before `--risk` is passed or any event fires. See the [Risk-Based Alerting](../guide/risk-based-alerting.md) guide.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -159,8 +162,8 @@ Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_r
 | `rsigma_risk_annotation_score` | histogram | none | Distribution of the per-detection resolved risk score. |
 | `rsigma_risk_objects_total` | counter | none | Risk objects extracted from firing detections. |
 | `rsigma_risk_entities_open` | gauge | none | Entities currently tracked by the risk accumulator. |
-| `rsigma_risk_state_entries` | gauge | none | Risk contributions currently retained across all entities. |
-| `rsigma_risk_evictions_total` | counter | none | Entities dropped from the accumulator (store full or aged out). |
+| `rsigma_risk_state_entries` | gauge | none | Sample contributions currently kept across all entities for embedding in incidents (at most `max_results_per_incident` per entity). |
+| `rsigma_risk_evictions_total` | counter | `reason` (`aged`, `cap`) | Entities dropped from the accumulator: `aged` when an entity's whole window elapsed, `cap` when a tracked entity was reclaimed to make room for a new one under `max_open_entities`. The `reason` label and both series are registered at startup. {{ added "unreleased" }} |
 | `rsigma_risk_incidents_emitted_total` | counter | `trigger` (`score`, `tactic_count`) | Risk incidents emitted by trigger. |
 | `rsigma_risk_incident_results_total` | counter | none | Total risk incident records emitted. |
 | `rsigma_risk_layer_duration_seconds` | histogram | none | Risk-layer stage duration in seconds. |

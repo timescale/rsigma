@@ -139,10 +139,10 @@ pub use processor::{
     BatchProcessOutcome, EventFilter, LogProcessor, detection_threads, init_detection_pool,
 };
 pub use risk::{
-    IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError, RiskEntityView, RiskEvent,
-    RiskFile, RiskIncidentResult, RiskLayer, RiskObject, RiskOutput, RiskRef, RiskState,
-    RiskStateSnapshot, SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION, build_risk_layer, load_risk_file,
-    parse_risk_config,
+    CapTrim as RiskCapTrim, IncidentConfig as RiskIncidentConfig, RiskCaps, RiskConfigError,
+    RiskEntityView, RiskEvent, RiskFile, RiskIncidentResult, RiskLayer, RiskObject, RiskOutput,
+    RiskRef, RiskState, RiskStateSnapshot, SNAPSHOT_VERSION as RISK_SNAPSHOT_VERSION,
+    build_risk_layer, load_risk_file, parse_risk_config,
 };
 pub use ruleset::{PipelineRef, RuleSource, RulesetBinding, load_pipelines, watch_paths};
 pub use selector::{Selector, SelectorParseError};

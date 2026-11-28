@@ -69,6 +69,10 @@ const MAX_CHAIN_DEPTH: usize = 10;
 /// correlation nor [`CorrelationConfig::max_group_entries`] sets a cap.
 const DEFAULT_ABSENCE_GROUP_ENTRIES: usize = 1_000;
 
+/// Event-time seconds between two warnings about absence cap refusals and
+/// evictions.
+const ABSENCE_CAP_WARN_SECS: i64 = 60;
+
 /// Event retention a correlation needs for itself and for the chain above it.
 #[derive(Debug, Clone, Default)]
 struct Retention {
@@ -176,6 +180,8 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     tenant_keys: HashMap<Option<TenantId>, HashSet<StateKey>>,
     /// Entries evicted because a tenant hit its quota.
     tenant_quota_evictions: u64,
+    /// Entries evicted because the store hit `max_state_entries`.
+    cap_evictions: u64,
     /// Sequence number the next processed event gets. Retained buffer entries
     /// carry it so a parent correlation can skip an event it already merged.
     next_event_seq: u64,
@@ -189,6 +195,10 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     absence_groups: usize,
     /// Absence outcome counters, drained by `take_absence_counters`.
     absence_counters: AbsenceCounters,
+    /// Event time of the last absence cap warning, and the refusals and
+    /// evictions since then.
+    absence_cap_warned_at: Option<i64>,
+    absence_cap_warn_pending: u64,
     /// Whether at least one loaded correlation uses deferred absence semantics.
     absence_compiled: bool,
     /// Per-tenant event-time clock: the maximum event time seen. Only tracked
@@ -238,11 +248,14 @@ impl<L> CorrelationEngine<L> {
             high_water: i64::MIN,
             tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
+            cap_evictions: 0,
             next_event_seq: 1,
             retention: Vec::new(),
             retention_dirty: true,
             absence_groups: 0,
             absence_counters: AbsenceCounters::default(),
+            absence_cap_warned_at: None,
+            absence_cap_warn_pending: 0,
             absence_compiled: false,
             clocks: HashMap::new(),
             wall_clock_tenants: std::collections::HashSet::new(),
@@ -959,6 +972,13 @@ impl<L> CorrelationEngine<L> {
         std::mem::take(&mut self.tenant_quota_evictions)
     }
 
+    /// Entries evicted because the store hit
+    /// [`CorrelationConfig::max_state_entries`] since the previous call,
+    /// draining the counter.
+    pub fn take_cap_evictions(&mut self) -> u64 {
+        std::mem::take(&mut self.cap_evictions)
+    }
+
     /// Run stateless detection only (no correlation), delegating to the inner engine.
     ///
     /// Returns one [`EvaluationResult`] per matched detection. Takes `&self`
@@ -1541,6 +1561,7 @@ impl<L> CorrelationEngine<L> {
             self.evict_tenant(tenant, ts);
             if self.tenant_len(&state_key.tenant) >= cap {
                 self.absence_counters.refused_tenant_quota += 1;
+                self.warn_absence_cap(ts);
                 return None;
             }
         }
@@ -1566,8 +1587,15 @@ impl<L> CorrelationEngine<L> {
                     < self.clocks.get(&tenant.cloned()).copied().unwrap_or(ts);
                 if late {
                     self.absence_counters.late_negatives += 1;
-                } else if !was_pending && self.absence_groups >= self.config.max_absence_entries {
+                } else if !was_pending
+                    && !self.reclaim_absence_slot(
+                        ts.saturating_add(timespan as i64)
+                            .saturating_add(absence.grace_secs as i64),
+                        ts,
+                    )
+                {
                     self.absence_counters.refused_global_cap += 1;
+                    self.warn_absence_cap(ts);
                     if is_new {
                         self.state.remove(&state_key);
                         self.note_tenant_removal(&state_key);
@@ -1709,12 +1737,23 @@ impl<L> CorrelationEngine<L> {
             Some(WindowState::Absence { obligations, .. }) => obligations.len(),
             _ => 0,
         };
+        // Obligations of one group open in deadline order, so refusing the
+        // newcomer is what drops the obligation that would fire last.
         if pending >= max_group_entries {
             self.absence_counters.refused_group_cap += 1;
+            self.warn_absence_cap(ts);
             return None;
         }
-        if !was_pending && self.absence_groups >= self.config.max_absence_entries {
+        if !was_pending
+            && !self.reclaim_absence_slot(
+                obligation
+                    .deadline
+                    .saturating_add(absence.grace_secs as i64),
+                ts,
+            )
+        {
             self.absence_counters.refused_global_cap += 1;
+            self.warn_absence_cap(ts);
             return None;
         }
         let inserted = match self.state.get_mut(&state_key) {
@@ -1855,6 +1894,59 @@ impl<L> CorrelationEngine<L> {
                 self.deadlines.remove(&key.tenant);
             }
         }
+    }
+
+    /// Make room under `max_absence_entries` for a group that would first fire
+    /// at `fire_at`. The pending group that fires last is dropped, but only
+    /// when it fires strictly later than the newcomer, so a flood of new
+    /// obligations cannot push out one that is about to fire. Returns whether
+    /// there is room.
+    fn reclaim_absence_slot(&mut self, fire_at: i64, now: i64) -> bool {
+        if self.absence_groups < self.config.max_absence_entries {
+            return true;
+        }
+        let victim = self
+            .deadlines
+            .iter()
+            .filter_map(|(tenant, set)| {
+                set.iter()
+                    .next_back()
+                    .map(|(at, group, corr_idx)| (*at, tenant, group, *corr_idx))
+            })
+            .max_by_key(|(at, ..)| *at)
+            .filter(|(at, ..)| *at > fire_at)
+            .map(|(_, tenant, group, corr_idx)| StateKey {
+                tenant: tenant.clone(),
+                corr_idx,
+                group_key: group.clone(),
+            });
+        let Some(victim) = victim else {
+            return false;
+        };
+        self.drop_absence_group(&victim);
+        self.absence_counters.evicted_global_cap += 1;
+        self.warn_absence_cap(now);
+        self.absence_groups < self.config.max_absence_entries
+    }
+
+    /// Log a warning about absence cap refusals and evictions at most once
+    /// per [`ABSENCE_CAP_WARN_SECS`] of event time, carrying the count since
+    /// the previous warning.
+    fn warn_absence_cap(&mut self, now: i64) {
+        self.absence_cap_warn_pending += 1;
+        if self
+            .absence_cap_warned_at
+            .is_some_and(|last| (last..last.saturating_add(ABSENCE_CAP_WARN_SECS)).contains(&now))
+        {
+            return;
+        }
+        self.absence_cap_warned_at = Some(now);
+        log::warn!(
+            "Absence correlation caps reached: {} absence hit(s) refused or pending \
+             obligation(s) evicted; raise max_absence_entries, the per-tenant \
+             correlation quota, or rsigma.max_group_entries",
+            std::mem::take(&mut self.absence_cap_warn_pending),
+        );
     }
 
     /// Rebuild this group's deadline-index entry from its current state.
@@ -2881,6 +2973,7 @@ impl<L> CorrelationEngine<L> {
                 .collect();
 
             // Drop the stalest entries (and their associated event buffers)
+            self.cap_evictions += stalest.len() as u64;
             for key in stalest {
                 self.remove_state_entry(&key);
             }
