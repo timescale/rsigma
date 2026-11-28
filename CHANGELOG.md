@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### CI no longer type-checks the workspace twice (#803)
+
+The `Check` job ran `cargo check --workspace --all-targets --all-features` on the same pinned toolchain, targets, and features that the `Clippy` job compiles with `cargo clippy`, so the step only repeated work. It is removed; `Check` keeps the fuzz crate and the `--no-default-features` builds that no other job covers.
+
 ### Correlation windows and suppression stay correct with far-future and out-of-order timestamps (#802)
 
 Correlation window state was kept in arrival order and expired only from the front, so one event with a far-future timestamp stopped every later entry from expiring: a sliding window grew without limit and kept firing, a tumbling window treated current events as late, a session stayed open, and an alert fired by such an event suppressed its group until the clock caught up. Any out-of-order arrival had milder versions of the same effects, and a temporal correlation could match hits further apart than its `timespan`.
@@ -13,6 +17,7 @@ Each event timestamp is now bounded by the wall clock. An event more than `max_f
 Window entries and retained events are kept ordered by timestamp. A sliding window ends at the newer of the event and the group's newest entry, so a late event cannot stretch it past its `timespan`; a session window discards an event from a session that already closed instead of restarting or extending the current one; and an older event never makes a session look idle. Suppression is measured on the group's newest event time on both direct and chained correlations, a last alert after that time counts as expired, and state eviction drops such records.
 
 `max_group_entries` now defaults to 10,000 entries per group instead of unbounded. For `event_count` and `value_count` the default rises to one more than the largest threshold in the condition, so the cap never stops a count short of a value the condition compares against. An explicit cap is used as given. The load-time warning about long windows without a cap is gone, since every group now has one.
+
 ### Rule partitioning keeps every rule an event can match, and prefilters apply under schema routing (#801)
 
 Per-schema rule partitioning (`--schema-partition-rules`) compiles each platform-locked pipeline-set with only the rules for its schemas' products. An event whose resolved product fell outside that set missed the removed rules, although the full rule set would have evaluated them: an event whose own `product` field contradicts its schema, and an event whose schema tied with one implying a different logsource. Such events are now also evaluated against the removed rules, compiled for that set the first time an event needs them from one shared copy of the parsed rules. With `--logsource-routing`, partitioning no longer changes any result.
