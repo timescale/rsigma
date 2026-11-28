@@ -42,7 +42,7 @@ use commands::{McpCommands, dispatch_mcp};
 #[cfg(feature = "taxii-sync")]
 use commands::{TaxiiCommands, dispatch_taxii};
 use jaq_core::load::{Arena, File, Loader};
-use jaq_core::{Compiler, Ctx, Vars, data, unwrap_valr};
+use jaq_core::{Compiler, Ctx, Vars, data};
 use jaq_json::Val;
 use rsigma_eval::{
     CorrelationAction, CorrelationConfig, CorrelationEventMode, Pipeline, parse_pipeline_file,
@@ -807,7 +807,9 @@ pub(crate) enum EventFilter {
 }
 
 /// Compile a jq event filter. The `env` builtin is left out, so a filter from
-/// a project config file cannot copy the process environment into events.
+/// a project config file cannot copy the process environment into events, and
+/// so are `halt` and `halt_error`, which would end the process (a running
+/// daemon included) on the first event that reaches them.
 fn compile_jq_filter(jq_expr: &str) -> Result<CompiledJqFilter, String> {
     let program = File {
         code: jq_expr,
@@ -815,9 +817,10 @@ fn compile_jq_filter(jq_expr: &str) -> Result<CompiledJqFilter, String> {
     };
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
-        .chain(jaq_json::defs());
+        .chain(jaq_json::defs())
+        .filter(|def| def.name != "halt" && def.name != "halt_error");
     let funs = jaq_core::funs()
-        .chain(jaq_std::funs().filter(|fun| fun.0 != "env"))
+        .chain(jaq_std::funs().filter(|fun| fun.0 != "env" && fun.0 != "halt"))
         .chain(jaq_json::funs());
     let arena = Arena::default();
     let modules = Loader::new(defs)
@@ -944,11 +947,13 @@ pub(crate) fn apply_event_filter(
             let input = json_to_val(value);
             let ctx = Ctx::<data::JustLut<Val>>::new(&f.lut, Vars::new([]));
             f.id.run((ctx, input))
-                .map(unwrap_valr)
                 .filter_map(|r| match r {
                     Ok(val) => val_to_json(&val),
-                    Err(e) => {
-                        eprintln!("jq runtime error: {e}");
+                    Err(exn) => {
+                        match exn.get_err() {
+                            Ok(e) => eprintln!("jq runtime error: {e}"),
+                            Err(_) => eprintln!("jq runtime error: the filter stopped"),
+                        }
                         None
                     }
                 })
