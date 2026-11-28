@@ -153,7 +153,7 @@ fn is_flat_field(field: &str) -> bool {
 
 /// One rendered SELECT list item.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum SelectColumn {
+enum SelectColumn {
     Star,
     /// A field, with the expression a GROUP BY repeats.
     Field {
