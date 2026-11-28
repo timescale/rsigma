@@ -351,6 +351,11 @@ impl Bundle {
         &self.objects
     }
 
+    /// Take the parsed objects, in document order, without cloning them.
+    pub fn into_objects(self) -> Vec<StixObject> {
+        self.objects
+    }
+
     /// Lookup a typed object by STIX id.
     pub fn get(&self, id: &StixId) -> Option<&StixObject> {
         self.id_index

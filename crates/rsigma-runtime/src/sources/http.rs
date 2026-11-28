@@ -81,7 +81,7 @@ pub async fn resolve_http(
         extract_expr,
         timeout,
         MAX_SOURCE_RESPONSE_BYTES,
-        |text| parse_data(text, format),
+        move |text| parse_data(text, format),
     )
     .await
 }
@@ -100,7 +100,7 @@ pub(crate) async fn resolve_http_with_limit<F>(
     parse: F,
 ) -> Result<ResolvedValue, SourceError>
 where
-    F: FnOnce(&str) -> Result<serde_json::Value, SourceError> + Send,
+    F: FnOnce(&str) -> Result<serde_json::Value, SourceError> + Send + 'static,
 {
     let SourceClient { client, policy } = shared_source_client()?;
     policy.check_url(url).map_err(|denial| SourceError {
@@ -169,7 +169,7 @@ where
 
     let body = read_body_capped(response, max_bytes).await?;
 
-    let parsed = parse(&body)?;
+    let parsed = super::run_blocking(move || parse(&body)).await?;
 
     let data = if let Some(expr) = extract_expr {
         apply_extract(&parsed, expr)?

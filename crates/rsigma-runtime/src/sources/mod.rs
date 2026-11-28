@@ -281,7 +281,8 @@ impl DefaultSourceResolver {
             let options = stix
                 .cloned()
                 .unwrap_or_else(rsigma_eval::pipeline::sources::StixOptions::all);
-            let built = stix::build(&contents, &options, &self.stix_now())?;
+            let now = self.stix_now();
+            let built = run_blocking(move || stix::build(&contents, &options, &now)).await?;
             return Ok(self.finish_stix(source_id, built));
         } else {
             let _ = (source_id, stix);
@@ -343,7 +344,7 @@ impl DefaultSourceResolver {
             extract,
             timeout,
             max_body_size,
-            |text| file::parse_data(text, format),
+            move |text| file::parse_data(text, format),
         )
         .await
     }
@@ -576,6 +577,22 @@ const WATCHLIST_SLOW_APPLY: Duration = Duration::from_secs(5);
 /// Most sources one [`resolve_all`] call fetches at the same time.
 pub const MAX_CONCURRENT_RESOLVES: usize = 8;
 
+/// Run `job` on the blocking pool, so parsing a large payload does not stall
+/// the async runtime. A panic in `job` resumes in the caller, where
+/// [`catch_resolver_panic`] reports it.
+pub(crate) async fn run_blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, SourceError> + Send + 'static,
+) -> Result<T, SourceError> {
+    match tokio::task::spawn_blocking(job).await {
+        Ok(result) => result,
+        Err(err) if err.is_panic() => std::panic::resume_unwind(err.into_panic()),
+        Err(err) => Err(SourceError {
+            source_id: String::new(),
+            kind: SourceErrorKind::Fetch(format!("source task did not finish: {err}")),
+        }),
+    }
+}
+
 /// Run `resolve`, turning a panic into a [`SourceErrorKind::Panic`] error for `source`.
 async fn catch_resolver_panic<F>(
     source: &DynamicSource,
@@ -766,5 +783,42 @@ pub fn yaml_value_to_json(yaml: &yaml_serde::Value) -> serde_json::Value {
             serde_json::Value::Object(obj)
         }
         yaml_serde::Value::Tagged(tagged) => yaml_value_to_json(&tagged.value),
+    }
+}
+
+#[cfg(test)]
+mod blocking {
+    use super::*;
+
+    fn source() -> DynamicSource {
+        DynamicSource {
+            id: "blocking".into(),
+            source_type: SourceType::File {
+                path: "unused".into(),
+                format: DataFormat::Json,
+                extract: None,
+                stix: None,
+            },
+            refresh: rsigma_eval::pipeline::sources::RefreshPolicy::OnDemand,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: true,
+            default: None,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_job_result_and_panic_reach_the_caller() {
+        assert_eq!(run_blocking(|| Ok(7)).await.expect("value"), 7);
+        let source = source();
+        let err = catch_resolver_panic(&source, async {
+            run_blocking(|| -> Result<ResolvedValue, SourceError> { panic!("parser bug") }).await
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err.kind, SourceErrorKind::Panic(message) if message == "parser bug"),
+            "{err:?}"
+        );
     }
 }

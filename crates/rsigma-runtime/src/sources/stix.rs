@@ -300,14 +300,17 @@ impl IndicatorSet {
             .iter()
             .map(|key| (key.clone(), BTreeSet::new()))
             .collect();
-        let mut metadata: HashMap<String, Vec<Kept>> = HashMap::new();
-        for item in &kept {
+        // `kept` is in metadata order, so each value keeps its first
+        // `METADATA_CAP` indicators, and an indicator repeating a value is the
+        // last one pushed for it.
+        let mut metadata: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, item) in kept.iter().enumerate() {
             for (key, value) in &item.observables {
                 if let Some(bucket) = values.get_mut(key) {
                     bucket.insert(escape_sigma_literal(value));
-                    let entries = metadata.entry(value.clone()).or_default();
-                    if entries.iter().all(|existing| existing.id != item.id) {
-                        entries.push(item.clone());
+                    let entries = metadata.entry(value.as_str()).or_default();
+                    if entries.len() < METADATA_CAP && entries.last() != Some(&index) {
+                        entries.push(index);
                     }
                 }
             }
@@ -327,20 +330,15 @@ impl IndicatorSet {
             object.insert(key.clone(), serde_json::Value::Array(list));
         }
         let mut indicator_map = serde_json::Map::new();
-        let mut meta_keys: Vec<_> = metadata.keys().cloned().collect();
-        meta_keys.sort();
-        for value in meta_keys {
-            let mut entries = metadata.remove(&value).unwrap_or_default();
-            entries.sort_by(|left, right| {
-                right
-                    .confidence
-                    .cmp(&left.confidence)
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-            entries.truncate(METADATA_CAP);
+        for (value, entries) in metadata {
             indicator_map.insert(
-                value,
-                serde_json::Value::Array(entries.iter().map(metadata_json).collect()),
+                value.to_owned(),
+                serde_json::Value::Array(
+                    entries
+                        .iter()
+                        .map(|&index| metadata_json(&kept[index]))
+                        .collect(),
+                ),
             );
         }
         object.insert(
@@ -520,9 +518,9 @@ pub fn build(
     })?;
     let objects = bundle.objects().len();
     let mut set = IndicatorSet::new();
-    for object in bundle.objects() {
+    for object in bundle.into_objects() {
         if let StixObject::Sdo(SdoObject::Indicator(indicator)) = object {
-            set.upsert(indicator.clone());
+            set.upsert(indicator);
         }
     }
     let (value, skips, active) = set.build(options, now, None);
@@ -732,6 +730,45 @@ mod tests {
         assert_eq!(meta.len(), 16);
         assert_eq!(meta[0]["confidence"], 99);
         assert_eq!(meta[1]["confidence"], 98);
+    }
+
+    #[test]
+    fn metadata_lists_an_indicator_once_per_value() {
+        let repeated = indicator(
+            1,
+            "2024-01-01T00:00:00.000Z",
+            "[ipv4-addr:value = '198.51.100.7'] OR [ipv4-addr:value = '198.51.100.7']",
+            r#","confidence":50"#,
+        );
+        let mut objects = vec![repeated];
+        for n in 2..=200 {
+            objects.push(indicator(
+                n,
+                "2024-01-01T00:00:00.000Z",
+                "[ipv4-addr:value = '198.51.100.7']",
+                &format!(r#","confidence":{}"#, n % 100),
+            ));
+        }
+        let refs: Vec<&str> = objects.iter().map(String::as_str).collect();
+        let built = build(&bundle(&refs), &StixOptions::all(), &now()).unwrap();
+        let meta = built.value["indicators"]["198.51.100.7"]
+            .as_array()
+            .unwrap();
+        assert_eq!(meta.len(), 16);
+        let confidences: Vec<u64> = meta
+            .iter()
+            .map(|entry| entry["confidence"].as_u64().unwrap())
+            .collect();
+        assert_eq!(&confidences[..4], &[99, 99, 98, 98]);
+
+        let built = build(&bundle(&refs[..1]), &StixOptions::all(), &now()).unwrap();
+        assert_eq!(
+            built.value["indicators"]["198.51.100.7"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

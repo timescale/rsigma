@@ -21,7 +21,7 @@ pub async fn resolve_file(
             kind: SourceErrorKind::Fetch(format!("failed to read {}: {e}", path.display())),
         })?;
 
-    let parsed = parse_data(&contents, format)?;
+    let parsed = super::run_blocking(move || parse_data(&contents, format)).await?;
 
     let data = if let Some(expr) = extract_expr {
         apply_extract(&parsed, expr)?
