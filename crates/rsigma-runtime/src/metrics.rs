@@ -246,6 +246,20 @@ pub trait MetricsHook: Send + Sync {
     /// `count` events were skipped for correlation because their timestamp
     /// was further ahead of the wall clock than `max_future_skew`.
     fn on_correlation_future_skipped(&self, _count: u64) {}
+    /// Report the current number of absence groups with a pending obligation or
+    /// an armed deadman.
+    fn set_correlation_absence_pending(&self, _count: u64) {}
+    /// `count` absence obligations or deadmen fired without cancellation,
+    /// including alerts that suppression then dropped.
+    fn on_correlation_absence_fired(&self, _count: u64) {}
+    /// `count` absence obligations were cancelled by a negated hit.
+    fn on_correlation_absence_cancelled(&self, _count: u64) {}
+    /// `count` absence hits were refused. `reason` is `global_cap`,
+    /// `tenant_quota`, or `group_cap`.
+    fn on_correlation_absence_refused(&self, _reason: &'static str, _count: u64) {}
+    /// `count` negated hits arrived after their obligation fired, or late
+    /// deadman heartbeats arrived.
+    fn on_correlation_absence_late_negatives(&self, _count: u64) {}
     /// `tenant` produced a detection or correlation match. Tenants outside the
     /// operator allowlist arrive as `other`.
     fn on_tenant_match(&self, _tenant: &str) {}
