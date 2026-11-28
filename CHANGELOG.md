@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Write paths from project config files stay inside the project
+### Write paths from project config files stay inside the project (#814)
 
 `rsigma backend build` wrote each group's `output` and `<output>.manifest.json` wherever a project file (`./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc`) pointed, so building in a cloned repository could create or replace files outside it. `convert.defaults.output`, `convert.groups.*.output`, `rulesets.*.output` (the `ruleset build` directory), and `backtest.findings` are now protected keys: from a project file they are ignored with a warning, and listed by `config validate` and `config show`, when the path or the manifest written next to it resolves outside the directory holding that file. The warning names the group or ruleset, such as `convert.groups.linux_edge.output`. `backend build` checks a project-sourced output again when it writes, creates missing directories only inside the project, and replaces a symlink at the output or manifest path instead of following it. Outputs from `--config`, the user or system config, and environment variables are unchanged.
 
