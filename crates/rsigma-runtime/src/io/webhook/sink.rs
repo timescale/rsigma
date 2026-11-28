@@ -724,6 +724,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_custom_signature_covers_a_body_that_contains_signing_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let scheme = SigningScheme::Custom(super::super::signing::CustomScheme {
+            algorithm: super::super::signing::Algorithm::Sha256,
+            encoding: super::super::signing::Encoding::Hex,
+            signature_header: "X-Signature".to_string(),
+            value_format: "t={timestamp},v1={signature}".to_string(),
+            signed_payload: "{id}.{timestamp}.{body}".to_string(),
+            timestamp_header: None,
+            id_header: Some("X-Webhook-Id".to_string()),
+        });
+        let secret = b"shared-secret".to_vec();
+        let signer = WebhookSigner::new(scheme, vec![Zeroizing::new(secret.clone())]);
+        let mut sink = signed_sink_to(format!("{}/hook", server.uri()), signer);
+        sink.send(
+            &vec![detection("{timestamp} {id} {body} {signature}")],
+            &ctx(),
+        )
+        .await
+        .unwrap();
+
+        let reqs = server.received_requests().await.unwrap();
+        let req = &reqs[0];
+        let header = |name: &str| req.headers.get(name).unwrap().to_str().unwrap().to_string();
+        let id = header("X-Webhook-Id");
+        let signature = header("X-Signature");
+        let ts = signature
+            .strip_prefix("t=")
+            .and_then(|rest| rest.split(',').next())
+            .unwrap()
+            .to_string();
+        let body = std::str::from_utf8(&req.body).unwrap();
+        assert!(
+            body.contains("{timestamp} {id} {body} {signature}"),
+            "{body}"
+        );
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(&secret).unwrap();
+        mac.update(format!("{id}.{ts}.{body}").as_bytes());
+        let expected = hex::encode(mac.finalize().into_bytes());
+        assert_eq!(signature, format!("t={ts},v1={expected}"));
+    }
+
+    #[tokio::test]
     async fn retries_with_the_same_context_reproduce_the_signature() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
