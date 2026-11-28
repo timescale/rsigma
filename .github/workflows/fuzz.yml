@@ -99,6 +99,8 @@ jobs:
             max_len: 65536
           - target: fuzz_draft_groups
             max_len: 65536
+          - target: fuzz_draft_emit
+            max_len: 65536
           - target: fuzz_pipeline_sources_yaml
             max_len: 8192
           - target: fuzz_watchlist_request
