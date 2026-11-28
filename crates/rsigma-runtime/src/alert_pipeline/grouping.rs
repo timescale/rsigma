@@ -19,6 +19,7 @@
 //! `resolve_timeout` elapses with no new results.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
@@ -182,8 +183,8 @@ pub(crate) struct Incident {
     id: String,
     /// Exact group identity (group_by mode). Snapshots before version 3 lack
     /// it; restore rebuilds it from `group_by`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key: Option<IdentityKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "shared_key")]
+    key: Option<Arc<IdentityKey>>,
     pub(crate) tenant: Option<TenantId>,
     first_seen: i64,
     last_seen: i64,
@@ -221,7 +222,7 @@ pub(crate) struct IncidentEmission {
 pub struct IncidentStore {
     incidents: HashMap<String, Incident>,
     /// group_by: exact group identity -> incident id.
-    group_ids: HashMap<IdentityKey, String>,
+    group_ids: HashMap<Arc<IdentityKey>, String>,
     /// entity_graph: `(tenant, selector, value)` -> incident id.
     entity_index: HashMap<(Option<TenantId>, String, String), String>,
     /// entity_graph: per-value occurrence count for the cardinality guard.
@@ -343,7 +344,7 @@ impl IncidentStore {
         match cfg.mode {
             GroupMode::GroupBy => {
                 let slot = slot.unwrap_or_else(|| GroupSlot {
-                    key: IdentityKey::group(&cfg.by, result),
+                    key: Arc::new(IdentityKey::group(&cfg.by, result)),
                     id: None,
                 });
                 self.assign_group_by(cfg, slot, result, finding_uid, now, &mut tenant_cap)
@@ -376,7 +377,7 @@ impl IncidentStore {
             .or_default()
             .insert(incident.id.clone());
         if let Some(key) = &incident.key {
-            self.group_ids.insert(key.clone(), incident.id.clone());
+            self.group_ids.insert(Arc::clone(key), incident.id.clone());
         }
         self.incidents.insert(incident.id.clone(), incident);
     }
@@ -384,9 +385,12 @@ impl IncidentStore {
     fn remove_incident(&mut self, id: &str) -> Option<Incident> {
         let incident = self.incidents.remove(id)?;
         if let Some(key) = &incident.key
-            && self.group_ids.get(key).is_some_and(|held| held == id)
+            && self
+                .group_ids
+                .get(key.as_ref())
+                .is_some_and(|held| held == id)
         {
-            self.group_ids.remove(key);
+            self.group_ids.remove(key.as_ref());
         }
         if let Some(ids) = self.tenant_ids.get_mut(&incident.tenant) {
             ids.remove(id);
@@ -422,7 +426,7 @@ impl IncidentStore {
                     id.clone(),
                     tenant,
                     now,
-                    identity::display_values(&cfg.by, result),
+                    identity::display_values(slot.key.names(), &cfg.by, result),
                 );
                 incident.key = Some(slot.key);
                 self.insert_incident(incident);
@@ -662,12 +666,13 @@ impl IncidentStore {
                 continue;
             }
             if inc.key.is_none() {
-                inc.key = identity::rebuild_group_key(&inc.id, inc.tenant.as_ref(), &inc.group_by);
+                inc.key = identity::rebuild_group_key(&inc.id, inc.tenant.as_ref(), &inc.group_by)
+                    .map(Arc::new);
             }
             // Two incidents restored under one identity: the most recently
             // seen keeps it, and the other resolves on its own.
             if let Some(key) = &inc.key
-                && let Some(held) = self.group_ids.get(key).cloned()
+                && let Some(held) = self.group_ids.get(key.as_ref()).cloned()
             {
                 let held_newer = self
                     .incidents
@@ -954,10 +959,32 @@ impl Incident {
     }
 }
 
+/// Serde for an incident's shared key, persisted as a plain [`IdentityKey`].
+mod shared_key {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::IdentityKey;
+
+    pub(super) fn serialize<S: Serializer>(
+        key: &Option<Arc<IdentityKey>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        key.as_deref().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Arc<IdentityKey>>, D::Error> {
+        Ok(Option::<IdentityKey>::deserialize(deserializer)?.map(Arc::new))
+    }
+}
+
 /// A `group_by` result's identity, with the incident id the caller already
 /// resolved for it (see [`IncidentStore::allocate_id`]).
 pub(crate) struct GroupSlot {
-    pub key: IdentityKey,
+    pub key: Arc<IdentityKey>,
     pub id: Option<String>,
 }
 

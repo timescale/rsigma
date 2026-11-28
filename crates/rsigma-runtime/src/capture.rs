@@ -27,6 +27,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -48,7 +49,7 @@ pub struct AdmittedEvent {
     /// whose identity differs from the one held under the same id starts a
     /// new generation instead of joining it. The alert pipeline always sets
     /// it.
-    pub incident_key: Option<IdentityKey>,
+    pub incident_key: Option<Arc<IdentityKey>>,
     /// Tenant that owns this incident, when tenancy is enabled.
     pub tenant: Option<TenantId>,
     /// True when this incident id is not currently open in the incident store.
@@ -300,7 +301,7 @@ pub struct CaptureStats {
 
 #[derive(Debug)]
 struct RingIncident {
-    key: Option<IdentityKey>,
+    key: Option<Arc<IdentityKey>>,
     tenant: Option<TenantId>,
     first_seen: i64,
     last_seen: i64,
@@ -594,7 +595,7 @@ fn index_matches(
 /// Internal pending admit used by the pipeline before coalescing.
 pub(crate) struct PendingAdmit {
     pub incident_id: String,
-    pub incident_key: IdentityKey,
+    pub incident_key: Arc<IdentityKey>,
     pub tenant: Option<TenantId>,
     pub is_fresh_generation: bool,
     pub event: Value,
@@ -623,7 +624,7 @@ pub(crate) fn flush_pending(pending: Vec<PendingCapture>, sink: &mut dyn Capture
 /// admit with a combined matches array, preserving first-seen order.
 fn coalesce_admits(pending: Vec<PendingAdmit>) -> Vec<AdmittedEvent> {
     let mut order = Vec::new();
-    let mut map: HashMap<(String, IdentityKey, Vec<u8>), AdmittedEvent> = HashMap::new();
+    let mut map: HashMap<(String, Arc<IdentityKey>, Vec<u8>), AdmittedEvent> = HashMap::new();
     for item in pending {
         let key_bytes = serde_json::to_vec(&item.event).unwrap_or_default();
         let key = (
@@ -662,7 +663,7 @@ mod tests {
     fn admit(incident: &str, event: Value, rule: &str) -> PendingAdmit {
         PendingAdmit {
             incident_id: incident.to_string(),
-            incident_key: IdentityKey::test_group(None, incident),
+            incident_key: Arc::new(IdentityKey::test_group(None, incident)),
             tenant: None,
             is_fresh_generation: true,
             event,
@@ -700,7 +701,7 @@ mod tests {
     fn event(id: &str, n: u8) -> AdmittedEvent {
         AdmittedEvent {
             incident_id: id.to_string(),
-            incident_key: Some(IdentityKey::test_group(None, id)),
+            incident_key: Some(Arc::new(IdentityKey::test_group(None, id))),
             tenant: None,
             is_fresh_generation: false,
             event: serde_json::json!({"n": n}),
@@ -866,7 +867,7 @@ mod tests {
     fn coalesce_keeps_distinct_identities_under_one_id() {
         let event = serde_json::json!({"user": "alice"});
         let mut other = admit("inc-1", event.clone(), "r2");
-        other.incident_key = IdentityKey::test_group(None, "other");
+        other.incident_key = Arc::new(IdentityKey::test_group(None, "other"));
         let out = coalesce_admits(vec![admit("inc-1", event, "r1"), other]);
         assert_eq!(out.len(), 2);
     }
@@ -888,7 +889,7 @@ mod tests {
         first.is_fresh_generation = true;
         ring.admit(first, 0, &crate::NoopMetrics);
         let mut other = event("a", 2);
-        other.incident_key = Some(IdentityKey::test_group(None, "b"));
+        other.incident_key = Some(Arc::new(IdentityKey::test_group(None, "b")));
         ring.admit(other, 5, &crate::NoopMetrics);
 
         let snap = ring.snapshot_incident(None, "a").unwrap();

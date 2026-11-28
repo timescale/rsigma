@@ -10,9 +10,11 @@
 //! live identities.
 
 use std::fmt::Write as _;
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::sync::{Arc, OnceLock};
 
 use rsigma_eval::{EvaluationResult, TenantId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -110,47 +112,172 @@ impl RuleIdentity {
 ///     IdentityKey::group(&by, &result(serde_json::json!("22"))),
 /// );
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IdentityKey {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `parts` hashed once with a per-process random key, so a store lookup
+    /// does not rehash every selector value. Never persisted.
+    hash: u64,
+    parts: KeyParts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct KeyParts {
     tenant: Option<TenantId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule: Option<RuleIdentity>,
+    /// Selector names, shared by every key built from one selector list and
+    /// index-aligned with `values`.
+    names: Arc<[String]>,
+    values: Vec<KeyValue>,
+}
+
+/// The persisted form of [`KeyParts`], with each name beside its value.
+#[derive(Serialize)]
+struct KeyPartsRef<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: &'a Option<TenantId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule: &'a Option<RuleIdentity>,
+    selectors: Vec<(&'a str, &'a KeyValue)>,
+}
+
+#[derive(Deserialize)]
+struct KeyPartsOwned {
+    #[serde(default)]
+    tenant: Option<TenantId>,
+    #[serde(default)]
     rule: Option<RuleIdentity>,
     selectors: Vec<(String, KeyValue)>,
+}
+
+impl KeyParts {
+    fn new(
+        tenant: Option<TenantId>,
+        rule: Option<RuleIdentity>,
+        selectors: Vec<(String, KeyValue)>,
+    ) -> Self {
+        let (names, values): (Vec<String>, Vec<KeyValue>) = selectors.into_iter().unzip();
+        KeyParts {
+            tenant,
+            rule,
+            names: names.into(),
+            values,
+        }
+    }
+}
+
+impl PartialEq for IdentityKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.parts == other.parts
+    }
+}
+
+impl Eq for IdentityKey {}
+
+impl Hash for IdentityKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
+
+impl Serialize for IdentityKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let parts = &self.parts;
+        KeyPartsRef {
+            tenant: &parts.tenant,
+            rule: &parts.rule,
+            selectors: parts
+                .names
+                .iter()
+                .map(String::as_str)
+                .zip(&parts.values)
+                .collect(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for IdentityKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let owned = KeyPartsOwned::deserialize(deserializer)?;
+        Ok(IdentityKey::from_parts(KeyParts::new(
+            owned.tenant,
+            owned.rule,
+            owned.selectors,
+        )))
+    }
+}
+
+/// The names of `selectors`, built once per selector list and shared by every
+/// key built from it.
+pub(crate) fn selector_names(selectors: &[Selector]) -> Arc<[String]> {
+    selectors.iter().map(Selector::as_str).collect()
 }
 
 impl IdentityKey {
     /// The dedup identity of `result`: its tenant, rule, and the values of
     /// the `dedup.fingerprint` selectors.
     pub fn dedup(selectors: &[Selector], result: &EvaluationResult) -> Self {
-        Self::build(Some(RuleIdentity::of(result)), selectors, result)
+        Self::dedup_named(&selector_names(selectors), selectors, result)
+    }
+
+    /// [`Self::dedup`] with the names of `selectors` already built.
+    pub(crate) fn dedup_named(
+        names: &Arc<[String]>,
+        selectors: &[Selector],
+        result: &EvaluationResult,
+    ) -> Self {
+        Self::build(Some(RuleIdentity::of(result)), names, selectors, result)
     }
 
     /// The `group_by` incident identity of `result`: its tenant and the
     /// values of the `group.by` selectors. The rule is left out so one
     /// incident can span rules that share the group values.
     pub fn group(selectors: &[Selector], result: &EvaluationResult) -> Self {
-        Self::build(None, selectors, result)
+        Self::group_named(&selector_names(selectors), selectors, result)
+    }
+
+    /// [`Self::group`] with the names of `selectors` already built.
+    pub(crate) fn group_named(
+        names: &Arc<[String]>,
+        selectors: &[Selector],
+        result: &EvaluationResult,
+    ) -> Self {
+        Self::build(None, names, selectors, result)
     }
 
     fn build(
         rule: Option<RuleIdentity>,
+        names: &Arc<[String]>,
         selectors: &[Selector],
         result: &EvaluationResult,
     ) -> Self {
-        IdentityKey {
+        Self::from_parts(KeyParts {
             tenant: result.header.tenant_id.clone(),
             rule,
-            selectors: selectors
+            names: Arc::clone(names),
+            values: selectors
                 .iter()
-                .map(|sel| (sel.as_str(), KeyValue::of(sel.resolve(result))))
+                .map(|sel| KeyValue::of(sel.resolve(result)))
                 .collect(),
+        })
+    }
+
+    fn from_parts(parts: KeyParts) -> Self {
+        static STATE: OnceLock<RandomState> = OnceLock::new();
+        IdentityKey {
+            hash: STATE.get_or_init(RandomState::new).hash_one(&parts),
+            parts,
         }
     }
 
     /// The tenant this identity belongs to.
     pub fn tenant(&self) -> Option<&TenantId> {
-        self.tenant.as_ref()
+        self.parts.tenant.as_ref()
+    }
+
+    /// The selector names, in configured order.
+    pub(crate) fn names(&self) -> &[String] {
+        &self.parts.names
     }
 
     /// The display id for `attempt` (0 for the natural id): the first 128
@@ -160,19 +287,20 @@ impl IdentityKey {
         if let Some(forced) = FORCED_DISPLAY_ID.with(std::cell::Cell::get) {
             return forced(self, attempt);
         }
+        let parts = &self.parts;
         let mut hasher = Sha256::new();
         hasher.update(b"rsigma.identity.v1");
-        match &self.tenant {
+        match &parts.tenant {
             None => hasher.update([0]),
             Some(tenant) => put(&mut hasher, 1, tenant.as_str()),
         }
-        match &self.rule {
+        match &parts.rule {
             None => hasher.update([0]),
             Some(RuleIdentity::Id(id)) => put(&mut hasher, 1, id),
             Some(RuleIdentity::Title(title)) => put(&mut hasher, 2, title),
         }
-        hasher.update((self.selectors.len() as u64).to_be_bytes());
-        for (name, value) in &self.selectors {
+        hasher.update((parts.values.len() as u64).to_be_bytes());
+        for (name, value) in parts.names.iter().zip(&parts.values) {
             put(&mut hasher, 0, name);
             match value {
                 KeyValue::Absent => hasher.update([0]),
@@ -184,7 +312,13 @@ impl IdentityKey {
             }
         }
         hasher.update(attempt.to_be_bytes());
-        hex::encode(&hasher.finalize()[..16])
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut id = String::with_capacity(32);
+        for byte in &hasher.finalize()[..16] {
+            id.push(char::from(HEX[usize::from(byte >> 4)]));
+            id.push(char::from(HEX[usize::from(byte & 0xf)]));
+        }
+        id
     }
 
     /// The first display id for this key that `taken` does not report as
@@ -243,15 +377,17 @@ fn canonical_json(value: &Value, out: &mut String) {
     }
 }
 
-/// The resolved selector values shown on emitted records. An absent selector
-/// shows as `null`.
+/// The resolved selector values shown on emitted records, under the names
+/// of `selectors`. An absent selector shows as `null`.
 pub(crate) fn display_values(
+    names: &[String],
     selectors: &[Selector],
     result: &EvaluationResult,
 ) -> Vec<(String, Value)> {
-    selectors
+    names
         .iter()
-        .map(|sel| (sel.as_str(), sel.resolve(result).unwrap_or(Value::Null)))
+        .zip(selectors)
+        .map(|(name, sel)| (name.clone(), sel.resolve(result).unwrap_or(Value::Null)))
         .collect()
 }
 
@@ -290,10 +426,10 @@ pub(crate) fn rebuild_dedup_key(
             absent.fill(true);
         }
     }
-    Some(IdentityKey {
-        tenant: tenant.cloned(),
-        rule: Some(rule),
-        selectors: fields
+    Some(IdentityKey::from_parts(KeyParts::new(
+        tenant.cloned(),
+        Some(rule),
+        fields
             .iter()
             .zip(&absent)
             .map(|((name, value), &absent)| {
@@ -301,7 +437,7 @@ pub(crate) fn rebuild_dedup_key(
                 (name.clone(), KeyValue::of(value))
             })
             .collect(),
-    })
+    )))
 }
 
 /// Rebuild the identity of a `group_by` incident persisted before keys were
@@ -316,10 +452,10 @@ pub(crate) fn rebuild_group_key(
     if values.is_empty() || legacy_group_fingerprint(tenant, values) != id {
         return None;
     }
-    Some(IdentityKey {
-        tenant: tenant.cloned(),
-        rule: None,
-        selectors: values
+    Some(IdentityKey::from_parts(KeyParts::new(
+        tenant.cloned(),
+        None,
+        values
             .iter()
             .map(|(name, value)| {
                 (
@@ -328,7 +464,7 @@ pub(crate) fn rebuild_group_key(
                 )
             })
             .collect(),
-    })
+    )))
 }
 
 /// The dedup fingerprint as computed before keys were stored.
@@ -420,11 +556,11 @@ impl Drop for ForcedDisplayId {
 impl IdentityKey {
     /// A `group_by` key over one `match.X` selector.
     pub(crate) fn test_group(tenant: Option<&str>, value: &str) -> Self {
-        IdentityKey {
-            tenant: tenant.map(|t| TenantId::new(t).unwrap()),
-            rule: None,
-            selectors: vec![("match.X".to_string(), KeyValue::String(value.to_string()))],
-        }
+        IdentityKey::from_parts(KeyParts::new(
+            tenant.map(|t| TenantId::new(t).unwrap()),
+            None,
+            vec![("match.X".to_string(), KeyValue::String(value.to_string()))],
+        ))
     }
 }
 
@@ -598,7 +734,7 @@ mod tests {
         ] {
             let r = result(fields);
             let key = IdentityKey::dedup(&by, &r);
-            let values = display_values(&by, &r);
+            let values = display_values(&selector_names(&by), &by, &r);
             let absent: Vec<bool> = by.iter().map(|s| s.resolve(&r).is_none()).collect();
             let legacy = legacy_dedup_fingerprint(None, "rule-1", &values, &absent);
             let sample = serde_json::to_value(&r).unwrap();
@@ -613,7 +749,7 @@ mod tests {
     fn a_legacy_group_incident_rebuilds_its_key() {
         let by = sels(&["match.A"]);
         let r = result(vec![("A", json!("10.0.0.1"))]);
-        let values = display_values(&by, &r);
+        let values = display_values(&selector_names(&by), &by, &r);
         let legacy = legacy_group_fingerprint(None, &values);
         assert_eq!(
             rebuild_group_key(&legacy, None, &values),

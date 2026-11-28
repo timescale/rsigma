@@ -15,6 +15,7 @@
 //! unique among active alerts.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rsigma_eval::EvaluationResult;
@@ -97,9 +98,9 @@ impl DedupSnap {
 /// In-memory active-alert store, owned single-threaded by the sink task.
 #[derive(Debug, Default)]
 pub struct DedupStore {
-    alerts: HashMap<IdentityKey, ActiveAlert>,
+    alerts: HashMap<Arc<IdentityKey>, ActiveAlert>,
     /// Display id to key, kept in step with `alerts`.
-    fingerprints: HashMap<String, IdentityKey>,
+    fingerprints: HashMap<String, Arc<IdentityKey>>,
     /// Display ids per tenant, kept in step with `alerts`.
     tenant_fingerprints: HashMap<Option<TenantId>, HashSet<String>>,
 }
@@ -165,12 +166,12 @@ impl DedupStore {
         fields: Vec<(String, Value)>,
     ) {
         let fingerprint = match self.fingerprints.get(&fingerprint) {
-            Some(holder) if *holder != key => self.allocate_fingerprint(&key),
+            Some(holder) if **holder != key => self.allocate_fingerprint(&key),
             _ => fingerprint,
         };
         let tenant = key.tenant().cloned();
         self.insert_alert(
-            key,
+            Arc::new(key),
             ActiveAlert {
                 fingerprint,
                 first_seen: now,
@@ -219,7 +220,7 @@ impl DedupStore {
         out
     }
 
-    fn insert_alert(&mut self, key: IdentityKey, alert: ActiveAlert) {
+    fn insert_alert(&mut self, key: Arc<IdentityKey>, alert: ActiveAlert) {
         self.remove_alert(&key);
         self.fingerprints
             .insert(alert.fingerprint.clone(), key.clone());
@@ -258,9 +259,13 @@ impl DedupStore {
             .into_iter()
             .flatten()
             .filter_map(|fingerprint| self.fingerprints.get(fingerprint))
-            .filter_map(|key| self.alerts.get(key).map(|alert| (key, alert.last_seen)))
+            .filter_map(|key| {
+                self.alerts
+                    .get(key.as_ref())
+                    .map(|alert| (key, alert.last_seen))
+            })
             .min_by_key(|(_, last_seen)| *last_seen)
-            .map(|(key, _)| key.clone());
+            .map(|(key, _)| Arc::clone(key));
         match victim {
             Some(key) => self.remove_alert(&key).is_some(),
             None => false,
@@ -293,7 +298,7 @@ impl DedupStore {
             .iter()
             .map(|(key, alert)| DedupSnap::Keyed {
                 fingerprint: alert.fingerprint.clone(),
-                key: key.clone(),
+                key: IdentityKey::clone(key),
                 alert: alert.clone(),
             })
             .collect()
@@ -337,10 +342,10 @@ impl DedupStore {
             }
             alert.tenant = key.tenant().cloned();
             alert.fingerprint = match self.fingerprints.get(&fingerprint) {
-                Some(holder) if *holder != key => self.allocate_fingerprint(&key),
+                Some(holder) if **holder != key => self.allocate_fingerprint(&key),
                 _ => fingerprint,
             };
-            self.insert_alert(key, alert);
+            self.insert_alert(Arc::new(key), alert);
         }
         unrebuildable
     }
@@ -360,7 +365,7 @@ impl DedupStore {
             .map(|alert| (alert.last_seen, alert.fingerprint.as_str()))
             .collect();
         by_age.sort_unstable();
-        let victims: Vec<IdentityKey> = by_age
+        let victims: Vec<Arc<IdentityKey>> = by_age
             .into_iter()
             .take(excess)
             .filter_map(|(_, fingerprint)| self.fingerprints.get(fingerprint).cloned())
@@ -468,7 +473,7 @@ mod tests {
             fingerprint,
             now,
             sample_of(r),
-            display_values(&c.fingerprint, r),
+            display_values(key.names(), &c.fingerprint, r),
         );
         key
     }

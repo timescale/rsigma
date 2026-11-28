@@ -47,6 +47,8 @@ pub use silence::{
 pub use snapshot::{AlertPipelineSnapshot, SNAPSHOT_VERSION};
 pub use state::AlertPipelineState;
 
+use std::sync::Arc;
+
 use rsigma_eval::{EvaluationResult, ProcessResult};
 use serde_json::Value;
 
@@ -82,6 +84,10 @@ pub struct AlertPipeline {
     strip_event: bool,
     dedup: Option<DedupConfig>,
     group: Option<GroupConfig>,
+    /// Names of the `dedup.fingerprint` and `group.by` selectors, shared by
+    /// every identity key the pipeline builds.
+    dedup_names: Arc<[String]>,
+    group_names: Arc<[String]>,
     static_silences: Vec<StaticSilence>,
     inhibit: Option<InhibitConfig>,
     max_silences: usize,
@@ -119,6 +125,13 @@ impl AlertPipeline {
         AlertPipeline {
             scope,
             strip_event,
+            dedup_names: dedup.as_ref().map_or_else(
+                || Arc::from([]),
+                |d| identity::selector_names(&d.fingerprint),
+            ),
+            group_names: group
+                .as_ref()
+                .map_or_else(|| Arc::from([]), |g| identity::selector_names(&g.by)),
             dedup,
             group,
             static_silences,
@@ -326,17 +339,23 @@ impl AlertPipeline {
             let dedup_key = self
                 .dedup
                 .as_ref()
-                .map(|cfg| IdentityKey::dedup(&cfg.fingerprint, &result));
+                .map(|cfg| IdentityKey::dedup_named(&self.dedup_names, &cfg.fingerprint, &result));
             // Capture needs the group identity before dedup; otherwise grouping
             // computes it only for results that survive dedup.
-            let mut group_slot = self
-                .group
-                .as_ref()
-                .filter(|g| capturing && g.mode == GroupMode::GroupBy)
-                .map(|g| grouping::GroupSlot {
-                    key: IdentityKey::group(&g.by, &result),
-                    id: None,
-                });
+            let group_slot_for = |result: &EvaluationResult| {
+                self.group
+                    .as_ref()
+                    .filter(|g| g.mode == GroupMode::GroupBy)
+                    .map(|g| grouping::GroupSlot {
+                        key: Arc::new(IdentityKey::group_named(&self.group_names, &g.by, result)),
+                        id: None,
+                    })
+            };
+            let mut group_slot = if capturing {
+                group_slot_for(&result)
+            } else {
+                None
+            };
             let mut new_fingerprint = None;
             if capturing {
                 new_fingerprint = self.offer_capture(
@@ -372,7 +391,7 @@ impl AlertPipeline {
                     }
                     let fingerprint =
                         new_fingerprint.unwrap_or_else(|| state.dedup.allocate_fingerprint(&key));
-                    let fields = identity::display_values(&cfg.fingerprint, &result);
+                    let fields = identity::display_values(key.names(), &cfg.fingerprint, &result);
                     let sample = dedup::sample_of(&result);
                     state.dedup.insert(key, fingerprint, now, sample, fields);
                 }
@@ -387,10 +406,11 @@ impl AlertPipeline {
                     max: self.tenant_quotas.incidents,
                     on_evict: || metrics.on_tenant_quota_eviction("incidents"),
                 };
+                let slot = group_slot.or_else(|| group_slot_for(&result));
                 if let Some(id) = state.incidents.assign_with_finding_uid(
                     gcfg,
                     &result,
-                    group_slot,
+                    slot,
                     finding_uid.as_deref().filter(|uid| !uid.is_empty()),
                     now,
                     |guard| {
@@ -488,7 +508,7 @@ impl AlertPipeline {
         pending.push(PendingCapture::Admit(PendingAdmit {
             is_fresh_generation,
             incident_id,
-            incident_key: slot.key.clone(),
+            incident_key: Arc::clone(&slot.key),
             tenant: result.header.tenant_id.clone(),
             event,
             match_: AdmittedMatch {
