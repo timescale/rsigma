@@ -162,7 +162,7 @@ fn collect_sdo_ref_paths(sdo: &SdoObject, out: &mut Vec<RefPath>) {
     }
 }
 
-fn collect_sco_ref_paths(sco: &ScoObject, out: &mut Vec<RefPath>) {
+pub(crate) fn collect_sco_ref_paths(sco: &ScoObject, out: &mut Vec<RefPath>) {
     use crate::model::sco::{
         Artifact, AutonomousSystem, Directory, DomainName, EmailAddr, EmailMessage, File, Ipv4Addr,
         Ipv6Addr, MacAddr, Mutex, NetworkTraffic, Process, Software, Url, UserAccount,
