@@ -30,10 +30,10 @@ The `test` job runs three commands:
 ```bash
 cargo nextest run --workspace --all-features --locked --profile ci
 cargo test --workspace --all-features --locked --doc
-cargo test -p rstix --all-features --locked --test interop --test taxii_interop
+cargo test --workspace --all-features --locked --test interop --test taxii_interop
 ```
 
-nextest does not run doc tests, so they get their own `cargo test --doc`. The rstix `interop` and `taxii_interop` suites use their own `main` (`harness = false`): they run every case in one process and write the certification report at the end, which nextest's process-per-test model cannot drive. The nextest config's `default-filter` leaves them out, and `cargo test` runs them. The `rstix-interop` and `rstix-taxii-interop` jobs also run them with their certification feature sets and gate the reports.
+nextest does not run doc tests, so they get their own `cargo test --doc`. The rstix `interop` and `taxii_interop` suites use their own `main` (`harness = false`): they run every case in one process and write the certification report at the end, which nextest's process-per-test model cannot drive. The nextest config's `default-filter` leaves them out, and `cargo test` runs them. That command keeps `--workspace` so features resolve as they do for the nextest build; `-p rstix` would recompile the shared dependencies with rstix's own feature set. The `rstix-interop` and `rstix-taxii-interop` jobs also run them with their certification feature sets and gate the reports.
 
 nextest flags a test that runs past 60 seconds and kills it after five minutes, so a hung daemon or container fails the job instead of holding the runner. The `ci` profile adds `fail-fast = false`, so every failure is reported.
 
@@ -208,7 +208,7 @@ When a check fails, fix the docs, or fix the code if the docs describe the inten
 
 ## Coverage
 
-The `coverage` job runs `cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci` and `cargo llvm-cov --no-report -p rstix --all-features --locked --test interop --test taxii_interop`, then `cargo llvm-cov report --lcov --output-path lcov.info`, on Linux and uploads `lcov.info`. It is advisory, not gating; there are no per-crate thresholds enforced today. Drops of more than a couple of percentage points warrant a comment on the PR.
+The `coverage` job runs `cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci` and `cargo llvm-cov --no-report --workspace --all-features --locked --test interop --test taxii_interop`, then `cargo llvm-cov report --lcov --output-path lcov.info`, on Linux and uploads `lcov.info`. It is advisory, not gating; there are no per-crate thresholds enforced today. Drops of more than a couple of percentage points warrant a comment on the PR.
 
 Locally a simpler one-shot form is fine:
 

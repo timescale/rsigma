@@ -280,9 +280,11 @@ jobs:
       # runs the binaries one after another.
       - run: cargo nextest run --workspace --all-features --locked --profile ci
       # nextest runs neither doc tests nor the rstix interop suites, which
-      # drive their own harness (see .config/nextest.toml).
+      # drive their own harness (see .config/nextest.toml). Keep `--workspace`
+      # on the interop run: `-p rstix` resolves features for rstix alone and
+      # recompiles about a hundred dependencies the nextest build already has.
       - run: cargo test --workspace --all-features --locked --doc
-      - run: cargo test -p rstix --all-features --locked --test interop --test taxii_interop
+      - run: cargo test --workspace --all-features --locked --test interop --test taxii_interop
 
   coverage:
     name: Coverage
@@ -313,7 +315,7 @@ jobs:
           # The rstix interop suites drive their own harness, so nextest
           # skips them and `cargo test` adds their coverage.
           cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci
-          cargo llvm-cov --no-report -p rstix --all-features --locked --test interop --test taxii_interop
+          cargo llvm-cov --no-report --workspace --all-features --locked --test interop --test taxii_interop
           host="$(rustc -vV | sed -n 's/^host: //p')"
           llvm_profdata="$(rustc --print sysroot)/lib/rustlib/${host}/bin/llvm-profdata"
           find target/llvm-cov-target -name '*.profraw' -print0 |
