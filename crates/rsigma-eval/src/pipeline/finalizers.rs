@@ -59,11 +59,7 @@ impl Finalizer {
             Finalizer::Template { template } => queries
                 .iter()
                 .enumerate()
-                .map(|(i, q)| {
-                    template
-                        .replace("{query}", q)
-                        .replace("{index}", &i.to_string())
-                })
+                .map(|(i, q)| fill_template(template, q, &i.to_string()))
                 .collect::<Vec<_>>()
                 .join("\n"),
         }
@@ -119,6 +115,28 @@ impl Finalizer {
             _ => None,
         }
     }
+}
+
+/// Expand `{query}` and `{index}` in `template` in one pass, so a query that
+/// contains the text `{index}` is inserted verbatim.
+fn fill_template(template: &str, query: &str, index: &str) -> String {
+    let mut out = String::with_capacity(template.len() + query.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let tail = &rest[open..];
+        let (value, token_len) = if tail.starts_with("{query}") {
+            (query, "{query}".len())
+        } else if tail.starts_with("{index}") {
+            (index, "{index}".len())
+        } else {
+            ("{", 1)
+        };
+        out.push_str(value);
+        rest = &tail[token_len..];
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -251,5 +269,14 @@ template: "source={source} ({query})"
         };
         let result = f.apply(vec!["first".to_string(), "second".to_string()]);
         assert_eq!(result, "[0] first\n[1] second");
+    }
+
+    #[test]
+    fn template_placeholders_inside_a_query_stay_literal() {
+        let f = Finalizer::Template {
+            template: "{{index}:{query}} {other}".to_string(),
+        };
+        let result = f.apply(vec!["msg=\"{index}\" or msg=\"{query}\"".to_string()]);
+        assert_eq!(result, "{0:msg=\"{index}\" or msg=\"{query}\"} {other}");
     }
 }

@@ -573,9 +573,10 @@ impl Backend for FibratusBackend {
             let expr = template.ok_or_else(|| {
                 ConvertError::UnsupportedModifier(format!("string operator for {field}"))
             })?;
-            return Ok(ConvertResult::Query(
-                expr.replace("{field}", f).replace("{value}", &val),
-            ));
+            return Ok(ConvertResult::Query(fill_placeholders(
+                expr,
+                &[("field", f), ("value", &val)],
+            )));
         }
 
         // Plain equality. Sigma string comparisons are case-insensitive by
@@ -603,7 +604,7 @@ impl Backend for FibratusBackend {
             let template = template.ok_or_else(|| {
                 ConvertError::UnsupportedModifier(format!("string operator for {field}"))
             })?;
-            template.replace("{field}", f).replace("{value}", &val)
+            fill_placeholders(template, &[("field", f), ("value", &val)])
         } else {
             let op = if is_cased || field == "evt.name" {
                 "="

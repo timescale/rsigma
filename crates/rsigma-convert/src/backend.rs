@@ -755,6 +755,16 @@ pub fn render_query_template(template: &str, lookup: impl Fn(&str) -> Option<Str
     out
 }
 
+/// [`render_query_template`] with a fixed set of `(placeholder, text)` pairs.
+pub(crate) fn fill_placeholders(template: &str, values: &[(&str, &str)]) -> String {
+    render_query_template(template, |key| {
+        values
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, text)| (*text).to_string())
+    })
+}
+
 /// Assemble the final query from the main condition string and any deferred parts.
 pub fn text_finish_query(
     cfg: &TextQueryConfig,
@@ -884,62 +894,61 @@ pub fn text_convert_field_str_ir(
 
     if is_cased {
         if is_contains && let Some(expr) = cfg.case_sensitive_contains_expression {
-            return Ok(ConvertResult::Query(
-                expr.replace("{field}", &escaped_field)
-                    .replace("{value}", &value_str),
-            ));
+            return Ok(ConvertResult::Query(fill_placeholders(
+                expr,
+                &[("field", &escaped_field), ("value", &value_str)],
+            )));
         }
         if is_startswith && let Some(expr) = cfg.case_sensitive_startswith_expression {
-            return Ok(ConvertResult::Query(
-                expr.replace("{field}", &escaped_field)
-                    .replace("{value}", &value_str),
-            ));
+            return Ok(ConvertResult::Query(fill_placeholders(
+                expr,
+                &[("field", &escaped_field), ("value", &value_str)],
+            )));
         }
         if is_endswith && let Some(expr) = cfg.case_sensitive_endswith_expression {
-            return Ok(ConvertResult::Query(
-                expr.replace("{field}", &escaped_field)
-                    .replace("{value}", &value_str),
-            ));
+            return Ok(ConvertResult::Query(fill_placeholders(
+                expr,
+                &[("field", &escaped_field), ("value", &value_str)],
+            )));
         }
         if let Some(expr) = cfg.case_sensitive_match_expression {
-            return Ok(ConvertResult::Query(
-                expr.replace("{field}", &escaped_field)
-                    .replace("{value}", &value_str),
-            ));
+            return Ok(ConvertResult::Query(fill_placeholders(
+                expr,
+                &[("field", &escaped_field), ("value", &value_str)],
+            )));
         }
     }
 
     if is_contains && let Some(expr) = cfg.contains_expression {
-        return Ok(ConvertResult::Query(
-            expr.replace("{field}", &escaped_field)
-                .replace("{value}", &value_str),
-        ));
+        return Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", &escaped_field), ("value", &value_str)],
+        )));
     }
     if is_startswith && let Some(expr) = cfg.startswith_expression {
-        return Ok(ConvertResult::Query(
-            expr.replace("{field}", &escaped_field)
-                .replace("{value}", &value_str),
-        ));
+        return Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", &escaped_field), ("value", &value_str)],
+        )));
     }
     if is_endswith && let Some(expr) = cfg.endswith_expression {
-        return Ok(ConvertResult::Query(
-            expr.replace("{field}", &escaped_field)
-                .replace("{value}", &value_str),
-        ));
+        return Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", &escaped_field), ("value", &value_str)],
+        )));
     }
 
     if pattern.has_wildcards()
         && let Some(expr) = cfg.wildcard_match_expression
     {
-        return Ok(ConvertResult::Query(
-            expr.replace("{field}", &escaped_field)
-                .replace("{value}", &value_str),
-        ));
+        return Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", &escaped_field), ("value", &value_str)],
+        )));
     }
 
     let result = if let Some(expr) = cfg.eq_expression {
-        expr.replace("{field}", &escaped_field)
-            .replace("{value}", &value_str)
+        fill_placeholders(expr, &[("field", &escaped_field), ("value", &value_str)])
     } else {
         format!("{escaped_field}{}{value_str}", cfg.eq_token)
     };
