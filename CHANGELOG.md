@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Webhooks no longer lose in-scope alerts, and header and signing templates are injection-safe
+### Webhooks no longer lose in-scope alerts, and header and signing templates are injection-safe (#815)
 
 Results entered a webhook's bounded queue before its `kind`, `scope`, and tenant filter ran, so a stream of detections the webhook would skip could fill the queue and push out the alerts it exists for. The dispatcher now checks each sink's scope before it queues: a webhook is offered only results its `kind` and `scope` admit, a `tenant=<id>` sink only its tenant's results and incidents, and webhook and OTLP sinks no incidents. Skipped traffic never takes a queue slot or holds the source acknowledgment. When an `?on_full=drop` queue is full, the drop is still counted on `rsigma_sink_dropped_total`, and the daemon now logs a rate-limited warning naming the sink, rule id, and level, and records the dropped in-scope results on the `--dlq` when the DLQ channel has room.
 
