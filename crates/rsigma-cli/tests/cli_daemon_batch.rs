@@ -485,14 +485,104 @@ fn batch_run_exits_0_when_a_failed_delivery_reaches_the_dlq() {
     );
 }
 
+const LOGIN_RULE: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+"#;
+
+/// A one-shot batch run that prints each detection to stdout.
+fn detections_batch(rules: &Path) -> Command {
+    let mut cmd = rsigma();
+    cmd.args([
+        "engine",
+        "daemon",
+        "-r",
+        rules.to_str().unwrap(),
+        "--api-addr",
+        "127.0.0.1:0",
+    ]);
+    cmd
+}
+
+fn detected_users(stdout: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|v| v["event"]["User"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn batch_run_evaluates_the_lines_around_invalid_utf8() {
+    let rules = temp_file(".yml", LOGIN_RULE);
+    let output = detections_batch(rules.path())
+        .arg("--include-event")
+        .write_stdin(
+            b"{\"EventType\":\"login\",\"User\":\"a\"}\n\xff\xfe\n{\"EventType\":\"login\",\"User\":\"b\"}\n"
+                .to_vec(),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "invalid UTF-8 must not fail the run; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(detected_users(&output.stdout), ["a", "b"]);
+}
+
+#[test]
+fn batch_run_drops_an_over_long_line_and_evaluates_the_rest() {
+    let rules = temp_file(".yml", LOGIN_RULE);
+    let mut input = b"{\"EventType\":\"login\",\"User\":\"a\"}\n".to_vec();
+    input.extend(std::iter::repeat_n(b'x', 2 * 1024 * 1024));
+    input.extend_from_slice(b"\n{\"EventType\":\"login\",\"User\":\"b\"}\n");
+    let output = detections_batch(rules.path())
+        .arg("--include-event")
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert_eq!(detected_users(&output.stdout), ["a", "b"]);
+    assert!(
+        stderr.contains("Dropping over-long stdin lines"),
+        "the dropped line should be logged, got: {stderr}"
+    );
+}
+
+/// A directory opened as stdin fails every read with an I/O error.
+#[cfg(unix)]
+fn directory_stdin(dir: &TempDir) -> std::process::Stdio {
+    std::fs::File::open(dir.path()).unwrap().into()
+}
+
+#[cfg(unix)]
 #[test]
 fn batch_run_exits_4_on_a_stdin_read_error() {
     let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("state.db");
 
-    let output = batch(rules.path(), &db)
-        .write_stdin(b"{\"EventType\":\"login\",\"User\":\"a\"}\n\xff\xfe\n".to_vec())
+    let output = std::process::Command::new(common::rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--api-addr",
+            "127.0.0.1:0",
+            "--state-db",
+            db.to_str().unwrap(),
+        ])
+        .stdin(directory_stdin(&dir))
         .output()
         .unwrap();
     assert_eq!(
@@ -505,6 +595,135 @@ fn batch_run_exits_4_on_a_stdin_read_error() {
     assert!(
         stderr.contains("\"input_read_error\":true"),
         "the summary should report the read error, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stream_mode_exits_4_on_a_stdin_read_error() {
+    let rules = temp_file(".yml", BATCH_CORRELATION_RULES);
+    let dir = TempDir::new().unwrap();
+
+    let mut child = std::process::Command::new(common::rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--stdin-mode",
+            "stream",
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .stdin(directory_stdin(&dir))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            common::terminate_child(&mut child, std::time::Duration::from_secs(2));
+            panic!("a stream-mode daemon must stop when stdin fails, not wait for a signal");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(4), "stderr: {stderr}");
+    assert!(
+        stderr.contains("the input source failed"),
+        "readiness should drop when stdin fails, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("waiting for a shutdown signal"),
+        "a failed stdin must not be held open, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stream_mode_evaluates_the_lines_around_invalid_utf8_and_counts_them() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command as StdCommand, Stdio};
+    use std::time::{Duration, Instant};
+
+    let rules = temp_file(".yml", LOGIN_RULE);
+    let mut child = StdCommand::new(common::rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--stdin-mode",
+            "stream",
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn daemon");
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let mut input = b"{\"EventType\":\"login\",\"User\":\"a\"}\n\xff\xfe\n".to_vec();
+    input.extend(std::iter::repeat_n(b'x', 2 * 1024 * 1024));
+    input.extend_from_slice(b"\n{\"EventType\":\"login\",\"User\":\"b\"}\n");
+    stdin.write_all(&input).unwrap();
+    drop(stdin);
+
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { return };
+            if tx.send(line).is_err() {
+                return;
+            }
+        }
+    });
+    let mut addr = None;
+    let mut ended = false;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while addr.is_none() || !ended {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::ZERO);
+        let Ok(line) = rx.recv_timeout(remaining) else {
+            common::terminate_child(&mut child, Duration::from_secs(2));
+            panic!("daemon never listened and reached end of input within 10s");
+        };
+        if line.contains("API server listening") {
+            addr = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| v["fields"]["addr"].as_str().map(str::to_string));
+        }
+        ended |= line.contains("waiting for a shutdown signal");
+    }
+    let url = format!("http://{}/metrics", addr.unwrap());
+
+    let metrics = common::poll_until(Duration::from_secs(10), || {
+        let (_, body) = http_get(&url);
+        body.lines()
+            .any(|l| l == "rsigma_detection_matches_total 2")
+            .then_some(body)
+    });
+    common::terminate_child(&mut child, Duration::from_secs(5));
+    let metrics = metrics.expect("both valid lines should be evaluated");
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == r#"rsigma_input_invalid_utf8_total{source="stdin"} 1"#),
+        "{metrics}"
+    );
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == r#"rsigma_input_dropped_total{reason="too_long",source="stdin"} 1"#),
+        "{metrics}"
     );
 }
 

@@ -2084,16 +2084,13 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     #[cfg_attr(not(feature = "daemon-otlp"), allow(unused_mut))]
     let mut source_handle: Option<tokio::task::JoinHandle<()>> = match config.input.as_str() {
         "stdin" | "stdin://" => {
-            let source = StdinSource::new();
-            stdin_status = Some(source.read_status());
             let hook = Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>);
+            let source = StdinSource::with_metrics(hook.clone());
+            let status = source.read_status();
+            stdin_status = Some(status.clone());
             let tenant = config.input_tenant.clone();
-            let h = match config.stdin_mode {
-                StdinMode::Batch => spawn_input_source(source, tenant, event_tx, hook),
-                StdinMode::Stream => {
-                    spawn_input_source(batch::HoldOpen::new(source), tenant, event_tx, hook)
-                }
-            };
+            let source = batch::StdinInput::new(source, status, config.stdin_mode, health.clone());
+            let h = spawn_input_source(source, tenant, event_tx, hook);
             tracing::info!(input = "stdin", mode = ?config.stdin_mode, "Event source started");
             Some(h)
         }
@@ -2194,7 +2191,12 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         #[cfg(unix)]
         input if input.starts_with("unix://") => {
             let path = input.strip_prefix("unix://").unwrap_or(input);
-            match rsigma_runtime::UnixSocketSource::bind(std::path::Path::new(path)).await {
+            match rsigma_runtime::UnixSocketSource::bind_with_metrics(
+                std::path::Path::new(path),
+                Some(metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>),
+            )
+            .await
+            {
                 Ok(source) => {
                     let h = match config.input_tenant.clone() {
                         Some(tenant) => spawn_source(
@@ -3239,13 +3241,17 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         None => false,
     };
 
+    let input_read_error = stdin_status.as_ref().is_some_and(StdinReadStatus::failed);
     if !batch {
+        if input_read_error {
+            return crate::exit_code::RUNTIME_ERROR;
+        }
         return crate::exit_code::SUCCESS;
     }
 
     let failures = batch::BatchFailures {
         interrupted: shutdown_triggered,
-        input_read_error: stdin_status.as_ref().is_some_and(StdinReadStatus::failed),
+        input_read_error,
         undelivered: undelivered.load(Ordering::Relaxed),
         state_save_failed,
         task_failed,
@@ -4107,6 +4113,16 @@ async fn readyz(State(state): State<AppState>) -> Response {
         (
             StatusCode::OK,
             Json(serde_json::json!({ "status": "ready", "rules_loaded": true })),
+        )
+            .into_response()
+    } else if state.health.input_failed() {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "status": "not_ready",
+                "rules_loaded": state.health.rules_loaded(),
+                "input_failed": true,
+            })),
         )
             .into_response()
     } else {

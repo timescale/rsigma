@@ -7,25 +7,31 @@
 //! [`RawEvent`]; acks are a no-op (a raw stream has no per-message ack).
 
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 
+use super::line_framer::{FramedLine, LineFramer, MAX_LINE_BYTES};
 use super::unix::{UnixSocketGuard, bind_unix_listener};
 use super::{AckToken, EventSource, RawEvent};
-
-/// Maximum length of a single newline-delimited line. Mirrors the daemon's
-/// HTTP ingest cap so a client that never sends a newline cannot exhaust
-/// memory; longer lines are dropped with a warning.
-const MAX_LINE_BYTES: usize = 1024 * 1024;
+use crate::log_throttle::WarnThrottle;
+use crate::metrics::MetricsHook;
 
 /// Channel capacity between the socket readers and the engine. Bounded so a
 /// slow pipeline back-pressures the readers (which stop draining their
 /// sockets) instead of buffering unboundedly.
 const CHANNEL_CAPACITY: usize = 1024;
 
+/// Bytes a connection reader asks for in one read.
+const READ_BUFFER_BYTES: usize = 64 * 1024;
+
 /// Reads events from a Unix domain socket, one record per line.
+///
+/// Lines are cut by a [`LineFramer`]: a line longer than [`MAX_LINE_BYTES`]
+/// is dropped, and bytes that are not valid UTF-8 are replaced with U+FFFD.
 pub struct UnixSocketSource {
     rx: mpsc::Receiver<String>,
     /// Unlinks the socket file when the source is dropped (daemon shutdown).
@@ -35,9 +41,18 @@ pub struct UnixSocketSource {
 impl UnixSocketSource {
     /// Bind the socket at `path` and start accepting connections.
     pub async fn bind(path: &Path) -> std::io::Result<Self> {
+        Self::bind_with_metrics(path, None).await
+    }
+
+    /// Like [`bind`](Self::bind), reporting dropped lines and lines that are
+    /// not valid UTF-8 through `metrics`.
+    pub async fn bind_with_metrics(
+        path: &Path,
+        metrics: Option<Arc<dyn MetricsHook>>,
+    ) -> std::io::Result<Self> {
         let (listener, guard) = bind_unix_listener(path).await?;
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
-        tokio::spawn(accept_loop(listener, tx));
+        tokio::spawn(accept_loop(listener, tx, metrics));
         Ok(Self { rx, _guard: guard })
     }
 }
@@ -45,11 +60,15 @@ impl UnixSocketSource {
 /// Accept connections, spawning one reader task per connection. Ends when every
 /// reader has dropped the shared sender (the channel receiver closed on
 /// shutdown) or is aborted with the daemon.
-async fn accept_loop(listener: UnixListener, tx: mpsc::Sender<String>) {
+async fn accept_loop(
+    listener: UnixListener,
+    tx: mpsc::Sender<String>,
+    metrics: Option<Arc<dyn MetricsHook>>,
+) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
-                tokio::spawn(read_connection(stream, tx.clone()));
+                tokio::spawn(read_connection(stream, tx.clone(), metrics.clone()));
             }
             Err(e) => {
                 tracing::warn!(error = %e, "unix socket accept failed");
@@ -61,67 +80,68 @@ async fn accept_loop(listener: UnixListener, tx: mpsc::Sender<String>) {
 }
 
 /// Read newline-delimited records from one connection, forwarding each to the
-/// engine. Bounds each line to `MAX_LINE_BYTES`, discarding longer ones.
-async fn read_connection(mut stream: UnixStream, tx: mpsc::Sender<String>) {
-    let mut line: Vec<u8> = Vec::with_capacity(256);
-    let mut chunk = [0u8; 8192];
-    // True while discarding the tail of an over-long line.
-    let mut discarding = false;
-
+/// engine. A line still incomplete when the connection fails is dropped; one
+/// that ends at a clean end of stream without a newline is forwarded.
+async fn read_connection(
+    mut stream: UnixStream,
+    tx: mpsc::Sender<String>,
+    metrics: Option<Arc<dyn MetricsHook>>,
+) {
+    let mut buf = vec![0u8; READ_BUFFER_BYTES];
+    let mut framer = LineFramer::default();
+    let mut lines = Vec::new();
+    let mut too_long_log = WarnThrottle::default();
     loop {
-        let n = match stream.read(&mut chunk).await {
+        let n = match stream.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) => {
                 tracing::warn!(error = %e, "unix socket read failed");
-                break;
+                return;
             }
         };
-        for &byte in &chunk[..n] {
-            if byte == b'\n' {
-                if discarding {
-                    discarding = false;
-                } else if !line.is_empty() {
-                    let decoded = take_line(&mut line);
-                    if tx.send(decoded).await.is_err() {
-                        return; // receiver gone: shutting down
-                    }
+        framer.push(&buf[..n], &mut |line| lines.push(line));
+        if !forward(&mut lines, &tx, metrics.as_deref(), &mut too_long_log).await {
+            return;
+        }
+    }
+    framer.finish(&mut |line| lines.push(line));
+    forward(&mut lines, &tx, metrics.as_deref(), &mut too_long_log).await;
+}
+
+/// Send each framed line to the engine and count the dropped ones. `false`
+/// once the receiver is gone (daemon shutdown).
+async fn forward(
+    lines: &mut Vec<FramedLine>,
+    tx: &mpsc::Sender<String>,
+    metrics: Option<&dyn MetricsHook>,
+    too_long_log: &mut WarnThrottle,
+) -> bool {
+    for line in lines.drain(..) {
+        match line {
+            FramedLine::Line { text, invalid_utf8 } => {
+                if invalid_utf8 && let Some(m) = metrics {
+                    m.on_input_invalid_utf8("unix");
                 }
-                line.clear();
-            } else if discarding {
-                continue;
-            } else if line.len() >= MAX_LINE_BYTES {
-                tracing::warn!(
-                    max_bytes = MAX_LINE_BYTES,
-                    "dropping over-long unix socket line"
-                );
-                discarding = true;
-                line.clear();
-            } else {
-                line.push(byte);
+                if tx.send(text).await.is_err() {
+                    return false;
+                }
+            }
+            FramedLine::TooLong => {
+                if let Some(m) = metrics {
+                    m.on_input_dropped("unix", "too_long");
+                }
+                if let Some(n) = too_long_log.record(Instant::now()) {
+                    tracing::warn!(
+                        max_bytes = MAX_LINE_BYTES,
+                        dropped = n,
+                        "Dropping over-long unix socket lines"
+                    );
+                }
             }
         }
     }
-
-    // Flush a trailing line that ended at EOF without a newline.
-    if !discarding && !line.is_empty() {
-        let _ = tx.send(take_line(&mut line)).await;
-    }
-}
-
-/// Decode the accumulated bytes (minus a trailing CR) as UTF-8, returning an
-/// empty string for invalid UTF-8 (skipped downstream).
-fn take_line(line: &mut Vec<u8>) -> String {
-    if line.last() == Some(&b'\r') {
-        line.pop();
-    }
-    match std::str::from_utf8(line) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            tracing::warn!("dropping non-UTF-8 line on unix socket");
-            String::new()
-        }
-    }
+    true
 }
 
 impl EventSource for UnixSocketSource {
@@ -183,5 +203,23 @@ mod tests {
 
         let event = source.recv().await.unwrap();
         assert_eq!(event.payload, "{\"ok\":true}");
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_is_replaced_and_later_lines_still_arrive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ingest.sock");
+
+        let mut source = UnixSocketSource::bind(&path).await.unwrap();
+
+        let mut client = UnixStream::connect(&path).await.unwrap();
+        client
+            .write_all(b"{\"a\":\"\xff\"}\n{\"b\":2}\n")
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+
+        assert_eq!(source.recv().await.unwrap().payload, "{\"a\":\"\u{fffd}\"}");
+        assert_eq!(source.recv().await.unwrap().payload, "{\"b\":2}");
     }
 }

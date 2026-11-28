@@ -21,6 +21,15 @@ pub trait MetricsHook: Send + Sync {
     fn on_input_queue_depth_change(&self, delta: i64);
     /// Back-pressure event: a source tried to send but the channel was full.
     fn on_back_pressure(&self);
+    /// A source dropped one input record. `source` is `stdin`, `unix`, or
+    /// `nats`; `reason` is `too_long` (over the per-record cap) or `blank` (an
+    /// empty NATS message, acked and skipped).
+    fn on_input_dropped(&self, _source: &'static str, _reason: &'static str) {}
+    /// A source read one input record that was not valid UTF-8 and passed it
+    /// on with each invalid sequence replaced by U+FFFD.
+    fn on_input_invalid_utf8(&self, _source: &'static str) {}
+    /// A source stopped on an error instead of at the end of its input.
+    fn on_input_source_failed(&self, _source: &'static str) {}
     /// Observe the batch size used for a single engine lock acquisition.
     fn observe_batch_size(&self, size: u64);
     /// The output queue depth changed by `delta`.

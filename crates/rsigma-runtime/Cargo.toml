@@ -66,6 +66,7 @@ hex = "0.4"
 base64 = "0.23"
 zeroize = "1.9"
 rayon = "1.12.0"
+memchr = "2"
 
 # optional
 tokio-stream = { version = "0.1", optional = true }

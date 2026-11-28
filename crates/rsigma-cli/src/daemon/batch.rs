@@ -1,7 +1,8 @@
-use rsigma_runtime::{EventSource, RawEvent};
+use rsigma_runtime::{EventSource, RawEvent, StdinReadStatus};
 
 use crate::exit_code;
 
+use super::health::HealthState;
 use super::server::{DaemonConfig, StdinMode};
 
 impl DaemonConfig {
@@ -12,26 +13,57 @@ impl DaemonConfig {
     }
 }
 
-/// Keeps a source open after it reports end of input, so the daemon keeps
-/// running until a shutdown signal instead of exiting.
-pub(crate) struct HoldOpen<S>(Option<S>);
+/// Ends a stdin source the way `--stdin-mode` asks.
+///
+/// At the end of input a stream-mode source is held open, so the daemon keeps
+/// running until a shutdown signal instead of exiting. A read error is never
+/// held: it marks the daemon not ready and ends the source, so the pipeline
+/// drains and the daemon exits with a runtime error.
+pub(crate) struct StdinInput<S> {
+    source: Option<S>,
+    status: StdinReadStatus,
+    hold_open: bool,
+    health: HealthState,
+}
 
-impl<S> HoldOpen<S> {
-    pub(crate) fn new(source: S) -> Self {
-        Self(Some(source))
+impl<S> StdinInput<S> {
+    pub(crate) fn new(
+        source: S,
+        status: StdinReadStatus,
+        mode: StdinMode,
+        health: HealthState,
+    ) -> Self {
+        Self {
+            source: Some(source),
+            status,
+            hold_open: mode == StdinMode::Stream,
+            health,
+        }
     }
 }
 
-impl<S: EventSource> EventSource for HoldOpen<S> {
+impl<S: EventSource> EventSource for StdinInput<S> {
     async fn recv(&mut self) -> Option<RawEvent> {
-        if let Some(source) = &mut self.0 {
+        if let Some(source) = &mut self.source {
             if let Some(event) = source.recv().await {
                 return Some(event);
             }
-            self.0 = None;
+            self.source = None;
+            if self.status.failed() {
+                self.health.set_input_failed();
+                tracing::error!("Stdin input failed; draining and exiting");
+                return None;
+            }
+            if !self.hold_open {
+                return None;
+            }
             tracing::info!("Stdin input ended; waiting for a shutdown signal");
         }
-        std::future::pending().await
+        if self.hold_open && !self.status.failed() {
+            std::future::pending().await
+        } else {
+            None
+        }
     }
 }
 
@@ -112,16 +144,41 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn hold_open_stays_pending_after_end_of_input() {
-        let mut source = HoldOpen::new(OneEvent(Some(RawEvent {
+    fn one_event() -> OneEvent {
+        OneEvent(Some(RawEvent {
             payload: "{}".to_string(),
             ack_token: AckToken::Noop,
             tenant: None,
-        })));
+        }))
+    }
+
+    #[tokio::test]
+    async fn stream_mode_stays_pending_after_end_of_input() {
+        let health = HealthState::new();
+        health.set_ready(true);
+        let mut source = StdinInput::new(
+            one_event(),
+            StdinReadStatus::default(),
+            StdinMode::Stream,
+            health.clone(),
+        );
         assert_eq!(source.recv().await.unwrap().payload, "{}");
         let next = tokio::time::timeout(Duration::from_millis(50), source.recv()).await;
         assert!(next.is_err(), "a held source must not report end of input");
+        assert!(health.is_ready());
+    }
+
+    #[tokio::test]
+    async fn batch_mode_ends_at_end_of_input() {
+        let mut source = StdinInput::new(
+            one_event(),
+            StdinReadStatus::default(),
+            StdinMode::Batch,
+            HealthState::new(),
+        );
+        assert_eq!(source.recv().await.unwrap().payload, "{}");
+        assert!(source.recv().await.is_none());
+        assert!(source.recv().await.is_none());
     }
 
     #[test]
