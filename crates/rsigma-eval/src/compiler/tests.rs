@@ -1214,3 +1214,273 @@ mod modifier_validation_tests {
         assert_accepts(&[Modifier::Hour], vec![SigmaValue::Integer(3)]);
     }
 }
+
+// =============================================================================
+// windash: one regex instead of one matcher per dash combination
+// =============================================================================
+
+mod windash_regex {
+    use super::value::{compile_encoded, compile_str, compile_windash};
+    use crate::event::EventValue;
+    use crate::matcher::CompiledMatcher;
+    use proptest::prelude::*;
+    use rsigma_ir::encoding::expand_encoded;
+    use rsigma_ir::{IrEncoding, IrPattern, IrPatternPart, IrStrOp};
+    use rsigma_parser::validate::WINDASH_CHARS;
+
+    /// The matcher windash compiled to before: every expanded variant compiled
+    /// on its own, any of which matches.
+    fn expanded(
+        encodings: &[IrEncoding],
+        op: IrStrOp,
+        pattern: &IrPattern,
+        ci: bool,
+    ) -> CompiledMatcher {
+        CompiledMatcher::AnyOf(
+            expand_encoded(encodings, op, pattern)
+                .unwrap()
+                .iter()
+                .map(|(op, p)| compile_str(*op, p, ci).unwrap())
+                .collect(),
+        )
+    }
+
+    /// Characters chosen to stress case folding: Unicode letters whose
+    /// lowercase depends on context (final sigma), expands (dotted capital I),
+    /// or folds onto ASCII (Kelvin sign, long s), next to every dash.
+    const ALPHABET: &[char] = &[
+        'a', 'B', 'k', 'K', 's', 'S', ' ', '.', '\\', 'Σ', 'σ', 'ς', 'İ', 'i', '\u{212a}', 'ſ',
+        '-', '/', '\u{2013}', '\u{2014}', '\u{2015}', '\0',
+    ];
+    const ASCII: &[char] = &['a', 'B', 'k', 'S', ' ', '.', '-', '/', 'x', 'Q'];
+
+    #[derive(Debug, Clone)]
+    enum Part {
+        Text(Vec<usize>),
+        Multi,
+        Single,
+    }
+
+    fn parts(alphabet: usize) -> impl Strategy<Value = Vec<Part>> {
+        prop::collection::vec(
+            prop_oneof![
+                6 => prop::collection::vec(0..alphabet, 1..6).prop_map(Part::Text),
+                1 => Just(Part::Multi),
+                1 => Just(Part::Single),
+            ],
+            1..5,
+        )
+    }
+
+    fn op() -> impl Strategy<Value = IrStrOp> {
+        prop_oneof![
+            Just(IrStrOp::Exact),
+            Just(IrStrOp::Contains),
+            Just(IrStrOp::StartsWith),
+            Just(IrStrOp::EndsWith),
+        ]
+    }
+
+    fn pattern(parts: &[Part], alphabet: &[char], wildcards: bool) -> IrPattern {
+        let mut out = Vec::new();
+        for part in parts {
+            match part {
+                Part::Text(chars) => {
+                    let text: String = chars.iter().map(|&i| alphabet[i]).collect();
+                    match out.last_mut() {
+                        Some(IrPatternPart::Literal(prev)) => prev.push_str(&text),
+                        _ => out.push(IrPatternPart::Literal(text)),
+                    }
+                }
+                Part::Multi if wildcards => out.push(IrPatternPart::WildcardMulti),
+                Part::Single if wildcards => out.push(IrPatternPart::WildcardSingle),
+                _ => {}
+            }
+        }
+        IrPattern { parts: out }
+    }
+
+    /// A haystack built from the pattern: dashes swapped, letters re-cased,
+    /// wildcards filled, and noise around it, plus the same with a cut.
+    fn haystacks(
+        pattern: &IrPattern,
+        picks: &[usize],
+        noise: &[usize],
+        alphabet: &[char],
+        utf16: Option<IrEncoding>,
+    ) -> Vec<String> {
+        let mut pick = picks.iter().cycle();
+        let mut body = String::new();
+        if utf16 == Some(IrEncoding::Utf16) {
+            body.push('\u{feff}');
+        }
+        let push = |c: char, body: &mut String| match utf16 {
+            Some(IrEncoding::Utf16Be) => {
+                body.push('\0');
+                body.push(c);
+            }
+            Some(_) => {
+                body.push(c);
+                body.push('\0');
+            }
+            None => body.push(c),
+        };
+        for part in &pattern.parts {
+            match part {
+                IrPatternPart::Literal(text) => {
+                    for c in text.chars() {
+                        let p = *pick.next().unwrap_or(&0);
+                        let c = if WINDASH_CHARS.contains(&c) {
+                            WINDASH_CHARS[p % 5]
+                        } else if p.is_multiple_of(3) {
+                            c.to_uppercase().next().unwrap_or(c)
+                        } else if p % 3 == 1 {
+                            c.to_lowercase().next().unwrap_or(c)
+                        } else {
+                            c
+                        };
+                        push(c, &mut body);
+                    }
+                }
+                IrPatternPart::WildcardMulti => {
+                    for &n in noise.iter().take(3) {
+                        body.push(alphabet[n]);
+                    }
+                }
+                IrPatternPart::WildcardSingle => {
+                    body.push(alphabet[noise.first().copied().unwrap_or(0)])
+                }
+            }
+        }
+        let noise: String = noise.iter().map(|&n| alphabet[n]).collect();
+        let half = noise.chars().count() / 2;
+        let before: String = noise.chars().take(half).collect();
+        let after: String = noise.chars().skip(half).collect();
+        let cut: String = body.chars().skip(1).collect();
+        vec![
+            body.clone(),
+            format!("{before}{body}"),
+            format!("{body}{after}"),
+            format!("{before}{body}{after}"),
+            cut,
+            noise,
+            String::new(),
+        ]
+    }
+
+    fn agree(
+        encodings: &[IrEncoding],
+        op: IrStrOp,
+        pattern: &IrPattern,
+        ci: bool,
+        haystacks: &[String],
+    ) -> Result<(), TestCaseError> {
+        let old = expanded(encodings, op, pattern, ci);
+        let new = compile_encoded(encodings, op, pattern, ci).unwrap();
+        let event = serde_json::json!({});
+        let event = crate::event::JsonEvent::borrow(&event);
+        for haystack in haystacks {
+            prop_assert_eq!(
+                old.matches_str(haystack),
+                new.matches_str(haystack),
+                "pattern {:?} op {:?} ci {} haystack {:?} new {:?}",
+                pattern,
+                op,
+                ci,
+                haystack,
+                new
+            );
+            let value = EventValue::Str(haystack.as_str().into());
+            prop_assert_eq!(old.matches(&value, &event), new.matches(&value, &event));
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(3000))]
+
+        #[test]
+        fn single_regex_matches_like_expanded_variants(
+            parts in parts(ALPHABET.len()),
+            op in op(),
+            ci in any::<bool>(),
+            wildcards in any::<bool>(),
+            picks in prop::collection::vec(0usize..15, 1..12),
+            noise in prop::collection::vec(0..ALPHABET.len(), 0..10),
+        ) {
+            let pattern = pattern(&parts, ALPHABET, wildcards);
+            let dashes = pattern.parts.iter().map(|p| match p {
+                IrPatternPart::Literal(t) => t.chars().filter(|c| WINDASH_CHARS.contains(c)).count(),
+                _ => 0,
+            }).sum::<usize>();
+            prop_assume!(dashes <= 4);
+            let haystacks = haystacks(&pattern, &picks, &noise, ALPHABET, None);
+            agree(&[IrEncoding::Windash], op, &pattern, ci, &haystacks)?;
+        }
+
+        #[test]
+        fn single_regex_matches_like_expanded_utf16_variants(
+            parts in parts(ASCII.len()),
+            op in op(),
+            ci in any::<bool>(),
+            wildcards in any::<bool>(),
+            encoding in prop_oneof![
+                Just(IrEncoding::Wide),
+                Just(IrEncoding::Utf16),
+                Just(IrEncoding::Utf16Be),
+            ],
+            picks in prop::collection::vec(0usize..15, 1..12),
+            noise in prop::collection::vec(0..ASCII.len(), 0..10),
+        ) {
+            let pattern = pattern(&parts, ASCII, wildcards);
+            let dashes = pattern.parts.iter().map(|p| match p {
+                IrPatternPart::Literal(t) => t.chars().filter(|c| WINDASH_CHARS.contains(c)).count(),
+                _ => 0,
+            }).sum::<usize>();
+            prop_assume!(dashes <= 4);
+            let haystacks = haystacks(&pattern, &picks, &noise, ASCII, Some(encoding));
+            agree(&[encoding, IrEncoding::Windash], op, &pattern, ci, &haystacks)?;
+        }
+    }
+
+    #[test]
+    fn regex_replaces_combinations() {
+        let pattern = IrPattern {
+            parts: vec![IrPatternPart::Literal("-a -b -c -d -e -f -g -h".into())],
+        };
+        let matcher = compile_windash(&[IrEncoding::Windash], IrStrOp::Contains, &pattern, true)
+            .unwrap()
+            .expect("a value with dashes compiles to a regex");
+        let CompiledMatcher::CaseInsensitiveGroup { children, .. } = &matcher else {
+            panic!("expected a case-insensitive group, got {matcher:?}");
+        };
+        assert!(matches!(children.as_slice(), [CompiledMatcher::Regex(_)]));
+        assert!(matcher.matches_str("run /A \u{2013}b -C \u{2014}d /e \u{2015}F -g /h now"));
+        assert!(!matcher.matches_str("run /A +b -C \u{2014}d /e \u{2015}F -g /h now"));
+    }
+
+    #[test]
+    fn values_without_dashes_and_base64_keep_the_expansion() {
+        let plain = IrPattern {
+            parts: vec![IrPatternPart::Literal("whoami".into())],
+        };
+        assert!(
+            compile_windash(&[IrEncoding::Windash], IrStrOp::Contains, &plain, true)
+                .unwrap()
+                .is_none()
+        );
+        let dashed = IrPattern {
+            parts: vec![IrPatternPart::Literal("-enc".into())],
+        };
+        assert!(
+            compile_windash(
+                &[IrEncoding::Base64Offset, IrEncoding::Windash],
+                IrStrOp::Contains,
+                &dashed,
+                true
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+}
