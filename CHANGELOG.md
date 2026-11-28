@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL
+### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL (#813)
 
 The PostgreSQL backend passed any `fields` entry containing `(` and `)` into the SELECT list as written, so a rule could add a sub-select, a call such as `pg_sleep(10)`, or a comment to the query. An entry must now be `*`, a field name, or a `count`, `sum`, `avg`, `min`, or `max` call over a field or `*`, each with an optional `AS alias`. Anything else fails conversion with `InvalidSelectField`, which names the entry. An aggregate call now groups the query by the other listed fields. In JSONB mode a selected field is named after its Sigma field, and an alias is a column name instead of a JSONB path.
 
