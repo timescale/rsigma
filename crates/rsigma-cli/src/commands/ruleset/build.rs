@@ -75,7 +75,10 @@ pub(crate) fn cmd_build(args: super::BuildArgs, ctx: OutputCtx) {
             process::exit(CONFIG_ERROR);
         });
 
-    let (plan, lock) = plan_output(&resolved, &spec);
+    let (plan, lock) = plan_output(&resolved, &spec).unwrap_or_else(|error| {
+        eprintln!("error: ruleset '{name}': {error}");
+        process::exit(CONFIG_ERROR);
+    });
 
     if args.check {
         let drifted = check_output(&output, &plan, &lock);

@@ -114,7 +114,10 @@ pub(crate) fn cmd_diff(args: super::DiffArgs, ctx: OutputCtx) {
         eprintln!("error: ruleset '{name}': {error}");
         process::exit(CONFIG_ERROR);
     }
-    let (_, current) = plan_output(&resolved, &spec);
+    let (_, current) = plan_output(&resolved, &spec).unwrap_or_else(|error| {
+        eprintln!("error: ruleset '{name}': {error}");
+        process::exit(CONFIG_ERROR);
+    });
 
     let mut previous_documents: BTreeMap<(String, String), LockedDocument> = previous
         .documents

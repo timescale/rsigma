@@ -270,3 +270,45 @@ fn dry_run_prints_config() {
         .success()
         .stdout(predicate::str::contains("fail_on_missing"));
 }
+
+#[test]
+fn in_place_scaffold_indents_past_a_comment_and_keeps_the_rule() {
+    // The first line under `custom_attributes:` is a comment at column 0; the
+    // merge must indent the new sections like the existing key, not like the
+    // comment, and must leave the rest of the rule unchanged.
+    let source = r#"title: Commented Block Rule
+id: 34343434-5656-7878-9090-121212121212
+status: stable
+description: Has a goal already.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains: whoami
+    condition: selection
+level: medium
+tags:
+    - attack.execution
+falsepositives:
+    - Known benign tooling
+custom_attributes:
+# team-owned settings
+    rsigma.suppress: 5m
+"#;
+    let rule = temp_file(".yml", source);
+    let path = rule.path().to_str().unwrap();
+
+    rsigma()
+        .args(["rule", "doc", "--scaffold", path, "--in-place"])
+        .assert()
+        .success();
+
+    let merged = std::fs::read_to_string(rule.path()).unwrap();
+    let parsed = rsigma_parser::parse_sigma_yaml(&merged).unwrap();
+    assert!(!parsed.has_errors(), "{merged}");
+    let attrs = &parsed.rules[0].custom_attributes;
+    assert_eq!(attrs["rsigma.suppress"].as_str(), Some("5m"), "{merged}");
+    assert!(attrs.contains_key("rsigma.ads.validation"), "{merged}");
+    assert!(merged.contains("\n    rsigma.ads.validation: "), "{merged}");
+}
