@@ -6,7 +6,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -138,6 +138,24 @@ struct Watchlist {
     max_indicators: usize,
     max_value_length: usize,
     default_ttl: Option<Duration>,
+    /// Bumped by [`WatchlistRegistry::mark_changed`] for each committed change.
+    revision: u64,
+    /// The latest revision the source cache holds.
+    applied: u64,
+    /// When the oldest change not in the source cache was made.
+    pending_since: Option<Instant>,
+}
+
+/// Whether a watchlist's changes have reached the source cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchlistStatus {
+    /// Committed changes so far.
+    pub revision: u64,
+    /// The latest revision the source cache, and so rule rebuilds and
+    /// enrichers, can see.
+    pub applied_revision: u64,
+    /// How long the oldest change not yet applied has waited.
+    pub pending_for: Option<Duration>,
 }
 
 impl Watchlist {
@@ -152,6 +170,9 @@ impl Watchlist {
             max_indicators,
             max_value_length,
             default_ttl,
+            revision: 0,
+            applied: 0,
+            pending_since: None,
         }
     }
 
@@ -435,6 +456,61 @@ impl WatchlistRegistry {
         changed
     }
 
+    /// The declared watchlist ids, in no set order.
+    pub fn ids(&self) -> Vec<String> {
+        self.lists.read().keys().cloned().collect()
+    }
+
+    /// Record a committed change to `source_id` made at `now` and return its
+    /// revision. The change stays pending until a resolve that read it
+    /// reports [`mark_applied`](Self::mark_applied).
+    pub fn mark_changed(&self, source_id: &str, now: Instant) -> Option<u64> {
+        let mut lists = self.lists.write();
+        let list = lists.get_mut(source_id)?;
+        list.revision += 1;
+        list.pending_since.get_or_insert(now);
+        Some(list.revision)
+    }
+
+    /// Unexpired values in byte order, with the revision they reflect.
+    pub fn values_at(
+        &self,
+        source_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(Vec<String>, u64), WatchlistError> {
+        let lists = self.lists.read();
+        let list = lists.get(source_id).ok_or(WatchlistError::UnknownSource)?;
+        Ok((list.live(now).into_keys().collect(), list.revision))
+    }
+
+    /// Record that the source cache holds `revision` of `source_id`. Returns
+    /// how long the oldest pending change waited when this applies every
+    /// change made so far.
+    pub fn mark_applied(&self, source_id: &str, revision: u64, now: Instant) -> Option<Duration> {
+        let mut lists = self.lists.write();
+        let list = lists.get_mut(source_id)?;
+        list.applied = list.applied.max(revision);
+        if list.applied < list.revision {
+            return None;
+        }
+        list.pending_since
+            .take()
+            .map(|since| now.saturating_duration_since(since))
+    }
+
+    /// Committed and applied revisions of `source_id` at `now`.
+    pub fn status(&self, source_id: &str, now: Instant) -> Option<WatchlistStatus> {
+        let lists = self.lists.read();
+        let list = lists.get(source_id)?;
+        Some(WatchlistStatus {
+            revision: list.revision,
+            applied_revision: list.applied,
+            pending_for: list
+                .pending_since
+                .map(|since| now.saturating_duration_since(since)),
+        })
+    }
+
     /// Unexpired values in byte order.
     pub fn values(
         &self,
@@ -683,6 +759,40 @@ mod tests {
 
     fn bare(value: &str) -> WatchlistItem {
         WatchlistItem::Bare(value.into())
+    }
+
+    #[test]
+    fn a_change_is_pending_until_a_resolve_that_read_it_is_applied() {
+        let set = sample(10, None);
+        let start = Instant::now();
+        let status = |at: Instant| set.status("c2", at).unwrap();
+        assert_eq!(status(start).pending_for, None);
+
+        set.add("c2", &[bare("a")], None, now()).unwrap();
+        assert_eq!(set.mark_changed("c2", start), Some(1));
+        let (values, read) = set.values_at("c2", now()).unwrap();
+        assert_eq!((values, read), (vec!["a".to_string()], 1));
+
+        // A second change lands after that resolve read the set.
+        set.add("c2", &[bare("b")], None, now()).unwrap();
+        set.mark_changed("c2", start + Duration::from_secs(1));
+        let later = start + Duration::from_secs(3);
+        assert_eq!(
+            set.mark_applied("c2", read, later),
+            None,
+            "revision 2 is pending"
+        );
+        assert_eq!(status(later).applied_revision, 1);
+        assert_eq!(status(later).pending_for, Some(Duration::from_secs(3)));
+
+        let (_, read) = set.values_at("c2", now()).unwrap();
+        assert_eq!(
+            set.mark_applied("c2", read, later),
+            Some(Duration::from_secs(3)),
+            "the delay runs from the oldest pending change"
+        );
+        assert_eq!(status(later).pending_for, None);
+        assert_eq!(set.mark_changed("missing", start), None);
     }
 
     #[test]

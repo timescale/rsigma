@@ -1,14 +1,18 @@
 //! HTTP push, replace, delete, and list for `type: watchlist` sources.
 //!
-//! A successful change updates the in-memory registry, then asks the refresh
-//! scheduler to rebuild rules. The response returns before that rebuild
-//! finishes. A full trigger channel is logged and still a success.
+//! A successful change updates the in-memory registry, records a new
+//! revision, then asks the refresh scheduler to re-resolve the source. The
+//! request is never dropped: requests for one source coalesce, and one made
+//! while the source resolves runs it again afterwards. The response returns
+//! before the source cache holds the change; the list endpoint reports the
+//! revision the cache holds, so a client can tell an applied change from a
+//! pending one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRef, Path, Query, State};
@@ -18,12 +22,11 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rsigma_eval::pipeline::sources::SourceType;
-use rsigma_runtime::sources::refresh::RefreshTrigger;
+use rsigma_runtime::RefreshRequests;
 use rsigma_runtime::sources::registry::DaemonSourceRegistry;
 use rsigma_runtime::sources::{WatchlistError, WatchlistItem, WatchlistRegistry, WatchlistRow};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
 
 use super::metrics::Metrics;
 
@@ -32,6 +35,10 @@ pub(crate) const BODY_LIMIT: usize = 4 * 1024 * 1024;
 
 const LIST_DEFAULT_LIMIT: usize = 1000;
 const LIST_MAX_LIMIT: usize = 10_000;
+
+/// A change still not in the source cache after this long is logged by the
+/// sweeper.
+const STALE_CHANGE_WARNING: Duration = Duration::from_secs(30);
 
 pub(crate) type PersistFn = Arc<
     dyn Fn(String, Vec<WatchlistRow>) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
@@ -44,7 +51,7 @@ pub(crate) type PersistFn = Arc<
 pub(crate) struct WatchlistApi {
     registry: Arc<WatchlistRegistry>,
     sources: Arc<DaemonSourceRegistry>,
-    trigger: Option<mpsc::Sender<RefreshTrigger>>,
+    trigger: Option<RefreshRequests>,
     metrics: Arc<Metrics>,
     persist: Option<PersistFn>,
 }
@@ -53,7 +60,7 @@ impl WatchlistApi {
     pub(crate) fn new(
         registry: Arc<WatchlistRegistry>,
         sources: Arc<DaemonSourceRegistry>,
-        trigger: Option<mpsc::Sender<RefreshTrigger>>,
+        trigger: Option<RefreshRequests>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
@@ -96,7 +103,7 @@ impl WatchlistApi {
         self.count(source_id, "add", summary.added);
         self.count(source_id, "update", summary.updated);
         self.gauge(source_id, summary.total);
-        self.publish(source_id);
+        let revision = self.publish(source_id);
         (
             StatusCode::OK,
             Json(json!({
@@ -104,6 +111,7 @@ impl WatchlistApi {
                 "added": summary.added,
                 "updated": summary.updated,
                 "total": summary.total,
+                "revision": revision,
             })),
         )
             .into_response()
@@ -145,13 +153,14 @@ impl WatchlistApi {
             before_values.intersection(&after).count(),
         );
         self.gauge(source_id, summary.total);
-        self.publish(source_id);
+        let revision = self.publish(source_id);
         (
             StatusCode::OK,
             Json(json!({
                 "source_id": source_id,
                 "total": summary.total,
                 "removed": summary.removed,
+                "revision": revision,
             })),
         )
             .into_response()
@@ -178,7 +187,7 @@ impl WatchlistApi {
         }
         self.count(source_id, "remove", summary.removed);
         self.gauge(source_id, summary.total);
-        self.publish(source_id);
+        let revision = self.publish(source_id);
         (
             StatusCode::OK,
             Json(json!({
@@ -186,6 +195,7 @@ impl WatchlistApi {
                 "removed": summary.removed,
                 "not_found": summary.not_found,
                 "total": summary.total,
+                "revision": revision,
             })),
         )
             .into_response()
@@ -197,6 +207,7 @@ impl WatchlistApi {
             return *response;
         }
         let limit = limit.min(LIST_MAX_LIMIT);
+        let status = self.registry.status(source_id, Instant::now());
         match self.registry.list(source_id, now, limit, offset) {
             Ok((total, page)) => {
                 let indicators: Vec<Value> = page
@@ -214,6 +225,9 @@ impl WatchlistApi {
                     Json(json!({
                         "source_id": source_id,
                         "total": total,
+                        "revision": status.map(|s| s.revision),
+                        "applied_revision": status.map(|s| s.applied_revision),
+                        "pending": status.is_some_and(|s| s.pending_for.is_some()),
                         "indicators": indicators,
                     })),
                 )
@@ -292,16 +306,18 @@ impl WatchlistApi {
             .set(total as i64);
     }
 
-    fn publish(&self, source_id: &str) {
-        let Some(tx) = &self.trigger else {
-            return;
-        };
-        if tx
-            .try_send(RefreshTrigger::Single(source_id.to_string()))
-            .is_err()
-        {
-            tracing::debug!(source_id, "watchlist refresh trigger was not queued");
+    /// Record a committed change and ask for the source to be re-resolved.
+    /// Returns the change's revision.
+    fn publish(&self, source_id: &str) -> Option<u64> {
+        let revision = self.registry.mark_changed(source_id, Instant::now());
+        self.metrics
+            .watchlist_refresh_pending
+            .with_label_values(&[source_id])
+            .set(1);
+        if let Some(requests) = &self.trigger {
+            requests.request_source(source_id);
         }
+        revision
     }
 }
 
@@ -385,6 +401,10 @@ pub(crate) fn preregister_metrics(metrics: &Metrics, ids: &[String]) {
             .watchlist_indicators
             .with_label_values(&[id.as_str()])
             .set(0);
+        metrics
+            .watchlist_refresh_pending
+            .with_label_values(&[id.as_str()])
+            .set(0);
         for op in ["add", "update", "remove", "expire"] {
             let _ = metrics
                 .watchlist_changes_total
@@ -397,7 +417,7 @@ pub(crate) fn preregister_metrics(metrics: &Metrics, ids: &[String]) {
 /// watchlist that lost one.
 pub(crate) fn spawn_sweeper(
     registry: Arc<WatchlistRegistry>,
-    trigger: Option<mpsc::Sender<RefreshTrigger>>,
+    trigger: Option<RefreshRequests>,
     metrics: Arc<Metrics>,
     store: Option<Arc<super::store::SqliteStateStore>>,
 ) {
@@ -405,8 +425,10 @@ pub(crate) fn spawn_sweeper(
         let mut tick = tokio::time::interval(Duration::from_secs(10));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tick.tick().await;
+        let mut warned: HashMap<String, u64> = HashMap::new();
         loop {
             tick.tick().await;
+            warn_stale_changes(&registry, &mut warned);
             let now = Utc::now();
             let writes = registry.write_lock();
             let _guard = writes.lock().await;
@@ -433,6 +455,35 @@ pub(crate) fn spawn_sweeper(
             }
         }
     });
+}
+
+/// Log each watchlist whose latest change has waited longer than
+/// [`STALE_CHANGE_WARNING`] for the source cache, once per revision.
+fn warn_stale_changes(registry: &WatchlistRegistry, warned: &mut HashMap<String, u64>) {
+    let now = Instant::now();
+    for id in registry.ids() {
+        let Some(status) = registry.status(&id, now) else {
+            continue;
+        };
+        match status.pending_for {
+            Some(waited)
+                if waited >= STALE_CHANGE_WARNING && warned.get(&id) != Some(&status.revision) =>
+            {
+                tracing::warn!(
+                    source_id = %id,
+                    waited_secs = waited.as_secs(),
+                    revision = status.revision,
+                    applied_revision = status.applied_revision,
+                    "Watchlist change has not reached the source cache"
+                );
+                warned.insert(id, status.revision);
+            }
+            None => {
+                warned.remove(&id);
+            }
+            Some(_) => {}
+        }
+    }
 }
 
 /// Load indicators saved for the declared watchlists. Rows for any other
@@ -642,9 +693,9 @@ mod tests {
 
     #[tokio::test]
     async fn post_get_put_delete_round_trip() {
-        let (tx, mut rx) = mpsc::channel(4);
+        let requests = RefreshRequests::default();
         let mut api = api_for(vec![watch("c2_ips", 10)]);
-        api.trigger = Some(tx);
+        api.trigger = Some(requests.clone());
         let (status, body) = call(
             api.clone(),
             "POST",
@@ -656,10 +707,8 @@ mod tests {
         assert_eq!(body["added"], 2);
         assert_eq!(body["updated"], 0);
         assert_eq!(body["total"], 2);
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            RefreshTrigger::Single(id) if id == "c2_ips"
-        ));
+        assert_eq!(body["revision"], 1);
+        assert!(requests.is_pending(), "the change asked for a refresh");
 
         let (status, listed) = call(
             api.clone(),
@@ -670,6 +719,9 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(listed["total"], 2);
+        assert_eq!(listed["revision"], 1);
+        assert_eq!(listed["applied_revision"], 0);
+        assert_eq!(listed["pending"], true);
         assert_eq!(listed["indicators"].as_array().unwrap().len(), 1);
         assert_eq!(listed["indicators"][0]["value"], "203.0.113.9");
         assert!(listed["indicators"][0]["expires_at"].is_string());

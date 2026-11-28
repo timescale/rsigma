@@ -56,6 +56,8 @@ pub struct Metrics {
     pub source_rebuilds_total: IntCounterVec,
     pub watchlist_indicators: IntGaugeVec,
     pub watchlist_changes_total: IntCounterVec,
+    pub watchlist_refresh_pending: IntGaugeVec,
+    pub watchlist_refresh_delay_seconds: prometheus::HistogramVec,
     #[cfg(feature = "stix-source")]
     pub stix_source_indicators: IntGaugeVec,
     #[cfg(feature = "stix-source")]
@@ -694,6 +696,31 @@ impl Metrics {
         .unwrap();
         registry
             .register(Box::new(watchlist_changes_total.clone()))
+            .unwrap();
+        let watchlist_refresh_pending = IntGaugeVec::new(
+            Opts::new(
+                "rsigma_watchlist_refresh_pending",
+                "1 while a watchlist change has not reached the source cache",
+            ),
+            &["source_id"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_refresh_pending.clone()))
+            .unwrap();
+        let watchlist_refresh_delay_seconds = prometheus::HistogramVec::new(
+            HistogramOpts::new(
+                "rsigma_watchlist_refresh_delay_seconds",
+                "Time from a watchlist change to the source cache holding it",
+            )
+            .buckets(vec![
+                0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0,
+            ]),
+            &["source_id"],
+        )
+        .unwrap();
+        registry
+            .register(Box::new(watchlist_refresh_delay_seconds.clone()))
             .unwrap();
         #[cfg(feature = "stix-source")]
         let stix_source_indicators = IntGaugeVec::new(
@@ -1801,6 +1828,8 @@ impl Metrics {
             source_rebuilds_total,
             watchlist_indicators,
             watchlist_changes_total,
+            watchlist_refresh_pending,
+            watchlist_refresh_delay_seconds,
             #[cfg(feature = "stix-source")]
             stix_source_indicators,
             #[cfg(feature = "stix-source")]
@@ -2585,6 +2614,15 @@ impl MetricsHook for Metrics {
         self.stix_source_indicators
             .with_label_values(&[source_id])
             .set(count as i64);
+    }
+
+    fn on_watchlist_applied(&self, source_id: &str, delay: std::time::Duration) {
+        self.watchlist_refresh_pending
+            .with_label_values(&[source_id])
+            .set(0);
+        self.watchlist_refresh_delay_seconds
+            .with_label_values(&[source_id])
+            .observe(delay.as_secs_f64());
     }
 
     #[cfg(feature = "stix-source")]

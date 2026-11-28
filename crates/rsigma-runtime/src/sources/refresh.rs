@@ -6,11 +6,11 @@
 //! - `Push`: receives updates from external triggers (NATS)
 //! - `OnDemand`: only refreshes when explicitly triggered via API/signal
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rsigma_eval::pipeline::sources::{DynamicSource, RefreshPolicy, SourceType};
-use tokio::sync::{Semaphore, mpsc, watch};
+use tokio::sync::{Notify, Semaphore, mpsc, watch};
 
 use super::{MAX_CONCURRENT_RESOLVES, SourceResolver, catch_resolver_panic};
 
@@ -27,6 +27,72 @@ pub enum RefreshTrigger {
         source_id: String,
         data: serde_json::Value,
     },
+}
+
+/// A refresh request queue that never drops a request.
+///
+/// Requests for the same source coalesce while they wait, and a request made
+/// while that source is resolving runs it once more afterwards, so the latest
+/// change is always picked up. Unlike the bounded trigger channel, a request
+/// never fails or waits for room.
+#[derive(Clone, Default)]
+pub struct RefreshRequests {
+    inner: Arc<PendingRequests>,
+}
+
+#[derive(Default)]
+struct PendingRequests {
+    pending: Mutex<Pending>,
+    notify: Notify,
+}
+
+#[derive(Default)]
+struct Pending {
+    all: bool,
+    sources: HashSet<String>,
+}
+
+impl RefreshRequests {
+    /// Ask for `source_id` to be re-resolved.
+    pub fn request_source(&self, source_id: &str) {
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sources
+            .insert(source_id.to_string());
+        self.inner.notify.notify_one();
+    }
+
+    /// Ask for every source to be re-resolved.
+    pub fn request_all(&self) {
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .all = true;
+        self.inner.notify.notify_one();
+    }
+
+    /// Whether any request waits for the scheduler.
+    pub fn is_pending(&self) -> bool {
+        let pending = self
+            .inner
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        pending.all || !pending.sources.is_empty()
+    }
+
+    fn take(&self) -> Pending {
+        std::mem::take(
+            &mut *self
+                .inner
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+    }
 }
 
 /// Notification sent when sources have been refreshed.
@@ -52,6 +118,8 @@ pub struct RefreshScheduler {
     result_tx: watch::Sender<Option<RefreshResult>>,
     /// Watch channel receiver for consumers.
     result_rx: watch::Receiver<Option<RefreshResult>>,
+    /// Lossless, coalescing refresh requests.
+    requests: RefreshRequests,
 }
 
 impl RefreshScheduler {
@@ -64,7 +132,15 @@ impl RefreshScheduler {
             trigger_rx: Some(trigger_rx),
             result_tx,
             result_rx,
+            requests: RefreshRequests::default(),
         }
+    }
+
+    /// Get a handle for refresh requests that are never dropped. Prefer it
+    /// over [`trigger_sender`](Self::trigger_sender) where a caller cannot
+    /// wait for room in the trigger channel.
+    pub fn requests(&self) -> RefreshRequests {
+        self.requests.clone()
     }
 
     /// Get a sender for triggering on-demand resolution.
@@ -129,6 +205,7 @@ impl RefreshScheduler {
                 trigger_rx,
                 self.trigger_tx,
                 self.result_tx,
+                self.requests,
             )
             .await;
         })
@@ -140,6 +217,7 @@ impl RefreshScheduler {
         mut trigger_rx: mpsc::Receiver<RefreshTrigger>,
         trigger_tx: mpsc::Sender<RefreshTrigger>,
         result_tx: watch::Sender<Option<RefreshResult>>,
+        requests: RefreshRequests,
     ) {
         // Spawn interval timers
         for source in &sources {
@@ -216,10 +294,36 @@ impl RefreshScheduler {
             }
         }
 
-        // Main loop: wait for triggers and start a resolve task per source
+        // Main loop: wait for triggers and requests, and start a resolve task
+        // per source.
         let in_flight = Arc::new(Mutex::new(HashMap::new()));
         let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_RESOLVES));
-        while let Some(trigger) = trigger_rx.recv().await {
+        let start = |source: &DynamicSource| {
+            SourceRefresh {
+                source: source.clone(),
+                resolver: resolver.clone(),
+                result_tx: result_tx.clone(),
+                in_flight: in_flight.clone(),
+                permits: permits.clone(),
+            }
+            .spawn();
+        };
+        loop {
+            let trigger = tokio::select! {
+                trigger = trigger_rx.recv() => match trigger {
+                    Some(trigger) => trigger,
+                    None => break,
+                },
+                () = requests.inner.notify.notified() => {
+                    let pending = requests.take();
+                    for source in &sources {
+                        if pending.all || pending.sources.contains(&source.id) {
+                            start(source);
+                        }
+                    }
+                    continue;
+                }
+            };
             // Handle NATS push with pre-parsed data (no re-resolution needed)
             #[cfg(feature = "nats")]
             if let RefreshTrigger::NatsPush { source_id, data } = trigger {
@@ -228,25 +332,16 @@ impl RefreshScheduler {
                 continue;
             }
 
-            let to_resolve: Vec<&DynamicSource> = match &trigger {
-                RefreshTrigger::All => sources.iter().collect(),
-                RefreshTrigger::Single(id) => sources.iter().filter(|s| s.id == *id).collect(),
+            match &trigger {
+                RefreshTrigger::All => sources.iter().for_each(start),
+                RefreshTrigger::Single(id) => {
+                    sources.iter().filter(|s| s.id == *id).for_each(start)
+                }
                 #[cfg(feature = "nats")]
                 RefreshTrigger::NatsPush { .. } => unreachable!(),
-            };
-
-            for source in to_resolve {
-                let refresh = SourceRefresh {
-                    source: source.clone(),
-                    resolver: resolver.clone(),
-                    result_tx: result_tx.clone(),
-                    trigger_tx: trigger_tx.clone(),
-                    in_flight: in_flight.clone(),
-                    permits: permits.clone(),
-                };
-                refresh.spawn();
             }
         }
+        drop(trigger_tx);
     }
 }
 
@@ -255,9 +350,11 @@ struct SourceRefresh {
     source: DynamicSource,
     resolver: Arc<dyn SourceResolver>,
     result_tx: watch::Sender<Option<RefreshResult>>,
-    trigger_tx: mpsc::Sender<RefreshTrigger>,
     /// Sources resolving now, each with whether another trigger arrived meanwhile.
     in_flight: Arc<Mutex<HashMap<String, bool>>>,
+    /// Shared by the sources that fetch over the network or from a process.
+    /// A watchlist reads memory and never waits for one, so sources that do
+    /// not answer cannot hold up indicator pushes.
     permits: Arc<Semaphore>,
 }
 
@@ -278,18 +375,32 @@ impl SourceRefresh {
     }
 
     async fn run(self) {
+        loop {
+            self.resolve_once().await;
+            let mut in_flight = self
+                .in_flight
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match in_flight.get_mut(&self.source.id) {
+                Some(again) if *again => *again = false,
+                _ => {
+                    in_flight.remove(&self.source.id);
+                    return;
+                }
+            }
+        }
+    }
+
+    async fn resolve_once(&self) {
         let source = &self.source;
         let started = std::time::Instant::now();
         let result = {
-            let _permit = self.permits.acquire().await;
+            let _permit = match source.source_type {
+                SourceType::Watchlist { .. } => None,
+                _ => Some(self.permits.acquire().await),
+            };
             catch_resolver_panic(source, self.resolver.resolve(source)).await
         };
-        let again = self
-            .in_flight
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&source.id)
-            .unwrap_or(false);
         let duration_ms = started.elapsed().as_millis() as u64;
         match result {
             Ok(value) => {
@@ -313,11 +424,6 @@ impl SourceRefresh {
                     "Background source refresh failed",
                 );
             }
-        }
-        if again {
-            let _ = self
-                .trigger_tx
-                .try_send(RefreshTrigger::Single(source.id.clone()));
         }
     }
 }
@@ -581,6 +687,197 @@ mod tests {
         let data = payload.resolved.get("d").expect("source d resolved");
         assert_eq!(data["rules"][0]["rule_id"], "r1");
         assert_eq!(data["rules"][0]["verdict"], "false_positive");
+    }
+
+    fn watchlist_source(id: &str) -> DynamicSource {
+        DynamicSource {
+            id: id.to_string(),
+            source_type: SourceType::Watchlist {
+                max_indicators: 1000,
+                max_value_length: 64,
+                default_ttl: None,
+            },
+            refresh: RefreshPolicy::OnDemand,
+            timeout: None,
+            on_error: ErrorPolicy::UseCached,
+            required: true,
+            default: None,
+        }
+    }
+
+    fn http_source(id: &str) -> DynamicSource {
+        DynamicSource {
+            id: id.to_string(),
+            source_type: SourceType::Http {
+                url: "http://127.0.0.1:9/never".to_string(),
+                method: None,
+                headers: Default::default(),
+                body: None,
+                format: DataFormat::Json,
+                extract: None,
+                stix: None,
+                max_body_size: None,
+            },
+            refresh: RefreshPolicy::OnDemand,
+            timeout: None,
+            on_error: ErrorPolicy::Fail,
+            required: false,
+            default: None,
+        }
+    }
+
+    /// Never answers for `http` sources; resolves watchlists from a registry,
+    /// pausing on `gate` while it is set.
+    struct HangingResolver {
+        inner: DefaultSourceResolver,
+        gate: Mutex<Option<Arc<Notify>>>,
+        resolves: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl SourceResolver for HangingResolver {
+        async fn resolve(
+            &self,
+            source: &DynamicSource,
+        ) -> Result<crate::sources::ResolvedValue, crate::sources::SourceError> {
+            if matches!(source.source_type, SourceType::Http { .. }) {
+                std::future::pending::<()>().await;
+            }
+            let gate = self.gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                gate.notified().await;
+            }
+            self.resolves
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.resolve(source).await
+        }
+    }
+
+    fn hanging(registry: &Arc<WatchlistRegistry>) -> Arc<HangingResolver> {
+        Arc::new(HangingResolver {
+            inner: DefaultSourceResolver::new().with_watchlists(registry.clone()),
+            gate: Mutex::new(None),
+            resolves: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    async fn next_value(
+        results: &mut watch::Receiver<Option<RefreshResult>>,
+        id: &str,
+    ) -> serde_json::Value {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                results.changed().await.unwrap();
+                if let Some(value) = results
+                    .borrow_and_update()
+                    .as_ref()
+                    .and_then(|r| r.resolved.get(id).cloned())
+                {
+                    return value;
+                }
+            }
+        })
+        .await
+        .expect("the watchlist was never re-resolved")
+    }
+
+    fn push(registry: &WatchlistRegistry, value: &str) {
+        registry
+            .add(
+                "wl",
+                &[WatchlistItem::Bare(value.to_string())],
+                None,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        registry.mark_changed("wl", std::time::Instant::now());
+    }
+
+    use crate::sources::{WatchlistItem, WatchlistRegistry};
+
+    #[tokio::test]
+    async fn sources_that_never_answer_do_not_hold_up_a_watchlist() {
+        let mut sources: Vec<DynamicSource> = (0..MAX_CONCURRENT_RESOLVES * 2)
+            .map(|i| http_source(&format!("hung-{i}")))
+            .collect();
+        sources.push(watchlist_source("wl"));
+        let registry = Arc::new(WatchlistRegistry::from_sources(&sources));
+        let resolver = hanging(&registry);
+        let scheduler = RefreshScheduler::new();
+        let mut results = scheduler.result_receiver();
+        let requests = scheduler.requests();
+        let handle = scheduler.run(sources, resolver);
+
+        // Every network source is now stuck, holding every shared permit.
+        requests.request_all();
+        tokio::task::yield_now().await;
+        push(&registry, "198.51.100.7");
+        requests.request_source("wl");
+        while next_value(&mut results, "wl").await != serde_json::json!(["198.51.100.7"]) {}
+        let status = registry.status("wl", std::time::Instant::now()).unwrap();
+        assert_eq!(status.applied_revision, status.revision);
+        assert_eq!(status.pending_for, None);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn requests_made_while_a_source_resolves_are_not_lost() {
+        let sources = vec![watchlist_source("wl")];
+        let registry = Arc::new(WatchlistRegistry::from_sources(&sources));
+        let resolver = hanging(&registry);
+        let gate = Arc::new(Notify::new());
+        *resolver.gate.lock().unwrap() = Some(gate.clone());
+        let scheduler = RefreshScheduler::new();
+        let mut results = scheduler.result_receiver();
+        let requests = scheduler.requests();
+        let handle = scheduler.run(sources, resolver.clone());
+
+        push(&registry, "a");
+        requests.request_source("wl");
+        // Far more requests than the trigger channel holds arrive while the
+        // first resolve waits; they coalesce into one more resolve.
+        for value in 0..100 {
+            tokio::task::yield_now().await;
+            push(&registry, &format!("b{value}"));
+            requests.request_source("wl");
+        }
+        *resolver.gate.lock().unwrap() = None;
+        gate.notify_one();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let value = next_value(&mut results, "wl").await;
+            if value.as_array().is_some_and(|values| values.len() == 101) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "last value: {value}"
+            );
+        }
+        let status = registry.status("wl", std::time::Instant::now()).unwrap();
+        assert_eq!(status.applied_revision, 101);
+        assert!(
+            resolver.resolves.load(std::sync::atomic::Ordering::SeqCst) <= 3,
+            "requests coalesce"
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cache_first_rebuild_does_not_wait_on_an_optional_source_with_no_value() {
+        let sources = vec![http_source("hung"), watchlist_source("wl")];
+        let registry = Arc::new(WatchlistRegistry::from_sources(&sources));
+        let resolver = hanging(&registry);
+        let resolved = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            crate::sources::resolve_all_cache_first(resolver.as_ref(), &sources),
+        )
+        .await
+        .expect("the rebuild must not fetch the optional source")
+        .unwrap();
+        assert_eq!(resolved["hung"], serde_json::Value::Null);
+        assert_eq!(resolved["wl"], serde_json::json!([]));
     }
 
     #[cfg(feature = "nats")]

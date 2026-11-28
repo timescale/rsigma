@@ -157,11 +157,13 @@ pub use rsigma_eval::{
     ProcessResultExt, SchemaClassifier, SchemaCountEntry, SchemaError, SchemaObservation,
     SchemaObserver, SchemaPruning, TenantId, UnknownShapeEntry, load_schema_signatures,
 };
-pub use sources::refresh::{RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription};
+pub use sources::refresh::{
+    RefreshRequests, RefreshResult, RefreshScheduler, RefreshTrigger, SourceSubscription,
+};
 pub use sources::{
     AddSummary, DefaultSourceResolver, RemoveSummary, ReplaceSummary, ResolvedValue, SourceCache,
     SourceError, SourceErrorKind, SourceResolver, TemplateExpander, WatchlistError, WatchlistItem,
-    WatchlistRegistry, WatchlistRestore,
+    WatchlistRegistry, WatchlistRestore, WatchlistStatus,
 };
 
 #[cfg(feature = "nats")]

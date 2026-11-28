@@ -226,8 +226,8 @@ struct AppState {
     start_time: Instant,
     /// Channel for HTTP event ingestion. Set when --input is http.
     event_tx: Option<mpsc::Sender<RawEvent>>,
-    /// Channel for on-demand source resolution triggers.
-    sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    /// On-demand source resolution requests.
+    source_requests: Option<rsigma_runtime::RefreshRequests>,
     /// The instrumented source resolver (provides cache access for invalidation API).
     source_resolver: Option<Arc<super::instrumented_resolver::InstrumentedResolver>>,
     /// Channel for OTLP event ingestion. Always set when daemon-otlp is compiled in.
@@ -709,9 +709,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // pipeline references external sources.
     let has_dynamic =
         !config.source_registry.is_empty() || config.pipelines.iter().any(|p| p.is_dynamic());
-    let mut sources_trigger_tx_val: Option<
-        mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>,
-    > = None;
+    let mut source_requests: Option<rsigma_runtime::RefreshRequests> = None;
     let mut source_results: Option<
         tokio::sync::watch::Receiver<Option<rsigma_runtime::RefreshResult>>,
     > = None;
@@ -838,11 +836,11 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         if !all_sources.is_empty() {
             let scheduler = rsigma_runtime::sources::refresh::RefreshScheduler::new();
             source_results = Some(scheduler.result_receiver());
-            sources_trigger_tx_val = Some(scheduler.trigger_sender());
+            source_requests = Some(scheduler.requests());
             if !watchlist_ids.is_empty() {
                 super::watchlist_api::spawn_sweeper(
                     watchlist_registry.clone(),
-                    sources_trigger_tx_val.clone(),
+                    source_requests.clone(),
                     metrics.clone(),
                     state_store.clone(),
                 );
@@ -1553,7 +1551,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let mut watchlists = super::watchlist_api::WatchlistApi::new(
         watchlist_registry,
         source_registry.clone(),
-        sources_trigger_tx_val.clone(),
+        source_requests.clone(),
         metrics.clone(),
     );
     if let Some(store) = state_store.clone() {
@@ -1570,7 +1568,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         reload_tx: reload_tx.clone(),
         start_time,
         event_tx: http_event_tx,
-        sources_trigger_tx: sources_trigger_tx_val.clone(),
+        source_requests: source_requests.clone(),
         source_resolver: source_resolver_val,
         #[cfg(feature = "daemon-otlp")]
         otlp_event_tx,
@@ -1799,9 +1797,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // same `reload_tx` channel the file watcher and HTTP endpoint
     // use, so every reload trigger funnels through one task).
     let sighup_reload_tx = reload_tx.clone();
-    let sighup_sources_tx = sources_trigger_tx_val.clone();
+    let sighup_sources = source_requests.clone();
     tokio::spawn(async move {
-        reload::sighup_listener(sighup_reload_tx, sighup_sources_tx).await;
+        reload::sighup_listener(sighup_reload_tx, sighup_sources).await;
     });
 
     // Spawn reload handler — uses LogProcessor::reload_rules for atomic hot-reload.
@@ -1817,6 +1815,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let reload_enrichment_metrics = enrichment_metrics.clone();
     let reload_source_cache = initial_source_cache.clone();
     let reload_applied = applied_sources.clone();
+    let reload_source_requests = source_requests.clone();
     #[cfg(feature = "stix-enrich")]
     let reload_stix_fs_store = stix_fs_store.clone();
     let reload_alert_pipeline_swap = alert_pipeline_swap.clone();
@@ -1895,7 +1894,18 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             tracing::info!("Reloading rules and pipelines...");
             let captured = seed_applied(&reload_processor, reload_source_cache.as_deref());
 
-            match reload_processor.reload_rules() {
+            // With a refresh scheduler, sources are re-fetched in the
+            // background and their new values trigger a rebuild, so a source
+            // that does not answer cannot hold the reload.
+            let reloaded = match &reload_source_requests {
+                Some(requests) => {
+                    let reloaded = reload_processor.rebuild_from_sources();
+                    requests.request_all();
+                    reloaded
+                }
+                None => reload_processor.reload_rules(),
+            };
+            match reloaded {
                 Ok(stats) => {
                     tracing::info!(
                         detection_rules = stats.detection_rules,
@@ -5274,50 +5284,40 @@ async fn list_sources(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn resolve_sources(State(state): State<AppState>) -> impl IntoResponse {
-    use rsigma_runtime::sources::refresh::RefreshTrigger;
-
-    let Some(tx) = &state.sources_trigger_tx else {
+    let Some(requests) = &state.source_requests else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no dynamic sources configured" })),
         );
     };
-
-    match tx.try_send(RefreshTrigger::All) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "resolve_triggered" })),
-        ),
-        Err(_) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({ "status": "resolve_already_pending" })),
-        ),
-    }
+    requests.request_all();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "resolve_triggered" })),
+    )
 }
 
 async fn resolve_source_by_id(
     State(state): State<AppState>,
     axum::extract::Path(source_id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    use rsigma_runtime::sources::refresh::RefreshTrigger;
-
-    let Some(tx) = &state.sources_trigger_tx else {
+    let Some(requests) = &state.source_requests else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no dynamic sources configured" })),
         );
     };
-
-    match tx.try_send(RefreshTrigger::Single(source_id.clone())) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "resolve_triggered", "source_id": source_id })),
-        ),
-        Err(_) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({ "status": "resolve_already_pending" })),
-        ),
+    if state.source_registry.get(&source_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown source", "source_id": source_id })),
+        );
     }
+    requests.request_source(&source_id);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "resolve_triggered", "source_id": source_id })),
+    )
 }
 
 async fn invalidate_source_cache(

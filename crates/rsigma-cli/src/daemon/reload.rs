@@ -83,7 +83,7 @@ pub fn spawn_file_watcher(
 #[cfg(unix)]
 pub async fn sighup_listener(
     reload_tx: mpsc::Sender<()>,
-    sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    source_requests: Option<rsigma_runtime::RefreshRequests>,
 ) {
     use tokio::signal::unix::{SignalKind, signal};
 
@@ -99,8 +99,8 @@ pub async fn sighup_listener(
         sig.recv().await;
         tracing::info!("SIGHUP received, triggering reload and source re-resolution");
         let _ = reload_tx.try_send(());
-        if let Some(tx) = &sources_trigger_tx {
-            let _ = tx.try_send(rsigma_runtime::sources::refresh::RefreshTrigger::All);
+        if let Some(requests) = &source_requests {
+            requests.request_all();
         }
     }
 }
@@ -108,7 +108,7 @@ pub async fn sighup_listener(
 #[cfg(not(unix))]
 pub async fn sighup_listener(
     _reload_tx: mpsc::Sender<()>,
-    _sources_trigger_tx: Option<mpsc::Sender<rsigma_runtime::sources::refresh::RefreshTrigger>>,
+    _source_requests: Option<rsigma_runtime::RefreshRequests>,
 ) {
     std::future::pending::<()>().await;
 }
