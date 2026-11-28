@@ -72,6 +72,7 @@ The free function `apply_filters(collection: &SigmaCollection) -> Vec<SigmaRule>
 | `has_absence_correlations()` | Whether any loaded correlation uses deferred absence semantics |
 | `absence_pending()` / `take_absence_counters()` | Count absence groups with a pending deadline, and drain the absence outcome counters |
 | `clock(tenant)` / `clocks()` / `absence_tenants()` | Read the per-tenant event-time clocks and the tenants with a pending absence deadline |
+| `follows_wall_clock(tenant)` | Whether the tenant's latest event took the wall-clock timestamp fallback, which does not move its clock |
 | `advance_clock(tenant, to_secs)` | Advance a tenant's event-time clock and fire every deadline that passes (monotonic) |
 | `finalize()` | Fire every pending absence obligation for every tenant, regardless of the clock; armed deadmen stay armed |
 | `future_skipped()` / `take_future_skipped()` | Events skipped for correlation because their timestamp was more than `max_future_skew` ahead of the wall clock |

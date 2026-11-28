@@ -632,6 +632,28 @@ impl RulesetEngines {
         tenants
     }
 
+    /// The tenant's event-time clock: the maximum across units.
+    pub fn clock(&self, tenant: Option<&TenantId>) -> Option<i64> {
+        self.units
+            .iter()
+            .filter_map(|unit| match &unit.engine {
+                UnitEngine::Detection(_) => None,
+                UnitEngine::Correlation(engine) => engine.clock(tenant),
+                UnitEngine::Routed(router) => router.clock(tenant),
+            })
+            .max()
+    }
+
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback in any unit.
+    pub fn follows_wall_clock(&self, tenant: Option<&TenantId>) -> bool {
+        self.units.iter().any(|unit| match &unit.engine {
+            UnitEngine::Detection(_) => false,
+            UnitEngine::Correlation(engine) => engine.follows_wall_clock(tenant),
+            UnitEngine::Routed(router) => router.follows_wall_clock(tenant),
+        })
+    }
+
     /// Every tenant event-time clock, merged with the maximum per tenant across
     /// units.
     pub fn clocks(&self) -> Vec<(Option<TenantId>, i64)> {

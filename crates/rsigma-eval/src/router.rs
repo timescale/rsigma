@@ -853,6 +853,19 @@ impl<L> SchemaRouter<L> {
             .map_or_else(Vec::new, |c| c.absence_tenants())
     }
 
+    /// The tenant's event-time clock in the shared store.
+    pub fn clock(&self, tenant: Option<&crate::tenant::TenantId>) -> Option<i64> {
+        self.correlation.as_ref().and_then(|c| c.clock(tenant))
+    }
+
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback in the shared store.
+    pub fn follows_wall_clock(&self, tenant: Option<&crate::tenant::TenantId>) -> bool {
+        self.correlation
+            .as_ref()
+            .is_some_and(|c| c.follows_wall_clock(tenant))
+    }
+
     /// Every tenant event-time clock, merged across the shared store.
     pub fn clocks(&self) -> Vec<(Option<crate::tenant::TenantId>, i64)> {
         self.correlation

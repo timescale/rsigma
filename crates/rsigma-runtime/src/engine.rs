@@ -402,16 +402,19 @@ impl RuntimeEngine {
         match &self.engine {
             EngineVariant::DetectionOnly(_) => None,
             EngineVariant::WithCorrelations(engine) => engine.clock(tenant),
-            EngineVariant::Routed(router) => router
-                .clocks()
-                .into_iter()
-                .find(|(clock_tenant, _)| clock_tenant.as_ref() == tenant)
-                .map(|(_, clock)| clock),
-            EngineVariant::Rulesets(engines) => engines
-                .clocks()
-                .into_iter()
-                .find(|(clock_tenant, _)| clock_tenant.as_ref() == tenant)
-                .map(|(_, clock)| clock),
+            EngineVariant::Routed(router) => router.clock(tenant),
+            EngineVariant::Rulesets(engines) => engines.clock(tenant),
+        }
+    }
+
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback, so only real time moves its absence deadlines forward.
+    pub fn follows_wall_clock(&self, tenant: Option<&TenantId>) -> bool {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => false,
+            EngineVariant::WithCorrelations(engine) => engine.follows_wall_clock(tenant),
+            EngineVariant::Routed(router) => router.follows_wall_clock(tenant),
+            EngineVariant::Rulesets(engines) => engines.follows_wall_clock(tenant),
         }
     }
 

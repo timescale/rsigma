@@ -6853,3 +6853,24 @@ fn an_invalid_absence_grace_fails_to_compile_only_on_an_absence_correlation() {
     let threshold = TEMPORAL.replace("a and not b", "a and b") + "rsigma.absence_grace: 30\n";
     absence_engine(&threshold, CorrelationConfig::default());
 }
+
+#[test]
+fn the_latest_event_decides_whether_a_tenant_follows_the_wall_clock() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let untimed = json!({"Action": "z", "User": "alice"});
+    engine.process_event(&JsonEvent::borrow(&untimed));
+    assert!(engine.follows_wall_clock(None));
+    assert_eq!(engine.clock(None), None);
+
+    let timed = json!({"Action": "z", "User": "alice", "@timestamp": 1_000});
+    engine.process_event(&JsonEvent::borrow(&timed));
+    assert!(!engine.follows_wall_clock(None));
+    assert_eq!(engine.clock(None), Some(1_000));
+
+    let mut plain = absence_engine(
+        &TEMPORAL.replace("a and not b", "a and b"),
+        CorrelationConfig::default(),
+    );
+    plain.process_event(&JsonEvent::borrow(&untimed));
+    assert!(!plain.follows_wall_clock(None));
+}

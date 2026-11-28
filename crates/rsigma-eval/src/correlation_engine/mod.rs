@@ -194,6 +194,9 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     /// Per-tenant event-time clock: the maximum event time seen. Only tracked
     /// while an absence correlation is compiled.
     clocks: HashMap<Option<TenantId>, i64>,
+    /// Tenants whose latest event had no timestamp and took the wall-clock
+    /// fallback, which does not move the event-time clock.
+    wall_clock_tenants: std::collections::HashSet<Option<TenantId>>,
     /// Per-tenant earliest absence deadline per group, keyed by
     /// `(fire_at, group, correlation index)`. An entry exists exactly when its
     /// group has a pending obligation or an armed deadman.
@@ -242,6 +245,7 @@ impl<L> CorrelationEngine<L> {
             absence_counters: AbsenceCounters::default(),
             absence_compiled: false,
             clocks: HashMap::new(),
+            wall_clock_tenants: std::collections::HashSet::new(),
             deadlines: HashMap::new(),
         }
     }
@@ -783,7 +787,14 @@ impl<L> CorrelationEngine<L> {
         // Step 1: advance the tenant's event-time clock and fire deadlines that
         // passed before this event.
         let mut pre = Vec::new();
-        if absence && advances_clock {
+        if absence && !advances_clock {
+            if !self.wall_clock_tenants.contains(&tenant.cloned()) {
+                self.wall_clock_tenants.insert(tenant.cloned());
+            }
+        } else if absence {
+            if !self.wall_clock_tenants.is_empty() {
+                self.wall_clock_tenants.remove(&tenant.cloned());
+            }
             let tenant_key = tenant.cloned();
             if self
                 .clocks
@@ -2921,6 +2932,12 @@ impl<L> CorrelationEngine<L> {
         self.clocks.get(&tenant.cloned()).copied()
     }
 
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback, so only real time moves its absence deadlines forward.
+    pub fn follows_wall_clock(&self, tenant: Option<&TenantId>) -> bool {
+        self.wall_clock_tenants.contains(&tenant.cloned())
+    }
+
     /// Every tenant clock, untenanted last.
     pub fn clocks(&self) -> Vec<(Option<TenantId>, i64)> {
         let mut clocks: Vec<(Option<TenantId>, i64)> = self
@@ -2946,12 +2963,16 @@ impl<L> CorrelationEngine<L> {
 
     /// Advance a tenant's event-time clock to `to_secs` and fire every deadline
     /// that passes. Monotonic: a value that does not move the clock forward is
-    /// a no-op returning nothing.
+    /// a no-op returning nothing, and so is any call while no absence
+    /// correlation is loaded.
     pub fn advance_clock(
         &mut self,
         tenant: Option<&TenantId>,
         to_secs: i64,
     ) -> Vec<EvaluationResult> {
+        if !self.absence_compiled {
+            return Vec::new();
+        }
         let tenant_key = tenant.cloned();
         if self
             .clocks
