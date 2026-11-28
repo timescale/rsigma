@@ -306,7 +306,7 @@ impl Metrics {
             &["source"],
         )
         .unwrap();
-        for source in ["stdin", "unix", "nats"] {
+        for source in ["stdin", "unix", "nats", "http"] {
             input_invalid_utf8_total.with_label_values(&[source]);
         }
         input_source_failed_total.with_label_values(&["stdin"]);

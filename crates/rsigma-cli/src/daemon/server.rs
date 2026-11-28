@@ -5716,11 +5716,13 @@ fn ingest_tenant(
 
 /// Accept events via HTTP POST for processing.
 /// Each non-empty line in the request body is parsed using the configured
-/// `--input-format` and forwarded to the engine.
+/// `--input-format` and forwarded to the engine. A line that is not valid
+/// UTF-8 is forwarded with the invalid bytes replaced. A line over the
+/// per-line cap refuses the whole request before any line is forwarded.
 async fn ingest_events(
     State(state): State<AppState>,
     identity: Option<Extension<AuthIdentity>>,
-    body: String,
+    body: axum::body::Bytes,
 ) -> Response {
     let tenant = match ingest_tenant(state.tenancy_enabled, identity.as_ref().map(|e| &e.0)) {
         Ok(tenant) => tenant,
@@ -5742,25 +5744,38 @@ async fn ingest_events(
         }
     };
 
-    const MAX_LINE_BYTES: usize = 1_048_576; // 1 MB
+    let mut lines = Vec::new();
+    let mut too_long = false;
+    let mut framer = rsigma_runtime::LineFramer::default();
+    let mut take = |line| match line {
+        rsigma_runtime::FramedLine::Line { text, invalid_utf8 } => {
+            if invalid_utf8 {
+                state.metrics.on_input_invalid_utf8("http");
+            }
+            lines.push(text);
+        }
+        rsigma_runtime::FramedLine::TooLong => too_long = true,
+    };
+    framer.push(&body, &mut take);
+    framer.finish(&mut take);
+    if too_long {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({
+                "error": "line exceeds maximum size",
+                "max_bytes": rsigma_runtime::MAX_LINE_BYTES,
+            })),
+        )
+            .into_response();
+    }
 
     let mut accepted = 0u64;
-    for line in body.lines() {
+    for line in lines {
         if line.trim().is_empty() {
             continue;
         }
-        if line.len() > MAX_LINE_BYTES {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                Json(serde_json::json!({
-                    "error": "line exceeds maximum size",
-                    "max_bytes": MAX_LINE_BYTES,
-                })),
-            )
-                .into_response();
-        }
         let raw_event = RawEvent {
-            payload: line.to_string(),
+            payload: line,
             ack_token: AckToken::Noop,
             tenant: tenant.clone(),
         };

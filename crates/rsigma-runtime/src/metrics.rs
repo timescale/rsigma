@@ -26,7 +26,8 @@ pub trait MetricsHook: Send + Sync {
     /// empty NATS message, acked and skipped).
     fn on_input_dropped(&self, _source: &'static str, _reason: &'static str) {}
     /// A source read one input record that was not valid UTF-8 and passed it
-    /// on with each invalid sequence replaced by U+FFFD.
+    /// on with each invalid sequence replaced by U+FFFD. `source` is `stdin`,
+    /// `unix`, `nats`, or `http` (`POST /api/v1/events`).
     fn on_input_invalid_utf8(&self, _source: &'static str) {}
     /// A source stopped on an error instead of at the end of its input.
     fn on_input_source_failed(&self, _source: &'static str) {}
