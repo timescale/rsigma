@@ -377,6 +377,62 @@ fn webhook_rejection_of_one_result_does_not_drop_the_next() {
 }
 
 #[test]
+fn webhook_queue_full_drop_is_logged_and_recorded_on_the_dlq() {
+    let rt = rt();
+    let server = rt.block_on(async {
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+            .mount(&s)
+            .await;
+        s
+    });
+    let cfg = format!(
+        "{}    queue_size: 1\n",
+        WEBHOOK_CFG.replace("__URL__", &server.uri())
+    );
+    let webhook = temp_file(".yml", &cfg);
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dlq = temp_file(".ndjson", "");
+    let dlq_spec = format!("file://{}", dlq.path().display());
+    let daemon = DaemonProcess::spawn_http_with_args(
+        rule.path().to_str().unwrap(),
+        &[
+            "--webhook",
+            webhook.path().to_str().unwrap(),
+            "--dlq",
+            &dlq_spec,
+        ],
+    );
+
+    for _ in 0..4 {
+        let (status, _) = http_post(&daemon.url("/api/v1/events"), MATCHING_EVENT);
+        assert_eq!(status, 200);
+    }
+
+    let dropped = poll_until(Duration::from_secs(10), || {
+        let s = std::fs::read_to_string(dlq.path()).unwrap_or_default();
+        s.contains("queue full").then_some(s)
+    })
+    .expect("a queue-full drop leaves a DLQ record");
+    assert!(dropped.contains("sink slack queue full"), "{dropped}");
+    assert!(dropped.contains("Test Rule"), "{dropped}");
+
+    let warning = poll_until(Duration::from_secs(5), || {
+        daemon
+            .stderr_lines()
+            .into_iter()
+            .find(|l| l.contains("Sink queue full"))
+    })
+    .expect("a queue-full drop is logged");
+    let warning: serde_json::Value = serde_json::from_str(&warning).unwrap();
+    assert_eq!(warning["level"], "WARN");
+    assert_eq!(warning["fields"]["sink"], "slack");
+    assert_eq!(warning["fields"]["rule_id"], common::SIMPLE_RULE_ID);
+    assert_eq!(warning["fields"]["level"], "high");
+}
+
+#[test]
 fn webhook_env_header_is_interpolated() {
     let rt = rt();
     let server = mock_server(&rt, 200);

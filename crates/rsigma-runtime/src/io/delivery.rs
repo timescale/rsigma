@@ -151,8 +151,8 @@ pub(crate) enum IncidentScope {
 /// The scope of a sink that keeps the results of one tenant (every result
 /// when unset) and handles incidents as `incidents` says.
 pub(crate) struct TenantScope {
-    pub(crate) tenant: Option<TenantId>,
-    pub(crate) incidents: IncidentScope,
+    tenant: Option<TenantId>,
+    incidents: IncidentScope,
 }
 
 impl TenantScope {
@@ -219,7 +219,7 @@ impl DeadLetters {
 
     /// Park `results`, which the sink could not deliver because of `error`.
     /// Waits for room on the DLQ channel.
-    pub(crate) async fn park_results(&self, results: &[&EvaluationResult], error: &RuntimeError) {
+    pub async fn park_results(&self, results: &[&EvaluationResult], error: &RuntimeError) {
         self.metrics.on_sink_delivery_failed(self.label);
         let failure = DeliveryFailure {
             serialized: serde_json::to_string(results).unwrap_or_default(),
@@ -262,12 +262,14 @@ impl DeadLetters {
         }
     }
 
-    /// Record a queue-full drop on the DLQ channel without waiting. Returns
-    /// whether a record was queued.
-    fn try_park_dropped(&self, serialized: String, tenant: Option<TenantId>) -> bool {
-        let Some(dlq) = &self.tx else {
+    /// Record a queue-full drop on the DLQ channel without waiting, building
+    /// the record only when there is room for it. Returns whether a record
+    /// was queued.
+    fn try_park_dropped(&self, record: impl FnOnce() -> (String, Option<TenantId>)) -> bool {
+        let Some(dlq) = self.tx.as_ref().filter(|dlq| dlq.capacity() > 0) else {
             return false;
         };
+        let (serialized, tenant) = record();
         dlq.try_send(DeliveryFailure {
             serialized,
             error: format!("sink {} queue full; dropped before delivery", self.label),
@@ -594,41 +596,48 @@ impl SinkWorker {
     /// Log a queue-full drop (rate limited) and record what was dropped on
     /// the DLQ channel when one is configured, without waiting for room.
     fn record_drop(&self, item: &DeliveryItem) {
-        let (serialized, tenant, first) = match &item.payload {
+        let parked;
+        let mut dropped_result = None;
+        match &item.payload {
             DeliveryPayload::Result(result) => {
                 let dropped: Vec<&EvaluationResult> = result
                     .iter()
                     .filter(|r| self.scope.as_ref().is_none_or(|s| s.accepts_result(r)))
                     .collect();
-                let tenant = dropped.iter().find_map(|r| r.header.tenant_id.clone());
-                let first = dropped.first().map(|r| {
+                parked = self.dead_letters.try_park_dropped(|| {
                     (
-                        r.header.rule_id.clone().unwrap_or_default(),
-                        r.header.level.map_or("", |l| l.as_str()),
-                        dropped.len(),
+                        serde_json::to_string(&dropped).unwrap_or_default(),
+                        dropped.iter().find_map(|r| r.header.tenant_id.clone()),
                     )
                 });
-                (
-                    serde_json::to_string(&dropped).unwrap_or_default(),
-                    tenant,
-                    first,
-                )
+                let first = dropped.first();
+                dropped_result = Some((
+                    first
+                        .and_then(|r| r.header.rule_id.clone())
+                        .unwrap_or_default(),
+                    first
+                        .and_then(|r| r.header.level)
+                        .map_or("", |l| l.as_str()),
+                    dropped.len(),
+                ));
             }
             DeliveryPayload::Incident(incident) => {
-                (incident.json.clone(), incident.tenant.clone(), None)
+                parked = self
+                    .dead_letters
+                    .try_park_dropped(|| (incident.json.clone(), incident.tenant.clone()));
             }
-            DeliveryPayload::FormattedIncident(incident) => (
-                incident.native().json.clone(),
-                incident.native().tenant.clone(),
-                None,
-            ),
-        };
-        let parked = self.dead_letters.try_park_dropped(serialized, tenant);
+            DeliveryPayload::FormattedIncident(incident) => {
+                let native = incident.native();
+                parked = self
+                    .dead_letters
+                    .try_park_dropped(|| (native.json.clone(), native.tenant.clone()));
+            }
+        }
         let Some(occurrences) = self.drop_log.lock().record(Instant::now()) else {
             return;
         };
         let suppressed = occurrences - 1;
-        match first {
+        match dropped_result {
             Some((rule_id, level, results)) => tracing::warn!(
                 sink = self.label,
                 rule_id,

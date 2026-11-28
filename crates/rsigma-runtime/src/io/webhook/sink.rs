@@ -87,7 +87,7 @@ impl TokenBucket {
 /// The results a webhook posts: its kind and its scope.
 struct WebhookScope {
     kind: WebhookKind,
-    scope: Arc<crate::enrichment::Scope>,
+    scope: crate::enrichment::Scope,
 }
 
 impl WebhookScope {
@@ -158,10 +158,7 @@ impl WebhookSink {
         WebhookSink {
             id,
             label,
-            scope: Arc::new(WebhookScope {
-                kind,
-                scope: Arc::new(scope),
-            }),
+            scope: Arc::new(WebhookScope { kind, scope }),
             method,
             url,
             headers,
