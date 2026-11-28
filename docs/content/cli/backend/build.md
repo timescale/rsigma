@@ -22,6 +22,8 @@ Reads the `convert:` section of the configuration and runs each group in name or
 
 Pipelines come only from the group or from `convert.defaults`, never from the ruleset. Delegated targets without a native backend are resolved and materialized into a temporary directory before sigma-cli runs, the same way [`backend convert --ruleset`](convert.md) does it, and their pipeline names go to sigma-cli untouched. Relative `output` and `pipelines` paths resolve against the working directory, like [ruleset sources](../../guide/rulesets.md).
 
+An `output` from a project file (`./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc`) must stay inside the directory holding that file, so building in a cloned repository cannot write elsewhere. When the output or its manifest resolves outside the project through `..`, an absolute path, or a symlinked directory, the key is ignored with a warning naming it (`convert.defaults.output` or `convert.groups.<name>.output`), and a group left without an output fails with exit `3`. At write time the command checks the path again, creates missing directories inside the project, and replaces a symlink at the output or manifest path instead of following it. Outputs from `--config`, the user or system config, and environment variables can point anywhere. See [Project config trust](../../reference/configuration.md#project-config-trust). {{ added "unreleased" }}
+
 ## Flags
 
 | Flag | Description |
@@ -71,7 +73,7 @@ convert:
 | `options` | Backend options, the `-O key=value` equivalents. |
 | `skip_unsupported` | Record rules the backend cannot convert as `skipped` instead of `failed`. |
 | `without_pipeline` | Skip the backend's pipeline-requirement check. |
-| `output` | Query output path. The manifest is written next to it. |
+| `output` | Query output path. The manifest is written next to it. From a project file, it must resolve inside the project. {{ added "unreleased" }} |
 | `metadata` | Opaque values copied verbatim into the manifest. |
 
 `metadata` is never interpreted. Scheduled-query concepts such as a rule group, a lookback, or a time window ride there for the consumer that reads the manifest.

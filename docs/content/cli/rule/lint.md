@@ -69,7 +69,7 @@ Inline `# rsigma-disable` and `# rsigma-disable-next-line` comments also work; s
 
 | Flag | Description |
 |------|-------------|
-| `--fix` | Apply safe auto-fixes in place. Uses `yamlpath`/`yamlpatch` to preserve formatting and comments. |
+| `--fix` | Apply safe auto-fixes in place. Uses `yamlpath`/`yamlpatch` to preserve formatting and comments. Files that resolve outside the linted path, such as a symlinked rule or a file under a symlinked directory, are reported and left unchanged. {{ added "unreleased" }} |
 
 ### JSON schema validation
 

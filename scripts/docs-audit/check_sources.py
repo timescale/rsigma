@@ -167,12 +167,15 @@ def check_features() -> list[str]:
 
 def check_protected_config_keys() -> list[str]:
     text = read(ROOT / "crates" / "rsigma-cli" / "src" / "config" / "mod.rs")
-    table = text.split("PROTECTED_KEYS: &[ProtectedKey] = &[", 1)
-    if len(table) != 2:
-        return ["PROTECTED_KEYS not found in crates/rsigma-cli/src/config/mod.rs"]
-    keys = re.findall(r'key:\s*"([^"]+)"', table[1].split("\n];", 1)[0])
-    if not keys:
-        return ["no keys parsed from PROTECTED_KEYS in crates/rsigma-cli/src/config/mod.rs"]
+    keys = []
+    for name, kind in (("PROTECTED_KEYS", "ProtectedKey"), ("PROTECTED_ENTRY_KEYS", "ProtectedEntryKey")):
+        table = text.split(f"{name}: &[{kind}] = &[", 1)
+        if len(table) != 2:
+            return [f"{name} not found in crates/rsigma-cli/src/config/mod.rs"]
+        found = re.findall(r'key:\s*"([^"]+)"', table[1].split("\n];", 1)[0])
+        if not found:
+            return [f"no keys parsed from {name} in crates/rsigma-cli/src/config/mod.rs"]
+        keys += found
     errors = []
     for name, heading in (("configuration.md", "## Project config trust"), ("security.md", "## Project config files")):
         page = read(CONTENT / "reference" / name)

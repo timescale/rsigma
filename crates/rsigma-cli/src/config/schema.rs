@@ -1024,11 +1024,12 @@ impl ConvertPartial {
     }
 }
 
+/// Appended to a group's query output path to name its manifest.
+pub(crate) const MANIFEST_SUFFIX: &str = ".manifest.json";
+
 /// The manifest written next to a group's query output.
 pub(crate) fn manifest_path(output: &Path) -> PathBuf {
-    let mut path = output.as_os_str().to_os_string();
-    path.push(".manifest.json");
-    PathBuf::from(path)
+    crate::fsutil::with_suffix(output, MANIFEST_SUFFIX)
 }
 
 /// One conversion group: a ruleset plus the target, format, and options used
@@ -1062,10 +1063,18 @@ pub(crate) struct ConvertGroupPartial {
     /// Opaque values copied verbatim into the manifest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, serde_json::Value>>,
+    /// The project directory `output` must stay inside, when the value came
+    /// from a project file. Never read from or written to YAML.
+    #[serde(skip)]
+    pub output_root: Option<PathBuf>,
 }
 
 impl Merge for ConvertGroupPartial {
     fn merge(self, over: Self) -> Self {
+        let (output, output_root) = match over.output {
+            Some(output) => (Some(output), over.output_root),
+            None => (self.output, self.output_root),
+        };
         Self {
             ruleset: over.ruleset.or(self.ruleset),
             target: over.target.or(self.target),
@@ -1074,7 +1083,8 @@ impl Merge for ConvertGroupPartial {
             options: merge_string_map(self.options, over.options),
             skip_unsupported: over.skip_unsupported.or(self.skip_unsupported),
             without_pipeline: over.without_pipeline.or(self.without_pipeline),
-            output: over.output.or(self.output),
+            output,
+            output_root,
             metadata: over.metadata.or(self.metadata),
         }
     }

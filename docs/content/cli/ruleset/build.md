@@ -22,9 +22,11 @@ Writes are atomic and minimal. The build computes the full desired file set firs
 
 The build refuses to write into an existing non-empty directory that has no `ruleset.lock.json` unless `--force` is given. It never deletes anything outside the three subdirectories.
 
+Every entry the build touches is physically inside the output directory. A `rules/`, `correlations/`, or `filters/` subdirectory that is a symlink fails the build with exit 3 (and counts as drift under `--check`), and a symlink where a generated file or the lockfile goes is replaced with a regular file rather than written through. {{ added "unreleased" }}
+
 A source parse error fails the build with exit 2 and lists the errors. Resolution errors exit 3. With `--check`, the build writes nothing and exits 1 when the directory differs from what a build would write.
 
-The output defaults to the ruleset's `output` key. Pass `-o` to override it.
+The output defaults to the ruleset's `output` key. Pass `-o` to override it. A ruleset `output` from a project file (`./rsigma.yaml` or `.rsigmarc`) that resolves outside the project is ignored with a warning; see [Project config trust](../../reference/configuration.md#project-config-trust). {{ added "unreleased" }}
 
 ## Flags
 

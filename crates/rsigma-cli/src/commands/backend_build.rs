@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::Args;
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use crate::config::{ConvertGroupPartial, manifest_path};
 use crate::exit_code::{CONFIG_ERROR, FINDINGS, RULE_ERROR};
-use crate::fsutil::atomic_write;
+use crate::fsutil::{atomic_write, path_within, write_confined};
 use crate::output::{OutputCtx, Tabular, render_report};
 use crate::ruleset::build::{ManifestDocument, manifest_documents};
 
@@ -130,6 +130,9 @@ struct GroupOutput {
     queries: usize,
     manifest: Manifest,
     output: PathBuf,
+    /// The project directory `output` came from, which both files must stay
+    /// inside.
+    output_root: Option<PathBuf>,
     query_text: String,
 }
 
@@ -433,6 +436,7 @@ fn build_group(
             queries: converted.queries,
             manifest,
             output: output.clone(),
+            output_root: group.output_root.clone(),
             query_text: converted.text,
         };
         return if failed_rules > 0 {
@@ -508,6 +512,7 @@ fn build_group(
         queries,
         manifest,
         output: output.clone(),
+        output_root: group.output_root.clone(),
         query_text: delegated.raw,
     })
 }
@@ -610,6 +615,19 @@ fn write_group(output: &GroupOutput) -> Result<bool, String> {
         (&output.output, output.query_text.as_str()),
         (&manifest, contents.as_str()),
     ] {
+        if write_if_changed(path, text, output.output_root.as_deref())? {
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// Write `text` to `path` unless it already holds it. A path from a project
+/// file goes through [`write_confined`], so it cannot leave `root` through
+/// `..`, an absolute path, or a symlinked directory, and a symlink at the
+/// path itself is replaced rather than followed.
+fn write_if_changed(path: &Path, text: &str, root: Option<&Path>) -> Result<bool, String> {
+    let Some(root) = root else {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -617,11 +635,56 @@ fn write_group(output: &GroupOutput) -> Result<bool, String> {
                 .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
         }
         if fs::read(path).is_ok_and(|existing| existing == text.as_bytes()) {
-            continue;
+            return Ok(false);
         }
         atomic_write(path, text)
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-        changed = true;
+        return Ok(true);
+    };
+    let unchanged = fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
+        && fs::read(path).is_ok_and(|existing| existing == text.as_bytes());
+    if unchanged && path_within(path, root) {
+        return Ok(false);
     }
-    Ok(changed)
+    write_confined(path, text, root)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rooted_write_creates_missing_directories_and_skips_unchanged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("build/deep/q.txt");
+        assert!(write_if_changed(&path, "q", Some(dir.path())).unwrap());
+        assert!(!write_if_changed(&path, "q", Some(dir.path())).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "q");
+    }
+
+    #[test]
+    fn a_rooted_write_refuses_a_path_outside_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir(&root).unwrap();
+        let error = write_if_changed(&root.join("../q.txt"), "q", Some(&root)).unwrap_err();
+        assert!(error.contains("resolves outside"), "{error}");
+        assert!(!dir.path().join("q.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rooted_write_refuses_a_directory_linked_outside_after_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("build")).unwrap();
+        let path = dir.path().join("build/q.txt");
+        assert!(write_if_changed(&path, "q", Some(dir.path())).is_err());
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+
+        assert!(write_if_changed(&path, "q", None).unwrap());
+        assert!(outside.path().join("q.txt").is_file());
+    }
 }

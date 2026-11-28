@@ -303,7 +303,7 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
         if fixable == 0 {
             println!("{}", p.dim("No auto-fixable issues found."));
         } else {
-            let result = crate::fix::apply_fixes(&all_results);
+            let result = crate::fix::apply_fixes(&all_results, &path);
             println!(
                 "\n{}",
                 p.green_bold(&format!(
@@ -311,6 +311,16 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
                     result.applied, result.files_modified,
                 ))
             );
+            if result.files_skipped > 0 {
+                println!(
+                    "{}",
+                    p.yellow(&format!(
+                        "Skipped {} file(s) that resolve outside {}.",
+                        result.files_skipped,
+                        path.display(),
+                    ))
+                );
+            }
             if result.failed > 0 {
                 println!(
                     "{}",

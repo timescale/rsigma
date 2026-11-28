@@ -61,9 +61,13 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.input.nats_tenants` | Declares the tenant of each NATS subscription. {{ added "0.28.0" }} |
 | `daemon.nats.consumer_group` | Joins another deployment's durable consumer and pulls its messages. |
 | `daemon.api.addr` | Unless it is a loopback `host:port` (`127.0.0.1`, `::1`, `localhost`) or a `unix://` path inside the project. Client commands such as `engine incidents export` send the API token to this address, and the daemon binds it. |
-| `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. |
+| `daemon.state.db` | Only when it resolves outside the project. The daemon creates and writes the SQLite file there. The SQLite `-wal`, `-shm`, and `-journal` files next to it must resolve inside the project too. {{ added "unreleased" }} |
 | `eval.output` | Only when it resolves outside the project. `engine eval` creates or truncates the file. |
+| `backtest.findings` | Only when it resolves outside the project. `rule backtest` creates or truncates the file. {{ added "unreleased" }} |
 | `scorecard.report` | Only when it resolves outside the project. `rule scorecard` creates or truncates the file. |
+| `convert.defaults.output` | Only when it, or the `<output>.manifest.json` written next to it, resolves outside the project. `backend build` creates or replaces both files. {{ added "unreleased" }} |
+| `convert.groups.*.output` | The same check for each group's `output`. The warning names the group, such as `convert.groups.linux_edge.output`. {{ added "unreleased" }} |
+| `rulesets.*.output` | Only when it resolves outside the project. `ruleset build` writes the directory and deletes stale generated files in it. The warning names the ruleset. {{ added "unreleased" }} |
 | `daemon.api.auth` | A planted token could name any environment variable, such as `HOME`, as its secret, and a project `auth` block replaces the operator's. |
 | `daemon.api.allowed_hosts` | Widens the `Host` headers the API accepts, which reopens the API to DNS-rebinding pages. {{ added "unreleased" }} |
 | `daemon.api.allow_unauthenticated` | Serves the API without authentication on a non-loopback address. |
@@ -78,6 +82,10 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.engine.allow_remote_include` | Lets pipelines include remote (HTTP or NATS) sources. |
 
 The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "0.27.0" }}
+
+A path is inside the project when it resolves under the directory holding the project file. Relative paths resolve against the working directory, as the commands that open them do. Every existing component is resolved as it is reached, so `..`, absolute paths, and symlinks (or Windows junctions) anywhere along the path count, and `..` after a directory that does not exist yet folds back into its parent the way it will once the directory is created. On Windows the path is first normalized the way Win32 opens it, so another drive, a drive-relative path such as `D:out`, a `\\?\` or `\\.\` prefix, and legacy device names such as `NUL` are judged by what they name. {{ added "unreleased" }}
+
+`backend build` checks a project-sourced output again when it writes: it refuses a query file or manifest whose directory leads outside the project, creates missing directories inside it, and replaces a symlink at the output path instead of writing through it. {{ added "unreleased" }}
 
 Each ignored key prints a warning naming the file:
 

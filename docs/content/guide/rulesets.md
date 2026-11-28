@@ -46,6 +46,8 @@ rulesets:
 
 A ruleset is a file-only configuration section. Environment variables such as `RSIGMA_EVAL__RULESET` work, but `RSIGMA_RULESETS__...` is ignored with a warning.
 
+`output` is the directory [`ruleset build`](../cli/ruleset/build.md) writes. When it comes from a project file (`./rsigma.yaml` or `.rsigmarc`), it must resolve inside the directory holding that file, or rsigma ignores it with a warning naming `rulesets.<name>.output`. Sources, overlays, and pipelines are only read, so they may point outside the project. {{ added "unreleased" }}
+
 ## Sources
 
 `sources` is a non-empty list of files or directories, processed in declaration order. A directory is walked recursively with sorted paths, hidden directories skipped, symlink loops guarded, and only `.yml` and `.yaml` files read. A file is read as is, whatever its extension. A missing source is a configuration error. Sources do not accept globs; use the `path` selector to sub-select files.

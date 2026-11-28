@@ -16,8 +16,11 @@ pub(crate) mod defaults;
 mod resolve;
 mod schema;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+use crate::fsutil::{path_within, with_suffix};
 
 #[cfg(feature = "daemon")]
 pub(crate) use schema::TenantQuotasPartial;
@@ -192,9 +195,10 @@ pub(crate) struct LoadedConfig {
     pub sources: Vec<PathBuf>,
     /// Unknown keys encountered while parsing, paired with their file.
     pub unknown_keys: Vec<(PathBuf, String)>,
-    /// [`PROTECTED_KEYS`] a project file set, paired with that file. They are
-    /// not part of [`Self::config`].
-    pub ignored_keys: Vec<(PathBuf, &'static str)>,
+    /// [`PROTECTED_KEYS`] and [`PROTECTED_ENTRY_KEYS`] a project file set, as
+    /// dotted keys paired with that file. They are not part of
+    /// [`Self::config`].
+    pub ignored_keys: Vec<(PathBuf, String)>,
     /// Whether a project layer (`./rsigma.yaml`, `./rsigma.yml`, `.rsigmarc`)
     /// was loaded. Tenancy refuses to start when one was.
     pub project_layer_loaded: bool,
@@ -578,13 +582,14 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         key: "daemon.engine.allow_remote_include",
         strip: |c, _| take_true(engine(c).map(|e| &mut e.allow_remote_include)),
     },
-    // Files the CLI creates or truncates.
+    // Files the CLI creates or truncates. SQLite writes its write-ahead log,
+    // shared-memory index, and rollback journal next to the database.
     ProtectedKey {
         key: "daemon.state.db",
         strip: |c, project_dir| {
-            daemon(c)
-                .and_then(|d| d.state.as_mut())
-                .is_some_and(|s| take_outside(&mut s.db, project_dir))
+            daemon(c).and_then(|d| d.state.as_mut()).is_some_and(|s| {
+                take_outside_with(&mut s.db, project_dir, &["-wal", "-shm", "-journal"])
+            })
         },
     },
     ProtectedKey {
@@ -596,6 +601,14 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
         },
     },
     ProtectedKey {
+        key: "backtest.findings",
+        strip: |c, project_dir| {
+            c.backtest
+                .as_mut()
+                .is_some_and(|b| take_outside(&mut b.findings, project_dir))
+        },
+    },
+    ProtectedKey {
         key: "scorecard.report",
         strip: |c, project_dir| {
             c.scorecard
@@ -603,7 +616,71 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
                 .is_some_and(|s| take_outside(&mut s.report, project_dir))
         },
     },
+    ProtectedKey {
+        key: "convert.defaults.output",
+        strip: |c, project_dir| {
+            c.convert
+                .as_mut()
+                .and_then(|convert| convert.defaults.as_mut())
+                .is_some_and(|defaults| take_convert_output(defaults, project_dir))
+        },
+    },
 ];
+
+/// A security-sensitive key inside every entry of a named map, such as
+/// `rulesets.<name>.output`. Project files may not set it, as for
+/// [`PROTECTED_KEYS`].
+pub(crate) struct ProtectedEntryKey {
+    /// Dotted config path with `*` standing for the entry name.
+    pub key: &'static str,
+    /// Clear the key from every entry of a project file's partial that may
+    /// not set it. `project_dir` is the directory holding that file. Returns
+    /// the names of the entries it was cleared from.
+    strip: fn(&mut RsigmaConfigPartial, project_dir: &Path) -> Vec<String>,
+}
+
+/// Every per-entry key project files may not set.
+/// `scripts/docs-audit/check_sources.py` checks that the configuration and
+/// security references list each one.
+pub(crate) const PROTECTED_ENTRY_KEYS: &[ProtectedEntryKey] = &[
+    // `ruleset build` writes the directory and deletes stale files in it.
+    ProtectedEntryKey {
+        key: "rulesets.*.output",
+        strip: |c, project_dir| {
+            strip_entries(c.rulesets.as_mut(), |spec| {
+                take_outside(&mut spec.output, project_dir)
+            })
+        },
+    },
+    ProtectedEntryKey {
+        key: "convert.groups.*.output",
+        strip: |c, project_dir| {
+            strip_entries(
+                c.convert
+                    .as_mut()
+                    .and_then(|convert| convert.groups.as_mut()),
+                |group| take_convert_output(group, project_dir),
+            )
+        },
+    },
+];
+
+/// Apply `strip` to every entry of `map` and return the names it cleared.
+fn strip_entries<T>(
+    map: Option<&mut BTreeMap<String, T>>,
+    mut strip: impl FnMut(&mut T) -> bool,
+) -> Vec<String> {
+    map.into_iter()
+        .flatten()
+        .filter_map(|(name, entry)| strip(entry).then(|| name.clone()))
+        .collect()
+}
+
+/// Clear a conversion group's output when it, or the manifest written next
+/// to it, lies outside `project_dir`.
+fn take_convert_output(group: &mut schema::ConvertGroupPartial, project_dir: &Path) -> bool {
+    take_outside_with(&mut group.output, project_dir, &[schema::MANIFEST_SUFFIX])
+}
 
 /// Whether `spec` is a `unix://` address whose path lies outside
 /// `project_dir`.
@@ -628,79 +705,56 @@ fn is_local_api_addr(addr: &str, project_dir: &Path) -> bool {
 
 /// Clear `path` when it lies outside `project_dir`. Returns whether it did.
 fn take_outside(path: &mut Option<PathBuf>, project_dir: &Path) -> bool {
-    if path
-        .as_deref()
-        .is_some_and(|p| !path_within(p, project_dir))
-    {
-        *path = None;
-        true
-    } else {
-        false
-    }
+    take_outside_with(path, project_dir, &[])
 }
 
-/// Remove every [`PROTECTED_KEYS`] entry from a project file's partial and
-/// return the keys that were set.
-fn strip_untrusted(config: &mut RsigmaConfigPartial, project_dir: &Path) -> Vec<&'static str> {
-    PROTECTED_KEYS
+/// Clear `path` when it, or a sibling file `<path><suffix>` written along
+/// with it, lies outside `project_dir`. Returns whether it did.
+fn take_outside_with(path: &mut Option<PathBuf>, project_dir: &Path, suffixes: &[&str]) -> bool {
+    let outside = path.as_deref().is_some_and(|p| {
+        !path_within(p, project_dir)
+            || suffixes
+                .iter()
+                .any(|suffix| !path_within(&with_suffix(p, suffix), project_dir))
+    });
+    if outside {
+        *path = None;
+    }
+    outside
+}
+
+/// Remove every [`PROTECTED_KEYS`] and [`PROTECTED_ENTRY_KEYS`] entry from a
+/// project file's partial and return the dotted keys that were set.
+fn strip_untrusted(config: &mut RsigmaConfigPartial, project_dir: &Path) -> Vec<String> {
+    let mut stripped: Vec<String> = PROTECTED_KEYS
         .iter()
         .filter(|protected| (protected.strip)(config, project_dir))
-        .map(|protected| protected.key)
-        .collect()
+        .map(|protected| protected.key.to_string())
+        .collect();
+    for protected in PROTECTED_ENTRY_KEYS {
+        for name in (protected.strip)(config, project_dir) {
+            stripped.push(protected.key.replacen('*', &name, 1));
+        }
+    }
+    stripped
 }
 
-/// Whether `path` (relative paths resolve against the current directory, as
-/// the commands that read them do) lies inside `dir`. Symlinks are resolved
-/// in the longest prefix that exists, and the rest is normalized lexically,
-/// so a path that does not exist yet cannot escape through a symlinked parent.
-fn path_within(path: &Path, dir: &Path) -> bool {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let absolute = |p: &Path| {
-        if p.is_absolute() {
-            resolve_existing_prefix(p)
-        } else {
-            resolve_existing_prefix(&cwd.join(p))
-        }
+/// Record `project_dir` as the root every conversion output kept from a
+/// project file must stay inside when `backend build` writes it.
+fn pin_convert_outputs(config: &mut RsigmaConfigPartial, project_dir: &Path) {
+    let Some(convert) = config.convert.as_mut() else {
+        return;
     };
-    absolute(path).starts_with(absolute(dir))
-}
-
-/// Canonicalize the longest prefix of `path` that exists and append the
-/// remaining components, folding `.` and `..`.
-fn resolve_existing_prefix(path: &Path) -> PathBuf {
-    let mut prefix = path.to_path_buf();
-    let mut rest = Vec::new();
-    loop {
-        if let Ok(real) = prefix.canonicalize() {
-            let mut out = real;
-            out.extend(rest.iter().rev());
-            return normalize_lexically(&out);
-        }
-        let Some(last) = prefix.components().next_back() else {
-            return normalize_lexically(path);
-        };
-        rest.push(last.as_os_str().to_os_string());
-        if !prefix.pop() {
-            return normalize_lexically(path);
+    let root = std::path::absolute(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    let groups = convert
+        .groups
+        .iter_mut()
+        .flat_map(|groups| groups.values_mut());
+    for group in convert.defaults.iter_mut().chain(groups) {
+        if group.output.is_some() {
+            group.output_root = Some(root.clone());
         }
     }
-}
-
-/// Drop `.` components and fold `..` into its parent without touching the
-/// filesystem.
-fn normalize_lexically(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// Render an ignored-key path as the dotted key an operator writes, such as
@@ -782,10 +836,14 @@ fn load_files(files: Vec<(PathBuf, Layer)>) -> Result<LoadedConfig, ConfigError>
         }
         if layer.is_project() {
             loaded.project_layer_loaded = true;
-            let project_dir = path.parent().unwrap_or(Path::new("."));
+            let project_dir = path
+                .parent()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
             for key in strip_untrusted(&mut partial, project_dir) {
                 loaded.ignored_keys.push((path.clone(), key));
             }
+            pin_convert_outputs(&mut partial, project_dir);
         }
         loaded.config = std::mem::take(&mut loaded.config).merge(partial);
         loaded.sources.push(path);
@@ -932,7 +990,11 @@ mod tests {
             assert!(mcp.daemon_ca.is_none());
             assert!(mcp.allow_operate_writes.is_none());
             assert!(mcp.lint_config.is_none());
-            let keys: Vec<&str> = loaded.ignored_keys.iter().map(|(_, k)| *k).collect();
+            let keys: Vec<&str> = loaded
+                .ignored_keys
+                .iter()
+                .map(|(_, k)| k.as_str())
+                .collect();
             assert_eq!(
                 keys,
                 [
@@ -1019,7 +1081,7 @@ mod tests {
                 };
                 assert_eq!(got.is_some(), *kept, "{key} = {}", target.display());
                 assert_eq!(
-                    loaded.ignored_keys.iter().any(|(_, k)| *k == key),
+                    loaded.ignored_keys.iter().any(|(_, k)| k == key),
                     !kept,
                     "{key} = {}",
                     target.display()
@@ -1116,7 +1178,11 @@ daemon:
         assert!(engine.egress_policy.is_none() && engine.allow_remote_include.is_none());
         assert_eq!(engine.bloom_prefilter, Some(true));
 
-        let ignored: Vec<&str> = loaded.ignored_keys.iter().map(|(_, k)| *k).collect();
+        let ignored: Vec<&str> = loaded
+            .ignored_keys
+            .iter()
+            .map(|(_, k)| k.as_str())
+            .collect();
         let daemon_keys: Vec<&str> = PROTECTED_KEYS
             .iter()
             .map(|p| p.key)
@@ -1203,6 +1269,154 @@ daemon:
             assert_eq!(config.scorecard.unwrap().report.is_some(), kept, "{t}");
             assert_eq!(loaded.ignored_keys.len(), if kept { 0 } else { 3 }, "{t}");
         }
+    }
+
+    fn write_paths_config(target: &str) -> String {
+        format!(
+            "backtest:\n  findings: '{target}/findings.ndjson'\nrulesets:\n  r:\n    sources: [rules]\n    output: '{target}/ruleset'\nconvert:\n  defaults:\n    output: '{target}/default.txt'\n  groups:\n    a:\n      ruleset: r\n      target: test\n      output: '{target}/a.txt'\n    b:\n      ruleset: r\n      target: test\n"
+        )
+    }
+
+    #[test]
+    fn project_write_paths_must_stay_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let inside = dir.path().join("build");
+        let escape = dir.path().join("build/../..");
+        for (target, kept) in [
+            (inside.as_path(), true),
+            (outside.path(), false),
+            (escape.as_path(), false),
+        ] {
+            let body = write_paths_config(&target.display().to_string());
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            let config = loaded.config;
+            let t = target.display();
+            assert_eq!(config.backtest.unwrap().findings.is_some(), kept, "{t}");
+            assert_eq!(config.rulesets.unwrap()["r"].output.is_some(), kept, "{t}");
+            let convert = config.convert.unwrap();
+            assert_eq!(convert.defaults.unwrap().output.is_some(), kept, "{t}");
+            let groups = convert.groups.unwrap();
+            assert_eq!(groups["a"].output.is_some(), kept, "{t}");
+            assert!(groups["b"].output.is_none());
+            let keys: Vec<&str> = loaded
+                .ignored_keys
+                .iter()
+                .map(|(_, k)| k.as_str())
+                .collect();
+            let expected: &[&str] = if kept {
+                &[]
+            } else {
+                &[
+                    "backtest.findings",
+                    "convert.defaults.output",
+                    "rulesets.r.output",
+                    "convert.groups.a.output",
+                ]
+            };
+            assert_eq!(keys, expected, "{t}");
+        }
+    }
+
+    #[test]
+    fn operator_layers_keep_write_paths_outside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let body = write_paths_config(&outside.path().display().to_string());
+        let path = write_config(dir.path(), "config.yaml", &body);
+        for layer in [Layer::System, Layer::User, Layer::Explicit] {
+            let loaded = load_files(vec![(path.clone(), layer)]).unwrap();
+            assert!(loaded.ignored_keys.is_empty(), "{layer:?}");
+            let convert = loaded.config.convert.unwrap();
+            let group = convert.effective(&convert.groups.as_ref().unwrap()["a"]);
+            assert!(group.output.is_some() && group.output_root.is_none());
+            assert!(loaded.config.rulesets.unwrap()["r"].output.is_some());
+        }
+    }
+
+    #[test]
+    fn convert_output_root_follows_the_layer_that_set_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let user = write_config(
+            dir.path(),
+            "config.yaml",
+            &format!(
+                "convert:\n  defaults:\n    output: '{}'\n  groups:\n    operator:\n      ruleset: r\n      output: '{}'\n",
+                outside.path().join("default.txt").display(),
+                outside.path().join("operator.txt").display(),
+            ),
+        );
+        let inside = dir.path().join("build/project.txt");
+        let project = write_config(
+            dir.path(),
+            "rsigma.yaml",
+            &format!(
+                "convert:\n  groups:\n    project:\n      ruleset: r\n      output: '{}'\n    inherits:\n      ruleset: r\n",
+                inside.display()
+            ),
+        );
+        let loaded = load_files(vec![(user, Layer::User), (project, Layer::ProjectYaml)]).unwrap();
+        let convert = loaded.config.convert.unwrap();
+        let groups = convert.groups.as_ref().unwrap();
+        let root = std::path::absolute(dir.path()).unwrap();
+
+        let project = convert.effective(&groups["project"]);
+        assert_eq!(project.output, Some(inside));
+        assert_eq!(project.output_root, Some(root));
+        let inherits = convert.effective(&groups["inherits"]);
+        assert_eq!(inherits.output, Some(outside.path().join("default.txt")));
+        assert!(inherits.output_root.is_none());
+        let operator = convert.effective(&groups["operator"]);
+        assert!(operator.output_root.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_state_db_sidecars_must_stay_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        for sidecar in ["-wal", "-shm", "-journal"] {
+            let db = dir.path().join(format!("state{sidecar}.db"));
+            let victim = outside.path().join(format!("victim{sidecar}"));
+            std::fs::write(&victim, "").unwrap();
+            std::os::unix::fs::symlink(&victim, with_suffix(&db, sidecar)).unwrap();
+            let body = format!("daemon:\n  state:\n    db: '{}'\n", db.display());
+            let path = write_config(dir.path(), "rsigma.yaml", &body);
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            let state = loaded.config.daemon.unwrap().state.unwrap();
+            assert!(state.db.is_none(), "{sidecar}");
+            assert_eq!(loaded.ignored_keys.len(), 1, "{sidecar}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_paths_through_a_missing_directory_cannot_reach_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        let target = dir.path().join("missing/../link/out.ndjson");
+        let body = format!("eval:\n  output: '{}'\n", target.display());
+        let path = write_config(dir.path(), "rsigma.yaml", &body);
+        let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+        assert!(loaded.config.eval.unwrap().output.is_none());
+    }
+
+    #[test]
+    fn protected_keys_are_unique() {
+        let mut keys: Vec<&str> = PROTECTED_KEYS.iter().map(|p| p.key).collect();
+        keys.extend(PROTECTED_ENTRY_KEYS.iter().map(|p| p.key));
+        let total = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), total);
+        assert!(
+            PROTECTED_ENTRY_KEYS
+                .iter()
+                .all(|p| p.key.matches('*').count() == 1)
+        );
     }
 
     #[test]
