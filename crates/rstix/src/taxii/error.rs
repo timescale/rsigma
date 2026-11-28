@@ -157,7 +157,7 @@ pub enum TaxiiError {
         host: String,
     },
     /// DNS SRV or TLSA lookup failure (non-DNSSEC path, or SRV when not using DANE).
-    #[error("DNS SRV discovery failed: {0}")]
+    #[error("DNS lookup failed: {0}")]
     DnsDiscovery(String),
     /// Client certificate could not be loaded.
     #[error("invalid client certificate: {0}")]

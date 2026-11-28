@@ -34,6 +34,8 @@ pub(crate) struct TaxiiHttp {
     pub dns_nameserver: Option<SocketAddr>,
     pub dane_require_dnssec: bool,
     pub address_filter: Option<AddressFilter>,
+    /// Host the certificate is checked against when it is not the URL host.
+    pub tls_identity: Option<String>,
 }
 
 pub(crate) struct TaxiiResponse {
@@ -214,7 +216,7 @@ impl TaxiiHttp {
         if !matches!(self.server_trust, ServerTrustPolicy::Dane) || url.scheme() != "https" {
             return Ok(());
         }
-        let Some(host) = url.host_str() else {
+        let Some(host) = self.tls_identity.as_deref().or(url.host_str()) else {
             return Ok(());
         };
         let port = url.port().unwrap_or(443);
@@ -279,11 +281,9 @@ fn is_transport_retryable(err: &reqwest::Error) -> bool {
 const MAX_CLOCK_SKEW_SECS: u64 = 24 * 60 * 60;
 
 pub(crate) fn parse_http_date_skew(value: &str) -> Option<i64> {
-    let server = time::OffsetDateTime::parse(
-        value.trim(),
-        &time::format_description::well_known::Rfc2822,
-    )
-    .ok()?;
+    let server =
+        time::OffsetDateTime::parse(value.trim(), &time::format_description::well_known::Rfc2822)
+            .ok()?;
     let now = time::OffsetDateTime::now_utc();
     server.unix_timestamp().checked_sub(now.unix_timestamp())
 }

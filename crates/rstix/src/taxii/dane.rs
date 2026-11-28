@@ -10,7 +10,7 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls_webpki::EndEntityCert;
+use rustls_webpki::{EndEntityCert, VerifiedPath, spki_for_anchor};
 use sha2::{Digest, Sha256};
 
 /// Parsed TLSA association data.
@@ -29,20 +29,21 @@ pub struct TlsaRecord {
 impl TlsaRecord {
     /// Returns true when `cert` matches this record's selector and matching type.
     pub fn association_matches(&self, cert: &CertificateDer<'_>) -> bool {
-        let data = match self.selector {
-            0 => cert.as_ref().to_vec(),
-            1 => match spki_bytes(cert) {
-                Some(spki) => spki,
-                None => return false,
-            },
-            _ => return false,
-        };
-        let digest = match self.matching {
-            0 => data,
-            1 => Sha256::digest(&data).to_vec(),
-            _ => return false,
-        };
-        digest == self.cert_data
+        match self.selector {
+            0 => self.data_matches(cert.as_ref()),
+            1 => spki_bytes(cert).is_some_and(|spki| self.data_matches(&spki)),
+            _ => false,
+        }
+    }
+
+    /// Compare already-selected `data` (full certificate or SPKI) under this
+    /// record's matching type.
+    fn data_matches(&self, data: &[u8]) -> bool {
+        match self.matching {
+            0 => data == self.cert_data.as_slice(),
+            1 => Sha256::digest(data).as_slice() == self.cert_data.as_slice(),
+            _ => false,
+        }
     }
 
     /// Usages and wire fields this client implements (RFC 7671 TLS client).
@@ -84,12 +85,46 @@ fn chain_associates(
 }
 
 /// Outcome of evaluating TLSA records for the presented chain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DaneDecision {
     /// Usage 3 (DANE-EE) or verified usage 2 (DANE-TA): accept without PKIX (RFC 7671 §5.1).
     AcceptWithoutPkix,
-    /// Usage 1 (PKIX-EE) or usage 0 (PKIX-TA) association matched: caller MUST run PKIX.
+    /// Usage 1 (PKIX-EE) association matched: caller MUST run PKIX.
     RequirePkix,
+    /// Usage 0 (PKIX-TA): caller MUST run PKIX, and the validated path MUST pass
+    /// through a CA that matches one of these records (RFC 6698 §2.1.1).
+    RequirePkixTrustAnchor(Vec<TlsaRecord>),
+}
+
+/// Whether the validated `path` passes through a CA matching one of the usage 0 `records`.
+///
+/// Only the path's intermediates and its trust anchor count, so a matching
+/// certificate the peer sent but the path does not use is ignored. The trust
+/// anchor is known by its SPKI; a full-certificate record matches it through a
+/// presented certificate that carries the anchor's key.
+pub(crate) fn path_matches_pkix_ta(
+    records: &[TlsaRecord],
+    path: &VerifiedPath<'_>,
+    presented: &[CertificateDer<'_>],
+) -> bool {
+    let through_intermediate = path.intermediate_certificates().any(|cert| {
+        let der = cert.der();
+        records
+            .iter()
+            .any(|record| record.association_matches(&der))
+    });
+    if through_intermediate {
+        return true;
+    }
+    let anchor_spki = spki_for_anchor(path.anchor());
+    records.iter().any(|record| match record.selector {
+        0 => presented.iter().any(|cert| {
+            spki_bytes(cert).as_deref() == Some(anchor_spki.as_ref())
+                && record.association_matches(cert)
+        }),
+        1 => record.data_matches(anchor_spki.as_ref()),
+        _ => false,
+    })
 }
 
 /// Evaluate TLSA records fail-closed (RFC 7671 §5–6).
@@ -147,12 +182,14 @@ pub(crate) fn evaluate_dane(
         return Ok(DaneDecision::RequirePkix);
     }
 
-    // Usage 0 (PKIX-TA): chain cert must match TLSA and PKIX MUST succeed (handled by caller).
-    if usable
+    // Usage 0 (PKIX-TA): the caller matches these against the PKIX-validated path.
+    let pkix_ta: Vec<TlsaRecord> = usable
         .iter()
-        .any(|r| r.cert_usage == 0 && chain_associates(r, end_entity, intermediates))
-    {
-        return Ok(DaneDecision::RequirePkix);
+        .filter(|r| r.cert_usage == 0)
+        .map(|r| (*r).clone())
+        .collect();
+    if !pkix_ta.is_empty() {
+        return Ok(DaneDecision::RequirePkixTrustAnchor(pkix_ta));
     }
 
     Err("DANE: usable TLSA records present but none matched the server certificate or chain".into())
