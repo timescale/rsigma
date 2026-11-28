@@ -197,3 +197,34 @@ fn schemas_delete_requires_observer() {
     let (status, _body) = http_delete(&daemon.url("/api/v1/schemas"));
     assert_eq!(status, 503);
 }
+
+#[test]
+fn discovered_shapes_leave_out_over_long_keys() {
+    let rule = temp_file(".yml", RULE);
+    let daemon =
+        DaemonProcess::spawn_http_with_args(rule.path().to_str().unwrap(), &["--discover-schemas"]);
+
+    let long = "k".repeat(4096);
+    let event = serde_json::json!({
+        "vendor": "acme",
+        "event_type": "alert",
+        long.clone(): { "a": 1, "b": 2 },
+    })
+    .to_string();
+    let payload = [event.as_str(); 4].join("\n");
+    let (status, _body) = http_post(&daemon.url("/api/v1/events"), &payload);
+    assert_eq!(status, 200);
+    let _ = wait_for_events_observed(&daemon, 4);
+
+    let body = poll_until(Duration::from_secs(5), || {
+        let (status, body) = http_get(&daemon.url("/api/v1/schemas/suggestions"));
+        let v: Value = serde_json::from_str(&body).ok()?;
+        (status == 200 && !v["candidates"].as_array()?.is_empty()).then_some(body)
+    })
+    .expect("no suggestions within 5s");
+    assert!(body.contains("event_type"), "{body}");
+    assert!(
+        !body.contains(&long[..600]),
+        "an over-long key must not be served"
+    );
+}

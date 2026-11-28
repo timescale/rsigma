@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use super::{Event, EventValue};
+use super::{Event, EventValue, FieldKeyBudget, FieldKeyOverflow};
 
 /// Raw log line event (keyword matching only).
 ///
@@ -44,6 +44,18 @@ impl Event for PlainEvent {
     /// for coverage analysis.
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
         Vec::new()
+    }
+
+    fn visit_field_keys(
+        &self,
+        _budget: &FieldKeyBudget,
+        _visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        FieldKeyOverflow::default()
+    }
+
+    fn has_any_field(&self) -> bool {
+        false
     }
 
     fn top_level_keys(&self) -> Option<Vec<Cow<'_, str>>> {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::{Event, EventValue};
+use super::{Event, EventValue, FieldKeyBudget, FieldKeyOverflow};
 
 /// Generic flat-map event for user-defined key-value stores.
 ///
@@ -65,10 +65,27 @@ where
     }
 
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
-        self.inner
-            .keys()
-            .map(|k| Cow::Borrowed(k.as_ref()))
-            .collect()
+        let mut keys = Vec::new();
+        super::visit_flat_field_keys(
+            self.inner.keys().map(AsRef::as_ref),
+            &FieldKeyBudget::default(),
+            &mut |key| keys.push(Cow::Borrowed(key)),
+        );
+        keys
+    }
+
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        super::visit_flat_field_keys(self.inner.keys().map(AsRef::as_ref), budget, &mut |key| {
+            visit(key)
+        })
+    }
+
+    fn has_any_field(&self) -> bool {
+        !self.inner.is_empty()
     }
 
     fn top_level_keys(&self) -> Option<Vec<Cow<'_, str>>> {

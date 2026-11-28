@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::{Event, EventValue};
+use super::{Event, EventValue, FieldKeyBudget, FieldKeyOverflow};
 
 /// An [`Event`] that rewrites field names via a `Sigma -> [event field]` map
 /// before reading from the inner event.
@@ -71,6 +71,18 @@ impl<E: Event + ?Sized> Event for MappedEvent<'_, E> {
 
     fn field_keys(&self) -> Vec<Cow<'_, str>> {
         self.inner.field_keys()
+    }
+
+    fn visit_field_keys(
+        &self,
+        budget: &FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> FieldKeyOverflow {
+        self.inner.visit_field_keys(budget, visit)
+    }
+
+    fn has_any_field(&self) -> bool {
+        self.inner.has_any_field()
     }
 
     fn top_level_keys(&self) -> Option<Vec<Cow<'_, str>>> {

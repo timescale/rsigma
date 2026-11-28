@@ -84,6 +84,8 @@ pub struct Metrics {
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
+    pub fields_observer_oversized_keys_total: IntCounter,
+    pub fields_observer_truncated_events_total: IntCounter,
     pub events_by_schema: IntCounterVec,
     pub events_unknown_schema: IntCounter,
     pub events_ambiguous_schema: IntCounter,
@@ -877,6 +879,16 @@ impl Metrics {
             "New-key insert attempts dropped because the field observer was at capacity",
         ))
         .unwrap();
+        let fields_observer_oversized_keys_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observer_oversized_keys_total",
+            "Field paths the field observer skipped for being longer than 512 bytes",
+        ))
+        .unwrap();
+        let fields_observer_truncated_events_total = IntCounter::with_opts(Opts::new(
+            "rsigma_fields_observer_truncated_events_total",
+            "Events whose field walk stopped at the per-event key or byte cap",
+        ))
+        .unwrap();
         registry
             .register(Box::new(fields_observed_total.clone()))
             .unwrap();
@@ -885,6 +897,12 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(fields_observer_overflow_dropped_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_oversized_keys_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(fields_observer_truncated_events_total.clone()))
             .unwrap();
 
         let events_by_schema = IntCounterVec::new(
@@ -1600,6 +1618,8 @@ impl Metrics {
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,
+            fields_observer_oversized_keys_total,
+            fields_observer_truncated_events_total,
             events_by_schema,
             events_ambiguous_schema,
             unknown_schema_clusters,
@@ -1685,6 +1705,18 @@ impl Metrics {
         if overflow_now > overflow_prev {
             self.fields_observer_overflow_dropped_total
                 .inc_by(overflow_now - overflow_prev);
+        }
+        let oversized_now = snapshot.lifetime_oversized_keys;
+        let oversized_prev = self.fields_observer_oversized_keys_total.get();
+        if oversized_now > oversized_prev {
+            self.fields_observer_oversized_keys_total
+                .inc_by(oversized_now - oversized_prev);
+        }
+        let truncated_now = snapshot.lifetime_truncated_events;
+        let truncated_prev = self.fields_observer_truncated_events_total.get();
+        if truncated_now > truncated_prev {
+            self.fields_observer_truncated_events_total
+                .inc_by(truncated_now - truncated_prev);
         }
     }
 

@@ -5436,6 +5436,8 @@ async fn fields_full(
             "unique_keys_observed": snapshot.unique_keys,
             "rule_fields_loaded": rule_field_set.len(),
             "overflow_dropped": snapshot.overflow_dropped,
+            "oversized_keys": snapshot.oversized_keys,
+            "truncated_events": snapshot.truncated_events,
             "max_keys": snapshot.max_keys,
             "uptime_seconds": snapshot.uptime_seconds,
             "intersection_count": intersection_count,

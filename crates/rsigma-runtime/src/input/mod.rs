@@ -109,6 +109,26 @@ impl Event for EventInputDecoded {
             EventInputDecoded::Plain(e) => e.field_keys(),
         }
     }
+
+    fn visit_field_keys(
+        &self,
+        budget: &rsigma_eval::FieldKeyBudget,
+        visit: &mut dyn FnMut(&str),
+    ) -> rsigma_eval::FieldKeyOverflow {
+        match self {
+            EventInputDecoded::Json(e) => e.visit_field_keys(budget, visit),
+            EventInputDecoded::Kv(e) => e.visit_field_keys(budget, visit),
+            EventInputDecoded::Plain(e) => e.visit_field_keys(budget, visit),
+        }
+    }
+
+    fn has_any_field(&self) -> bool {
+        match self {
+            EventInputDecoded::Json(e) => e.has_any_field(),
+            EventInputDecoded::Kv(e) => e.has_any_field(),
+            EventInputDecoded::Plain(e) => e.has_any_field(),
+        }
+    }
 }
 
 /// Parse a raw log line using the specified format.
