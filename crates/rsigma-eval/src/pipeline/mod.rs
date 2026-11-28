@@ -65,7 +65,9 @@ pub use parsing::{
     parse_transformation_items, validate_source_refs,
 };
 pub use state::PipelineState;
-pub use transformations::{MAX_PLACEHOLDER_COMBINATIONS, Transformation};
+pub use transformations::{
+    MAX_PLACEHOLDER_COMBINATIONS, MAX_PLACEHOLDER_VALUES_PER_RULE, Transformation,
+};
 
 // =============================================================================
 // Pipeline types

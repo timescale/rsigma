@@ -26,6 +26,12 @@ use crate::error::{EvalError, Result};
 /// load time instead of silently ballooning memory and CPU.
 const MAX_FIELD_MAPPING_COMBINATIONS: usize = 4096;
 
+/// Max branches the one-to-many expansions of one field-name transformation
+/// can produce across all the `AllOf`s of one rule, so a rule with many
+/// selections cannot multiply [`MAX_FIELD_MAPPING_COMBINATIONS`] by their
+/// number.
+const MAX_FIELD_MAPPING_BRANCHES_PER_RULE: usize = 16_384;
+
 /// Apply a field-name-rewriting closure to every detection in `rule`.
 ///
 /// The closure returns `None` to leave a name untouched, `Some(vec)` to
@@ -56,6 +62,7 @@ where
         &mut renames,
     );
     let rule_title = rule.title.clone();
+    let mut branches = 0usize;
     for detection in rule.detection.named.values_mut() {
         transform_detection_fields(
             detection,
@@ -65,6 +72,7 @@ where
             &transform_fn,
             &rule_title,
             &mut renames,
+            &mut branches,
         )?;
     }
     state.track_field_renames(renames);
@@ -102,6 +110,7 @@ where
     renamed
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transform_detection_fields<F>(
     detection: &mut Detection,
     state: &PipelineState,
@@ -110,6 +119,7 @@ fn transform_detection_fields<F>(
     transform_fn: &F,
     rule_title: &str,
     renames: &mut Vec<FieldRename>,
+    branches: &mut usize,
 ) -> Result<()>
 where
     F: Fn(&str) -> Option<Vec<String>>,
@@ -211,6 +221,15 @@ where
                          reduce the number of one-to-many alternatives or split the AllOf"
                     )));
                 }
+                *branches = branches.saturating_add(total);
+                if *branches > MAX_FIELD_MAPPING_BRANCHES_PER_RULE {
+                    return Err(EvalError::Pipeline(format!(
+                        "field name mapping cartesian expansion would produce more than \
+                         {MAX_FIELD_MAPPING_BRANCHES_PER_RULE} branches across the rule \
+                         (rule: {rule_title}); reduce the number of one-to-many alternatives \
+                         or split the rule"
+                    )));
+                }
                 let combinations = cartesian_product(alternatives);
                 *detection =
                     Detection::AnyOf(combinations.into_iter().map(Detection::AllOf).collect());
@@ -226,6 +245,7 @@ where
                     transform_fn,
                     rule_title,
                     renames,
+                    branches,
                 )?;
             }
         }
@@ -238,6 +258,7 @@ where
                 transform_fn,
                 rule_title,
                 renames,
+                branches,
             )?;
         }
         Detection::And(subs) => {
@@ -250,6 +271,7 @@ where
                     transform_fn,
                     rule_title,
                     renames,
+                    branches,
                 )?;
             }
         }
@@ -263,6 +285,7 @@ where
                     transform_fn,
                     rule_title,
                     renames,
+                    branches,
                 )?;
             }
         }
@@ -788,8 +811,9 @@ pub(super) fn expand_placeholders_in_rule(
     expansion: &PlaceholderExpansion<'_>,
 ) -> Result<()> {
     let rule_title = rule.title.clone();
+    let mut produced = 0usize;
     for detection in rule.detection.named.values_mut() {
-        expand_placeholders_in_detection(detection, expansion, &rule_title)?;
+        expand_placeholders_in_detection(detection, expansion, &rule_title, &mut produced)?;
     }
     Ok(())
 }
@@ -798,12 +822,18 @@ fn expand_placeholders_in_detection(
     detection: &mut Detection,
     expansion: &PlaceholderExpansion<'_>,
     rule_title: &str,
+    produced: &mut usize,
 ) -> Result<()> {
     match detection {
         Detection::AllOf(items) => {
             for item in items.iter_mut() {
                 if item.field.modifiers.contains(&Modifier::Expand) {
-                    expand_placeholders_in_values(&mut item.values, expansion, rule_title)?;
+                    expand_placeholders_in_values(
+                        &mut item.values,
+                        expansion,
+                        rule_title,
+                        produced,
+                    )?;
                     // An authored empty list is a null check. A placeholder
                     // that expanded to no values must match nothing instead,
                     // or an empty feed would fire on events missing the field.
@@ -816,15 +846,15 @@ fn expand_placeholders_in_detection(
         }
         Detection::AnyOf(subs) | Detection::And(subs) => {
             for sub in subs.iter_mut() {
-                expand_placeholders_in_detection(sub, expansion, rule_title)?;
+                expand_placeholders_in_detection(sub, expansion, rule_title, produced)?;
             }
         }
         Detection::ArrayMatch { body, .. } => {
-            expand_placeholders_in_detection(body.as_mut(), expansion, rule_title)?;
+            expand_placeholders_in_detection(body.as_mut(), expansion, rule_title, produced)?;
         }
         Detection::Conditional { named, .. } => {
             for sub in named.values_mut() {
-                expand_placeholders_in_detection(sub, expansion, rule_title)?;
+                expand_placeholders_in_detection(sub, expansion, rule_title, produced)?;
             }
         }
         Detection::Keywords(_) => {}
@@ -836,17 +866,22 @@ fn expand_placeholders_in_values(
     values: &mut Vec<SigmaValue>,
     expansion: &PlaceholderExpansion<'_>,
     rule_title: &str,
+    produced: &mut usize,
 ) -> Result<()> {
     let mut expanded_values = Vec::new();
     for value in values.drain(..) {
         if let SigmaValue::String(ref s) = value
             && s.original.contains('%')
         {
-            expanded_values.extend(expand_placeholder_string(
-                &s.original,
-                expansion,
-                rule_title,
-            )?);
+            let expanded = expand_placeholder_string(&s.original, expansion, rule_title)?;
+            *produced = produced.saturating_add(expanded.len());
+            if *produced > MAX_PLACEHOLDER_VALUES_PER_RULE {
+                return Err(EvalError::Pipeline(format!(
+                    "placeholder expansion would produce more than \
+                     {MAX_PLACEHOLDER_VALUES_PER_RULE} values across the rule (rule: {rule_title})"
+                )));
+            }
+            expanded_values.extend(expanded);
             continue;
         }
         expanded_values.push(value);
@@ -928,6 +963,11 @@ fn escape_bare_percent(text: &str) -> String {
 }
 
 pub const MAX_PLACEHOLDER_COMBINATIONS: usize = 4096;
+
+/// Max values placeholder expansion may produce across all the values of one
+/// rule, so a rule with many placeholder values cannot multiply
+/// [`MAX_PLACEHOLDER_COMBINATIONS`] by their number.
+pub const MAX_PLACEHOLDER_VALUES_PER_RULE: usize = 65_536;
 
 /// Substitute the placeholders in the raw source text `s` that `expansion`
 /// handles, producing the Cartesian product of multi-value variables.

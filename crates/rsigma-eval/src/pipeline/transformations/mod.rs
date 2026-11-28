@@ -10,7 +10,7 @@ pub(super) use helpers::{
     merge_plain_parts, parse_condition_field, parse_number, parts_to_original,
 };
 
-pub use helpers::MAX_PLACEHOLDER_COMBINATIONS;
+pub use helpers::{MAX_PLACEHOLDER_COMBINATIONS, MAX_PLACEHOLDER_VALUES_PER_RULE};
 #[cfg(test)]
 mod tests;
 
