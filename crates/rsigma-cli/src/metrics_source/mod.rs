@@ -65,8 +65,8 @@ pub(crate) fn load_metrics(spec: &str, window: Option<&str>) -> Result<MetricsDa
 }
 
 /// Read a spec that is either a local path or an `http(s)` URL (a `/metrics`
-/// endpoint). URLs are fetched with the synchronous `ureq` client, the same
-/// transport convention `rule coverage` uses.
+/// endpoint). URLs are fetched through [`crate::fetch`], the same transport
+/// `rule coverage` uses.
 fn read_spec(spec: &str) -> Result<String, MetricsError> {
     if is_url(spec) {
         http_get(spec)
@@ -77,19 +77,12 @@ fn read_spec(spec: &str) -> Result<String, MetricsError> {
 }
 
 fn is_url(spec: &str) -> bool {
-    spec.starts_with("http://") || spec.starts_with("https://")
+    crate::fetch::is_remote(spec)
 }
 
 fn http_get(url: &str) -> Result<String, MetricsError> {
-    match ureq::get(url).call() {
-        Ok(resp) => resp
-            .into_body()
-            .read_to_string()
-            .map_err(|e| MetricsError::Unreadable(format!("reading response from {url}: {e}"))),
-        Err(e) => Err(MetricsError::Unreadable(format!(
-            "could not fetch metrics from {url}: {e}"
-        ))),
-    }
+    crate::fetch::get_text(url)
+        .map_err(|e| MetricsError::Unreadable(format!("could not fetch metrics from {url}: {e}")))
 }
 
 // ---------------------------------------------------------------------------

@@ -729,7 +729,38 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
                 .is_some_and(|defaults| take_convert_output(defaults, project_dir))
         },
     },
+    // Inputs the CLI downloads when they are URLs. A project may still name
+    // local files.
+    ProtectedKey {
+        key: "coverage.atomics",
+        strip: |c, _| take_url(c.coverage.as_mut().map(|s| &mut s.atomics)),
+    },
+    ProtectedKey {
+        key: "coverage.baseline",
+        strip: |c, _| take_url(c.coverage.as_mut().map(|s| &mut s.baseline)),
+    },
+    ProtectedKey {
+        key: "visibility.mapping",
+        strip: |c, _| take_url(c.visibility.as_mut().map(|s| &mut s.mapping)),
+    },
+    ProtectedKey {
+        key: "scorecard.metrics",
+        strip: |c, _| take_url(c.scorecard.as_mut().map(|s| &mut s.metrics)),
+    },
+    ProtectedKey {
+        key: "hygiene.metrics",
+        strip: |c, _| take_url(c.hygiene.as_mut().map(|s| &mut s.metrics)),
+    },
 ];
+
+/// Clear `slot` when it holds a URL rather than a local path.
+fn take_url(slot: Option<&mut Option<String>>) -> bool {
+    slot.is_some_and(|value| {
+        value
+            .take_if(|spec| crate::fetch::is_remote(spec))
+            .is_some()
+    })
+}
 
 /// A security-sensitive key inside every entry of a named map, such as
 /// `rulesets.<name>.output`. Project files may not set it, as for
@@ -1581,6 +1612,77 @@ daemon:
         assert_eq!(daemon.enrichers, Some(PathBuf::from("enrich.yml")));
         assert_eq!(daemon.api.unwrap().allow_unauthenticated, Some(true));
         assert!(loaded.ignored_keys.is_empty());
+    }
+
+    fn remote_inputs(value: &str) -> String {
+        format!(
+            "coverage:\n  atomics: '{value}'\n  baseline: '{value}'\nvisibility:\n  mapping: '{value}'\nscorecard:\n  metrics: '{value}'\nhygiene:\n  metrics: '{value}'\n"
+        )
+    }
+
+    const REMOTE_INPUT_KEYS: [&str; 5] = [
+        "coverage.atomics",
+        "coverage.baseline",
+        "visibility.mapping",
+        "scorecard.metrics",
+        "hygiene.metrics",
+    ];
+
+    fn remote_input_values(config: &RsigmaConfigPartial) -> [Option<String>; 5] {
+        let coverage = config.coverage.clone().unwrap_or_default();
+        [
+            coverage.atomics,
+            coverage.baseline,
+            config.visibility.clone().unwrap_or_default().mapping,
+            config.scorecard.clone().unwrap_or_default().metrics,
+            config.hygiene.clone().unwrap_or_default().metrics,
+        ]
+    }
+
+    #[test]
+    fn project_layers_drop_remote_inputs_and_keep_local_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        for url in [
+            "http://127.0.0.1:9/metrics",
+            "HTTPS://example.com/index.yaml",
+        ] {
+            let path = write_config(dir.path(), "rsigma.yaml", &remote_inputs(url));
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                [None, None, None, None, None]
+            );
+            let keys: Vec<&str> = loaded
+                .ignored_keys
+                .iter()
+                .map(|(_, k)| k.as_str())
+                .collect();
+            assert_eq!(keys, REMOTE_INPUT_KEYS, "{url}");
+        }
+        for local in ["./metrics.txt", "/srv/atomics/index.yaml"] {
+            let path = write_config(dir.path(), ".rsigmarc", &remote_inputs(local));
+            let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
+            assert!(loaded.ignored_keys.is_empty(), "{local}");
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                std::array::from_fn(|_| Some(local.to_string()))
+            );
+        }
+    }
+
+    #[test]
+    fn operator_layers_keep_remote_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "http://127.0.0.1:9/metrics";
+        let path = write_config(dir.path(), "config.yaml", &remote_inputs(url));
+        for layer in [Layer::System, Layer::User, Layer::Explicit] {
+            let loaded = load_files(vec![(path.clone(), layer)]).unwrap();
+            assert!(loaded.ignored_keys.is_empty(), "{layer:?}");
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                std::array::from_fn(|_| Some(url.to_string()))
+            );
+        }
     }
 
     fn other_owner() -> trust::Facts {

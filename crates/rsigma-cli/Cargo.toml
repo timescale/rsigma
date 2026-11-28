@@ -118,6 +118,7 @@ jaq-std = "3.0"
 serde_json_path = "0.7.2"
 jsonschema = "0.61"
 ureq = "3"
+url = "2"
 dirs = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }

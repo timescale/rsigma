@@ -79,6 +79,7 @@ mod cli_parse;
 mod cli_pipeline_diff;
 mod cli_project_config_trust;
 mod cli_project_config_trust_daemon;
+mod cli_project_remote_inputs;
 mod cli_project_write_paths;
 mod cli_reverse;
 mod cli_rule_loading_limits;

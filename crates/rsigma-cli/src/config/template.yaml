@@ -411,6 +411,9 @@ coverage:
   # rules: [./rules]
   # Cross-reference against the Atomic Red Team index: a local index.yaml, an
   # atomic-red-team `atomics/` directory, or a URL.
+  # A URL is honored only outside a project file (the user or system config,
+  # --config, RSIGMA_* variables, or the flag); ./rsigma.yaml may name a local
+  # file.
   # atomics: https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/Indexes/index.yaml
   # Baseline ATT&CK Navigator layer (local path or URL); e.g. the SigmaHQ heatmap.
   # baseline: https://raw.githubusercontent.com/SigmaHQ/sigma/master/other/sigma_attack_nav_coverage.json
@@ -426,6 +429,9 @@ scorecard:
   # backtest: ./backtest.json
   # coverage: ./coverage.json
   # Prometheus exposition snapshot or /metrics URL for production fire volume.
+  # A URL is honored only outside a project file (the user or system config,
+  # --config, RSIGMA_* variables, or the flag); ./rsigma.yaml may name a local
+  # file.
   # metrics: http://localhost:9090/metrics
   # When metrics is a Prometheus query-API base, range window for last-fired.
   # metrics_window: 7d
@@ -450,6 +456,9 @@ visibility:
   # Logsource/field to ATT&CK data-source mapping table (local path or URL).
   # Unset uses the bundled default table; a bare `--mapping` flag uses the
   # curated default URL.
+  # A URL is honored only outside a project file (the user or system config,
+  # --config, RSIGMA_* variables, or the flag); ./rsigma.yaml may name a local
+  # file.
   # mapping: ./mapping.json
   # Exit non-zero when a rule-expected data source has no observed telemetry
   # (every mapped field sits in the broken-coverage `missing` set).
@@ -469,6 +478,9 @@ hygiene:
   # rules: [./rules]
   # Prometheus exposition snapshot or /metrics URL for per-rule fire volume
   # (drives the silence and noisy signals).
+  # A URL is honored only outside a project file (the user or system config,
+  # --config, RSIGMA_* variables, or the flag); ./rsigma.yaml may name a local
+  # file.
   # metrics: http://localhost:9090/metrics
   # When metrics is a Prometheus query-API base, range window for last-fired.
   # metrics_window: 7d

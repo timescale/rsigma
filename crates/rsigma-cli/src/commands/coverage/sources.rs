@@ -84,7 +84,7 @@ const CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 /// Read a spec that is either a local path or an `http(s)` URL. URLs are
 /// fetched through the on-disk cache; paths are read directly.
 fn fetch_or_read(spec: &str) -> Result<String, String> {
-    if spec.starts_with("http://") || spec.starts_with("https://") {
+    if crate::fetch::is_remote(spec) {
         fetch_cached(spec)
     } else {
         std::fs::read_to_string(spec).map_err(|e| format!("could not read {spec}: {e}"))
@@ -132,12 +132,8 @@ fn fetch_cached(url: &str) -> Result<String, String> {
         return Ok(body);
     }
 
-    match ureq::get(url).call() {
-        Ok(response) => {
-            let body = response
-                .into_body()
-                .read_to_string()
-                .map_err(|e| format!("reading response from {url}: {e}"))?;
+    match crate::fetch::get_text(url) {
+        Ok(body) => {
             if let Some(path) = &cache {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
