@@ -141,6 +141,8 @@ Sinks work on both multi-threaded and current-thread Tokio runtimes; on a curren
 
 `load_rules` logs rule documents that fail to parse, leaves them out, and reports how many in `EngineStats::parse_errors`. It returns an error, leaving the previous engine in place, when every rule fails to parse, or on any parse error after `set_strict_rules(true)`. Hot-reload carries the strict setting forward. {{ added "0.26.0" }}
 
+`set_follow_external_links(true)` makes `load_rules` follow links in the rules directory and in ruleset source and overlay directories that resolve outside them, instead of skipping them with a warning; hot-reload carries it forward too. `sources::registry::load_external_sources_with(paths, follow_external_links)` does the same for `--source` directories. {{ added "unreleased" }}
+
 ## Hot-reload
 
 `LogProcessor` holds the live `RuntimeEngine` in an `ArcSwap`. `processor.reload_rules()` rebuilds it from disk and atomically swaps it in; in-flight batches finish against the old engine, the next batch sees the new one. Wire a file watcher (`notify`), a `SIGHUP` handler, or an HTTP endpoint to call it:

@@ -26,7 +26,7 @@ This reference documents every subcommand with its flag table, verified examples
 
 ## Global flags
 
-Every subcommand accepts five global flags. They share the same layered precedence as the rest of the configuration: **flag > `RSIGMA_GLOBAL__*` env > `global.*` in the YAML config > built-in default**. The `--output-format` and `--color` defaults are TTY-aware where a command emits structured or tabular data; see the [Output reference](../reference/output.md) for per-command defaults.
+Every subcommand accepts six global flags. The first five share the same layered precedence as the rest of the configuration: **flag > `RSIGMA_GLOBAL__*` env > `global.*` in the YAML config > built-in default**. The `--output-format` and `--color` defaults are TTY-aware where a command emits structured or tabular data; see the [Output reference](../reference/output.md) for per-command defaults.
 
 | Flag | Default | Values | Effect |
 |------|---------|--------|--------|
@@ -35,6 +35,7 @@ Every subcommand accepts five global flags. They share the same layered preceden
 | `--color` | `auto` | `auto`, `always`, `never` | Controls ANSI color on human-readable paths (lint findings, summaries). Honors [`NO_COLOR`](https://no-color.org/) when `auto`. |
 | `--quiet` / `-q` | off | flag | Suppress every non-data line (progress, summary, fallback warnings). Errors still go to stderr. |
 | `--no-stats` | off | flag | Suppress only the trailing summary/stats line. Progress messages still appear. |
+| `--follow-external-links` | off | flag | Follow symlinks and junctions in rule, ruleset, pipeline source, and corpus directories that resolve outside the directory being loaded, instead of skipping them with a warning. Cycles are still detected and each file still loads once. It has no environment variable or config key, so a project config file cannot turn it on. See [Directory loading](../reference/security.md#directory-loading). {{ added "unreleased" }} |
 
 `--log-format` adds the diagnostic-log stream alongside the existing stdout/stderr output; it never replaces them. See [Observability](../guide/observability.md) for the full RUST_LOG target catalog. For the output formats and color resolution model see the [Output reference](../reference/output.md).
 

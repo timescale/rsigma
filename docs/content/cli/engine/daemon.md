@@ -28,7 +28,7 @@ For narrative coverage see [Streaming Detection](../../guide/streaming-detection
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. Conflicts with `--ruleset`. |
+| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `daemon.rules` in a config file. Conflicts with `--ruleset`. Each real file loads once, and links that resolve outside the directory are skipped with a warning unless the global `--follow-external-links` is set; the file watcher follows links only with that flag, and hot-reload keeps it ([Directory loading](../../reference/security.md#directory-loading)). {{ added "unreleased" }} |
 | `--ruleset <NAME>` | Named rulesets from the configuration, evaluated side by side. Repeatable. May also be supplied via `daemon.rulesets` (with optional `when` schema bindings). Conflicts with `--rules`. {{ added "0.28.0" }} |
 
 ### Several rulesets

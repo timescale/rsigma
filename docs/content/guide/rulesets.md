@@ -50,7 +50,7 @@ A ruleset is a file-only configuration section. Environment variables such as `R
 
 ## Sources
 
-`sources` is a non-empty list of files or directories, processed in declaration order. A directory is walked recursively with sorted paths, hidden directories skipped, symlink loops guarded, and only `.yml` and `.yaml` files read. A file is read as is, whatever its extension. A missing source is a configuration error. Sources do not accept globs; use the `path` selector to sub-select files.
+`sources` is a non-empty list of files or directories, processed in declaration order. A directory is walked recursively with sorted paths, hidden directories skipped, and only `.yml` and `.yaml` files read. Each real directory and file is read once, so symlink loops and links to the same file are harmless, and a link that resolves outside the source directory is skipped with a warning unless `--follow-external-links` is set. A link out of an overlay directory is a confinement error. {{ added "unreleased" }} A file is read as is, whatever its extension. A missing source is a configuration error. Sources do not accept globs; use the `path` selector to sub-select files.
 
 Each file is parsed separately, so every document keeps its origin. The resolved collection is deterministic: source order, then sorted file path, then document order within each kind. Two kept documents with the same id (case-insensitive), or the same name, are a configuration error. A vendored rule plus a local fork is resolved by excluding one of them with `path` or `id`.
 

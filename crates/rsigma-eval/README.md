@@ -111,7 +111,8 @@ A non-short-circuiting, bloom-free recording evaluator that backs `rsigma engine
 | `parse_pipeline(yaml: &str)` | Parse a pipeline from a YAML string |
 | `parse_pipeline_file(path: &Path)` | Parse a pipeline from a YAML file |
 | `parse_sources_file(path: &Path)` | Parse a standalone source YAML file (top-level `sources:` list). Unknown keys, keys that do not apply to a source's type, and unknown `format`, `on_error`, and `refresh` values are errors |
-| `parse_sources_dir(dir: &Path)` | Parse all `*.yml`/`*.yaml` source files in a directory |
+| `parse_sources_dir(dir: &Path)` | Parse all `*.yml`/`*.yaml` source files in a directory, each real file once, refusing links out of it |
+| `parse_sources_dir_with(dir: &Path, follow_external_links: bool)` | The same, optionally following links out of the directory |
 | `validate_source_refs(pipeline, external_ids)` | Validate that `${source.*}` references resolve against declared and/or external source IDs |
 | `sources::scan_source_templates(text)` | Find every `${source.<id>}` or `${source.<id>.<path>}` template in a string, with its id, path, and byte offset; the one reference grammar used by pipeline parsing and runtime expansion |
 | `sources::is_valid_source_id(id)` | Whether an id is declarable: ASCII letters, digits, `_`, and `-` |
@@ -184,7 +185,7 @@ Contrasts false-positive events with required true-positive exemplars and emits 
 ## Detection Engine
 
 - **Witness-based candidate index**: every rule is analyzed into witnesses, necessary conditions of which at least one holds on any event the rule can match, drawn from exact values, substring needles, keywords, mandatory regex literals, and field presence. The index inverts that relation over a per-field presence list and exact-value map, one Aho-Corasick automaton per field for substring needles, and one keyword automaton scanned against every string value. Rules with no sound witness, chiefly those whose only required branch is negated, are evaluated against every event. Candidates come back in ascending rule order.
-- **Compiled matchers**: optimized matching for all 30 modifier combinations: exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash expansion (5 replacement characters), field references, placeholder expansion, timestamp part extraction
+- **Compiled matchers**: optimized matching for all 30 modifier combinations: exact, contains, startswith, endswith, regex, CIDR, numeric comparison, base64 offset (3 alignment variants), windash (one regex with a class of the 5 dash characters at each dash position), field references, placeholder expansion, timestamp part extraction
 - **Logsource-aware evaluation**: opt-in `LogSourceExtractor` plus conflict-based pruning (`set_logsource_extractor`) skips rules whose `product`/`service`/`category` (and custom dimensions) conflict with the event's logsource, backed by a product-partitioned rule index; off by default and fail-open. Implement the `ExtractLogSource` trait to read the logsource from your own event type, such as metadata beside the payload; `Engine`, `CorrelationEngine`, and `SchemaRouter` are generic over the extractor and default to `LogSourceExtractor`
 - **Schema classification and routing**: `SchemaClassifier` recognizes an event's schema from declarative field predicates (`explain`/`classify_with_ambiguity` for tuning), and `SchemaRouter` routes each event to its schema's pipeline engine, derives the event's logsource from the recognized schema for pruning, and feeds one shared correlation store. When the winning schema ties with a schema implying a different logsource, the router drops the schema-derived logsource for that event and counts it in `logsource_ambiguous_total`. `set_bloom_prefilter`, `set_bloom_max_bytes`, and `set_cross_rule_ac` apply the substring prefilters to every per-schema engine
 - **Condition tree evaluation**: short-circuit boolean logic, selector patterns with quantifiers (`1 of selection_*`, `all of them`)
@@ -623,7 +624,9 @@ Always benchmark against representative rule sets and event streams before flipp
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `MAX_NESTING_DEPTH` | 64 | Recursive JSON traversal depth for keyword search |
-| `MAX_WINDASH_DASHES` | 8 | Maximum dash characters expanded by windash (5^8 variants); defined in `rsigma_ir::encoding` and shared with conversion |
+| `MAX_WINDASH_VARIANTS_PER_ITEM`, `MAX_WINDASH_VARIANTS_PER_RULE` | 4,096, 16,384 | Most `\|windash` variants of one detection item and of one rule; defined in `rsigma_parser::validate` and checked by the parser, IR lowering (so evaluation and conversion), and lint |
+| `MAX_WINDASH_DASHES` | 8 | Maximum dash characters `rsigma_ir::encoding::windash_variants` expands in one value |
+| `MAX_PLACEHOLDER_VALUES_PER_RULE` | 65,536 | Most values placeholder expansion may produce across one rule |
 | Windash characters | 5 | `-`, `/`, `–` (en-dash), `—` (em-dash), `―` (horizontal bar) |
 | `MAX_CHAIN_DEPTH` | 10 | Maximum correlation chaining depth |
 | `max_state_entries` | 100,000 | Default hard cap for correlation state |
@@ -642,7 +645,7 @@ Always benchmark against representative rule sets and event streams before flipp
 | `IncompatibleValue` | A value the modifier cannot use, such as null for a string modifier, a `cidr` with host bits set, or a wildcard in a field reference |
 | `Base64` | Base64 encoding error |
 | `UnknownDetection` | Condition references missing detection (caught at compile time) |
-| `InvalidModifiers` | Invalid modifier combo, empty AllOf/AnyOf, windash overflow |
+| `InvalidModifiers` | Invalid modifier combo, empty AllOf/AnyOf, a rule over the windash budget (named in the message) |
 | `ExpectedNumeric` | Numeric modifier with non-numeric value |
 | `Pipeline` | Processing pipeline YAML that fails to parse or validate, or a pipeline that fails while being applied (including `rule_failure` and `detection_item_failure`) |
 | `Parser` | Parser error (from rsigma-parser) |

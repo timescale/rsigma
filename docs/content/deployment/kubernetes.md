@@ -213,7 +213,7 @@ The container has no shell, so `kubectl exec` works only for the `rsigma` binary
 
 ## Reloading rules
 
-Kubernetes updates a mounted ConfigMap by swapping a hidden `..data` symlink rather than rewriting the rule files in place, so do not rely on the daemon's file watcher to notice. Trigger the reload explicitly once the kubelet has synced the new ConfigMap (up to a minute or so):
+Kubernetes updates a mounted ConfigMap by swapping a hidden `..data` symlink rather than rewriting the rule files in place, so do not rely on the daemon's file watcher to notice. Each rule loads once, although the mount reaches it through the visible file, `..data`, and the timestamped directory: those links stay inside the mounted directory. {{ added "unreleased" }} Trigger the reload explicitly once the kubelet has synced the new ConfigMap (up to a minute or so):
 
 ```bash
 kubectl -n rsigma port-forward deploy/rsigma 9090:9090 &

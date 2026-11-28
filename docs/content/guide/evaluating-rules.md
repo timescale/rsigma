@@ -70,6 +70,22 @@ helr run | rsigma engine eval -r rules/ -p ecs.yml
 
 Use eval for one-shot pipes and batch replay. For a long-lived service, start [`engine daemon`](streaming-detection.md#start-the-daemon) with `--input http` (or NATS/unix) and post events with curl or a collector; a finite stdin pipe into the daemon also ends the process once the writer closes. Collectors such as [Helr](../ecosystem/helr.md) and [Vector](otlp-integration.md) fit either path depending on whether you want a one-shot run or a service.
 
+## Loading rule directories
+
+{{ added "unreleased" }}
+
+`-r` takes a rule file or a directory. A directory is walked recursively for `.yml` and `.yaml` files, the same way by `engine eval`, `engine daemon`, `rule validate`, `rule lint`, `backend convert`, and the MCP server:
+
+- Each real directory is visited once and each real file loads once. A symlink or Windows junction back to the directory or to one of its ancestors does not loop, and two links to the same rule do not load it twice.
+- A link that resolves outside the directory is skipped. The command prints a warning naming the link, never its target, and the file is not read. `rule validate` counts it as a parse warning and `rule lint` reports it as `skipped_path`.
+- Pass the global `--follow-external-links` to load linked rules from elsewhere, such as a shared SigmaHQ checkout linked into a rules tree:
+
+```bash
+rsigma engine eval --follow-external-links -r rules/ -e @events.ndjson
+```
+
+A rule whose `|windash` values expand past the [windash budget](../reference/modifiers.md#the-windash-expansion-budget) is rejected when it loads; the first parse errors are printed on stderr with the rule's title.
+
 ## Pipelines and field mapping
 
 Real event schemas almost never match Sigma field names directly. Pass any number of `--pipeline NAME_OR_PATH` (or `-p`) flags; they apply to each rule in priority order before compilation:

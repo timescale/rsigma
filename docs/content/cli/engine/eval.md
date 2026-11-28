@@ -32,7 +32,7 @@ For a narrative tutorial see [Evaluating Rules](../../guide/evaluating-rules.md)
 
 | Flag | Description |
 |------|-------------|
-| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. Conflicts with `--ruleset`. |
+| `-r, --rules <RULES>` | Path to a Sigma rule file or directory of rules (recursive). May also be supplied via `eval.rules` in a config file. Conflicts with `--ruleset`. Each real file loads once, and links that resolve outside the directory are skipped with a warning unless the global `--follow-external-links` is set ([Directory loading](../../reference/security.md#directory-loading)). {{ added "unreleased" }} |
 | `--ruleset <NAME>` | Named ruleset from the configuration to evaluate. Repeatable: several rulesets are evaluated side by side and every result carries its ruleset name. May also be supplied via `eval.ruleset` (one name) or `eval.rulesets` (several names, with optional `when` schema bindings). Conflicts with `--rules`. {{ added "0.28.0" }} |
 
 ### Configuration

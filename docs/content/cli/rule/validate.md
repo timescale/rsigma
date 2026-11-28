@@ -30,7 +30,7 @@ For narrative coverage see [Linting Rules](../../guide/linting-rules.md) and [CI
 
 | Flag | Description |
 |------|-------------|
-| `<PATH>` | A Sigma YAML file, or a directory searched recursively for Sigma YAML files. Single files are accepted. Required unless `--ruleset` is set. {{ added "0.24.0" }} |
+| `<PATH>` | A Sigma YAML file, or a directory searched recursively for Sigma YAML files. Single files are accepted. Required unless `--ruleset` is set. {{ added "0.24.0" }} Each real file loads once, and links that resolve outside the directory are skipped and counted as parse warnings unless the global `--follow-external-links` is set ([Directory loading](../../reference/security.md#directory-loading)). {{ added "unreleased" }} |
 | `--ruleset <NAME>` | Named ruleset from the configuration to validate instead of `PATH`. Conflicts with `PATH`. {{ added "0.28.0" }} |
 | `--config <PATH>` | Path to an rsigma config file. Overrides config-file discovery. {{ added "0.28.0" }} |
 | `-v, --verbose` | Show details for each file, not just the summary. With `--ruleset`, the per-document origin list covers the kept documents. {{ added "0.28.0" }} |
