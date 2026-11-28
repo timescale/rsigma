@@ -18,6 +18,9 @@ pub use context::{ObservationContext, TimestampedObservation};
 pub use error::{PatternError, PatternMatchError};
 pub use lexer::{MAX_OBSERVATIONS, MAX_PATTERN_BYTES};
 pub use observables::{ObservableExtraction, ObservableKind, SimpleObservable, UnsupportedReason};
+pub use security::{
+    MATCHES_REGEX_CACHE_BYTES, MAX_EVAL_STEPS, MAX_PATH_TARGETS, MAX_REF_DEREFERENCES,
+};
 
 use crate::core::ScoKind;
 use crate::model::Bundle;
@@ -25,10 +28,30 @@ use crate::model::sco::ScoObject;
 use crate::model::sdo::ObservedData;
 
 /// A parsed and type-checked STIX pattern syntax tree.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Evaluation keeps the `MATCHES` regexes it compiles, up to
+/// [`MATCHES_REGEX_CACHE_BYTES`], so later evaluations of the same pattern
+/// (and its clones) reuse them.
+#[derive(Clone)]
 pub struct Pattern {
     ast: PatternAst,
     source: String,
+    regexes: security::RegexCache,
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.ast == other.ast && self.source == other.source
+    }
+}
+
+impl std::fmt::Debug for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pattern")
+            .field("ast", &self.ast)
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 impl Pattern {
@@ -42,6 +65,7 @@ impl Pattern {
         Ok(Self {
             ast,
             source: source.to_owned(),
+            regexes: security::RegexCache::default(),
         })
     }
 
@@ -52,6 +76,7 @@ impl Pattern {
         Ok(Self {
             ast,
             source: source.to_owned(),
+            regexes: security::RegexCache::default(),
         })
     }
 
@@ -77,12 +102,12 @@ impl Pattern {
 
     /// Full evaluation (Levels 1–3) against timestamped observations.
     pub fn evaluate(&self, ctx: &ObservationContext<'_>) -> Result<bool, PatternMatchError> {
-        eval::evaluate(&self.ast, ctx)
+        eval::evaluate(&self.ast, &self.regexes, ctx)
     }
 
     /// Level 1 shortcut: single top-level observation without temporal qualifiers.
     pub fn matches_single(&self, sco: &ScoObject) -> Result<bool, PatternMatchError> {
-        eval::matches_single(&self.ast, sco)
+        eval::matches_single(&self.ast, &self.regexes, sco)
     }
 
     /// Level 1 shortcut with optional bundle for `_ref` path dereference.
@@ -96,7 +121,7 @@ impl Pattern {
         sco: &ScoObject,
         bundle: Option<&Bundle>,
     ) -> Result<bool, PatternMatchError> {
-        eval::matches_single_with_bundle(&self.ast, sco, bundle)
+        eval::matches_single_with_bundle(&self.ast, &self.regexes, sco, bundle)
     }
 
     /// Build context from observed-data + bundle, then evaluate.
@@ -108,7 +133,7 @@ impl Pattern {
         observed_data: &ObservedData,
         bundle: &Bundle,
     ) -> Result<bool, PatternMatchError> {
-        eval::evaluate_observed_data(&self.ast, observed_data, bundle)
+        eval::evaluate_observed_data(&self.ast, &self.regexes, observed_data, bundle)
     }
 
     /// Render this pattern as a canonical STIX pattern string.

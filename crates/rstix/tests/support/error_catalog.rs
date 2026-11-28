@@ -52,4 +52,11 @@ error_cases! {
         path: "observed-data.objects".into(),
         msg: "embedded SRO objects are not supported".into(),
     },
+    "path-too-wide" => PatternMatchError::PathTooWide {
+        path: "directory:contains_refs[*]._ref.name".into(),
+        max: rstix::pattern::MAX_PATH_TARGETS,
+    },
+    "step-limit-exceeded" => PatternMatchError::StepLimitExceeded {
+        max: rstix::pattern::MAX_EVAL_STEPS,
+    },
 }

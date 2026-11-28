@@ -543,7 +543,7 @@ impl<'a> Parser<'a> {
         let mut steps = vec![PathStep::Property(first.clone())];
         let mut expect_dict_key = is_dict_container_property(&first);
         self.after_property_step(&mut steps, &first);
-        self.parse_path_suffixes(&mut steps, &mut expect_dict_key)?;
+        self.parse_path_suffixes(&mut steps, &mut expect_dict_key, 0)?;
         let end = self.tokens[self.pos.saturating_sub(1)].end;
         Ok(ObjectPath {
             object_type,
@@ -552,10 +552,12 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `last_property` is the index in `steps` of the latest property step.
     fn parse_path_suffixes(
         &mut self,
         steps: &mut Vec<PathStep>,
         expect_dict_key: &mut bool,
+        mut last_property: usize,
     ) -> Result<(), PatternError> {
         loop {
             match self.peek() {
@@ -577,6 +579,7 @@ impl<'a> Parser<'a> {
                         Token::Identifier(name) => {
                             let name = name.clone();
                             self.bump();
+                            last_property = steps.len();
                             steps.push(PathStep::Property(name.clone()));
                             *expect_dict_key = is_dict_container_property(&name);
                             self.after_property_step(steps, &name);
@@ -610,7 +613,7 @@ impl<'a> Parser<'a> {
                     };
                     self.expect(&Token::RBracket)?;
                     steps.push(index_step);
-                    self.after_ref_list_index(steps);
+                    self.after_ref_list_index(steps, last_property);
                     *expect_dict_key = false;
                 }
                 _ => break,
@@ -625,14 +628,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn after_ref_list_index(&mut self, steps: &mut Vec<PathStep>) {
-        let prop = steps.iter().rev().skip(1).find_map(|step| {
-            if let PathStep::Property(name) = step {
-                Some(name.as_str())
-            } else {
-                None
-            }
-        });
+    fn after_ref_list_index(&mut self, steps: &mut Vec<PathStep>, last_property: usize) {
+        let prop = match steps.get(last_property) {
+            Some(PathStep::Property(name)) => Some(name.as_str()),
+            _ => None,
+        };
         if prop.is_some_and(is_ref_property) && matches!(self.peek(), Token::Dot) {
             steps.push(PathStep::Reference);
         }
@@ -762,6 +762,39 @@ mod level1 {
             PatternAst::Observation(obs) => obs,
             _ => panic!("expected observation"),
         }
+    }
+
+    fn path_steps(source: &str) -> Vec<PathStep> {
+        match parse_obs(source).root {
+            ComparisonTree::Cmp(cmp) => cmp.path.steps,
+            other => panic!("expected comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reference_follows_the_last_index_of_a_ref_list() {
+        assert_eq!(
+            path_steps("[x-thing:item_refs[0][1].name = 'a']"),
+            vec![
+                PathStep::Property("item_refs".into()),
+                PathStep::Index(0),
+                PathStep::Index(1),
+                PathStep::Reference,
+                PathStep::Property("name".into()),
+            ]
+        );
+        assert_eq!(
+            path_steps("[x-thing:item_refs[0].values[*][2].name = 'a']"),
+            vec![
+                PathStep::Property("item_refs".into()),
+                PathStep::Index(0),
+                PathStep::Reference,
+                PathStep::Property("values".into()),
+                PathStep::AnyIndex,
+                PathStep::Index(2),
+                PathStep::Property("name".into()),
+            ]
+        );
     }
 
     #[test]

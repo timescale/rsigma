@@ -92,4 +92,19 @@ pub enum PatternMatchError {
         /// Configured maximum.
         max: usize,
     },
+    /// One `_ref` or `_refs` dereference step reached more distinct objects than
+    /// [`crate::pattern::MAX_PATH_TARGETS`].
+    #[error("_ref resolution at path {path} reached more than {max} objects in one step")]
+    PathTooWide {
+        /// Object path string.
+        path: String,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// The evaluation took more than [`crate::pattern::MAX_EVAL_STEPS`] steps.
+    #[error("pattern evaluation exceeded its limit of {max} steps")]
+    StepLimitExceeded {
+        /// Configured maximum.
+        max: u64,
+    },
 }
