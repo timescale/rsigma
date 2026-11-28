@@ -15,8 +15,8 @@ The `CI` and `Docs audit` workflows run on every pull request, whatever its base
 | Unit | `src/` modules with `#[cfg(test)] mod tests` | `cargo test --workspace --all-features --locked`, or `cargo nextest run --workspace --all-features --locked` as CI does (see [Test runner](#test-runner)) | `test` job on Linux, macOS, Windows. |
 | Integration (in-process) | `crates/{rsigma-parser,rsigma-eval,rsigma-convert,rsigma-runtime}/tests/*.rs` | Same. | Same. |
 | End-to-end (binary + containers) | `crates/rsigma-cli/tests/cli_*.rs`, `crates/rsigma-runtime/tests/nats_e2e.rs`, `crates/rsigma-convert/tests/postgres_integration.rs` | Same; testcontainers-based tests skip when Docker is unavailable. | Same. |
-| Snapshot/golden | insta snapshots mainly under `crates/rsigma-parser/tests/snapshots/`; convert/runtime/cli goldens under each crate's `tests/golden/` (or fixtures); dynamic-pipeline goldens in `tests/fixtures/dynamic-pipelines/golden/` | `cargo test` plus the SigmaHQ-corpus job for the dynamic-pipelines goldens. | `test` and `sigma-corpus` jobs. |
-| SigmaHQ corpus | `.github/workflows/ci.yml` -> `sigma-corpus` | `cargo build --release --all-features --locked -p rsigma` then `target/release/rsigma rule validate …` against the pinned corpus SHA | `sigma-corpus` job, on every PR. |
+| Snapshot/golden | insta snapshots mainly under `crates/rsigma-parser/tests/snapshots/`; convert/runtime/cli goldens under each crate's `tests/golden/` (or fixtures); dynamic-pipeline goldens in `tests/fixtures/dynamic-pipelines/golden/` | `cargo test` plus the `cli-smoke` job for the dynamic-pipelines goldens. | `test` and `cli-smoke` jobs. |
+| SigmaHQ corpus and CLI smoke | `.github/workflows/ci.yml` -> `cli-smoke`; `scripts/mcp-smoke.py`, `scripts/output-format-smoke.sh` | `cargo build --all-features --locked -p rsigma`, then the two smoke scripts and `target/debug/rsigma rule validate …` against the pinned corpus SHA | `cli-smoke` job, on every PR. |
 | Docs audit | `scripts/docs-audit/` | `python3 scripts/docs-audit/check_sources.py`; `cargo build --locked -p rsigma --all-features` then `python3 scripts/docs-audit/check_binary.py --bin target/debug/rsigma` | `Docs catalogues` and `Docs contracts` jobs in `docs-audit.yml`, on every PR. |
 | Coverage | `cargo-llvm-cov` (Linux) | CI: `cargo llvm-cov nextest --workspace --all-features --locked --no-report --profile ci`, the rstix interop suites through `cargo llvm-cov --no-report`, then `cargo llvm-cov report --lcov …`. Locally a one-shot form is fine; prefer `--locked`. | `coverage` job (advisory, not gating). |
 | Representative performance | `.github/workflows/performance.yml`, `scripts/perf/` | `scripts/perf/fetch-fixtures.sh` then the offline and daemon harnesses | Coarse same-runner base/PR gate on PRs labeled `performance`; weekly full matrix plus native glibc/static musl scaling on dedicated eight-core amd64/arm64 runners. |
@@ -134,15 +134,15 @@ tests/fixtures/dynamic-pipelines/
 └── golden/                     # expected `rsigma pipeline resolve --pretty` output
 ```
 
-The CI loop in the `sigma-corpus` job iterates `pipelines/*.yml`, runs `rsigma pipeline resolve --pipeline … --source-file … --pretty`, and diffs against `golden/${name}.json`. To run the same check locally:
+The CI loop in the `cli-smoke` job iterates `pipelines/*.yml`, runs `rsigma pipeline resolve --pipeline … --source-file … --pretty`, and diffs against `golden/${name}.json`. To run the same check locally:
 
 ```bash
-cargo build --release --all-features --locked -p rsigma
+cargo build --all-features --locked -p rsigma
 for pipeline in tests/fixtures/dynamic-pipelines/pipelines/*.yml; do
   name=$(basename "$pipeline" .yml)
   golden="tests/fixtures/dynamic-pipelines/golden/${name}.json"
   source_file="tests/fixtures/dynamic-pipelines/source-files/${name}.yml"
-  diff -u "$golden" <(./target/release/rsigma pipeline resolve --pipeline "$pipeline" --source-file "$source_file" --pretty) \
+  diff -u "$golden" <(./target/debug/rsigma pipeline resolve --pipeline "$pipeline" --source-file "$source_file" --pretty) \
     || echo "FAIL: $name"
 done
 ```
@@ -150,7 +150,7 @@ done
 To regenerate a golden after an intentional behavior change:
 
 ```bash
-./target/release/rsigma pipeline resolve \
+./target/debug/rsigma pipeline resolve \
     --pipeline tests/fixtures/dynamic-pipelines/pipelines/<name>.yml \
     --source-file tests/fixtures/dynamic-pipelines/source-files/<name>.yml \
     --pretty \
@@ -161,16 +161,22 @@ Then `git diff` the resulting golden file; if the diff matches your intent, comm
 
 ## SigmaHQ corpus regression
 
-CI clones [`SigmaHQ/sigma`](https://github.com/SigmaHQ/sigma) at the pinned SHA `994da16651194500b607a3007186c29779e1f961` (`SIGMA_CORPUS_SHA` in `.github/workflows/ci.yml`) and runs three checks (job `sigma-corpus`):
+CI clones [`SigmaHQ/sigma`](https://github.com/SigmaHQ/sigma) at the pinned SHA `994da16651194500b607a3007186c29779e1f961` (`SIGMA_CORPUS_SHA` in `.github/workflows/ci.yml`) and runs four checks (job `cli-smoke`):
 
 ```bash
 # 1. Every rule must parse and compile.
-./target/release/rsigma rule validate /tmp/sigma/rules/ --verbose
+./target/debug/rsigma rule validate /tmp/sigma/rules/ --verbose
 
-# 2. The dynamic-pipelines fixtures must still resolve cleanly against
+# 2. `rule fmt` must format a copy of the corpus without skipping any file,
+#    reach a fixed point, and leave every rule valid.
+./target/debug/rsigma rule fmt --write --quiet /tmp/sigma-fmt
+./target/debug/rsigma rule fmt --check /tmp/sigma-fmt
+./target/debug/rsigma rule validate /tmp/sigma-fmt --verbose
+
+# 3. The dynamic-pipelines fixtures must still resolve cleanly against
 #    the live corpus, validating that the field-mapping and include
 #    expansion stay compatible with rules in the wild.
-./target/release/rsigma rule validate /tmp/sigma/rules/ \
+./target/debug/rsigma rule validate /tmp/sigma/rules/ \
     --pipeline tests/fixtures/dynamic-pipelines/pipelines/field_mapping.yml \
     --pipeline tests/fixtures/dynamic-pipelines/pipelines/allowlist.yml \
     --pipeline tests/fixtures/dynamic-pipelines/pipelines/multi_format.yml \
@@ -179,20 +185,22 @@ CI clones [`SigmaHQ/sigma`](https://github.com/SigmaHQ/sigma) at the pinned SHA 
     --source tests/fixtures/dynamic-pipelines/source-files/ \
     --resolve-sources --verbose
 
-# 3. The dynamic-pipelines goldens must match (the diff loop shown above).
+# 4. The dynamic-pipelines goldens must match (the diff loop shown above).
 ```
+
+The same job first drives the binary through `scripts/mcp-smoke.py` (MCP over stdio and HTTP) and `scripts/output-format-smoke.sh` (`--output-format` across CLI commands). It uses a debug build: the corpus checks finish in well under a minute, and a release build with the workspace's thin LTO and single codegen unit took about six minutes to compile.
 
 A regression in any of those steps fails the PR. Locally:
 
 ```bash
-cargo build --release --all-features --locked -p rsigma
+cargo build --all-features --locked -p rsigma
 mkdir -p /tmp/sigma && cd /tmp/sigma
 git init -q
 git remote add origin https://github.com/SigmaHQ/sigma.git
 git fetch --depth 1 origin 994da16651194500b607a3007186c29779e1f961
 git checkout -q FETCH_HEAD
 cd - >/dev/null
-./target/release/rsigma rule validate /tmp/sigma/rules/ --verbose
+./target/debug/rsigma rule validate /tmp/sigma/rules/ --verbose
 ```
 
 The Performance workflow also uses this pinned corpus for representative throughput and candidate-rate checks. Keep both corpus consumers pinned to the same SHA.
