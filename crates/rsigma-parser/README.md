@@ -15,6 +15,7 @@ This library is part of [rsigma].
 | `parse_sigma_yaml(yaml: &str)` | Parse a multi-document YAML string into a `SigmaCollection` |
 | `parse_sigma_file(path: &Path)` | Parse a single YAML file |
 | `parse_sigma_directory(dir: &Path)` | Recursively parse all `.yml`/`.yaml` files in a directory |
+| `parse_sigma_directory_with(dir: &Path, options: &WalkOptions)` | The same with explicit walk options, such as following external links |
 | `SigmaCollection::diagnostics` | Every parse error and parse warning as a `CollectionDiagnostic`; `has_errors()`, `error_count()`, `warning_count()`, `errors()`, `warnings()`, and `into_result()` separate the two |
 | `parse_condition(input: &str)` | Parse a condition expression string into a `ConditionExpr` |
 | `absence::analyze_absence(rule)` | Analyze a parsed correlation rule for deferred absence semantics; returns `AbsenceShape`, or the reason a deadline cannot decide it |
@@ -53,7 +54,7 @@ The emitter is a deterministic canonical form: named detections, logsource custo
 | `ruleset::load_sources(spec, opts)` | Walk and parse the spec's sources into candidates |
 | `ruleset::validate_spec(name, spec)` | Static validation of a spec: names, paths, selectors, policies, and overlay shapes |
 
-`ResolveOptions { confine_to }` rejects any source or overlay file outside a root. Pipelines are not resolved here, so callers confine pipeline paths themselves. The spec types derive `serde::Serialize`/`Deserialize`; with the `schema` feature they also derive `schemars::JsonSchema`.
+`ResolveOptions { confine_to }` rejects any source or overlay file outside a root. `ResolveOptions::follow_external_links` follows links out of source and overlay directories when no root is set; otherwise such a source entry is skipped with a `SkippedPath` diagnostic and such an overlay entry is a confinement error. Pipelines are not resolved here, so callers confine pipeline paths themselves. The spec types derive `serde::Serialize`/`Deserialize`; with the `schema` feature they also derive `schemars::JsonSchema`.
 
 ### Formatting
 
@@ -84,6 +85,7 @@ The emitter is a deterministic canonical form: named detections, logsource custo
 | `lint_yaml_file_with_config(path: &Path, config: &LintConfig)` | Lint a file with config |
 | `lint_yaml_directory(dir: &Path)` | Recursively lint all `.yml`/`.yaml` in a directory |
 | `lint_yaml_directory_with_config(dir: &Path, config: &LintConfig)` | Lint a directory with config |
+| `lint_yaml_directory_with_options(dir: &Path, config: &LintConfig, options: WalkOptions)` | Lint a directory with config and explicit walk options |
 | `parse_inline_suppressions(text: &str)` | Parse `# rsigma-disable` comments from YAML text |
 | `apply_suppressions(warnings, config, inline)` | Filter and override warnings using config and inline suppressions |
 
@@ -484,8 +486,9 @@ The `schema_violation` lint rule optionally validates rules against a JSON schem
 
 ## Directory Parsing and Linting
 
-- **`parse_sigma_directory`:** Recursively walks directories; only processes `.yml`/`.yaml` files. A file that cannot be read is recorded as a `DiagnosticKind::File` error (not fatal), and every diagnostic carries the path of its file. Sub-collections (rules, correlations, filters) are merged.
-- **`lint_yaml_directory`:** Skips hidden directories (`.` prefix). Canonicalizes paths to detect symlink cycles. Sorts entries by path for deterministic output. Runs a two-pass directory-global rule index so cross-document reference checks (`sigma_version_mismatch`, `unknown_rule_reference`) resolve rules (by `id` or `name`) across sibling files.
+- **`parse_sigma_directory`:** Recursively walks directories with `walk::walk_files`; only processes `.yml`/`.yaml` files. Each real directory and file is visited once, so symlink or junction loops terminate and a file reached through several links loads once. An entry that resolves outside the directory is skipped and recorded as a `DiagnosticKind::SkippedPath` warning naming the entry but not its target, unless `WalkOptions::follow_external_links` is set. A file that cannot be read is recorded as a `DiagnosticKind::File` error (not fatal), and every diagnostic carries the path of its file. Sub-collections (rules, correlations, filters) are merged.
+- **`lint_yaml_directory`:** Skips hidden directories (`.` prefix). Uses the same walker, so cycles terminate, each real file is linted once, and links out of the directory are reported as `skipped_path`. Sorts entries by path for deterministic output. Runs a two-pass directory-global rule index so cross-document reference checks (`sigma_version_mismatch`, `unknown_rule_reference`) resolve rules (by `id` or `name`) across sibling files.
+- **`|windash` budget:** `validate::check_windash_budget` limits the variants `|windash` expands one detection item into to 4,096 and one rule or filter to 16,384 (a value with k dash characters stands for 5^k variants, three times as many with `|base64offset`). The parser, IR lowering, and the `windash_expansion_too_large` lint run it, and errors name the rule.
 
 ## Error Types
 

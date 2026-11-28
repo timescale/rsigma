@@ -1,0 +1,7 @@
+dir 0 a
+dir 0 b
+link 1 l1 root
+link 1 l2 root
+link 2 l3 root
+link 2 l4 root
+file 0 r.yml

@@ -1,0 +1,10 @@
+title: Item Bomb
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel0:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e -f /g –h'
+      - 'cmd -a /b –c —d ―e -f /g –h *'
+  condition: all of sel*

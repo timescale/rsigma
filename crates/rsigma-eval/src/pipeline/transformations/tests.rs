@@ -2607,3 +2607,84 @@ transformations:
         );
     }
 }
+
+#[test]
+fn field_name_mapping_branches_are_capped_per_rule() {
+    // 12 items with 2 alternatives each give 4096 branches per selection, at
+    // the per-selection cap. Four selections fit the per-rule cap, five do
+    // not.
+    let mapping: HashMap<String, Vec<String>> = (0..12)
+        .map(|i| (format!("F{i}"), vec![format!("a{i}"), format!("b{i}")]))
+        .collect();
+    let rule_with = |selections: usize| {
+        let mut yaml =
+            String::from("title: Many Selections\nlogsource:\n  product: windows\ndetection:\n");
+        for s in 0..selections {
+            yaml.push_str(&format!("  sel{s}:\n"));
+            for i in 0..12 {
+                yaml.push_str(&format!("    F{i}: v{s}\n"));
+            }
+        }
+        yaml.push_str("  condition: 1 of sel*\n");
+        rsigma_parser::parse_sigma_yaml(&yaml)
+            .unwrap()
+            .rules
+            .remove(0)
+    };
+    let transformation = Transformation::FieldNameMapping { mapping };
+
+    let mut fits = rule_with(4);
+    transformation
+        .apply(&mut fits, &mut PipelineState::default(), &[], &[], false)
+        .unwrap();
+
+    let mut over = rule_with(5);
+    let message = transformation
+        .apply(&mut over, &mut PipelineState::default(), &[], &[], false)
+        .expect_err("five selections exceed the per-rule cap")
+        .to_string();
+    assert!(message.contains("16384"), "{message}");
+    assert!(message.contains("Many Selections"), "{message}");
+}
+
+#[test]
+fn placeholder_values_are_capped_per_rule() {
+    let rule_with = |values: usize| {
+        let mut yaml = String::from(
+            "title: Many Placeholders\nlogsource:\n  product: windows\ndetection:\n  sel:\n    User|expand:\n",
+        );
+        for _ in 0..values {
+            yaml.push_str("      - '%big%'\n");
+        }
+        yaml.push_str("  condition: sel\n");
+        rsigma_parser::parse_sigma_yaml(&yaml)
+            .unwrap()
+            .rules
+            .remove(0)
+    };
+    let mut state = PipelineState::default();
+    state.vars.insert(
+        "big".to_string(),
+        (0..MAX_PLACEHOLDER_COMBINATIONS)
+            .map(|i| format!("user{i}"))
+            .collect(),
+    );
+    let transformation = Transformation::ValuePlaceholders {
+        allow_unresolved: false,
+        include: None,
+        exclude: None,
+    };
+
+    let mut fits = rule_with(16);
+    transformation
+        .apply(&mut fits, &mut state, &[], &[], false)
+        .unwrap();
+
+    let mut over = rule_with(17);
+    let message = transformation
+        .apply(&mut over, &mut state, &[], &[], false)
+        .expect_err("17 full expansions exceed the per-rule cap")
+        .to_string();
+    assert!(message.contains("65536"), "{message}");
+    assert!(message.contains("Many Placeholders"), "{message}");
+}

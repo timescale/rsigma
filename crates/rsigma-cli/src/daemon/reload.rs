@@ -41,7 +41,9 @@ pub fn spawn_file_watcher(
                 tracing::warn!(error = %e, "File watcher error");
             }
         },
-        notify::Config::default(),
+        // Following a link to `/` would add a watch per directory on the
+        // filesystem, and such links are only loaded with this flag anyway.
+        notify::Config::default().with_follow_symlinks(crate::follow_external_links()),
     ) {
         Ok(w) => w,
         Err(e) => {

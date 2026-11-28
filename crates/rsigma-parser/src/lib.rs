@@ -78,7 +78,7 @@ mod style;
 pub mod validate;
 pub mod value;
 pub mod version;
-mod walk;
+pub mod walk;
 
 // Re-export the most commonly used types and functions at crate root
 pub use absence::{
@@ -115,12 +115,13 @@ pub use lint::fix::{SourceFixOutcome, apply_fixes_to_source};
 pub use lint::{
     AdsConfig, FileLintResult, Fix, FixDisposition, FixPatch, InlineSuppressions, LintConfig,
     LintRule, LintWarning, Severity, Span, apply_suppressions, lint_yaml_directory,
-    lint_yaml_directory_with_config, lint_yaml_file, lint_yaml_file_with_config, lint_yaml_str,
-    lint_yaml_str_with_config, lint_yaml_value, parse_inline_suppressions,
+    lint_yaml_directory_with_config, lint_yaml_directory_with_options, lint_yaml_file,
+    lint_yaml_file_with_config, lint_yaml_str, lint_yaml_str_with_config, lint_yaml_value,
+    parse_inline_suppressions,
 };
 pub use parser::{
-    is_reserved_attribute_name, parse_field_spec, parse_sigma_directory, parse_sigma_file,
-    parse_sigma_yaml,
+    is_reserved_attribute_name, parse_field_spec, parse_sigma_directory,
+    parse_sigma_directory_with, parse_sigma_file, parse_sigma_yaml,
 };
 pub use selector::detection_name_matches;
 pub use value::{SigmaString, SigmaValue, SpecialChar, StringPart, Timespan};

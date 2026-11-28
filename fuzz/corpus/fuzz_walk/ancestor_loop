@@ -1,0 +1,5 @@
+dir 0 x
+dir 1 y
+file 2 deep.yml
+link 2 up root
+link 2 parent node:1

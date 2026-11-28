@@ -227,7 +227,9 @@ pub enum CompiledMatcher {
     ///
     /// **Invariant**: every child must be pre-lowerable. The optimizer's
     /// `is_pre_lowerable` validator enforces this; `matches_pre_lowered`
-    /// `debug_assert!`s on violation.
+    /// `debug_assert!`s on violation. The one exception is a `windash` value
+    /// without wildcards: the compiler wraps a regex built from the lowercased
+    /// value, without `(?i)`, so it only ever sees the lowered haystack.
     ///
     /// **Why this exists**: a mixed `AnyOf([Contains, StartsWith, EndsWith])`
     /// previously called `s.to_lowercase()` once per child. Pre-lowering the

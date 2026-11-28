@@ -35,13 +35,23 @@ String matching is case-insensitive unless the key has `|cased`. Case folding us
 
 The encoding modifiers transform the value before it is matched. When several apply, they run in a fixed order regardless of their position in the key: `windash`, then one of `wide` (alias `utf16le`), `utf16be`, or `utf16`, then one of `base64` or `base64offset`.
 
-- `windash` makes every `-`, `/`, `–` (en dash), `—` (em dash), and `―` (horizontal bar) in the value interchangeable with the others. A value may contain at most 8 such characters, because each one multiplies the number of variants by 5. Wildcards keep their meaning, so `dir*-s` matches `dir C:\ /s`.
+- `windash` makes every `-`, `/`, `–` (en dash), `—` (em dash), and `―` (horizontal bar) in the value interchangeable with the others. Wildcards keep their meaning, so `dir*-s` matches `dir C:\ /s`.
 - `wide` encodes the value as UTF-16LE, `utf16be` as UTF-16BE, and `utf16` as UTF-16LE with a byte-order mark. Without a following base64 modifier, the encoded value is matched against the event field as text, so the field must carry the NUL bytes of the UTF-16 encoding. Only ASCII values can be matched this way.
 - `base64` encodes the value. `base64offset` produces the three encodings of the value at each byte alignment inside a larger base64 string, and drops the leading and trailing characters that depend on the surrounding bytes, as pySigma does.
 
 A value with a wildcard cannot be combined with `base64` or `base64offset`, because a base64 encoding has no way to represent "any characters". Such a rule is rejected when it is compiled.
 
-Backends convert encoding modifiers as pySigma does: each variant becomes a plain string match, and the variants are ORed together. The windash limit applies to conversion too. Without a base64 step, a UTF-16 variant contains NUL characters, which the PostgreSQL and Fibratus backends reject with `UnsupportedValue`. {{ added "0.24.0" }}
+### The windash expansion budget
+
+{{ added "unreleased" }}
+
+Each dash character in a `windash` value multiplies the variants it stands for by 5, and `base64offset` encodes each variant three times, so a value with k dash characters stands for 5^k variants (3 x 5^k with `base64offset`). Values without a dash character are not counted. The variants of one detection item may not exceed 4,096, which allows up to five dash characters in a single value, and those of all the items of one rule or filter may not exceed 16,384.
+
+The parser rejects a rule over the budget with an error that names the rule and the field, IR lowering checks the budget again after processing pipelines (so a pipeline cannot add dashes past it), and `rule lint` reports the same rules as [`windash_expansion_too_large`](lint-rules.md#modifier-and-related-hygiene-8). `rule validate`, `engine eval`, `engine daemon`, and `backend convert` therefore accept and reject the same rules. A pipeline with `apply_modifiers: first` leaves a rule over the budget unexpanded, so it is rejected the same way.
+
+Evaluation does not expand the variants: a value with dash characters and no base64 step compiles into one regular expression with a character class of the five dashes at each dash position, which matches exactly the strings the variants match. Its compile time and memory grow with the length of the value, not with the number of variants.
+
+Backends convert encoding modifiers as pySigma does: each variant becomes a plain string match, and the variants are ORed together. The windash budget applies to conversion too. Without a base64 step, a UTF-16 variant contains NUL characters, which the PostgreSQL and Fibratus backends reject with `UnsupportedValue`. {{ added "0.24.0" }}
 
 ## Modifiers in pipelines
 
@@ -83,4 +93,4 @@ To require the field to be present, add a separate `Field|exists: true` item to 
 
 ## Empty value lists
 
-`Field: []` is a null check: it matches when the field is missing or `null`, as in pySigma. `Field|neq: []` matches when the field has a non-null value. An empty value list without a field name is rejected, and so is `|all` with no values, such as `Field|contains|all: []`, which pySigma accepts. `|all` with a single value is accepted and matches like the same value without `|all`; `rule lint` flags it as [`single_value_all_modifier`](lint-rules.md#modifier-and-related-hygiene-7) and can remove the modifier.
+`Field: []` is a null check: it matches when the field is missing or `null`, as in pySigma. `Field|neq: []` matches when the field has a non-null value. An empty value list without a field name is rejected, and so is `|all` with no values, such as `Field|contains|all: []`, which pySigma accepts. `|all` with a single value is accepted and matches like the same value without `|all`; `rule lint` flags it as [`single_value_all_modifier`](lint-rules.md#modifier-and-related-hygiene-8) and can remove the modifier.

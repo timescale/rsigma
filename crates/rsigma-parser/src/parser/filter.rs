@@ -3,6 +3,7 @@ use yaml_serde::Value;
 use crate::ast::*;
 use crate::diagnostic::CollectionDiagnostic;
 use crate::error::{Result, SigmaParserError};
+use crate::validate::check_windash_budget;
 
 use super::detection::parse_detections;
 use super::{
@@ -83,23 +84,9 @@ pub(super) fn parse_filter_rule(
         _ => FilterRuleTarget::Any,
     };
 
-    // Parse detection from filter.selection + filter.condition
-    // (Sigma filter spec: selection/condition live inside the filter section).
-    let detection = if let Some(fm) = filter_mapping {
-        let mut det_map = yaml_serde::Mapping::new();
-        for (k, v) in fm.iter() {
-            let key_str = k.as_str().unwrap_or("");
-            if key_str != "rules" {
-                det_map.insert(k.clone(), v.clone());
-            }
-        }
-        if det_map.is_empty() {
-            return Err(SigmaParserError::MissingField("filter.selection".into()));
-        }
-        parse_detections(&Value::Mapping(det_map), array_matching)?
-    } else {
-        return Err(SigmaParserError::MissingField("filter".into()));
-    };
+    let detection = parse_filter_detections(filter_mapping, array_matching)?;
+    check_windash_budget(&detection)
+        .map_err(|e| SigmaParserError::InvalidDetection(format!("filter '{title}': {e}")))?;
 
     let logsource = Some(parse_logsource(
         m.get(val_key("logsource"))
@@ -132,4 +119,27 @@ pub(super) fn parse_filter_rule(
         detection,
         custom_attributes,
     })
+}
+
+/// Parse the detection of a filter from `filter.selection` and
+/// `filter.condition` (Sigma filter spec: selection and condition live inside
+/// the filter section, next to `rules`).
+pub(crate) fn parse_filter_detections(
+    filter_mapping: Option<&yaml_serde::Mapping>,
+    array_matching: bool,
+) -> Result<Detections> {
+    let Some(fm) = filter_mapping else {
+        return Err(SigmaParserError::MissingField("filter".into()));
+    };
+    let mut det_map = yaml_serde::Mapping::new();
+    for (k, v) in fm.iter() {
+        let key_str = k.as_str().unwrap_or("");
+        if key_str != "rules" {
+            det_map.insert(k.clone(), v.clone());
+        }
+    }
+    if det_map.is_empty() {
+        return Err(SigmaParserError::MissingField("filter.selection".into()));
+    }
+    parse_detections(&Value::Mapping(det_map), array_matching)
 }

@@ -85,3 +85,7 @@ harness = false
 [[bench]]
 name = "rulesets"
 harness = false
+
+[[bench]]
+name = "windash"
+harness = false

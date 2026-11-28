@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use rsigma_parser::SigmaCollection;
-use rsigma_parser::ruleset::{ResolveOptions, ResolvedRuleset, RulesetSpec, resolve_ruleset};
+use rsigma_parser::ruleset::{ResolvedRuleset, RulesetSpec, resolve_ruleset};
 
 use crate::config;
 use crate::exit_code;
@@ -61,7 +61,7 @@ pub(crate) fn resolve_named(name: &str, config: Option<&Path>, ctx: &OutputCtx) 
 
 /// Resolve a spec and exit 3 on failure, printing diagnostics and warnings.
 pub(crate) fn resolve_or_exit(name: &str, spec: &RulesetSpec, ctx: &OutputCtx) -> ResolvedRuleset {
-    match resolve_ruleset(name, spec, &ResolveOptions::default()) {
+    match resolve_ruleset(name, spec, &crate::resolve_options()) {
         Ok(resolved) => {
             crate::report_load_diagnostics(&resolved.collection);
             if !ctx.quiet {

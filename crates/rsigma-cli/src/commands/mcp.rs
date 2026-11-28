@@ -319,7 +319,8 @@ fn build_handler(
             lint_config,
             args.allow_sigma_cli,
         )
-        .with_rulesets(rulesets));
+        .with_rulesets(rulesets)
+        .with_follow_external_links(crate::follow_external_links()));
     };
     let ca_pem = match &args.daemon_ca {
         Some(path) => Some(
@@ -339,7 +340,11 @@ fn build_handler(
         },
         args.allow_operate_writes,
     )
-    .map(|handler| handler.with_rulesets(rulesets))
+    .map(|handler| {
+        handler
+            .with_rulesets(rulesets)
+            .with_follow_external_links(crate::follow_external_links())
+    })
     .map_err(|e| format!("invalid daemon client configuration: {e}"))
 }
 

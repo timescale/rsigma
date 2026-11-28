@@ -1150,17 +1150,13 @@ mod corpus {
     }
 
     fn walk_dir(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-        let entries = std::fs::read_dir(dir)
+        let options = crate::walk_options().accept(rsigma_parser::walk::any_file);
+        let walk = rsigma_parser::walk::walk_files(dir, &options)
             .map_err(|e| format!("could not read corpus directory {}: {e}", dir.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("could not read corpus entry: {e}"))?;
-            let path = entry.path();
-            if path.is_dir() {
-                walk_dir(&path, out)?;
-            } else if path.is_file() {
-                out.push(path);
-            }
+        for skipped in &walk.skipped {
+            eprintln!("Warning: {skipped}");
         }
+        out.extend(walk.files.into_iter().map(|file| file.path));
         Ok(())
     }
 }

@@ -81,6 +81,9 @@ pub enum DiagnosticKind {
     CustomAttribute,
     /// A file could not be read or parsed at all.
     File(SigmaParserErrorKind),
+    /// A directory walk passed over an entry, such as a link that resolves
+    /// outside the directory being loaded. The file was not opened.
+    SkippedPath,
 }
 
 /// A problem found while building a [`SigmaCollection`](crate::SigmaCollection).
@@ -129,6 +132,11 @@ impl CollectionDiagnostic {
         )
         .with_path(path)
         .with_location(error.location())
+    }
+
+    /// A warning for an entry a directory walk passed over.
+    pub fn skipped(entry: &crate::walk::SkippedEntry) -> Self {
+        Self::warning(DiagnosticKind::SkippedPath, entry.to_string()).with_path(&entry.path)
     }
 
     fn new(kind: DiagnosticKind, severity: DiagnosticSeverity, message: String) -> Self {

@@ -61,11 +61,13 @@ pub use conditions::{
 pub use finalizers::Finalizer;
 pub use modifiers::ApplyModifiers;
 pub use parsing::{
-    parse_pipeline, parse_pipeline_file, parse_sources, parse_sources_dir, parse_sources_file,
-    parse_transformation_items, validate_source_refs,
+    parse_pipeline, parse_pipeline_file, parse_sources, parse_sources_dir, parse_sources_dir_with,
+    parse_sources_file, parse_transformation_items, validate_source_refs,
 };
 pub use state::PipelineState;
-pub use transformations::{MAX_PLACEHOLDER_COMBINATIONS, Transformation};
+pub use transformations::{
+    MAX_PLACEHOLDER_COMBINATIONS, MAX_PLACEHOLDER_VALUES_PER_RULE, Transformation,
+};
 
 // =============================================================================
 // Pipeline types

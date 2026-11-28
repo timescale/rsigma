@@ -212,7 +212,7 @@ rsigma accepts a few things pySigma rejects, and rejects a few things it cannot 
 - An invalid `*_cond_op` value is an error instead of being treated as `and`.
 - A `type: include` transformation item is accepted as an alternative to the bare `include:` directive.
 - `cond` on `match_string` and `is_null` defaults to `any`, and `is_null` also accepts `negate`.
-- Placeholder expansion and one-to-many field mappings stop with an error past 4096 values or branches, because rsigma evaluates the expanded rule against every event.
+- Placeholder expansion and one-to-many field mappings stop with an error past 4096 values or branches, because rsigma evaluates the expanded rule against every event. Across one rule, placeholder expansion stops past 65,536 values and one field-name transformation past 16,384 branches. {{ added "unreleased" }}
 - A `nest` transformation shares the pipeline state of its parent pipeline. Like pySigma, it applies each inner item under that item's own conditions and ignores detection-item and field-name conditions on the `nest` item itself.
 - `processing_state` ordered comparisons (`gt`, `gte`, `lt`, `lte`) between values of different types are false instead of an error, and booleans never equal numbers.
 - `regex` is a no-op because rsigma already matches strings case-insensitively, so `method: plain` (case-sensitive matching) is rejected. `field_name_transform` rejects `apply_keyword: true`, since keyword detections have no field name to transform.

@@ -38,6 +38,7 @@ rsigma-mcp = "{{ rsigma.version }}"
 |------|---------|
 | `RsigmaMcp::new(root, lint_config, allow_sigma_cli)` | Build the handler with an optional default root for relative path-based tool calls, a lint configuration, and the sigma-cli delegation switch for `convert_rules` (pass `false` to keep conversion native-only). |
 | `RsigmaMcp::with_daemon(..., connect, allow_operate_writes)` | Same as `new`, plus a [`DaemonConnect`](https://docs.rs/rsigma-mcp) so Operate-cycle tools register against a running daemon. Write tools register only when `allow_operate_writes` is true. |
+| `RsigmaMcp::with_follow_external_links(bool)` | Follow links out of directory inputs when no root is set. With a root, links never leave it. {{ added "unreleased" }} |
 | `DaemonClient` / `DaemonConnect` / `DaemonError` | HTTP client pointed at the daemon control-plane API. |
 | `RsigmaMcp::default()` | A handler with no root, default lint configuration, and delegation disabled. |
 | `serve_stdio(handler)` | Serve the handler over stdio, blocking until the client disconnects. The caller owns the tokio runtime. |

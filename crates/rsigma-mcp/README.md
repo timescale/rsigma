@@ -76,7 +76,7 @@ Engineer-cycle tools always register. Operate-cycle tools appear in `tools/list`
 
 ## Resources
 
-Four read-only resources expose reference data: `rsigma://lint/catalogue` (98 entries: 97 emitted lint rules plus the reserved `empty_filter_rules` rule), `rsigma://ads/schema` (the ADS section catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
+Four read-only resources expose reference data: `rsigma://lint/catalogue` (100 entries: 99 emitted lint rules plus the reserved `empty_filter_rules` rule), `rsigma://ads/schema` (the ADS section catalogue), `rsigma://reference/modifiers`, and `rsigma://reference/mitre-tactics`.
 
 ## Design
 
@@ -84,7 +84,7 @@ Four read-only resources expose reference data: `rsigma://lint/catalogue` (98 en
 - `RsigmaMcp` is the cloneable handler; the tool methods are thin wrappers over the underlying rsigma crates.
 - The CLI owns the tokio runtime entry point (`serve_stdio`), mirroring how the daemon is wired.
 - With the `http` feature, `http_router_with` and `serve_http_with` take `HttpOptions` (bearer token, `AllowedHosts` for `Host` and `Origin` validation shared with the daemon API, and `ServeLimits` for the connection cap and read timeout). `http_router` and `serve_http` keep the loopback host list. The CLI refuses a non-loopback bind without a token unless `--allow-unauthenticated` is set.
-- `--rules-dir` confines every path argument (`path`, `events_path`, `enrichers_path`, file-based `pipelines`): paths that leave it through an absolute path, `../`, or a symlink are refused, as are directory inputs containing symlinks. A `ruleset` input resolves its sources, overlay files and directories, and pipeline files through the same root; builtin pipeline names are allowed. `evaluate_events` only builds `template` enrichers, and refuses templates that reference `${ENV_VAR}` so a caller cannot read the server's environment; `command`, `http`, `lookup`, and `stix` are refused.
+- `--rules-dir` confines every path argument (`path`, `events_path`, `enrichers_path`, file-based `pipelines`): paths that leave it through an absolute path, `../`, or a symlink are refused, as are directory inputs containing symlinks. Without `--rules-dir`, directory inputs load each real file once and skip links that resolve outside them unless the server runs with the global `--follow-external-links` (`RsigmaMcp::with_follow_external_links`). A `ruleset` input resolves its sources, overlay files and directories, and pipeline files through the same root; builtin pipeline names are allowed. `evaluate_events` only builds `template` enrichers, and refuses templates that reference `${ENV_VAR}` so a caller cannot read the server's environment; `command`, `http`, `lookup`, and `stix` are refused.
 - sigma-cli delegation is opt-in (`--allow-sigma-cli`) and hardened: `path` and file-based pipeline inputs are confined to `--rules-dir` when set, inline YAML is staged to a temp file, the subprocess is killed after 60s, and at most two delegations run concurrently.
 - Operate-cycle tools are opt-in (`--daemon-url`, plus `--allow-operate-writes` for mutations). The daemon token is flag/env-only (`--daemon-token` / `RSIGMA_MCP_DAEMON_TOKEN`).
 

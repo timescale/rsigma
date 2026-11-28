@@ -516,5 +516,6 @@ fn lint_fix_skips_files_that_resolve_outside_the_linted_directory() {
     if file_linked {
         assert_eq!(fs::read_to_string(&victim).unwrap(), FIXABLE_RULE);
     }
-    assert!(out.contains("resolve outside"), "{out}");
+    assert!(out.contains("skipped_path"), "{out}");
+    assert!(out.contains("resolves outside"), "{out}");
 }

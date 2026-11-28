@@ -70,6 +70,7 @@ pub enum LintRule {
     NotAMapping,
     FileReadError,
     SchemaViolation,
+    SkippedPath,
 
     // ── Shared (all document types) ──────────────────────────────────────
     MissingTitle,
@@ -153,6 +154,7 @@ pub enum LintRule {
     SingleValueAllModifier,
     AllWithRe,
     IncompatibleModifiers,
+    WindashExpansionTooLarge,
     EmptyValueList,
     WildcardOnlyValue,
     FlattenedArrayCorrelation,
@@ -187,6 +189,7 @@ impl fmt::Display for LintRule {
             LintRule::NotAMapping => "not_a_mapping",
             LintRule::FileReadError => "file_read_error",
             LintRule::SchemaViolation => "schema_violation",
+            LintRule::SkippedPath => "skipped_path",
             LintRule::MissingTitle => "missing_title",
             LintRule::EmptyTitle => "empty_title",
             LintRule::TitleTooLong => "title_too_long",
@@ -260,6 +263,7 @@ impl fmt::Display for LintRule {
             LintRule::SingleValueAllModifier => "single_value_all_modifier",
             LintRule::AllWithRe => "all_with_re",
             LintRule::IncompatibleModifiers => "incompatible_modifiers",
+            LintRule::WindashExpansionTooLarge => "windash_expansion_too_large",
             LintRule::EmptyValueList => "empty_value_list",
             LintRule::WildcardOnlyValue => "wildcard_only_value",
             LintRule::FlattenedArrayCorrelation => "flattened_array_correlation",
@@ -805,6 +809,16 @@ fn lint_yaml_value_ext(
         DocType::Correlation => rules::correlation::lint_correlation_rule(m, &mut warnings),
         DocType::Filter => rules::filter::lint_filter_rule(m, &mut warnings),
     }
+    if doc_type != DocType::Correlation
+        && let Some(problem) = crate::parser::windash_budget_problem(value)
+    {
+        let pointer = if doc_type == DocType::Filter {
+            "/filter"
+        } else {
+            "/detection"
+        };
+        warnings.push(err(LintRule::WindashExpansionTooLarge, problem, pointer));
+    }
 
     rules::version::lint_sigma_version(m, doc_type, &mut warnings);
     rules::shared::lint_unknown_keys(m, doc_type, &mut warnings);
@@ -842,6 +856,7 @@ fn lint_yaml_str_indexed(
 ) -> Vec<LintWarning> {
     let mut all_warnings = Vec::new();
     let mut docs: Vec<Value> = Vec::new();
+    let mut windash_flagged: Vec<bool> = Vec::new();
 
     for doc in yaml_serde::Deserializer::from_str(text) {
         let value: Value = match Value::deserialize(doc) {
@@ -865,11 +880,39 @@ fn lint_yaml_str_indexed(
             }
         };
 
+        let mut flagged = false;
         for mut w in lint_yaml_value_ext(&value, extra_ns, ads) {
+            flagged |= w.rule == LintRule::WindashExpansionTooLarge;
             w.span = resolve_path_to_span(text, &w.path);
             all_warnings.push(w);
         }
+        windash_flagged.push(flagged);
         docs.push(value);
+    }
+
+    // `action: global` and `action: repeat` build documents the per-document
+    // pass never sees, so ask the parser about the merged documents too.
+    if text.contains("windash")
+        && let Ok(collection) = crate::parse_sigma_yaml(text)
+    {
+        for diagnostic in collection.errors() {
+            let Some(index) = diagnostic.document else {
+                continue;
+            };
+            if windash_flagged.get(index).copied().unwrap_or(true)
+                || !diagnostic
+                    .message
+                    .contains(crate::validate::WINDASH_BUDGET_MARKER)
+            {
+                continue;
+            }
+            windash_flagged[index] = true;
+            all_warnings.push(err(
+                LintRule::WindashExpansionTooLarge,
+                diagnostic.message.clone(),
+                "/",
+            ));
+        }
     }
 
     // Cross-document checks resolve references against the directory-global index
@@ -1023,18 +1066,21 @@ pub fn lint_yaml_file(path: &Path) -> crate::error::Result<FileLintResult> {
 fn lint_directory_impl(
     dir: &Path,
     config: Option<&LintConfig>,
+    walk_options: crate::walk::WalkOptions<'_>,
 ) -> crate::error::Result<Vec<FileLintResult>> {
     let exclude_set = config.and_then(LintConfig::build_exclude_set);
-    let mut files = Vec::new();
-    let mut visited = HashSet::new();
-    crate::walk::collect_yaml_files(dir, dir, exclude_set.as_ref(), &mut files, &mut visited)?;
+    let options = walk_options
+        .skip_hidden_dirs(true)
+        .exclude(exclude_set.as_ref());
+    let walk = crate::walk::walk_files(dir, &options)?;
 
     // Read each file once and index every referenceable rule across the tree.
     let mut index = RuleIndex::new(true);
     let mut contents: Vec<(std::path::PathBuf, std::result::Result<String, String>)> =
-        Vec::with_capacity(files.len());
-    for path in files {
-        match std::fs::read_to_string(&path) {
+        Vec::with_capacity(walk.files.len());
+    for file in walk.files {
+        let path = file.path;
+        match std::fs::read_to_string(&file.real_path) {
             Ok(text) => {
                 index.add_text(&text);
                 contents.push((path, Ok(text)));
@@ -1067,12 +1113,44 @@ fn lint_directory_impl(
             }),
         }
     }
+    for skipped in walk.skipped {
+        let warning = LintWarning {
+            rule: LintRule::SkippedPath,
+            severity: Severity::Warning,
+            message: skipped.to_string(),
+            path: "/".to_string(),
+            span: None,
+            fix: None,
+        };
+        let warnings = match config {
+            Some(cfg) => apply_suppressions(vec![warning], cfg, &InlineSuppressions::default()),
+            None => vec![warning],
+        };
+        results.push(FileLintResult {
+            path: skipped.path,
+            warnings,
+        });
+    }
     Ok(results)
 }
 
 /// Lint all `.yml`/`.yaml` files in a directory recursively.
+///
+/// Hidden directories are skipped, each real file is linted once, and links
+/// that resolve outside `dir` are reported as [`LintRule::SkippedPath`]
+/// instead of being read.
 pub fn lint_yaml_directory(dir: &Path) -> crate::error::Result<Vec<FileLintResult>> {
-    lint_directory_impl(dir, None)
+    lint_directory_impl(dir, None, crate::walk::WalkOptions::default())
+}
+
+/// [`lint_yaml_directory_with_config`] with the given walk options, such as
+/// [`WalkOptions::follow_external_links`](crate::walk::WalkOptions::follow_external_links).
+pub fn lint_yaml_directory_with_options(
+    dir: &Path,
+    config: &LintConfig,
+    walk_options: crate::walk::WalkOptions<'_>,
+) -> crate::error::Result<Vec<FileLintResult>> {
+    lint_directory_impl(dir, Some(config), walk_options)
 }
 
 // =============================================================================
@@ -1487,7 +1565,7 @@ pub fn lint_yaml_directory_with_config(
     dir: &Path,
     config: &LintConfig,
 ) -> crate::error::Result<Vec<FileLintResult>> {
-    lint_directory_impl(dir, Some(config))
+    lint_directory_impl(dir, Some(config), crate::walk::WalkOptions::default())
 }
 
 // =============================================================================

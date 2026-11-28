@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 53 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 47 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
+The workspace ships 55 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 49 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -19,6 +19,8 @@ The workspace ships 53 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_regex_compile` | The hardened regex compilation path (size and complexity caps). | 1024 |
 | `fuzz_pipeline_yaml` | Pipeline YAML parser. | 4096 |
 | `fuzz_apply_modifiers` | Differential test for `apply_modifiers: first`: a rule with arbitrary modifiers and values must match the same events whether a pipeline applies its modifiers first or leaves them for compilation. {{ added "unreleased" }} | 1024 |
+| `fuzz_windash_budget` | The `\|windash` expansion budget on rule YAML, optionally followed by a NUL byte and an event value: lint reports `windash_expansion_too_large` whenever the parser rejects a rule for the budget and only for rules the parser rejects, and accepted rules compile and evaluate without hitting it. Seeds in `fuzz/corpus/fuzz_windash_budget/` include SigmaHQ windash rules, items and rules over and at the budget, `base64offset`, `wide`, and `cased` chains, a filter, an `action: global` merge, and context-dependent lowercasing. {{ added "unreleased" }} | 8192 |
+| `fuzz_walk` | Directory walks over trees built from a line-based description of directories, files, and links (to entries, back to the root, out of the root, to `/`, and dangling). Walks must finish, return each real file once, stay inside the root unless following external links, and never let the content of an outside file reach a parser diagnostic. Seeds in `fuzz/corpus/fuzz_walk/` cover self and ancestor loops, exponential loops, outside files and directories, a link to `/`, a Kubernetes ConfigMap layout, duplicate links, and a dangling link. Unix only. {{ added "unreleased" }} | 4096 |
 | `fuzz_pipeline_sources_yaml` | Dynamic source spec parser. | 8192 |
 | `fuzz_watchlist_request` | Watchlist push, replace, and delete bodies. The first byte selects the operation. The rest is JSON. {{ added "0.28.0" }} | 4096 |
 | `fuzz_alert_pipeline_config` | Alert-pipeline configuration parser. | 4096 |

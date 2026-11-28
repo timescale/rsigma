@@ -23,8 +23,8 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 
 | Severity | Rules |
 |----------|------:|
-| `error` | 43 |
-| `warning` | 46 |
+| `error` | 44 |
+| `warning` | 47 |
 | `info` | 8 |
 | `hint` | 0 |
 | Reserved (no production emission) | {{ rsigma.lint.reserved }} |
@@ -51,7 +51,7 @@ The `hint` severity is defined but not used by any of the shipped rules.
 | `unknown_key` | `info` | Replace a typo'd key with the closest known key (when the edit distance is small). |
 | `ads_unknown_section` | `info` | Rename an unrecognized `rsigma.ads.*` key to the closest known ADS section (when the edit distance is small). |
 
-## Infrastructure rules (4)
+## Infrastructure rules (5)
 
 Fired by the linter's loader and runner before per-rule checks even start. Cannot be suppressed with inline comments because the rule never gets parsed.
 
@@ -61,6 +61,7 @@ Fired by the linter's loader and runner before per-rule checks even start. Canno
 | `not_a_mapping` | `error` | none | The top-level YAML document is a sequence or scalar instead of a mapping. |
 | `file_read_error` | `error` | none | The lint path could not be opened (IO error, permission denied). |
 | `schema_violation` | `error` | none | When `--schema` is set, the rule fails the JSON schema. Schema violations attach the JSON schema error message verbatim. |
+| `skipped_path` | `warning` | none | A directory lint passed over an entry: a symlink or junction that resolves outside the linted directory, or one whose target cannot be resolved. The file is not read, and the finding names the entry but not its target. Pass `--follow-external-links` to lint through such links. {{ added "unreleased" }} |
 
 ## Shared metadata rules (17)
 
@@ -160,15 +161,16 @@ Apply to filter rules (`kind: filter` with a `filter:` block). The ninth row (`e
 | `filter_reference_by_title` | `warning` | none | A `filter.rules` entry matches a rule title. Title references are deprecated; use the rule `id` or `name`. {{ added "0.24.0" }} |
 | `empty_filter_rules` | reserved | none | Variant declared in the enum and asserted in a regression test, but no production code emits it today. |
 
-## Modifier and `related:` hygiene (7)
+## Modifier and `related:` hygiene (8)
 
-These also apply to detection rules but sit apart from the core detection-block checks above: modifier-misuse checks on a single detection item (`single_value_all_modifier`, `all_with_re`, `incompatible_modifiers`) and validation of the `related:` cross-reference block.
+These also apply to detection rules but sit apart from the core detection-block checks above: modifier-misuse checks on a single detection item (`single_value_all_modifier`, `all_with_re`, `incompatible_modifiers`), the `windash` expansion budget (`windash_expansion_too_large`), and validation of the `related:` cross-reference block.
 
 | Rule | Severity | Fix | Description |
 |------|----------|-----|-------------|
 | `single_value_all_modifier` | `warning` | yes | A single-value detection item carries the `\|all` modifier, which is a no-op. The fix removes the redundant modifier. |
 | `all_with_re` | `warning` | yes | The `\|all` modifier is combined with `\|re`, which is not meaningful (regex matching is inherently set-style). The fix removes `\|all`. |
 | `incompatible_modifiers` | `error` | none | The modifier chain on a field is one the parser rejects, with the parser's reason: more than one operator (e.g. `\|contains\|startswith` or `\|re\|contains`), two UTF-16 encodings, `base64` with `base64offset`, a value transformation with a non-string operator, a regex flag without or before `re`, or a string modifier before `fieldref`. `fieldref` may be followed by one of `contains`, `startswith`, or `endswith`, and by `neq`. Chains with an unknown or repeated modifier are left to the parser's error. Reported as an `error` rather than a `warning`. {{ added "0.25.0" }} |
+| `windash_expansion_too_large` | `error` | none | The `\|windash` variants of one detection item exceed 4,096, or those of one rule or filter exceed 16,384. A value with k dash characters stands for 5^k variants, three times as many with `\|base64offset`. The parser, evaluation, and conversion reject the same rules with an error that names the rule, so this finding predicts what `rule validate`, `engine eval`, and `backend convert` will do. See [Encodings](modifiers.md#encodings). {{ added "unreleased" }} |
 | `invalid_related_id` | `warning` | none | `related[].id` is not a valid UUID. |
 | `invalid_related_type` | `error` | none | `related[].type` is not one of `derived`, `obsolete`, `merged`, `renamed`, `similar`. |
 | `related_missing_required` | `error` | none | `related[]` entry is missing the required `id:` or `type:` field. |
@@ -480,7 +482,7 @@ Every lint rule's emission lives under [`crates/rsigma-parser/src/lint/rules/`](
 | `shared.rs` | `unknown_key`. |
 | `mod.rs` | Module wiring for the rule packages above. |
 
-Infrastructure findings (`yaml_parse_error`, `not_a_mapping`, `file_read_error`) and cross-document reference checks (`sigma_version_mismatch`, `unknown_rule_reference`) are produced by the lint loader/runner in [`crates/rsigma-parser/src/lint/mod.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/src/lint/mod.rs). `schema_violation` is attached by the CLI when `--schema` fails. Each emission is a call to `error(LintRule::X, ...)`, `warning(LintRule::X, ...)`, `info(LintRule::X, ...)`, or `hint(LintRule::X, ...)`. The full enum and the programmatic catalog live in that same module and in [`catalogue.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/src/lint/catalogue.rs).
+Infrastructure findings (`yaml_parse_error`, `not_a_mapping`, `file_read_error`, `skipped_path`) and cross-document reference checks (`sigma_version_mismatch`, `unknown_rule_reference`) are produced by the lint loader/runner in [`crates/rsigma-parser/src/lint/mod.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/src/lint/mod.rs). `schema_violation` is attached by the CLI when `--schema` fails. Each emission is a call to `error(LintRule::X, ...)`, `warning(LintRule::X, ...)`, `info(LintRule::X, ...)`, or `hint(LintRule::X, ...)`. The full enum and the programmatic catalog live in that same module and in [`catalogue.rs`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-parser/src/lint/catalogue.rs).
 
 ## See also
 

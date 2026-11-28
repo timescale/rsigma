@@ -1,0 +1,24 @@
+title: Rule Bomb
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel0:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  sel1:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  sel2:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  sel3:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  sel4:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  sel5:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+  condition: all of sel*

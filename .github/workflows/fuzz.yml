@@ -93,6 +93,10 @@ jobs:
             max_len: 4096
           - target: fuzz_apply_modifiers
             max_len: 1024
+          - target: fuzz_windash_budget
+            max_len: 8192
+          - target: fuzz_walk
+            max_len: 4096
           - target: fuzz_input_formats
             max_len: 4096
           - target: fuzz_rule_tune

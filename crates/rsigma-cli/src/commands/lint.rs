@@ -93,7 +93,7 @@ pub(crate) fn cmd_lint(args: LintArgs, ctx: OutputCtx) -> LintCounts {
 
     // 1. Run built-in lint checks (with suppression)
     let results: Vec<FileLintResult> = if path.is_dir() {
-        match lint::lint_yaml_directory_with_config(&path, &config) {
+        match lint::lint_yaml_directory_with_options(&path, &config, crate::walk_options()) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -457,24 +457,12 @@ fn run_schema_validation(path: &std::path::Path, schema_arg: &str) -> Vec<FileLi
     let mut results = Vec::new();
 
     if path.is_dir() {
-        fn walk_schema(
-            dir: &std::path::Path,
-            validator: &jsonschema::Validator,
-            results: &mut Vec<FileLintResult>,
-        ) {
-            let Ok(entries) = std::fs::read_dir(dir) else {
-                return;
-            };
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    walk_schema(&p, validator, results);
-                } else if matches!(p.extension().and_then(|e| e.to_str()), Some("yml" | "yaml")) {
-                    results.push(validate_file_against_schema(&p, validator));
-                }
+        // Skipped entries are reported by the built-in lint pass.
+        if let Ok(walk) = rsigma_parser::walk::walk_files(path, &crate::walk_options()) {
+            for file in walk.files {
+                results.push(validate_file_against_schema(&file.path, &validator));
             }
         }
-        walk_schema(path, &validator, &mut results);
     } else {
         results.push(validate_file_against_schema(path, &validator));
     }

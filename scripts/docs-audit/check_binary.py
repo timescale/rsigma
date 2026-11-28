@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTENT = ROOT / "docs" / "content"
-GLOBAL_FLAGS = {"log-format", "output-format", "color", "quiet", "no-stats", "features", "help", "version"}
+GLOBAL_FLAGS = {"log-format", "output-format", "color", "quiet", "no-stats", "follow-external-links", "features", "help", "version"}
 FLAG = r"--([A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
 MCP_DOCS = [
     CONTENT / "guide" / "mcp-server.md",

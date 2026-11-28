@@ -1,0 +1,10 @@
+title: Noisy Filter
+logsource:
+  product: windows
+filter:
+  rules: any
+  selection:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e -f'
+      - 'cmd -a /b –c —d ―e -f'
+  condition: not selection

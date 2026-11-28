@@ -111,12 +111,12 @@ async fn resolve_async(
     source_files: Vec<PathBuf>,
     ctx: OutputCtx,
 ) {
-    use rsigma_runtime::sources::registry::load_external_sources;
+    use rsigma_runtime::sources::registry::load_external_sources_with;
 
     let mut all_sources = Vec::new();
 
     // Load external sources from --source-file flags
-    match load_external_sources(&source_files) {
+    match load_external_sources_with(&source_files, crate::follow_external_links()) {
         Ok(external) => {
             for (source, path) in external {
                 if let Some(ref filter) = source_filter

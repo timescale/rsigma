@@ -34,6 +34,7 @@ use yaml_serde::Value;
 use crate::ast::*;
 use crate::diagnostic::{CollectionDiagnostic, DiagnosticKind};
 use crate::error::{Result, SigmaParserError, SourceLocation};
+use crate::walk::{WalkOptions, walk_files};
 
 // =============================================================================
 // Public API
@@ -180,7 +181,12 @@ pub fn parse_sigma_yaml(yaml: &str) -> Result<SigmaCollection> {
 ///
 /// Every diagnostic in the returned collection carries `path`.
 pub fn parse_sigma_file(path: &Path) -> Result<SigmaCollection> {
-    let content = std::fs::read_to_string(path)?;
+    parse_sigma_file_as(path, path)
+}
+
+/// Read `real_path` and label its diagnostics with `path`.
+fn parse_sigma_file_as(real_path: &Path, path: &Path) -> Result<SigmaCollection> {
+    let content = std::fs::read_to_string(real_path)?;
     let mut collection = parse_sigma_yaml(&content)?;
     for diagnostic in &mut collection.diagnostics {
         diagnostic.path = Some(path.to_path_buf());
@@ -190,41 +196,68 @@ pub fn parse_sigma_file(path: &Path) -> Result<SigmaCollection> {
 
 /// Parse all Sigma YAML files from a directory (recursively).
 ///
-/// A file that cannot be read or parsed at all is recorded as a
-/// [`DiagnosticKind::File`] error and the walk continues.
+/// Walks with the default [`WalkOptions`]: each real directory and file is
+/// visited once, and links that resolve outside `dir` are skipped. See
+/// [`parse_sigma_directory_with`].
 pub fn parse_sigma_directory(dir: &Path) -> Result<SigmaCollection> {
-    let mut collection = SigmaCollection::new();
+    parse_sigma_directory_with(dir, &WalkOptions::default())
+}
 
-    fn walk(dir: &Path, collection: &mut SigmaCollection) -> Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, collection)?;
-            } else if matches!(
-                path.extension().and_then(|e| e.to_str()),
-                Some("yml" | "yaml")
-            ) {
-                match parse_sigma_file(&path) {
-                    Ok(sub) => {
-                        collection.rules.extend(sub.rules);
-                        collection.correlations.extend(sub.correlations);
-                        collection.filters.extend(sub.filters);
-                        collection.diagnostics.extend(sub.diagnostics);
-                    }
-                    Err(e) => {
-                        collection
-                            .diagnostics
-                            .push(CollectionDiagnostic::file(&path, &e));
-                    }
-                }
+/// Parse the Sigma YAML files [`walk_files`] finds under `dir` with `options`.
+///
+/// A file that cannot be read or parsed at all is recorded as a
+/// [`DiagnosticKind::File`] error and the walk continues. Each entry the walk
+/// passed over, such as a link that resolves outside the boundary, is
+/// recorded as a [`DiagnosticKind::SkippedPath`] warning that names the entry
+/// but not its target.
+pub fn parse_sigma_directory_with(
+    dir: &Path,
+    options: &WalkOptions<'_>,
+) -> Result<SigmaCollection> {
+    let walk = walk_files(dir, options)?;
+    let mut collection = SigmaCollection::new();
+    for file in &walk.files {
+        match parse_sigma_file_as(&file.real_path, &file.path) {
+            Ok(sub) => {
+                collection.rules.extend(sub.rules);
+                collection.correlations.extend(sub.correlations);
+                collection.filters.extend(sub.filters);
+                collection.diagnostics.extend(sub.diagnostics);
+            }
+            Err(e) => {
+                collection
+                    .diagnostics
+                    .push(CollectionDiagnostic::file(&file.path, &e));
             }
         }
-        Ok(())
     }
-
-    walk(dir, &mut collection)?;
+    collection
+        .diagnostics
+        .extend(walk.skipped.iter().map(CollectionDiagnostic::skipped));
     Ok(collection)
+}
+
+/// The `|windash` budget problem of a detection rule or filter document, as
+/// [`check_windash_budget`](crate::validate::check_windash_budget) reports
+/// it. `None` when the document is within the budget, is a correlation, or
+/// has a detection that does not parse (other checks report that).
+pub(crate) fn windash_budget_problem(value: &Value) -> Option<String> {
+    let m = value.as_mapping()?;
+    if m.contains_key(val_key("correlation")) {
+        return None;
+    }
+    let array_matching =
+        crate::version::array_matching_enabled(parse_sigma_version(m, &mut Vec::new()));
+    let detections = if m.contains_key(val_key("filter")) {
+        filter::parse_filter_detections(
+            m.get(val_key("filter")).and_then(Value::as_mapping),
+            array_matching,
+        )
+    } else {
+        detection::parse_detections(m.get(val_key("detection"))?, array_matching)
+    }
+    .ok()?;
+    crate::validate::check_windash_budget(&detections).err()
 }
 
 // =============================================================================

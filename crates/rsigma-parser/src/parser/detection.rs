@@ -7,7 +7,9 @@ use crate::condition::parse_condition;
 use crate::diagnostic::CollectionDiagnostic;
 use crate::error::{Result, SigmaParserError};
 use crate::fieldpath::{ends_with_unescaped, escape_brackets, first_unescaped};
-use crate::validate::{check_condition, check_detection, check_detection_item};
+use crate::validate::{
+    check_condition, check_detection, check_detection_item, check_windash_budget,
+};
 use crate::value::SigmaValue;
 
 use super::{
@@ -74,6 +76,8 @@ pub(super) fn parse_detection_rule(
         detection_val,
         crate::version::array_matching_enabled(sigma_version),
     )?;
+    check_windash_budget(&detection)
+        .map_err(|e| SigmaParserError::InvalidDetection(format!("rule '{title}': {e}")))?;
 
     let logsource = parse_logsource(
         m.get(val_key("logsource"))
@@ -123,7 +127,7 @@ pub(super) fn parse_detection_rule(
 /// - Everything else: named detection identifiers
 ///
 /// Reference: pySigma rule/detection.py SigmaDetections.from_dict
-pub(super) fn parse_detections(value: &Value, array_matching: bool) -> Result<Detections> {
+pub(crate) fn parse_detections(value: &Value, array_matching: bool) -> Result<Detections> {
     let m = value.as_mapping().ok_or_else(|| {
         SigmaParserError::InvalidDetection("Detection section must be a mapping".into())
     })?;

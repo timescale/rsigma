@@ -2408,11 +2408,14 @@ fn run_daemon(
         .collect();
 
     // Load external sources and build the daemon-wide registry.
-    let external_sources = rsigma_runtime::sources::registry::load_external_sources(&source_paths)
-        .unwrap_or_else(|e| {
-            eprintln!("Error loading external sources: {e}");
-            process::exit(exit_code::CONFIG_ERROR);
-        });
+    let external_sources = rsigma_runtime::sources::registry::load_external_sources_with(
+        &source_paths,
+        crate::follow_external_links(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Error loading external sources: {e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
 
     // Source declarations come exclusively from external `--source` files;
     // pipelines only reference them. The registry therefore holds only the

@@ -202,6 +202,8 @@ Correlation windows carry over to the new engine for correlations that still exi
 
 Builtin pipelines (`ecs_windows`, `sysmon`) are embedded in the binary and are not file-watched.
 
+The watcher does not follow symlinks or junctions out of a watched directory unless the daemon runs with `--follow-external-links`, the same flag that makes rule loading follow them, so a link to `/` in the rules directory cannot make it watch the whole filesystem. Links that stay inside the directory are watched through their targets. {{ added "unreleased" }}
+
 ## State persistence
 
 Without `--state-db`, correlation state lives only in memory and is lost on restart. With `--state-db`:

@@ -603,41 +603,31 @@ fn collect_corpus_files(roots: &[PathBuf]) -> Result<Vec<CorpusFile>, String> {
                 path: root.clone(),
             });
         } else if root.is_dir() {
-            walk_dir(root, root, &mut out)?;
+            walk_dir(root, &mut out)?;
         }
     }
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
 }
 
-fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<CorpusFile>) -> Result<(), String> {
-    let read = std::fs::read_dir(dir)
-        .map_err(|e| format!("could not read corpus directory {}: {e}", dir.display()))?;
-    let mut paths: Vec<PathBuf> = Vec::new();
-    for entry in read {
-        let entry = entry.map_err(|e| {
-            format!(
-                "could not read corpus directory entry in {}: {e}",
-                dir.display()
-            )
-        })?;
-        paths.push(entry.path());
+fn walk_dir(root: &Path, out: &mut Vec<CorpusFile>) -> Result<(), String> {
+    let options = crate::walk_options().accept(rsigma_parser::walk::any_file);
+    let walk = rsigma_parser::walk::walk_files(root, &options)
+        .map_err(|e| format!("could not read corpus directory {}: {e}", root.display()))?;
+    for skipped in &walk.skipped {
+        eprintln!("Warning: {skipped}");
     }
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
-            walk_dir(root, &path, out)?;
-        } else if path.is_file() {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let key = rel
-                .to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "/");
-            out.push(CorpusFile {
-                key,
-                kind: classify(&path),
-                path,
-            });
-        }
+    for file in walk.files {
+        let path = file.path;
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        let key = rel
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        out.push(CorpusFile {
+            key,
+            kind: classify(&path),
+            path,
+        });
     }
     Ok(())
 }

@@ -44,20 +44,18 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
     let mut pipeline_files: Vec<PathBuf> = Vec::new();
     for path in &pipeline_paths {
         if path.is_dir() {
-            let entries = match std::fs::read_dir(path) {
-                Ok(entries) => entries,
+            let options = crate::walk_options().max_depth(0);
+            let walk = match rsigma_parser::walk::walk_files(path, &options) {
+                Ok(walk) => walk,
                 Err(e) => {
                     eprintln!("Error reading directory {}: {e}", path.display());
                     std::process::exit(crate::exit_code::CONFIG_ERROR);
                 }
             };
-            let mut files: Vec<PathBuf> = entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("yml" | "yaml")))
-                .collect();
-            files.sort();
-            pipeline_files.extend(files);
+            for skipped in &walk.skipped {
+                eprintln!("Warning: {skipped}");
+            }
+            pipeline_files.extend(walk.files.into_iter().map(|file| file.path));
         } else {
             pipeline_files.push(path.clone());
         }

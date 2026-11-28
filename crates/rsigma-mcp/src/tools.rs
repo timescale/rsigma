@@ -42,6 +42,8 @@ mod author_ads;
 mod confinement_tests;
 mod convert_rules;
 mod create_silence;
+#[cfg(all(test, unix))]
+mod directory_walk_tests;
 mod evaluate_events;
 mod fix_rules;
 mod format_rules;
@@ -96,6 +98,9 @@ pub struct RsigmaMcp {
     state: Arc<State>,
     /// Named rulesets declared in the server's configuration.
     rulesets: Arc<BTreeMap<String, RulesetSpec>>,
+    /// Follow links in rule directories that resolve outside them. Has no
+    /// effect with a root: links never leave `--rules-dir`.
+    follow_external_links: bool,
 }
 
 impl RsigmaMcp {
@@ -147,6 +152,7 @@ impl RsigmaMcp {
                 allow_operate_writes: has_daemon && allow_operate_writes,
             }),
             rulesets: Arc::new(BTreeMap::new()),
+            follow_external_links: false,
         })
     }
 
@@ -156,8 +162,27 @@ impl RsigmaMcp {
         self
     }
 
+    /// Follow links in rule, lint, and ruleset directories that resolve
+    /// outside the directory being loaded. Ignored when a root is set, so a
+    /// link never leads out of `--rules-dir`.
+    pub fn with_follow_external_links(mut self, follow: bool) -> Self {
+        self.follow_external_links = follow;
+        self
+    }
+
     fn root(&self) -> Option<&Path> {
         self.state.root.as_deref()
+    }
+
+    /// How rule directories are walked: confined to the root when one is
+    /// set, otherwise to the directory, following external links only when
+    /// asked to.
+    fn rule_walk_options(&self) -> rsigma_parser::walk::WalkOptions<'_> {
+        let options = rsigma_parser::walk::WalkOptions::new();
+        match self.root() {
+            Some(root) => options.confine_to(root),
+            None => options.follow_external_links(self.follow_external_links),
+        }
     }
 
     /// The lint configuration applied by `lint_rules` and `fix_rules`.
@@ -543,7 +568,7 @@ mod tests {
                 .any(|m| m["name"] == "contains")
         );
         let cat = to_value(&catalogue());
-        assert_eq!(cat.as_array().unwrap().len(), 98);
+        assert_eq!(cat.as_array().unwrap().len(), 100);
     }
 
     #[test]

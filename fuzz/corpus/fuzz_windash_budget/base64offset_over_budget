@@ -1,0 +1,10 @@
+title: Encoded
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  sel0:
+    CommandLine|windash|base64offset|contains:
+      - 'cmd -a /b –c —d ―e'
+      - 'cmd -a /b'
+  condition: all of sel*

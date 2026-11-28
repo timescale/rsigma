@@ -5,7 +5,7 @@ use std::process;
 use serde::Serialize;
 use serde_json::json;
 
-use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
+use rsigma_parser::ruleset::resolve_ruleset;
 
 use crate::config;
 use crate::exit_code;
@@ -92,7 +92,7 @@ pub(crate) fn cmd_list(args: super::ListArgs, ctx: OutputCtx) {
             .collect::<Vec<_>>()
             .join(",");
 
-        match resolve_ruleset(name, spec, &ResolveOptions::default()) {
+        match resolve_ruleset(name, spec, &crate::resolve_options()) {
             Ok(resolved) => {
                 if !ctx.quiet {
                     for warning in &resolved.warnings {

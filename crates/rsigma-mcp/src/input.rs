@@ -106,8 +106,8 @@ fn lexically_normalize(path: &Path) -> Option<PathBuf> {
 
 /// Reject a directory tree that contains symlinks when a root is configured.
 ///
-/// The rule and lint directory walkers follow symlinks, so a link anywhere
-/// under a confined directory could otherwise lead outside the root.
+/// The in-process walkers stay inside the root, but sigma-cli walks a
+/// delegated tree itself and would follow a link out of it.
 pub(crate) fn ensure_no_symlinks(dir: &Path, root: Option<&Path>) -> Result<(), McpError> {
     if root.is_none() {
         return Ok(());

@@ -28,7 +28,7 @@ For the narrative version with the full lint-rule catalog and CI patterns see [L
 
 | Flag | Description |
 |------|-------------|
-| `<PATH>` | Path to a Sigma rule file or a directory of rules (recursive). |
+| `<PATH>` | Path to a Sigma rule file or a directory of rules (recursive). Hidden directories are skipped, each real file is linted once, and links that resolve outside the directory are reported as `skipped_path` instead of being read, unless the global `--follow-external-links` is set ([Directory loading](../../reference/security.md#directory-loading)). {{ added "unreleased" }} |
 | `--exclude <GLOB>` | Exclude paths matching a glob (relative to `<PATH>`). Repeatable: `--exclude "config/**" --exclude "**/unsupported/**"`. |
 
 ### Output
