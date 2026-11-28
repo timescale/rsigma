@@ -11,6 +11,7 @@ mod cli_backend_build;
 mod cli_backtest;
 mod cli_classify;
 mod cli_config;
+mod cli_config_trust;
 mod cli_convert;
 mod cli_coverage;
 mod cli_daemon;

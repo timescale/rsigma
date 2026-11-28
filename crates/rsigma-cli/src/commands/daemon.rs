@@ -20,7 +20,7 @@ use rsigma_runtime::{PipelineRef, RulesetBinding};
 #[derive(Args, Debug)]
 pub(crate) struct DaemonArgs {
     /// Path to a YAML config file. Overrides config-file discovery
-    /// (./rsigma.yaml, ~/.config/rsigma/config.yaml, /etc/rsigma/config.yaml).
+    /// (./rsigma.yaml, ~/.config/rsigma/config.yaml, the system config).
     /// CLI flags still take precedence over config-file values.
     #[arg(long = "config", value_name = "PATH")]
     pub config: Option<PathBuf>,
