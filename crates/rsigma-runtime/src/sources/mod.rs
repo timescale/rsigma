@@ -79,6 +79,8 @@ pub enum SourceErrorKind {
     Timeout,
     /// The response exceeded the maximum allowed size.
     ResourceLimit(String),
+    /// The resolver panicked. The message is the panic payload when it is text.
+    Panic(String),
 }
 
 impl std::fmt::Display for SourceErrorKind {
@@ -89,6 +91,7 @@ impl std::fmt::Display for SourceErrorKind {
             Self::Extract(msg) => write!(f, "extract failed: {msg}"),
             Self::Timeout => write!(f, "timed out"),
             Self::ResourceLimit(msg) => write!(f, "resource limit exceeded: {msg}"),
+            Self::Panic(msg) => write!(f, "resolver panicked: {msg}"),
         }
     }
 }
@@ -390,18 +393,10 @@ impl Default for DefaultSourceResolver {
     }
 }
 
-#[async_trait::async_trait]
-impl SourceResolver for DefaultSourceResolver {
-    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
-        self.cache.get(source_id)
-    }
-
-    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
-        self.cache.store(source_id, &value);
-    }
-
-    async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
-        let result = match &source.source_type {
+impl DefaultSourceResolver {
+    /// Fetch `source` by type, before the error policy applies.
+    async fn dispatch(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
+        match &source.source_type {
             SourceType::File {
                 path,
                 format,
@@ -482,7 +477,22 @@ impl SourceResolver for DefaultSourceResolver {
                     from_cache: false,
                 })
             }
-        };
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SourceResolver for DefaultSourceResolver {
+    fn cached(&self, source_id: &str) -> Option<serde_json::Value> {
+        self.cache.get(source_id)
+    }
+
+    fn store_cached(&self, source_id: &str, value: serde_json::Value) {
+        self.cache.store(source_id, &value);
+    }
+
+    async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {
+        let result = catch_resolver_panic(source, self.dispatch(source)).await;
 
         match result {
             Ok(value) => {
@@ -533,21 +543,89 @@ impl SourceResolver for DefaultSourceResolver {
     }
 }
 
+/// Most sources one [`resolve_all`] call fetches at the same time.
+pub const MAX_CONCURRENT_RESOLVES: usize = 8;
+
+/// Run `resolve`, turning a panic into a [`SourceErrorKind::Panic`] error for `source`.
+async fn catch_resolver_panic<F>(
+    source: &DynamicSource,
+    resolve: F,
+) -> Result<ResolvedValue, SourceError>
+where
+    F: std::future::Future<Output = Result<ResolvedValue, SourceError>>,
+{
+    use futures_util::FutureExt;
+    match std::panic::AssertUnwindSafe(resolve).catch_unwind().await {
+        Ok(result) => result,
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-text panic payload".to_owned());
+            tracing::error!(source_id = %source.id, panic = %message, "Source resolver panicked");
+            Err(SourceError {
+                source_id: source.id.clone(),
+                kind: SourceErrorKind::Panic(message),
+            })
+        }
+    }
+}
+
+/// Resolve `sources` with at most [`MAX_CONCURRENT_RESOLVES`] in flight,
+/// returning the results in input order. A panicking resolve becomes an error
+/// for its own source only.
+pub(crate) async fn resolve_concurrently<'a>(
+    resolver: &'a dyn SourceResolver,
+    sources: impl IntoIterator<Item = &'a DynamicSource>,
+) -> Vec<(&'a DynamicSource, Result<ResolvedValue, SourceError>)> {
+    use futures_util::StreamExt;
+    type Resolving<'a> = std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = (&'a DynamicSource, Result<ResolvedValue, SourceError>),
+                > + Send
+                + 'a,
+        >,
+    >;
+    let pending: Vec<Resolving<'a>> = sources
+        .into_iter()
+        .map(|source| -> Resolving<'a> {
+            Box::pin(async move {
+                (
+                    source,
+                    catch_resolver_panic(source, resolver.resolve(source)).await,
+                )
+            })
+        })
+        .collect();
+    futures_util::stream::iter(pending)
+        .buffered(MAX_CONCURRENT_RESOLVES)
+        .collect()
+        .await
+}
+
 /// Resolve sources from the cache, fetching only the ones with no cached value.
 ///
-/// A hit is returned as stored. A miss calls [`SourceResolver::resolve`],
-/// which stores the fetched value. Optional sources that fail become JSON null.
+/// A hit is returned as stored. Misses call [`SourceResolver::resolve`]
+/// concurrently, which stores each fetched value. Optional sources that fail
+/// become JSON null.
 pub async fn resolve_all_cache_first(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],
 ) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
     let mut resolved = std::collections::HashMap::new();
+    let mut misses = Vec::new();
     for source in sources {
-        if let Some(cached) = resolver.cached(&source.id) {
-            resolved.insert(source.id.clone(), cached);
-            continue;
+        match resolver.cached(&source.id) {
+            Some(cached) => {
+                resolved.insert(source.id.clone(), cached);
+            }
+            None => misses.push(source),
         }
-        match resolver.resolve(source).await {
+    }
+    for (source, result) in resolve_concurrently(resolver, misses).await {
+        match result {
             Ok(value) => {
                 resolved.insert(source.id.clone(), value.data);
             }
@@ -569,10 +647,12 @@ pub async fn resolve_all_cache_first(
 
 /// Resolve all sources in a pipeline, returning a map of source_id -> resolved data.
 ///
+/// Sources resolve concurrently, at most [`MAX_CONCURRENT_RESOLVES`] at a
+/// time, so a slow source holds the call only as long as its own timeout.
 /// Applies error policies: `use_cached`, `use_default`, or `fail`.
-/// Required sources with `Fail` policy propagate errors immediately.
+/// The first required source, in input order, that still fails is the error.
 /// Optional sources (required=false) that fail are logged and skipped
-/// with a Null fallback value.
+/// with a Null fallback value. A resolver panic fails only its own source.
 pub async fn resolve_all(
     resolver: &dyn SourceResolver,
     sources: &[DynamicSource],
@@ -589,8 +669,8 @@ pub async fn resolve_all_with_state(
     mut state: Option<&mut rsigma_eval::pipeline::state::PipelineState>,
 ) -> Result<std::collections::HashMap<String, serde_json::Value>, SourceError> {
     let mut resolved = std::collections::HashMap::new();
-    for source in sources {
-        match resolver.resolve(source).await {
+    for (source, result) in resolve_concurrently(resolver, sources).await {
+        match result {
             Ok(value) => {
                 resolved.insert(source.id.clone(), value.data);
                 if let Some(s) = state.as_deref_mut() {

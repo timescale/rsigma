@@ -316,11 +316,17 @@ impl DispositionState {
             let _scheduler_task = handle;
             // Resolve once on startup, then react to each scheduled refresh.
             let _ = trigger.send(RefreshTrigger::All).await;
+            // Each notification carries every source's latest value; ingest only the ones that changed.
+            let mut ingested = std::collections::HashMap::new();
             while results.changed().await.is_ok() {
                 let Some(result) = results.borrow_and_update().clone() else {
                     continue;
                 };
                 for (id, value) in result.resolved {
+                    if ingested.get(&id) == Some(&value) {
+                        continue;
+                    }
+                    ingested.insert(id.clone(), value.clone());
                     let label = labels.get(&id).copied().unwrap_or("file");
                     let text = serde_json::to_string(&value).unwrap_or_default();
                     match this.ingest(&text, label) {
