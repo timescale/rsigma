@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### API listeners refuse browser-driven requests, bound their connections, and keep slow enrichment off the delivery path
+### API listeners refuse browser-driven requests, bound their connections, and keep slow enrichment off the delivery path (#810)
 
 The daemon API did not check `Host` or `Origin`, so a web page the operator opened could POST events, create silences, or trigger a reload on an unauthenticated loopback daemon (a `text/plain` POST needs no CORS preflight), and a DNS-rebinding page could read the API. A TCP API listener now validates both before authentication, routing, and body buffering, OTLP included, with the rules the MCP HTTP transport already applied, now shared in `rsigma_runtime::http_guard`. It accepts `localhost`, `127.0.0.1`, `::1`, a specific bind IP, and each `--api-allowed-host` (config `daemon.api.allowed_hosts`, which a project config file cannot set). An authenticated non-loopback listener accepts every host unless that list narrows it, and `*` accepts every host but needs authentication. A request whose `Origin` names another site gets `403`, also when every host is accepted, which covers mTLS listeners where the browser would present the operator's client certificate. `GET /healthz`, `GET /readyz`, and `unix://` listeners skip the checks.
 
