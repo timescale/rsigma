@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Absence and missing-event correlations
+### Absence and missing-event correlations (#816)
 
 Correlation rules can now express "A without B within T" and entity deadman detection, "no heartbeat from host X for T". A negated rule reference in the string `condition:` of a `temporal` or `temporal_ordered` correlation is evaluated at an event-time deadline instead of the moment the positive rule matches: a negated hit inside the obligation's window cancels it, and the alert fires when the tenant clock passes the deadline. A condition made only of one negated rule is the deadman form, which arms on a heartbeat, slides on a later heartbeat, and fires once when the clock passes the deadline. `rsigma.absence_grace` delays firing past the deadline. Late negated hits cannot retract an alert.
 
