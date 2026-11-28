@@ -134,6 +134,60 @@ correlation:
     condition: recon_whoami and (exfil_http or exfil_dns)
 ```
 
+A string condition may use `not`. Negating a rule reference means the correlation fires when that rule did *not* match in the window; the engine evaluates it at a deadline instead of the moment the positive rule matches. `correlation.rules` may be omitted for a string condition, in which case the references are taken from the condition in order of first appearance. Every name in the condition must appear in `rules:`; a missing name is a parse error, and a listed rule the condition never uses is a lint warning. {{ added "unreleased" }}
+
+### Missing events and silent entities
+
+A negated rule reference expresses "A without B within T", and a condition made only of one negated rule expresses a deadman alert, "no heartbeat from this entity for T". Both are RSigma extensions evaluated by the engine at an event-time deadline. The PostgreSQL and Fibratus backends reject them.
+
+```yaml
+title: Login without MFA
+name: login_without_mfa
+correlation:
+    type: temporal_ordered
+    rules:
+        - login_success
+        - mfa_success
+    group-by:
+        - user.name
+    timespan: 5m
+    condition: login_success and not mfa_success
+rsigma.absence_grace: 30s
+```
+
+```yaml
+title: Host stopped sending heartbeats
+correlation:
+    type: temporal
+    group-by:
+        - host.id
+    timespan: 10m
+    condition: not host_heartbeat     # rules omitted: derived as [host_heartbeat]
+```
+
+For `temporal`, the obligation opens when the positive rules match and the negated rules are absent. A negated hit cancels the obligation only when its timestamp falls in `[s_max - T, s_min + T]`, the times that could share one `timespan` window with every positive hit, so a B shortly before A counts. For `temporal_ordered`, the interval is `[s_min + 1, s_min + T]`, so only a B after the sequence starts counts; a B before A does not cancel it. The deadline is `s_min + T`, and `rsigma.absence_grace` delays firing past it.
+
+A tumbling window opens one obligation per bucket, keyed by the bucket start `b`, with deadline `b + T - 1`. A negated hit cancels every pending obligation of its group whose interval contains its timestamp, including obligations of earlier tumbling buckets that have not fired yet. With one positive rule, every positive event opens its own obligation: A at 0m, B at 1m, and A at 4m with no later B still alerts for the second A.
+
+The deadman form requires exactly one negated rule, a non-empty `group-by`, `type: temporal`, and a `sliding` window. A heartbeat arms the entity to `last + T`, a later heartbeat slides that deadline, and the alert fires once when the event-time clock passes the deadline plus grace. Entities are tracked after their first heartbeat only.
+
+An absence correlation is rejected when a negation appears under `or` (`a or not b`, or `not (b and d)`), when a selector (`1 of ...`, `all of ...`) appears, when a rule is used both positively and negated, when the window is `session`, or when a `temporal_ordered` positive part is not a conjunction of rules. An empty positive part is the deadman form and follows the restrictions above.
+
+An absence result carries an `absence` object with the missing rule references, the interval start, and the deadline:
+
+```json
+{
+  "rule_title": "Login without MFA",
+  "correlation_type": "temporal_ordered",
+  "group_key": [["user.name", "alice"]],
+  "aggregated_value": 1.0,
+  "timespan_secs": 300,
+  "absence": { "missing": ["mfa_success"], "window_start": 1735689600, "deadline": 1735689900 }
+}
+```
+
+A negated hit that arrives after the obligation fired cannot retract the alert. The daemon counts such late hits in `rsigma_correlation_absence_late_negatives_total`, which is how to size `rsigma.absence_grace`. {{ added "unreleased" }}
+
 ## Aliases
 
 Referenced rules do not always name the same thing the same way. A process event might call the host `Computer` while a network event calls it `hostname`. An alias gives the group-by a single name and maps it to the right field in each rule:
@@ -227,8 +281,8 @@ Here `brute_burst` is the `name` of the first correlation. Only the top of a cha
 
 By default a correlation keeps its window after firing, so the next qualifying match fires again. Two settings change that:
 
-- Suppression drops repeat alerts for the same correlation and group key for the given duration. Set it with `--suppress 5m`, or with `rsigma.suppress: 5m` on the rule. The duration is measured on the group's newest event time, so a late event cannot shorten it. {{ added "unreleased" }}
-- Reset clears the group's window when the correlation fires, so the count starts again from zero. Set it with `--action reset`, or with `rsigma.action: reset` on the rule. The default action is `alert`.
+- Suppression drops repeat alerts for the same correlation and group key for the given duration. Set it with `--suppress 5m`, or with `rsigma.suppress: 5m` on the rule. The duration is measured on the group's newest event time, so a late event cannot shorten it. {{ added "unreleased" }} For an absence result, suppression is measured on the deadline.
+- Reset clears the group's window when the correlation fires, so the count starts again from zero. Set it with `--action reset`, or with `rsigma.action: reset` on the rule. The default action is `alert`. For an absence correlation, `alert` keeps the group's other pending obligations and `reset` clears the group's positive hits, latest negated hits, and every pending obligation after emitting.
 
 The flags apply to every correlation, and a value on the rule overrides the flag for that rule.
 
@@ -252,16 +306,16 @@ custom_attributes:
 
 Correlation state is a window per correlation and group key. In `engine eval` it lives in memory for the length of the run. The daemon keeps it across restarts when you pass `--state-db`, which snapshots state to SQLite periodically and on shutdown (see [State persistence](streaming-detection.md#state-persistence)).
 
-Memory grows with the number of distinct group keys and with window length. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains (default 10,000, raised for an `event_count` or `value_count` condition with a larger threshold). [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
+Memory grows with the number of distinct group keys and with window length. `--max-state-entries` (default 100,000) caps the total number of groups across all correlations and evicts the stalest when reached, and `--max-group-entries` or `rsigma.max_group_entries` caps how much a single group retains (default 10,000, raised for an `event_count` or `value_count` condition with a larger threshold). Absence correlations have their own caps: `--max-absence-entries` (default 100,000) bounds the number of absence groups with a pending obligation or an armed deadman, and a hit that would make a group pending at the cap is refused instead of evicting a pending deadline. Pending obligations per group default to 1,000 when neither `--max-group-entries` nor `rsigma.max_group_entries` is set. {{ added "unreleased" }} [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) covers sizing.
 
 When several daemons share a NATS consumer group, each replica keeps its own state, so the events of one group key must reach the same replica to correlate. See [consumer groups](nats-streaming.md#consumer-groups).
 
 ## Testing and debugging correlations
 
-- Pipe a file of events through `rsigma engine eval -r rules/` to check that a correlation fires. If it does not, add `--dump-correlation-state` to print each group's current value, threshold, and window entries at the end of the run.
-- Attach timestamped example events to the rule with `rsigma.exemplars` and run [`rule test`](../cli/rule/test.md). Correlation exemplars use an `events` list with relative `offset`s; see [Custom Attributes](../reference/custom-attributes.md).
+- Pipe a file of events through `rsigma engine eval -r rules/` to check that a correlation fires. If it does not, add `--dump-correlation-state` to print each group's current value, threshold, and window entries at the end of the run. An absence correlation fires at the end of the input when its deadline is reached, and the dump prints after that finalization. {{ added "unreleased" }}
+- Attach timestamped example events to the rule with `rsigma.exemplars` and run [`rule test`](../cli/rule/test.md). Correlation exemplars use an `events` list with relative `offset`s; see [Custom Attributes](../reference/custom-attributes.md). An absence exemplar fires at the end of the listed events when the missing rule never arrived.
 - [`rule backtest`](../cli/rule/backtest.md) resets correlation state for each corpus file, so keep the events of one incident in one file.
-- [`rule lint`](linting-rules.md) checks correlation structure, such as a value type without `field`, a non-numeric threshold, or a session window without `gap`. The [lint rule reference](../reference/lint-rules.md#correlation-rules-18) lists every check.
+- [`rule lint`](linting-rules.md) checks correlation structure, such as a value type without `field`, a non-numeric threshold, or a session window without `gap`. The [lint rule reference](../reference/lint-rules.md#correlation-rules-24) lists every check.
 - [`rule draft --groups`](rule-drafting.md#drafting-correlations) turns example incidents into per-step detections and a `temporal` or `temporal_ordered` correlation. It infers the group-by, order, and window, and embeds an exemplar that `rule test` can run.
 
 [Troubleshooting](../getting-started/troubleshooting.md#a-correlation-never-fires) collects the common causes of a correlation that never fires.

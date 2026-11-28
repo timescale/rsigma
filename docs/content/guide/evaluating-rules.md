@@ -152,6 +152,8 @@ Every correlation result that carries `events` or `event_refs` also carries `eve
 
 When a tumbling or session parent window resets, the parent clears its events, but a child that fires in the new window can deliver older events it still holds, because they contributed to that firing. {{ added "0.28.0" }}
 
+At the end of the input, eval fires every pending absence obligation, regardless of the clock, because a finite input is the whole observation; this matches a converted query over the same dataset. Armed deadman entities are not fired at the end: a host that went silent mid-file alerts, and a host still alive at the end does not. Output is deterministic for the same input file: absence deadlines come from event time, not the run time, so two runs produce byte-identical results. {{ added "unreleased" }} `--dump-correlation-state` prints after this finalization.
+
 | Flag | Purpose |
 |------|---------|
 | `--suppress 5m` | Suppress duplicate correlation alerts within the window. |
@@ -162,6 +164,7 @@ When a tumbling or session parent window resets, the parent clears its events, b
 | `--max-correlation-events N` | Cap events stored per correlation window. Default 10. A chained parent applies its own cap to the events it receives. {{ added "0.28.0" }} |
 | `--max-state-entries N` | Hard cap on correlation state entries across all correlations and group keys. Default 100,000. |
 | `--max-group-entries N` | Cap retained entries within a single group's window. Unset = 10,000, raised for an `event_count` or `value_count` condition with a larger threshold. {{ added "unreleased" }} |
+| `--max-absence-entries N` | Hard cap on absence groups with a pending deadline. Default 100,000; a hit that would make a group pending at the cap is refused. {{ added "unreleased" }} |
 | `--max-future-skew DURATION` | How far an event timestamp may be ahead of the wall clock before the event is skipped for correlation. Default `5m`; a smaller lead is clamped to the wall clock. {{ added "unreleased" }} |
 | `--timestamp-field FIELD` | Prepend a field name to the timestamp extraction list (default `@timestamp`, `timestamp`, `EventTime`, `TimeCreated`, `eventTime`). |
 

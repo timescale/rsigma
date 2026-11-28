@@ -282,6 +282,8 @@ Tumbling and session apply to every correlation type. For the aggregate types (`
 
 For session windows the `gap` is honored exactly, but the `timespan` cap is enforced as a `HAVING (MAX(<ts>) - MIN(<ts>)) <= INTERVAL '<timespan> seconds'` filter, which drops sessions longer than the cap rather than splitting them mid-session as the runtime engine does. `rsigma backend convert` emits a stderr warning noting this approximation.
 
+A `temporal` or `temporal_ordered` string condition with negated rule references is an absence correlation, which this backend cannot express as a query because "no B in the window" has no aggregate form. The rule fails with `UnsupportedCorrelation` and a message explaining the deadline semantics. {{ added "unreleased" }}
+
 The strategy can also be chosen at conversion time with `-O correlation_method=NAME`, following pySigma's `correlation_methods` model. The backend advertises `sliding` (default), `tumbling`, and `session` (run `rsigma backend formats postgres` to list them); the option overrides a rule's own `window` for that conversion and is rejected if it is not one of the advertised methods. With no option, the rule's own `window` is used. For `correlation_method=session` over rules that declare no `gap`, pass `-O gap=5m` as the conversion default; a rule's own `gap` always wins over the option.
 
 Unlike the sliding queries, tumbling and session queries carry no `NOW() - INTERVAL` bound (their windows derive from the data, and a session may extend arbitrarily far back), so they scan the whole table or view they run against. Schedule them against time-partitioned tables (hypertables) or bound the source with a view to keep scan costs predictable.

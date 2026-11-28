@@ -23,9 +23,9 @@ Override the threshold with `--fail-level warning` or `--fail-level info`. See [
 
 | Severity | Rules |
 |----------|------:|
-| `error` | 40 |
-| `warning` | 44 |
-| `info` | 7 |
+| `error` | 43 |
+| `warning` | 46 |
+| `info` | 8 |
 | `hint` | 0 |
 | Reserved (no production emission) | {{ rsigma.lint.reserved }} |
 | **Total** | **{{ rsigma.lint.total }}** ({{ rsigma.lint.autofix }} of which have safe auto-fixes via `--fix`) |
@@ -113,7 +113,7 @@ Apply to detection rules (`detection:` block + `condition:`).
 | `deprecated_detection_timeframe` | `warning` | none | The `detection:` block has a v1.x `timeframe:` key, which has no effect. Use a correlation rule with a `timespan` instead. {{ added "0.24.0" }} |
 | `flattened_array_correlation` | `warning` | none | Two or more sibling keys share a quantified array prefix (e.g. `connections[any].protocol` and `connections[any].ip`). Each opens an independent scope, so they do **not** correlate on the same array element. Use an object-scope block (`connections[any]:` with the fields nested) to require one element to satisfy all of them. See [Array Matching](../guide/array-matching.md). |
 
-## Correlation rules (18)
+## Correlation rules (24)
 
 Apply to correlation rules (`correlation:` block).
 
@@ -122,7 +122,7 @@ Apply to correlation rules (`correlation:` block).
 | `missing_correlation` | `error` | none | A `kind: correlation` rule has no `correlation:` block. |
 | `missing_correlation_type` | `error` | none | `correlation:` has no `type:`. |
 | `invalid_correlation_type` | `error` | none | `correlation.type:` is not one of `event_count`, `value_count`, `temporal`, `temporal_ordered`, `value_sum`, `value_avg`, `value_percentile`, `value_median`. |
-| `missing_correlation_rules` | `error` | none | `correlation:` has no `rules:` list. |
+| `missing_correlation_rules` | `error` | none | `correlation:` has no `rules:` list. Not reported when `condition:` is a string, because the references are then derived from the condition. {{ added "unreleased" }} |
 | `empty_correlation_rules` | `warning` | none | `correlation.rules:` is present but empty. |
 | `missing_correlation_timespan` | `error` | none | `correlation:` has no `timespan:`. |
 | `invalid_timespan_format` | `error` | none | `timespan:` is not a valid duration (`5m`, `1h`, `30s`). |
@@ -137,6 +137,12 @@ Apply to correlation rules (`correlation:` block).
 | `generate_not_boolean` | `error` | none | The `generate:` field is not a boolean. |
 | `correlation_only_references` | `info` | none | The correlation omits `generate: true`, so referenced rules, detections or correlations, produce no standalone output. {{ added "0.24.0" }} |
 | `invalid_condition_operator` | `error` | none | A key in `correlation.condition` is not one of `gt`, `gte`, `lt`, `lte`, `eq`, `neq` (the `field` and `percentile` keys are exempt). |
+| `extended_condition_undefined_rule` | `error` | none | A string `correlation.condition` references a name that is not in `correlation.rules`. The parser rejects the same rule at load. {{ added "unreleased" }} |
+| `extended_condition_unreferenced_rule` | `warning` | none | `correlation.rules` lists a rule that the string condition never references. The rule still loads; the unused reference feeds no condition. {{ added "unreleased" }} |
+| `absence_condition_unsupported` | `error` | none | The condition uses negated rules in a shape the engine cannot evaluate at a deadline, such as a negation under `or`, a selector, a rule used both ways, a `session` window, an ordered disjunction, or an invalid deadman form. {{ added "unreleased" }} |
+| `absence_semantics` | `info` | none | The rule is an absence correlation, evaluated at a deadline by the RSigma engine. That evaluation is an RSigma extension; the PostgreSQL and Fibratus backends reject it. {{ added "unreleased" }} |
+| `invalid_absence_grace` | `error` | none | `rsigma.absence_grace` does not parse as a duration such as `30s` (`0s` is allowed). {{ added "unreleased" }} |
+| `absence_grace_without_absence` | `warning` | none | `rsigma.absence_grace` is set on a correlation that is not an absence correlation, so it has no effect. {{ added "unreleased" }} |
 
 ## Filter rules (9 IDs, 8 emitted)
 
@@ -364,6 +370,34 @@ detection:
 ```
 
 Sigma v1.x paired `timeframe:` with the aggregation pipe syntax to bound a count. On its own it never limited matching, and RSigma ignores it. Express the time window with a `correlation:` block and its `timespan:`, as in the [`deprecated_aggregation_syntax`](#deprecated_aggregation_syntax) example. No auto-fix because the replacement is structural.
+
+### `absence_condition_unsupported`
+
+{{ added "unreleased" }}
+
+Trigger:
+
+```yaml
+correlation:
+    type: temporal
+    rules: [login_success, mfa_success]
+    group-by: [User]
+    timespan: 5m
+    condition: login_success or not mfa_success
+```
+
+A negation under `or` cannot be decided at one deadline: the engine would have to know whether the negated rule is absent from every window that satisfies the other branch. The fix is to put negated rules only in the top-level `and`, or to use a positive-only condition and a separate correlation:
+
+```yaml
+correlation:
+    type: temporal
+    rules: [login_success, mfa_success]
+    group-by: [User]
+    timespan: 5m
+    condition: login_success and not mfa_success
+```
+
+The same lint reports selectors in an absence condition, a rule used both positively and negated, a `session` window, an ordered disjunction, and an invalid deadman form. The [correlation guide](../guide/correlations.md#missing-events-and-silent-entities) describes the accepted shapes.
 
 ### `duplicate_fields`
 

@@ -115,6 +115,7 @@ When every field is present but the verdict is still `NO MATCH`, the per-item li
 - **Group keys.** Every event that should count toward one correlation needs the same values in the `group-by` fields, after the pipeline has renamed them.
 - **Backtests.** `rule backtest` resets correlation state per corpus file, so the events of one incident have to be in the same file.
 - **Several daemons.** With a NATS consumer group, each replica keeps its own correlation state, so events for one group key can land on different replicas and never meet. See [consumer groups](../guide/nats-streaming.md#consumer-groups).
+- **Absence rules.** An absence correlation fires only after its deadline plus `rsigma.absence_grace` passes on the event-time clock, not when the positive rule matches. In a streaming daemon the clock advances with event time and with idle time; in `engine eval` pending obligations fire at the end of the input. A condition name that is missing from `correlation.rules` is now a load error, so check the parse diagnostics. See [Missing events and silent entities](../guide/correlations.md#missing-events-and-silent-entities). {{ added "unreleased" }}
 
 ## Rule changes are not picked up
 

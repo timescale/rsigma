@@ -17,6 +17,8 @@ This library is part of [rsigma].
 | `parse_sigma_directory(dir: &Path)` | Recursively parse all `.yml`/`.yaml` files in a directory |
 | `SigmaCollection::diagnostics` | Every parse error and parse warning as a `CollectionDiagnostic`; `has_errors()`, `error_count()`, `warning_count()`, `errors()`, `warnings()`, and `into_result()` separate the two |
 | `parse_condition(input: &str)` | Parse a condition expression string into a `ConditionExpr` |
+| `absence::analyze_absence(rule)` | Analyze a parsed correlation rule for deferred absence semantics; returns `AbsenceShape`, or the reason a deadline cannot decide it |
+| `absence::analyze_absence_parts(expr, corr_type, window, rules, has_group_by)` | The lower-level analyzer the linter calls with the window resolved from raw YAML |
 | `parse_field_spec(key: &str)` | Parse a field specification like `"CommandLine\|contains\|all"` into a `FieldSpec` |
 
 ### Validation

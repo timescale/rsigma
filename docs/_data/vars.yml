@@ -10,16 +10,16 @@ rsigma:
   # sync with the enum in crates/rsigma-parser/src/lint and the per-severity
   # breakdown table in docs/reference/lint-rules.md.
   lint:
-    rules: 91 # built-in checks emitted in production
+    rules: 97 # built-in checks emitted in production
     autofix: 14 # built-in checks with a safe --fix
     reserved: 1 # enum values declared but not emitted (empty_filter_rules)
-    total: 92 # rules + reserved
+    total: 98 # rules + reserved
   # Prometheus metric catalogue sizes for `engine daemon` under `--all-features`.
   # Referenced as {{ rsigma.metrics.names }} etc. Keep in sync with
   # crates/rsigma-cli/src/daemon/metrics.rs and docs/content/reference/metrics.md.
   metrics:
-    names: 129 # total metric names in the definition catalogue
-    always: 119 # registered without feature gates (names - otlp - tls - stix)
+    names: 134 # total metric names in the definition catalogue
+    always: 124 # registered without feature gates (names - otlp - tls - stix)
     otlp: 4 # daemon-otlp
     tls: 3 # daemon-tls
     stix: 3 # stix-source

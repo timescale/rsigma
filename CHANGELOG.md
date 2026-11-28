@@ -4,6 +4,23 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Absence and missing-event correlations
+
+Correlation rules can now express "A without B within T" and entity deadman detection, "no heartbeat from host X for T". A negated rule reference in the string `condition:` of a `temporal` or `temporal_ordered` correlation is evaluated at an event-time deadline instead of the moment the positive rule matches: a negated hit inside the obligation's window cancels it, and the alert fires when the tenant clock passes the deadline. A condition made only of one negated rule is the deadman form, which arms on a heartbeat, slides on a later heartbeat, and fires once when the clock passes the deadline. `rsigma.absence_grace` delays firing past the deadline. Late negated hits cannot retract an alert.
+
+The engine keeps a per-tenant event-time clock. Explicit timestamps and timestamps extracted from events advance it, wall-clock fallback timestamps do not, and `finalize()` fires every pending obligation at the end of a finite input, which is the whole observation. `engine eval`, every `rule backtest` and `rule hygiene` corpus file, MCP `evaluate_events`, and correlation exemplars finalize; a streaming daemon advances the clock while input is idle and never finalizes on shutdown, while finite input without `--state-db` finalizes like eval. With `--state-db`, pending obligations, armed deadmen, and clocks persist across runs.
+
+Absence results carry an `absence` object with the missing rules, the interval start, and the deadline. `--max-absence-entries` and `daemon.correlation.max_absence_entries` bound absence groups with a pending deadline; a hit that would make a group pending at the cap is refused rather than evicting a pending deadline. Five new daemon metrics report pending, fired, cancelled, refused, and late-negative counts.
+
+Behavior changes:
+
+- A negated rule reference in a temporal string condition now has deferred absence semantics. Under `temporal` it no longer fires the moment the positive rule matches, and under `temporal_ordered` it can fire at all.
+- A condition identifier that is not in `correlation.rules` is now a load error instead of silently evaluating false or true under `not`.
+- `correlation.rules` may be omitted for a string condition; the references are then derived from the condition in order of first appearance. A selector in such a condition requires `rules:`.
+- `missing_correlation_rules` is not reported when the condition is a string.
+
+Breaking changes: `CorrelationBody` gains an `absence` field, `CorrelationConfig` gains `max_absence_entries`, `TenantStateSnapshot` gains `clock`, `WindowState` gains the `Absence` variant, so exhaustive matches must handle it, and snapshots with absence state or a clock are written as version 3, which older binaries cannot read. A deployment without absence rules keeps writing version 2 snapshots.
+
 ### Webhooks no longer lose in-scope alerts, and header and signing templates are injection-safe (#815)
 
 Results entered a webhook's bounded queue before its `kind`, `scope`, and tenant filter ran, so a stream of detections the webhook would skip could fill the queue and push out the alerts it exists for. The dispatcher now checks each sink's scope before it queues: a webhook is offered only results its `kind` and `scope` admit, a `tenant=<id>` sink only its tenant's results and incidents, and webhook and OTLP sinks no incidents. Skipped traffic never takes a queue slot or holds the source acknowledgment. When an `?on_full=drop` queue is full, the drop is still counted on `rsigma_sink_dropped_total`, and the daemon now logs a rate-limited warning naming the sink, rule id, and level, and records the dropped in-scope results on the `--dlq` when the DLQ channel has room.
