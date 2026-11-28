@@ -6678,3 +6678,25 @@ correlation:
     assert!(restored.import_state(snapshot));
     assert_eq!(restored.state_count(), 1);
 }
+
+#[test]
+fn a_late_positive_hit_after_an_obligation_is_retained() {
+    let yaml = r#"---
+title: Either
+correlation:
+    type: temporal
+    rules: [a, b, c]
+    group-by: [User]
+    timespan: 60s
+    condition: (a or c) and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "c", "alice", 90);
+    match absence_state(&engine, "Either", "alice") {
+        Some(WindowState::Absence { positive_hits, .. }) => {
+            assert_eq!(positive_hits.get("c").map(|hits| hits.len()), Some(1));
+        }
+        other => panic!("expected absence state, got {other:?}"),
+    }
+}

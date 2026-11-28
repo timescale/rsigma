@@ -211,14 +211,12 @@ impl WindowState {
             WindowState::Absence {
                 positive_hits,
                 last_negative,
-                obligations,
                 deadman,
                 ..
             } => positive_hits
                 .values()
                 .filter_map(|ts| ts.back().copied())
                 .chain(last_negative.values().copied())
-                .chain(obligations.iter().map(|o| o.deadline))
                 .chain(deadman.iter().map(|d| d.last_heartbeat))
                 .max(),
         }
@@ -239,14 +237,12 @@ impl WindowState {
             WindowState::Absence {
                 positive_hits,
                 last_negative,
-                obligations,
                 deadman,
                 ..
             } => positive_hits
                 .values()
                 .filter_map(|ts| ts.front().copied())
                 .chain(last_negative.values().copied())
-                .chain(obligations.iter().map(|o| o.s_min))
                 .chain(deadman.iter().map(|d| d.last_heartbeat))
                 .min(),
         }
