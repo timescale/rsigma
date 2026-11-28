@@ -1,7 +1,7 @@
 //! End-to-end multi-tenant isolation: startup refusals, ingest binding, and
 //! API scoping.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

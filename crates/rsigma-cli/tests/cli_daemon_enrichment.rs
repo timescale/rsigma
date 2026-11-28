@@ -13,7 +13,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, http_post, poll_until, rsigma_bin, temp_file};
 use std::process::Stdio;

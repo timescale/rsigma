@@ -2,7 +2,7 @@
 //!
 //! Uses insta inline snapshot testing for stdout/stderr output verification.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use insta::assert_snapshot;

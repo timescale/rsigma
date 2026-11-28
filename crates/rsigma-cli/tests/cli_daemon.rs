@@ -2,7 +2,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 #[cfg(unix)]
 use common::terminate_child;

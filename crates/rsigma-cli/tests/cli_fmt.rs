@@ -1,6 +1,6 @@
 //! Integration tests for rsigma rule fmt: modes, flag conflicts, file collection, write safety, and exit codes.
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::path::{Path, PathBuf};

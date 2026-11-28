@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### The CLI integration tests build as one test binary
+
+Each of the 81 `cli_*.rs` files in `crates/rsigma-cli/tests/` was its own test target, so every build compiled and linked 81 executables, about 1 GB of linker output, and linking dominates the Windows and macOS test jobs. The files are now modules of a single `cli` target rooted at `tests/cli.rs` (`autotests = false`). The file layout and the 1,402 tests are unchanged; a rebuild of the suite with CI's settings drops from about 12.5 to 4.5 seconds on a 4-job macOS build. To run one file's tests, filter on its module, for example `cargo test -p rsigma --test cli cli_daemon_nats::`. The three `engine explain` insta snapshots are renamed for the new module path.
+
 ### CI builds the CLI once for its smoke and SigmaHQ corpus checks (#805)
 
 The `Sigma Corpus Regression`, `MCP Smoke`, and `Output Format Smoke` jobs each compiled `rsigma` on their own, and the corpus job spent about six minutes on a release build (thin LTO, one codegen unit) to run about ten seconds of checks. They are now one `CLI smoke and Sigma corpus` job that builds an all-features debug binary once and runs the MCP smoke test over stdio and HTTP, the `--output-format` smoke test, and every corpus check: `rule validate`, the `rule fmt` round trip, validation with the dynamic pipelines, and the `pipeline resolve` goldens. The corpus checks take under a minute on the debug binary. The testing guide now lists the `rule fmt` check it was missing.

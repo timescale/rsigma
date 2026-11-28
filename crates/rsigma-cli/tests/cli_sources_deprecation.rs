@@ -10,7 +10,7 @@
 //! [issue #136]: https://github.com/timescale/rsigma/issues/136
 //! [issue #137]: https://github.com/timescale/rsigma/issues/137
 
-mod common;
+use crate::common;
 
 use common::{SIMPLE_RULE, rsigma, temp_file};
 use predicates::prelude::*;

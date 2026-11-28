@@ -4,7 +4,7 @@
 //! `engine eval`. Profiling, scoring, and inference logic is unit-tested in
 //! rsigma-eval's rule_draft module; these tests cover the CLI surface only.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;

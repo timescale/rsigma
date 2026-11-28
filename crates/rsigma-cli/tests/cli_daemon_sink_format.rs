@@ -5,7 +5,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

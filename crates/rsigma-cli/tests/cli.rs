@@ -1,0 +1,90 @@
+//! End-to-end tests for the `rsigma` binary.
+//!
+//! Every `cli_*.rs` file in this directory is a module of this one test
+//! binary rather than a test target of its own, so the suite compiles and
+//! links once (`autotests = false` in `Cargo.toml`). Add a new file here as
+//! a `mod` and reach the shared helpers through `crate::common`.
+
+mod common;
+
+mod cli_backend_build;
+mod cli_backtest;
+mod cli_classify;
+mod cli_config;
+mod cli_convert;
+mod cli_coverage;
+mod cli_daemon;
+mod cli_daemon_alert_pipeline;
+mod cli_daemon_audit_trail;
+mod cli_daemon_auth;
+mod cli_daemon_batch;
+mod cli_daemon_capture;
+mod cli_daemon_correlations;
+mod cli_daemon_cross_rule_ac;
+mod cli_daemon_delivery;
+mod cli_daemon_dynamic;
+mod cli_daemon_enrichment;
+mod cli_daemon_enrichment_logs;
+mod cli_daemon_fields_observer;
+mod cli_daemon_http;
+mod cli_daemon_incident_bundle;
+mod cli_daemon_listener_policy;
+mod cli_daemon_logsource_routing;
+mod cli_daemon_nats;
+mod cli_daemon_otlp;
+mod cli_daemon_risk;
+mod cli_daemon_rule_load;
+mod cli_daemon_rulesets;
+mod cli_daemon_schema_routing;
+mod cli_daemon_schemas;
+mod cli_daemon_silence_limits;
+mod cli_daemon_sink_format;
+mod cli_daemon_status;
+mod cli_daemon_stix_enrichment;
+mod cli_daemon_stix_source;
+mod cli_daemon_tail;
+mod cli_daemon_tap;
+mod cli_daemon_tenancy;
+mod cli_daemon_tls;
+mod cli_daemon_uds;
+mod cli_daemon_watchlist;
+mod cli_daemon_webhook;
+mod cli_discover;
+mod cli_disposition_recipes;
+mod cli_doc;
+mod cli_draft;
+mod cli_draft_stix;
+mod cli_dump_correlation_state;
+mod cli_eval;
+mod cli_eval_output;
+mod cli_eval_rulesets;
+mod cli_explain;
+mod cli_fields;
+mod cli_fmt;
+mod cli_hunt;
+mod cli_hunt_postgres;
+mod cli_hygiene;
+mod cli_incidents_export;
+mod cli_lint;
+mod cli_logsource_routing;
+mod cli_mcp_http_exposure;
+mod cli_mcp_operate;
+mod cli_mcp_serve;
+mod cli_migrate_sources;
+mod cli_output_format;
+mod cli_parse;
+mod cli_pipeline_diff;
+mod cli_project_config_trust;
+mod cli_project_config_trust_daemon;
+mod cli_reverse;
+mod cli_ruleset;
+mod cli_ruleset_wiring;
+mod cli_schema_routing;
+mod cli_scorecard;
+mod cli_sources_deprecation;
+mod cli_taxii_store;
+mod cli_taxii_sync;
+mod cli_test;
+mod cli_tune;
+mod cli_validate;
+mod cli_visibility;

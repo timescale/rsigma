@@ -1,6 +1,6 @@
 //! Integration tests for `engine eval --logsource-routing`.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;

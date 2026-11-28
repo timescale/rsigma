@@ -1,6 +1,6 @@
 //! Integration tests for the `pipeline diff` subcommand.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;

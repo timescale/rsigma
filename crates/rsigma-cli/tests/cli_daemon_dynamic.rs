@@ -15,7 +15,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{temp_file, terminate_child};
 use std::io::{BufRead, BufReader, Write};

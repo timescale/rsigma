@@ -6,7 +6,7 @@
 //! the network (a miniature fixture mapping table stands in for the bundled
 //! default).
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

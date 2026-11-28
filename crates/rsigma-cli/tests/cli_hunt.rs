@@ -2,7 +2,7 @@
 //! `hunt-postgres` feature nor a database: `--emit sql` and the rejection
 //! paths, all through the real binary.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;

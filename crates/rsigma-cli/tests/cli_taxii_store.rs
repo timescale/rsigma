@@ -2,7 +2,7 @@
 
 #![cfg(feature = "taxii-sync")]
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::path::Path;

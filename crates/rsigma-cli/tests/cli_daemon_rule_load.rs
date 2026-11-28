@@ -2,7 +2,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, SIMPLE_RULE, http_get, poll_until, rsigma};
 use predicates::str::contains;

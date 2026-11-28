@@ -10,7 +10,7 @@
 
 #![cfg(feature = "daemon-nats")]
 
-mod common;
+use crate::common;
 
 use common::{SIMPLE_RULE, temp_file, terminate_child};
 use futures::StreamExt;
