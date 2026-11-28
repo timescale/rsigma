@@ -195,6 +195,10 @@ pub struct EnricherConfig {
     /// `stix`: template-expanded substring for [`rstix::store::StixQuery::text_search`].
     #[serde(default)]
     pub text_search: Option<String>,
+    /// `stix`: how `text_search` (or the `attack_technique` term) is compared
+    /// with indexed text. Defaults to `substring`.
+    #[serde(default)]
+    pub text_match: Option<TextMatchLabel>,
     /// `stix`: derive `text_search` from the first `attack.t*` technique tag.
     #[serde(default)]
     pub attack_technique: bool,
@@ -297,6 +301,7 @@ fn type_keys(type_name: &str) -> Option<&'static [&'static str]> {
         "stix" => &[
             "stix_id",
             "text_search",
+            "text_match",
             "attack_technique",
             "type_filter",
             "max_results",
@@ -351,6 +356,7 @@ impl EnricherConfig {
         push(self.on_miss.is_some(), "on_miss");
         push(self.stix_id.is_some(), "stix_id");
         push(self.text_search.is_some(), "text_search");
+        push(self.text_match.is_some(), "text_match");
         push(self.attack_technique, "attack_technique");
         push(!self.type_filter.is_empty(), "type_filter");
         push(self.max_results.is_some(), "max_results");
@@ -456,6 +462,41 @@ impl From<OnErrorLabel> for OnError {
             OnErrorLabel::Skip => OnError::Skip,
             OnErrorLabel::Null => OnError::Null,
             OnErrorLabel::Drop => OnError::Drop,
+        }
+    }
+}
+
+/// `text_match:` discriminator for the `stix` primitive.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextMatchLabel {
+    /// The term appears anywhere in the indexed text.
+    #[default]
+    Substring,
+    /// The term appears with no letter, digit, `_`, `-`, or non-ASCII
+    /// character directly before or after it.
+    Token,
+    /// The term equals one whole indexed value.
+    Exact,
+}
+
+impl TextMatchLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Substring => "substring",
+            Self::Token => "token",
+            Self::Exact => "exact",
+        }
+    }
+}
+
+#[cfg(feature = "stix-enrich")]
+impl From<TextMatchLabel> for rstix::store::TextMatch {
+    fn from(label: TextMatchLabel) -> Self {
+        match label {
+            TextMatchLabel::Substring => Self::Substring,
+            TextMatchLabel::Token => Self::Token,
+            TextMatchLabel::Exact => Self::Exact,
         }
     }
 }
@@ -1012,11 +1053,19 @@ fn build_one(
                     field: "stix_id | text_search | attack_technique",
                 });
             }
+            if cfg.text_match.is_some() && cfg.text_search.is_none() && !cfg.attack_technique {
+                return Err(EnrichersConfigError::MissingField {
+                    enricher_id: cfg.id.clone(),
+                    type_name: cfg.type_name.clone(),
+                    field: "text_search | attack_technique (text_match applies to text searches)",
+                });
+            }
             let type_filter = parse_stix_type_filter(&cfg)?;
             let extract = build_extract_expr(&cfg)?;
             let query = StixEnricherQuery {
                 stix_id: cfg.stix_id.clone(),
                 text_search: cfg.text_search.clone(),
+                text_match: cfg.text_match.unwrap_or_default().into(),
                 attack_technique: cfg.attack_technique,
                 type_filter,
                 max_results: cfg.max_results.unwrap_or(1).max(1),
@@ -1443,6 +1492,9 @@ impl serde::Serialize for EnricherConfig {
         if let Some(search) = &self.text_search {
             m.serialize_entry("text_search", search)?;
         }
+        if let Some(mode) = self.text_match {
+            m.serialize_entry("text_match", mode.as_str())?;
+        }
         if self.attack_technique {
             m.serialize_entry("attack_technique", &self.attack_technique)?;
         }
@@ -1732,6 +1784,41 @@ enrichers:
             msg.contains("stix_id | text_search | attack_technique"),
             "got: {msg}"
         );
+    }
+
+    #[cfg(feature = "stix-enrich")]
+    #[test]
+    fn stix_text_match_parses_and_needs_a_text_search() {
+        use rstix::store::MemoryStore;
+
+        let build = |extra: &str| {
+            let yaml = format!(
+                "enrichers:\n  - id: intel\n    kind: detection\n    type: stix\n    inject_field: stix\n{extra}"
+            );
+            let parsed: EnrichersFile = yaml_serde::from_str(&yaml).map_err(|e| e.to_string())?;
+            build_enrichers_full(
+                parsed,
+                EnricherResources {
+                    stix_store: Some(std::sync::Arc::new(MemoryStore::new())),
+                    ..EnricherResources::default()
+                },
+                std::sync::Arc::new(NoopMetrics),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        for mode in ["substring", "token", "exact"] {
+            build(&format!(
+                "    text_search: \"${{detection.fields.Ip}}\"\n    text_match: {mode}\n"
+            ))
+            .unwrap_or_else(|e| panic!("{mode}: {e}"));
+        }
+        build("    attack_technique: true\n    text_match: token\n").expect("attack technique");
+        let err =
+            build("    stix_id: \"${detection.fields.Id}\"\n    text_match: exact\n").unwrap_err();
+        assert!(err.contains("text_match applies to text searches"), "{err}");
+        let err = build("    text_search: x-term\n    text_match: fuzzy\n").unwrap_err();
+        assert!(err.contains("fuzzy"), "{err}");
     }
 
     #[cfg(feature = "mmdb-enrich")]
@@ -2303,7 +2390,7 @@ enrichers:
             ),
             (
                 "stix",
-                "stix_id: indicator--1\ntext_search: x\nattack_technique: true\ntype_filter: [indicator]\nmax_results: 2\nextract: \".id\"\nextract_type: jq\ndefault: none\non_miss: skip",
+                "stix_id: indicator--1\ntext_search: x\ntext_match: token\nattack_technique: true\ntype_filter: [indicator]\nmax_results: 2\nextract: \".id\"\nextract_type: jq\ndefault: none\non_miss: skip",
             ),
             (
                 "mmdb",
@@ -2355,7 +2442,7 @@ enrichers:
 
     #[test]
     fn key_tables_match_the_config_fields() {
-        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nmiss_status: [404]\non_miss: skip\nstix_id: x\ntext_search: x\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nmmap: true\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
+        let all_keys = "template: x\nurl: x\nmethod: x\nheaders: { a: b }\nbody: x\ncache_ttl: 1s\nextract: x\nextract_type: jq\ncommand: [x]\nenv: { a: b }\noutput: json\nsource: x\ndefault: x\nmiss_status: [404]\non_miss: skip\nstix_id: x\ntext_search: x\ntext_match: exact\nattack_technique: true\ntype_filter: [x]\nmax_results: 1\ndb_path: x\nkey: x\nfields: { a: b }\nmmap: true\nrecord_type: A\nnameservers: [x]\nnegative_cache_ttl: 1s\ncache_max_entries: 1";
         let cfg = first_entry(&entry_yaml("template", all_keys));
         assert!(cfg.extra.is_empty(), "unexpected extra: {:?}", cfg.extra);
 

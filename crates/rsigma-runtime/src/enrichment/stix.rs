@@ -4,15 +4,16 @@
 //! Requires the **`stix-enrich`** feature and a store opened by the daemon
 //! (`--stix-store`, same layout as `rsigma taxii sync --store`).
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use rsigma_eval::EvaluationResult;
 use rsigma_eval::pipeline::sources::ExtractExpr;
 use rstix::core::{StixId, StixObjectKind};
-use rstix::store::{QueryResult, StixQuery, StixStore};
+use rstix::store::{QueryResult, StixQuery, StixStore, TextMatch};
 use serde_json::Value;
+use tokio::sync::Semaphore;
 
 use super::extract::EnricherExtract;
 use super::{
@@ -20,13 +21,30 @@ use super::{
     render_enricher_template,
 };
 
+/// Fewest characters a rendered `text_search` term may have, not counting
+/// leading and trailing whitespace. Shorter terms match most of a store.
+pub const MIN_TEXT_SEARCH_CHARS: usize = 3;
+
+/// Store queries running on the blocking pool at once. A query that outlives
+/// its enricher's timeout keeps its slot until it finishes, so slow queries
+/// delay other STIX lookups (which then time out) rather than filling the
+/// blocking pool the rest of the runtime uses.
+static QUERY_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
+    let cpus = std::thread::available_parallelism().map_or(4, |n| n.get());
+    Arc::new(Semaphore::new(cpus.max(2) * 2))
+});
+
 /// Query parameters for a [`StixEnricher`].
 #[derive(Clone, Debug)]
 pub struct StixEnricherQuery {
     /// Template-expanded STIX id for a direct [`StixStore::get`] lookup.
     pub stix_id: Option<String>,
-    /// Template-expanded substring passed to [`StixQuery::text_search`].
+    /// Template-expanded term passed to [`StixQuery::text_search`]. A rendered
+    /// term shorter than [`MIN_TEXT_SEARCH_CHARS`] fails the lookup.
     pub text_search: Option<String>,
+    /// How the `text_search` or `attack_technique` term is compared with the
+    /// store's indexed text.
+    pub text_match: TextMatch,
     /// When true, derive `text_search` from the first `attack.t*` technique tag
     /// on the firing rule (`attack.t1059.001` → `1059.001`).
     pub attack_technique: bool,
@@ -136,11 +154,20 @@ impl StixEnricher {
                     kind: EnrichErrorKind::Fetch("text_search template rendered empty".into()),
                 });
             }
+            if rendered.trim().chars().count() < MIN_TEXT_SEARCH_CHARS {
+                return Err(EnrichError {
+                    enricher_id: self.id.clone(),
+                    kind: EnrichErrorKind::Fetch(format!(
+                        "text_search template rendered '{rendered}', shorter than {MIN_TEXT_SEARCH_CHARS} characters"
+                    )),
+                });
+            }
             rendered
         };
 
         let mut query = StixQuery::new()
             .text_search(text_search)
+            .text_match(self.query.text_match)
             .max_results(self.query.max_results);
         if !self.query.type_filter.is_empty() {
             query = query.type_filter(self.query.type_filter.clone());
@@ -148,11 +175,32 @@ impl StixEnricher {
         Ok(query)
     }
 
-    fn query_store(&self, query: &StixQuery) -> Result<QueryResult, EnrichError> {
-        self.store.query(query).map_err(|e| EnrichError {
+    /// Run the query on the blocking pool, bounded by the enricher timeout.
+    async fn query_store(&self, query: StixQuery) -> Result<QueryResult, EnrichError> {
+        let failed = |message: String| EnrichError {
             enricher_id: self.id.clone(),
-            kind: EnrichErrorKind::Fetch(format!("stix store query failed: {e}")),
-        })
+            kind: EnrichErrorKind::Fetch(format!("stix store query failed: {message}")),
+        };
+        let store = Arc::clone(&self.store);
+        let run = async {
+            let permit = Arc::clone(&QUERY_SLOTS)
+                .acquire_owned()
+                .await
+                .map_err(|e| failed(e.to_string()))?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                store.query(&query)
+            })
+            .await
+            .map_err(|e| failed(e.to_string()))?
+            .map_err(|e| failed(e.to_string()))
+        };
+        tokio::time::timeout(self.timeout, run)
+            .await
+            .map_err(|_| EnrichError {
+                enricher_id: self.id.clone(),
+                kind: EnrichErrorKind::Timeout,
+            })?
     }
 
     fn objects_to_value(objects: &[rstix::model::stix_object::StixObject]) -> Value {
@@ -190,7 +238,7 @@ impl Enricher for StixEnricher {
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         let query = self.build_query(result)?;
-        let page = self.query_store(&query)?;
+        let page = self.query_store(query).await?;
         if page.objects.is_empty() {
             if let Some(d) = &self.default {
                 inject_enrichment(result, &self.inject_field, d.clone());
@@ -234,7 +282,9 @@ mod tests {
 
     use rsigma_eval::{DetectionBody, FieldMatch, ResultBody, RuleHeader};
     use rsigma_parser::Level;
-    use rstix::store::MemoryStore;
+    use rstix::model::Bundle;
+    use rstix::model::stix_object::StixObject;
+    use rstix::store::{ImportReport, MemoryStore, StoreError};
 
     fn detection(tags: Vec<&str>, field: &str, value: &str) -> EvaluationResult {
         EvaluationResult {
@@ -283,6 +333,7 @@ mod tests {
             StixEnricherQuery {
                 stix_id: None,
                 text_search: Some("${detection.fields.Hash}".into()),
+                text_match: TextMatch::Substring,
                 attack_technique: false,
                 type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
                 max_results: 3,
@@ -305,6 +356,153 @@ mod tests {
         assert_eq!(
             matches[0]["id"],
             "indicator--aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        );
+    }
+
+    fn enricher(
+        store: Arc<dyn StixStore>,
+        query: StixEnricherQuery,
+        timeout: Duration,
+    ) -> StixEnricher {
+        StixEnricher::new(
+            "lookup".into(),
+            EnricherKind::Detection,
+            "stix_matches".into(),
+            query,
+            None,
+            None,
+            timeout,
+            OnError::Skip,
+            Scope::default(),
+            store,
+        )
+    }
+
+    fn search(template: &str, text_match: TextMatch) -> StixEnricherQuery {
+        StixEnricherQuery {
+            stix_id: None,
+            text_search: Some(template.into()),
+            text_match,
+            attack_technique: false,
+            type_filter: Vec::new(),
+            max_results: 10,
+        }
+    }
+
+    fn ip_store() -> Arc<MemoryStore> {
+        let objects: Vec<_> = ["10.0.0.1", "10.0.0.10"]
+            .iter()
+            .enumerate()
+            .map(|(n, ip)| {
+                rstix::parse_object(&format!(
+                    r#"{{"type":"indicator","spec_version":"2.1","id":"indicator--00000000-0000-4000-8000-{n:012x}","created":"2024-01-01T00:00:00.000Z","modified":"2024-01-01T00:00:00.000Z","pattern":"[ipv4-addr:value = '{ip}']","pattern_type":"stix","valid_from":"2024-01-01T00:00:00.000Z"}}"#
+                ))
+                .expect("indicator")
+            })
+            .collect();
+        let store = Arc::new(MemoryStore::new());
+        store.import_objects(&objects).expect("import");
+        store
+    }
+
+    #[tokio::test]
+    async fn short_rendered_term_is_rejected() {
+        for value in ["a", " ab "] {
+            let lookup = enricher(
+                ip_store(),
+                search("${detection.fields.Ip}", TextMatch::Substring),
+                Duration::from_secs(5),
+            );
+            let mut result = detection(vec![], "Ip", value);
+            let err = lookup.enrich(&mut result).await.unwrap_err();
+            let EnrichErrorKind::Fetch(message) = &err.kind else {
+                panic!("expected a fetch error, got {:?}", err.kind);
+            };
+            assert!(
+                message.contains(&format!("shorter than {MIN_TEXT_SEARCH_CHARS} characters")),
+                "{message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn token_match_does_not_match_inside_a_longer_value() {
+        let matched = |text_match| async move {
+            let lookup = enricher(
+                ip_store(),
+                search("${detection.fields.Ip}", text_match),
+                Duration::from_secs(5),
+            );
+            let mut result = detection(vec![], "Ip", "10.0.0.1");
+            lookup.enrich(&mut result).await.expect("enrich");
+            result.header.enrichments.expect("enrichments")["stix_matches"]
+                .as_array()
+                .expect("array")
+                .len()
+        };
+        assert_eq!(matched(TextMatch::Substring).await, 2);
+        assert_eq!(matched(TextMatch::Token).await, 1);
+    }
+
+    /// A store whose queries block the calling thread.
+    struct SlowStore(MemoryStore);
+
+    impl StixStore for SlowStore {
+        fn upsert(&self, obj: &StixObject) -> Result<(), StoreError> {
+            self.0.upsert(obj)
+        }
+        fn get(&self, id: &StixId) -> Result<Option<StixObject>, StoreError> {
+            self.0.get(id)
+        }
+        fn get_all_versions(&self, id: &StixId) -> Result<Vec<StixObject>, StoreError> {
+            self.0.get_all_versions(id)
+        }
+        fn query(&self, q: &StixQuery) -> Result<QueryResult, StoreError> {
+            std::thread::sleep(Duration::from_millis(500));
+            self.0.query(q)
+        }
+        fn import_bundle(&self, bundle: &Bundle) -> Result<ImportReport, StoreError> {
+            self.0.import_bundle(bundle)
+        }
+        fn import_objects(&self, objects: &[StixObject]) -> Result<ImportReport, StoreError> {
+            self.0.import_objects(objects)
+        }
+        fn delete(&self, id: &StixId) -> Result<bool, StoreError> {
+            self.0.delete(id)
+        }
+        fn export_bundle(&self, bundle_id: StixId) -> Result<Bundle, StoreError> {
+            self.0.export_bundle(bundle_id)
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn slow_query_runs_off_the_runtime_and_times_out() {
+        let lookup = enricher(
+            Arc::new(SlowStore(MemoryStore::new())),
+            search("${detection.fields.Ip}", TextMatch::Substring),
+            Duration::from_millis(20),
+        );
+        let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let ticker = tokio::spawn({
+            let ticks = Arc::clone(&ticks);
+            async move {
+                loop {
+                    ticks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+        let mut result = detection(vec![], "Ip", "10.0.0.1");
+        let err = lookup.enrich(&mut result).await.unwrap_err();
+        ticker.abort();
+        assert!(
+            matches!(err.kind, EnrichErrorKind::Timeout),
+            "{:?}",
+            err.kind
+        );
+        assert!(
+            ticks.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "the runtime kept running other tasks during the query"
         );
     }
 }

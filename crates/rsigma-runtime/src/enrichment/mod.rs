@@ -99,7 +99,7 @@ pub use lookup::LookupEnricher;
 #[cfg(feature = "mmdb-enrich")]
 pub use mmdb::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 #[cfg(feature = "stix-enrich")]
-pub use stix::{StixEnricher, StixEnricherQuery};
+pub use stix::{MIN_TEXT_SEARCH_CHARS, StixEnricher, StixEnricherQuery};
 #[cfg(any(feature = "mmdb-enrich", feature = "dns-enrich", test))]
 pub(crate) use template::empty_key_message;
 pub use template::{

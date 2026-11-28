@@ -16,7 +16,7 @@ use rsigma_runtime::{
     OnError, Scope, StixEnricher, StixEnricherQuery, build_enrichers_full,
 };
 use rstix::core::StixObjectKind;
-use rstix::store::{MemoryStore, StixStore};
+use rstix::store::{MemoryStore, StixStore, TextMatch};
 use serde_json::json;
 
 fn detection_with_hash(hash: &str) -> EvaluationResult {
@@ -59,6 +59,7 @@ async fn stix_text_search_injects_indicator_objects() {
         StixEnricherQuery {
             stix_id: None,
             text_search: Some("${detection.fields.Hash}".into()),
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
             max_results: 2,
@@ -98,6 +99,7 @@ async fn stix_templates_read_unmatched_fields_from_the_event() {
         StixEnricherQuery {
             stix_id: None,
             text_search: Some("${detection.fields.Hash}".into()),
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
             max_results: 5,
@@ -118,6 +120,7 @@ async fn stix_templates_read_unmatched_fields_from_the_event() {
         StixEnricherQuery {
             stix_id: Some("${detection.fields.IndicatorId}".into()),
             text_search: None,
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![],
             max_results: 1,
@@ -171,6 +174,7 @@ async fn stix_extract_binds_event_values_as_data() {
             StixEnricherQuery {
                 stix_id: None,
                 text_search: Some("indicator".into()),
+                text_match: TextMatch::Substring,
                 attack_technique: false,
                 type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
                 max_results: 10,
@@ -233,6 +237,7 @@ async fn stix_attack_technique_finds_attack_pattern_by_external_id() {
         StixEnricherQuery {
             stix_id: None,
             text_search: None,
+            text_match: TextMatch::Substring,
             attack_technique: true,
             type_filter: vec![StixObjectKind::from_type_str("attack-pattern").unwrap()],
             max_results: 1,
@@ -306,6 +311,7 @@ async fn stix_enricher_skips_correlation_results_for_detection_kind() {
         StixEnricherQuery {
             stix_id: None,
             text_search: Some("644bf17e482f443f763b0b7355b14372".into()),
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![],
             max_results: 1,
@@ -353,6 +359,7 @@ async fn stix_query_with_no_objects_is_a_miss() {
         StixEnricherQuery {
             stix_id: None,
             text_search: Some("${detection.fields.Hash}".into()),
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
             max_results: 1,
@@ -382,6 +389,7 @@ async fn stix_extract_returning_null_is_a_miss() {
         StixEnricherQuery {
             stix_id: None,
             text_search: Some("${detection.fields.Hash}".into()),
+            text_match: TextMatch::Substring,
             attack_technique: false,
             type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
             max_results: 1,

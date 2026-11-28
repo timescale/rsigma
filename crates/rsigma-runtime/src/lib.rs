@@ -115,10 +115,10 @@ pub use enrichment::{
 };
 #[cfg(feature = "dns-enrich")]
 pub use enrichment::{DnsEnricher, DnsRecordType, DnsResolverConfig, SUPPORTED_DNS_RECORD_TYPES};
+#[cfg(feature = "stix-enrich")]
+pub use enrichment::{MIN_TEXT_SEARCH_CHARS, StixEnricher, StixEnricherQuery};
 #[cfg(feature = "mmdb-enrich")]
 pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
-#[cfg(feature = "stix-enrich")]
-pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;
 pub use finding_links::FindingLinks;
 pub use http_guard::{HostGuard, Rejection as HostRejection};
