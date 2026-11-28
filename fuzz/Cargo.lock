@@ -2954,6 +2954,7 @@ dependencies = [
  "rstix",
  "serde",
  "serde_json",
+ "tokio",
  "tree-sitter",
  "tree-sitter-yaml",
  "yaml_serde",
