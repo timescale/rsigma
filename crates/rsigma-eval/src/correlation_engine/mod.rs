@@ -1735,6 +1735,18 @@ impl<L> CorrelationEngine<L> {
         retention_mode: CorrelationEventMode,
         retention_cap: usize,
     ) {
+        // A bucket reset keeps what an earlier bucket's pending obligation
+        // still reports when it fires.
+        let pending_start = match self.state.get(key) {
+            Some(WindowState::Absence { obligations, .. }) => {
+                obligations.iter().map(|o| o.s_min).min()
+            }
+            _ => None,
+        };
+        let (reset, cutoff) = match pending_start {
+            Some(start) if reset => (false, start),
+            _ => (reset, cutoff),
+        };
         match retention_mode {
             CorrelationEventMode::Full => {
                 let buf = self
@@ -2673,15 +2685,12 @@ impl<L> CorrelationEngine<L> {
                             .latest_timestamp()
                             .is_some_and(|last| now_secs - last > staleness)
                         {
-                            state.clear();
+                            state.clear_window();
                         }
                     }
                 }
             }
             if state.is_empty() {
-                if state.absence_pending() {
-                    self.absence_groups = self.absence_groups.saturating_sub(1);
-                }
                 self.state.remove(key);
                 self.note_tenant_removal(key);
                 self.event_buffers.remove(key);
@@ -2704,7 +2713,7 @@ impl<L> CorrelationEngine<L> {
                 .flatten()
                 .filter_map(|key| {
                     let state = self.state.get(key)?;
-                    if matches!(state, WindowState::Absence { .. }) {
+                    if state.absence_pending() {
                         return None;
                     }
                     Some((key, state.latest_timestamp().unwrap_or(i64::MIN)))
@@ -2777,7 +2786,7 @@ impl<L> CorrelationEngine<L> {
                             .latest_timestamp()
                             .is_some_and(|last| now_secs - last > staleness)
                         {
-                            state.clear();
+                            state.clear_window();
                         }
                     }
                 }
@@ -2848,7 +2857,7 @@ impl<L> CorrelationEngine<L> {
             let mut by_staleness: Vec<_> = self
                 .state
                 .iter()
-                .filter(|(_, state)| !matches!(state, WindowState::Absence { .. }))
+                .filter(|(_, state)| !state.absence_pending())
                 .map(|(k, v)| (k, v.latest_timestamp().unwrap_or(i64::MIN)))
                 .collect();
             if excess < by_staleness.len() {

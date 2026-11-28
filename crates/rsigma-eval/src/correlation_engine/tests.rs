@@ -6700,3 +6700,94 @@ correlation:
         other => panic!("expected absence state, got {other:?}"),
     }
 }
+
+#[test]
+fn time_eviction_keeps_a_pending_tumbling_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 5m\n";
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    // Another tenant's newer event time drives eviction while alice's
+    // obligation still waits out its grace.
+    engine.evict_expired(300);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.absence_pending(), 1);
+    engine.assert_absence_index_consistent();
+    assert_eq!(absence_results(&mut engine, "Missing", 420).len(), 1);
+    assert_eq!(engine.absence_pending(), 0);
+}
+
+#[test]
+fn tenant_quota_eviction_keeps_a_pending_tumbling_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 5m\n";
+    let mut engine = absence_engine(
+        &yaml,
+        CorrelationConfig {
+            max_state_entries_per_tenant: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t1").unwrap();
+    let alice = json!({"Action": "a", "User": "alice"});
+    let bob = json!({"Action": "a", "User": "bob"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&alice), 100, Some(&tenant));
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&bob), 300, Some(&tenant));
+    assert_eq!(engine.absence_pending(), 1);
+    engine.assert_absence_index_consistent();
+    let fired = engine.advance_clock(Some(&tenant), 420);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(engine.absence_pending(), 0);
+}
+
+#[test]
+fn a_tumbling_reset_keeps_the_evidence_of_a_pending_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 30s\n";
+    let mut engine = absence_engine(
+        &yaml,
+        CorrelationConfig {
+            correlation_event_mode: CorrelationEventMode::Refs,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    // The next bucket's first hit resets the window before the first
+    // obligation's grace has passed.
+    hit(&mut engine, "a", "alice", 125);
+    let fired = absence_results(&mut engine, "Missing", 150);
+    assert_eq!(fired.len(), 1);
+    let refs = fired[0]
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .clone()
+        .unwrap();
+    assert_eq!(refs.iter().map(|r| r.timestamp).collect::<Vec<_>>(), [100]);
+    let fired = absence_results(&mut engine, "Missing", 210);
+    let refs = fired[0]
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .clone()
+        .unwrap();
+    assert_eq!(refs.iter().map(|r| r.timestamp).collect::<Vec<_>>(), [125]);
+}
+
+#[test]
+fn stalest_eviction_drops_absence_groups_without_a_deadline() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries: 10,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    for i in 0..50 {
+        hit(&mut engine, "b", &format!("user{i}"), 101 + i);
+    }
+    assert!(engine.state_count() <= 10, "{}", engine.state_count());
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.absence_pending(), 1);
+}
