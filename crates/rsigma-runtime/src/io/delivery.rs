@@ -144,7 +144,8 @@ pub(crate) enum IncidentScope {
     All,
     /// Incidents of the sink's tenant.
     SameTenant,
-    /// No incidents.
+    /// No incidents. Only the OTLP sink, which is feature-gated, uses it.
+    #[cfg_attr(not(feature = "otlp"), allow(dead_code))]
     None,
 }
 
