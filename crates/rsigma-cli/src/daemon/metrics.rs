@@ -16,6 +16,11 @@ pub struct Metrics {
     pub rule_parse_errors: IntGauge,
     pub correlation_state_entries: IntGauge,
     pub correlation_future_events_skipped: IntCounter,
+    pub correlation_absence_pending: IntGauge,
+    pub correlation_absence_fired_total: IntCounter,
+    pub correlation_absence_cancelled_total: IntCounter,
+    pub correlation_absence_refused_total: IntCounterVec,
+    pub correlation_absence_late_negatives_total: IntCounter,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
     pub api_auth_failures: IntCounterVec,
@@ -205,6 +210,40 @@ impl Metrics {
             "Events skipped for correlation because their timestamp was further ahead of the wall clock than max_future_skew",
         ))
         .unwrap();
+        let correlation_absence_pending = IntGauge::with_opts(Opts::new(
+            "rsigma_correlation_absence_pending",
+            "Absence groups with a pending obligation or an armed deadman",
+        ))
+        .unwrap();
+        let correlation_absence_fired_total = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_absence_fired_total",
+            "Absence obligations and deadmen that fired without cancellation, including suppressed alerts",
+        ))
+        .unwrap();
+        let correlation_absence_cancelled_total = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_absence_cancelled_total",
+            "Absence obligations cancelled by a negated hit",
+        ))
+        .unwrap();
+        let correlation_absence_refused_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_correlation_absence_refused_total",
+                "Absence hits refused by reason (global_cap, tenant_quota, group_cap)",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        let correlation_absence_late_negatives_total = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_absence_late_negatives_total",
+            "Negated hits that arrived after their obligation fired, and late deadman heartbeats",
+        ))
+        .unwrap();
+        for reason in ["global_cap", "tenant_quota", "group_cap"] {
+            correlation_absence_refused_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+        correlation_absence_pending.set(0);
         let reloads_total = IntCounter::with_opts(Opts::new(
             "rsigma_reloads_total",
             "Total rule reload attempts",
@@ -442,6 +481,21 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(correlation_future_events_skipped.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_pending.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_fired_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_cancelled_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_refused_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_absence_late_negatives_total.clone()))
             .unwrap();
         registry.register(Box::new(reloads_total.clone())).unwrap();
         registry.register(Box::new(reloads_failed.clone())).unwrap();
@@ -1602,6 +1656,11 @@ impl Metrics {
             rule_parse_errors,
             correlation_state_entries,
             correlation_future_events_skipped,
+            correlation_absence_pending,
+            correlation_absence_fired_total,
+            correlation_absence_cancelled_total,
+            correlation_absence_refused_total,
+            correlation_absence_late_negatives_total,
             reloads_total,
             reloads_failed,
             api_auth_failures,
@@ -1896,6 +1955,28 @@ impl MetricsHook for Metrics {
 
     fn on_correlation_future_skipped(&self, count: u64) {
         self.correlation_future_events_skipped.inc_by(count);
+    }
+
+    fn set_correlation_absence_pending(&self, count: u64) {
+        self.correlation_absence_pending.set(count as i64);
+    }
+
+    fn on_correlation_absence_fired(&self, count: u64) {
+        self.correlation_absence_fired_total.inc_by(count);
+    }
+
+    fn on_correlation_absence_cancelled(&self, count: u64) {
+        self.correlation_absence_cancelled_total.inc_by(count);
+    }
+
+    fn on_correlation_absence_refused(&self, reason: &'static str, count: u64) {
+        self.correlation_absence_refused_total
+            .with_label_values(&[reason])
+            .inc_by(count);
+    }
+
+    fn on_correlation_absence_late_negatives(&self, count: u64) {
+        self.correlation_absence_late_negatives_total.inc_by(count);
     }
 
     fn on_tenant_quota_eviction(&self, store: &'static str) {
@@ -2592,6 +2673,27 @@ mod tests {
             assert!(
                 output.contains(&format!(r#"result="{result}""#)),
                 "missing result {result}"
+            );
+        }
+    }
+
+    #[test]
+    fn absence_metrics_appear_on_the_first_scrape() {
+        let m = Metrics::new();
+        let output = m.encode();
+        for family in [
+            "rsigma_correlation_absence_pending",
+            "rsigma_correlation_absence_fired_total",
+            "rsigma_correlation_absence_cancelled_total",
+            "rsigma_correlation_absence_refused_total",
+            "rsigma_correlation_absence_late_negatives_total",
+        ] {
+            assert!(output.contains(family), "missing {family}");
+        }
+        for reason in ["global_cap", "tenant_quota", "group_cap"] {
+            assert!(
+                output.contains(&format!(r#"reason="{reason}""#)),
+                "missing reason {reason}"
             );
         }
     }
