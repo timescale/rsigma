@@ -484,6 +484,36 @@ pub fn render_webhook_body(
     Ok(render_template_json_with_ocsf(text, result, ocsf))
 }
 
+/// One `${...}` reference in a template, by where its value comes from.
+pub(crate) enum TemplateRef<'a> {
+    /// `${ENV_VAR}`, with the variable's name.
+    Env(&'a str),
+    /// Any other reference, with the text between the braces. Rendered from
+    /// the evaluation result with [`render_enricher_reference`].
+    Result(&'a str),
+}
+
+/// Every `${...}` reference in `text`, with its byte range, in order.
+pub(crate) fn template_refs(
+    text: &str,
+) -> impl Iterator<Item = (std::ops::Range<usize>, TemplateRef<'_>)> {
+    TEMPLATE_RE.captures_iter(text).map(|caps| {
+        let whole = caps.get(0).unwrap();
+        let inner = caps.get(1).unwrap().as_str();
+        let reference = match classify_ref(inner) {
+            VarRef::Env(_) => TemplateRef::Env(inner),
+            _ => TemplateRef::Result(inner),
+        };
+        (whole.range(), reference)
+    })
+}
+
+/// Render one non-environment reference (the text between `${` and `}`)
+/// the way [`render_enricher_template`] renders it.
+pub(crate) fn render_enricher_reference(inner: &str, result: &EvaluationResult) -> String {
+    resolve_reference(inner, result, true).1
+}
+
 /// Where a substituted value came from, so an escaper can treat operator
 /// environment values differently from evaluation-result values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,33 +535,37 @@ fn render_with<F: Fn(ValueSource, String) -> String>(
 ) -> String {
     TEMPLATE_RE
         .replace_all(text, |caps: &regex::Captures| {
-            let inner = caps.get(1).unwrap().as_str();
-            let (source, raw) = match classify_ref(inner) {
-                VarRef::Env(name) => (ValueSource::Env, std::env::var(name).unwrap_or_default()),
-                VarRef::Detection(path) => match &result.body {
-                    ResultBody::Detection(_) if path == OCSF_PATH => {
-                        (ValueSource::Ocsf, String::new())
-                    }
-                    ResultBody::Detection(_) => (
-                        ValueSource::Result,
-                        render_detection_path(&path, result, fallback),
-                    ),
-                    ResultBody::Correlation(_) => (ValueSource::Result, String::new()),
-                },
-                VarRef::Correlation(path) => match &result.body {
-                    ResultBody::Correlation(_) if path == OCSF_PATH => {
-                        (ValueSource::Ocsf, String::new())
-                    }
-                    ResultBody::Correlation(_) => {
-                        (ValueSource::Result, render_correlation_path(&path, result))
-                    }
-                    ResultBody::Detection(_) => (ValueSource::Result, String::new()),
-                },
-                VarRef::Invalid(_) => (ValueSource::Result, String::new()),
-            };
+            let (source, raw) = resolve_reference(caps.get(1).unwrap().as_str(), result, fallback);
             escape(source, raw)
         })
         .into_owned()
+}
+
+/// Resolve the text between `${` and `}` against `result`.
+fn resolve_reference(
+    inner: &str,
+    result: &EvaluationResult,
+    fallback: bool,
+) -> (ValueSource, String) {
+    match classify_ref(inner) {
+        VarRef::Env(name) => (ValueSource::Env, std::env::var(name).unwrap_or_default()),
+        VarRef::Detection(path) => match &result.body {
+            ResultBody::Detection(_) if path == OCSF_PATH => (ValueSource::Ocsf, String::new()),
+            ResultBody::Detection(_) => (
+                ValueSource::Result,
+                render_detection_path(&path, result, fallback),
+            ),
+            ResultBody::Correlation(_) => (ValueSource::Result, String::new()),
+        },
+        VarRef::Correlation(path) => match &result.body {
+            ResultBody::Correlation(_) if path == OCSF_PATH => (ValueSource::Ocsf, String::new()),
+            ResultBody::Correlation(_) => {
+                (ValueSource::Result, render_correlation_path(&path, result))
+            }
+            ResultBody::Detection(_) => (ValueSource::Result, String::new()),
+        },
+        VarRef::Invalid(_) => (ValueSource::Result, String::new()),
+    }
 }
 
 /// Bytes left unencoded in a URL component: RFC 3986 unreserved characters.

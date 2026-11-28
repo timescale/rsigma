@@ -154,6 +154,71 @@ async fn stix_templates_read_unmatched_fields_from_the_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn stix_extract_binds_event_values_as_data() {
+    let extracts = [
+        ExtractExpr::Jq("[.[] | select(.id == \"${detection.fields.IndicatorId}\") | .id]".into()),
+        ExtractExpr::JsonPath("$[?@.id == '${detection.fields.IndicatorId}'].id".into()),
+        ExtractExpr::Cel(
+            "data.filter(o, o.id == '${detection.fields.IndicatorId}').map(o, o.id)".into(),
+        ),
+    ];
+    let wanted = "indicator--bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    for extract in extracts {
+        let enricher = StixEnricher::new(
+            "hash_lookup".into(),
+            EnricherKind::Detection,
+            "ids".into(),
+            StixEnricherQuery {
+                stix_id: None,
+                text_search: Some("indicator".into()),
+                attack_technique: false,
+                type_filter: vec![StixObjectKind::from_type_str("indicator").unwrap()],
+                max_results: 10,
+            },
+            Some(extract.clone()),
+            None,
+            Duration::from_secs(5),
+            OnError::Skip,
+            Scope::default(),
+            populated_store(),
+        );
+        for value in [
+            "x\") or true or (\"",
+            "x\" or .id != \"",
+            "x' || true || '",
+            "x' || @.id != '",
+            "x') || o.id != ('",
+            "\\",
+            "ünïcødé\n",
+        ] {
+            let mut det = detection_with_hash("unused");
+            det.as_detection_mut().unwrap().matched_fields =
+                vec![FieldMatch::new("IndicatorId", json!(value))];
+            match enricher.enrich(&mut det).await {
+                Ok(()) => assert_eq!(
+                    det.header.enrichments.unwrap()["ids"],
+                    json!([]),
+                    "{extract:?} with {value:?}"
+                ),
+                Err(e) => assert!(
+                    matches!(e.kind, EnrichErrorKind::Miss(_)),
+                    "{extract:?} with {value:?}: {e}"
+                ),
+            }
+        }
+        let mut det = detection_with_hash("unused");
+        det.as_detection_mut().unwrap().matched_fields =
+            vec![FieldMatch::new("IndicatorId", json!(wanted))];
+        enricher.enrich(&mut det).await.unwrap();
+        let ids = det.header.enrichments.unwrap()["ids"].clone();
+        assert!(
+            ids == json!([wanted]) || ids == json!(wanted),
+            "{extract:?}: {ids}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn stix_attack_technique_finds_attack_pattern_by_external_id() {
     let bundle = rstix::parse_bundle(include_str!(
         "../../rstix/tests/fixtures/store/attack-pattern-powershell-t1059.json"

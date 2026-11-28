@@ -72,6 +72,7 @@ mod command;
 pub mod config;
 #[cfg(feature = "dns-enrich")]
 mod dns;
+mod extract;
 mod http;
 pub mod http_cache;
 mod lookup;

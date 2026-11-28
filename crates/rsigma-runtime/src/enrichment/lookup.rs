@@ -24,6 +24,10 @@
 //! no-extract-match cases only; outright extractor failures still apply
 //! `on_error` (so a malformed extract expression doesn't silently mask
 //! data quality issues behind the default value).
+//!
+//! `${detection.*}` and `${correlation.*}` references in the extract are
+//! bound as string values the program reads, never pasted into its text,
+//! and the program is compiled once, when the enricher is built.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,12 +37,11 @@ use rsigma_eval::EvaluationResult;
 use rsigma_eval::pipeline::sources::ExtractExpr;
 use serde_json::Value;
 
+use super::extract::EnricherExtract;
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
-    render_enricher_template,
 };
 use crate::sources::SourceCache;
-use crate::sources::extract::apply_extract;
 
 /// One lookup enricher instance.
 pub struct LookupEnricher {
@@ -46,7 +49,7 @@ pub struct LookupEnricher {
     kind: EnricherKind,
     inject_field: String,
     source_id: String,
-    extract: Option<ExtractExpr>,
+    extract: Option<EnricherExtract>,
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
@@ -74,7 +77,7 @@ impl LookupEnricher {
             kind,
             inject_field,
             source_id,
-            extract,
+            extract: extract.map(|expr| EnricherExtract::new(&expr, true)),
             default,
             timeout,
             on_error,
@@ -89,29 +92,6 @@ impl LookupEnricher {
     pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
         self.on_miss = on_miss;
         self
-    }
-
-    /// Render any `${detection.*}` / `${correlation.*}` references inside
-    /// the configured extract expression against the current result.
-    /// Returns the (possibly cloned) expression with literal text where
-    /// templates were.
-    fn render_extract(&self, result: &EvaluationResult) -> Option<ExtractExpr> {
-        let original = self.extract.as_ref()?;
-        let (lang, raw) = match original {
-            ExtractExpr::Jq(s) => ("jq", s),
-            ExtractExpr::JsonPath(s) => ("jsonpath", s),
-            ExtractExpr::Cel(s) => ("cel", s),
-        };
-        let rendered = render_enricher_template(raw, result);
-        Some(match lang {
-            "jq" => ExtractExpr::Jq(rendered),
-            "jsonpath" => ExtractExpr::JsonPath(rendered),
-            "cel" => ExtractExpr::Cel(rendered),
-            // The match above is exhaustive; keep the arm for the
-            // compiler's benefit if `ExtractExpr` ever grows a new
-            // variant.
-            _ => return None,
-        })
     }
 }
 
@@ -159,12 +139,13 @@ impl Enricher for LookupEnricher {
             }
         };
 
-        let extracted = match self.render_extract(result) {
-            None => cached_value.clone(),
-            Some(expr) => apply_extract(&cached_value, &expr).map_err(|e| EnrichError {
-                enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Extract(format!("{}", e.kind)),
-            })?,
+        let extracted = match &self.extract {
+            None => cached_value,
+            Some(extract) => {
+                extract
+                    .apply(&self.id, cached_value, result, self.timeout)
+                    .await?
+            }
         };
 
         if extracted.is_null() {

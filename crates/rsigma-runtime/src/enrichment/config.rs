@@ -1244,7 +1244,7 @@ fn build_extract_expr(
         return Ok(None);
     };
     let kind = cfg.extract_type.as_deref().unwrap_or("jq");
-    Ok(Some(match kind {
+    let expr = match kind {
         "jq" => ExtractExpr::Jq(expr),
         "jsonpath" => ExtractExpr::JsonPath(expr),
         "cel" => ExtractExpr::Cel(expr),
@@ -1254,7 +1254,24 @@ fn build_extract_expr(
                 message: format!("unknown extract_type '{other}' (expected jq | jsonpath | cel)"),
             });
         }
-    }))
+    };
+    // `lookup` and `stix` render references in the extract; `http` and `dns`
+    // use it as written. Bespoke types interpret it themselves.
+    let templated = match cfg.type_name.as_str() {
+        "lookup" | "stix" => Some(true),
+        "http" | "dns" => Some(false),
+        _ => None,
+    };
+    if let Some(templated) = templated {
+        super::extract::ExtractTemplate::new(&expr, templated).map_err(|message| {
+            EnrichersConfigError::InvalidValue {
+                enricher_id: cfg.id.clone(),
+                field: "extract",
+                message,
+            }
+        })?;
+    }
+    Ok(Some(expr))
 }
 
 /// Walk every templated field on `cfg` and validate that its `${...}`

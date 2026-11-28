@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use crate::metrics::{MetricsHook, NoopMetrics};
 
+use super::extract::EnricherExtract;
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, empty_key_message,
     inject_enrichment, render_enricher_template,
@@ -450,7 +451,7 @@ pub struct DnsEnricher {
     inject_field: String,
     key_template: String,
     record_type: DnsRecordType,
-    extract: Option<ExtractExpr>,
+    extract: Option<EnricherExtract>,
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
@@ -491,7 +492,7 @@ impl DnsEnricher {
             inject_field,
             key_template,
             record_type,
-            extract,
+            extract: extract.map(|expr| EnricherExtract::new(&expr, false)),
             default,
             timeout,
             on_error,
@@ -546,7 +547,7 @@ impl DnsEnricher {
             inject_field,
             key_template,
             record_type,
-            extract,
+            extract: extract.map(|expr| EnricherExtract::new(&expr, false)),
             default,
             timeout,
             on_error,
@@ -593,11 +594,14 @@ impl DnsEnricher {
         }
     }
 
-    fn maybe_extract(&self, value: Value) -> Result<Value, EnrichError> {
+    async fn maybe_extract(
+        &self,
+        value: Value,
+        result: &EvaluationResult,
+    ) -> Result<Value, EnrichError> {
         match &self.extract {
             None => Ok(value),
-            Some(expr) => crate::sources::extract::apply_extract(&value, expr)
-                .map_err(|e| self.error(EnrichErrorKind::Extract(format!("{}", e.kind)))),
+            Some(extract) => extract.apply(&self.id, value, result, self.timeout).await,
         }
     }
 }
@@ -675,9 +679,12 @@ impl Enricher for DnsEnricher {
         }
 
         if !answers.is_empty() {
-            let value = self.maybe_extract(Value::Array(
-                answers.into_iter().map(Value::String).collect(),
-            ))?;
+            let value = self
+                .maybe_extract(
+                    Value::Array(answers.into_iter().map(Value::String).collect()),
+                    result,
+                )
+                .await?;
             inject_enrichment(result, &self.inject_field, value);
             return Ok(());
         }
