@@ -658,8 +658,9 @@ fn merge_in_place(
                 );
             }
             // Child indent: the indent of the first key under the block, or 2.
-            let child_indent = lines
-                .get(idx + 1)
+            let child_indent = lines[idx + 1..]
+                .iter()
+                .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
                 .map(|l| l.len() - l.trim_start().len())
                 .filter(|n| *n > 0)
                 .unwrap_or(2);
@@ -686,8 +687,49 @@ fn merge_in_place(
         }
     };
 
+    verify_merge(&content, &new_text, &to_add)?;
     std::fs::write(path, new_text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(to_add.len())
+}
+
+/// Check that the merged text parses as the original rule plus exactly the
+/// added sections, so a merge never changes anything else in the file.
+fn verify_merge(
+    original: &str,
+    merged: &str,
+    added: &[rsigma_parser::AdsScaffoldEntry],
+) -> Result<(), String> {
+    let refused = || {
+        "merging the sections would change the rule beyond adding them; add them manually"
+            .to_string()
+    };
+    let parse_one = |text: &str| {
+        rsigma_parser::parse_sigma_yaml(text)
+            .ok()
+            .filter(|c| !c.has_errors() && c.rules.len() == 1 && c.len() == 1)
+            .map(|mut c| c.rules.remove(0))
+    };
+    let mut expected = parse_one(original).ok_or_else(refused)?;
+    let actual = parse_one(merged).ok_or_else(refused)?;
+    for entry in added {
+        let value = match &entry.placeholder {
+            AdsContent::Text(text) => yaml_serde::Value::String(text.clone()),
+            AdsContent::List(items) => yaml_serde::Value::Sequence(
+                items
+                    .iter()
+                    .map(|item| yaml_serde::Value::String(item.clone()))
+                    .collect(),
+            ),
+        };
+        expected
+            .custom_attributes
+            .insert(entry.key.to_string(), value);
+    }
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(refused())
+    }
 }
 
 /// Whether `content` already declares the dotted key `<key>:` on some line

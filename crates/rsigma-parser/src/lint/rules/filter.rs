@@ -131,6 +131,9 @@ mod tests {
                 FixPatch::ReplaceValue { path, new_value } => {
                     writeln!(s, "patch[{i}]: ReplaceValue {path} -> {new_value}").unwrap();
                 }
+                FixPatch::ReplaceBool { path, new_value } => {
+                    writeln!(s, "patch[{i}]: ReplaceBool {path} -> {new_value}").unwrap();
+                }
                 FixPatch::ReplaceKey { path, new_key } => {
                     writeln!(s, "patch[{i}]: ReplaceKey {path} -> {new_key}").unwrap();
                 }

@@ -471,6 +471,10 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
     }
 }
 
+/// Emit custom attributes as top-level keys, except those with a
+/// [reserved name](crate::is_reserved_attribute_name): at the top level those
+/// would be read back as a standard key or a collection action, so they go
+/// under a `custom_attributes:` block instead.
 fn emit_custom_attributes(out: &mut String, attrs: &HashMap<String, yaml_serde::Value>) {
     let mut keys: Vec<&str> = attrs.keys().map(String::as_str).collect();
     let mut ordered: Vec<&str> = RSIGMA_ORDER
@@ -480,9 +484,59 @@ fn emit_custom_attributes(out: &mut String, attrs: &HashMap<String, yaml_serde::
         .collect();
     keys.sort_unstable();
     ordered.extend(keys.into_iter().filter(|key| !RSIGMA_ORDER.contains(key)));
-    for key in ordered {
-        let value = &attrs[key];
-        emit_yaml_value(out, &encode_key(key, KeyCtx::Key), value, "");
+    let (reserved, top_level): (Vec<&str>, Vec<&str>) = ordered
+        .into_iter()
+        .partition(|key| crate::is_reserved_attribute_name(key));
+    for key in top_level {
+        emit_yaml_value(out, &encode_key(key, KeyCtx::Key), &attrs[key], "");
+    }
+    if !reserved.is_empty() {
+        let _ = writeln!(out, "custom_attributes:");
+        for key in reserved {
+            emit_yaml_value(out, &encode_key(key, KeyCtx::Key), &attrs[key], STEP);
+        }
+    }
+}
+
+/// Write `s` as a quoted YAML scalar on one line that reads back as exactly
+/// `s`, whatever it contains.
+///
+/// The result is single-quoted when single quotes can carry every character,
+/// and double-quoted with escapes otherwise (line breaks, control characters,
+/// and the characters YAML readers reject raw). It is valid both as a value
+/// and as a mapping key of up to 1024 characters, which is the longest key
+/// YAML reads without the explicit `? ` form.
+///
+/// ```rust
+/// use rsigma_parser::quote_yaml_string;
+///
+/// assert_eq!(quote_yaml_string("it's: here"), "'it''s: here'");
+/// assert_eq!(quote_yaml_string("two\nlines"), "\"two\\nlines\"");
+/// ```
+pub fn quote_yaml_string(s: &str) -> String {
+    crate::style::quote(s)
+}
+
+/// Replace every line break and control character in `s` with a space, so
+/// rule text such as a title or id stays on one line when it is written into
+/// a SQL comment, a query template, or another line-oriented output.
+///
+/// Line breaks are LF, CR, NEL (U+0085), and the Unicode line and paragraph
+/// separators (U+2028, U+2029); control characters are the C0 and C1 ranges
+/// and DEL.
+///
+/// ```rust
+/// use rsigma_parser::sanitize_single_line;
+///
+/// assert_eq!(sanitize_single_line("title\nDROP TABLE x; --"), "title DROP TABLE x; --");
+/// assert_eq!(sanitize_single_line("plain"), "plain");
+/// ```
+pub fn sanitize_single_line(s: &str) -> std::borrow::Cow<'_, str> {
+    let breaks = |c: char| c.is_control() || matches!(c, '\u{85}' | '\u{2028}' | '\u{2029}');
+    if s.contains(breaks) {
+        std::borrow::Cow::Owned(s.replace(breaks, " "))
+    } else {
+        std::borrow::Cow::Borrowed(s)
     }
 }
 
@@ -803,8 +857,48 @@ fn emit_yaml_value(out: &mut String, key: &str, value: &yaml_serde::Value, inden
         yaml_serde::Value::String(s) => {
             push_scalar(out, indent, Lead::Key(key), s, ScalarCtx::Value);
         }
+        yaml_serde::Value::Tagged(tagged) => {
+            emit_tagged(out, &format!("{indent}{key}:"), tagged, indent);
+        }
         scalar => {
             let _ = writeln!(out, "{indent}{key}: {}", yaml_scalar(scalar));
+        }
+    }
+}
+
+/// Emit a tagged value after `prefix` (`key:` or `-`): the tag, then the value
+/// inline when it is a scalar or below it when it is a collection.
+fn emit_tagged(
+    out: &mut String,
+    prefix: &str,
+    tagged: &yaml_serde::value::TaggedValue,
+    indent: &str,
+) {
+    let tag = &tagged.tag;
+    match &tagged.value {
+        yaml_serde::Value::Mapping(map) if !map.is_empty() => {
+            let _ = writeln!(out, "{prefix} {tag}");
+            for (k, v) in map {
+                emit_yaml_value(out, &yaml_key(k), v, &deeper(indent));
+            }
+        }
+        yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
+            let _ = writeln!(out, "{prefix} {tag}");
+            for v in seq {
+                emit_yaml_seq_item(out, v, &deeper(indent));
+            }
+        }
+        yaml_serde::Value::Mapping(_) => {
+            let _ = writeln!(out, "{prefix} {tag} {{}}");
+        }
+        yaml_serde::Value::Sequence(_) => {
+            let _ = writeln!(out, "{prefix} {tag} []");
+        }
+        yaml_serde::Value::String(s) => {
+            let _ = writeln!(out, "{prefix} {tag} {}", crate::style::quote(s));
+        }
+        scalar => {
+            let _ = writeln!(out, "{prefix} {tag} {}", yaml_scalar(scalar));
         }
     }
 }
@@ -840,6 +934,9 @@ fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str)
         }
         yaml_serde::Value::String(s) => {
             push_scalar(out, indent, Lead::Dash, s, ScalarCtx::Value);
+        }
+        yaml_serde::Value::Tagged(tagged) => {
+            emit_tagged(out, &format!("{indent}-"), tagged, indent);
         }
         scalar => {
             let _ = writeln!(out, "{indent}- {}", yaml_scalar(scalar));
@@ -1444,5 +1541,106 @@ rsigma.suppress:
             "title: Drop bursts\nlogsource:\n    product: windows\nfilter:\n    selection:\n        User: SYSTEM\n    condition: selection\n    timeframe: 5m\n",
         );
         assert!(emitted.contains("    timeframe: 5m\n"), "{emitted}");
+    }
+
+    /// Strings that break naive YAML quoting: every line break YAML readers
+    /// honour, flow indicators, comment and mapping markers, document
+    /// markers, quotes, and the characters YAML rejects raw.
+    const HOSTILE: &[&str] = &[
+        "a\nb",
+        "a\rb",
+        "a\r\nb",
+        "a\u{85}b",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a: b",
+        "a #b",
+        "#a",
+        "[a]",
+        "{a}",
+        "a,b",
+        "- a",
+        "---",
+        "...",
+        "--- a",
+        "'q'",
+        "\"q\"",
+        "a|b",
+        "|",
+        ">",
+        "&a",
+        "*a",
+        "!a",
+        "%a",
+        "@a",
+        "`a",
+        "?",
+        ":",
+        "true",
+        "null",
+        "~",
+        "1.5",
+        "0x1F",
+        "2026-01-01",
+        " lead",
+        "trail ",
+        "\ttab",
+        "\u{0}",
+        "\u{7}",
+        "\u{1b}",
+        "\u{7f}",
+        "\u{80}",
+        "\u{9f}",
+        "\u{feff}",
+        "\u{fffe}",
+        "\u{ffff}",
+        "",
+        "a\\b",
+    ];
+
+    #[test]
+    fn quoted_strings_read_back_exactly() {
+        for s in HOSTILE {
+            let quoted = quote_yaml_string(s);
+            assert!(!quoted.contains(['\n', '\r']), "{s:?} -> {quoted}");
+            let value: yaml_serde::Value =
+                yaml_serde::from_str(&format!("value: {quoted}")).unwrap();
+            assert_eq!(value["value"].as_str(), Some(*s), "{quoted}");
+            let key: yaml_serde::Value = yaml_serde::from_str(&format!("{quoted}: v")).unwrap();
+            let read = key.as_mapping().unwrap().keys().next().unwrap();
+            assert_eq!(read.as_str(), Some(*s), "{quoted}");
+        }
+    }
+
+    #[test]
+    fn tagged_custom_attribute_values_round_trip() {
+        let rule = parse_sigma_yaml(
+            "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\nscalar: !foo 'a: b'\nnumber: !n 5\nmap: !m\n    k: v\nseq: !s\n    - !i x\n    - y\nempty: !e {}\n",
+        )
+        .unwrap()
+        .rules
+        .remove(0);
+        assert!(matches!(
+            rule.custom_attributes["map"],
+            yaml_serde::Value::Tagged(_)
+        ));
+        let emitted = emit_rule_yaml(&rule);
+        let reparsed = parse_sigma_yaml(&emitted).unwrap();
+        assert_eq!(reparsed.rules, [rule], "{emitted}");
+    }
+
+    #[test]
+    fn custom_attribute_values_with_hostile_text_round_trip() {
+        let mut rule = parse_sigma_yaml("title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\n")
+            .unwrap()
+            .rules
+            .remove(0);
+        for (i, s) in HOSTILE.iter().enumerate() {
+            rule.custom_attributes
+                .insert(format!("k{i}{s}"), yaml_serde::Value::String(s.to_string()));
+        }
+        let emitted = emit_rule_yaml(&rule);
+        let reparsed = parse_sigma_yaml(&emitted).unwrap();
+        assert_eq!(reparsed.rules, [rule], "{emitted}");
     }
 }

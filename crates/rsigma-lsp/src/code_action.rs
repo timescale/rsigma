@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use rsigma_parser::lint::fix::apply_fixes_to_source;
 use rsigma_parser::lint::{
-    self, FixDisposition, FixPatch, LintConfig, LintWarning, lint_yaml_str_with_config,
+    self, FixDisposition, LintConfig, LintWarning, lint_yaml_str_with_config,
 };
 use tower_lsp_server::ls_types::*;
 
@@ -34,7 +35,7 @@ pub fn code_actions(
             continue;
         }
 
-        let edits = fix_to_text_edits(fix, text, &index);
+        let edits = fix_to_text_edits(w, text, &index);
         if edits.is_empty() {
             continue;
         }
@@ -87,93 +88,40 @@ fn severity_to_lsp(severity: lint::Severity) -> DiagnosticSeverity {
     }
 }
 
-/// Convert a Fix's patches into LSP TextEdits.
-///
-/// For ReplaceValue: replace the value portion of the line at the path.
-/// For ReplaceKey: replace the key portion of the line at the path.
-/// For Remove: delete the entire line at the path.
-fn fix_to_text_edits(
-    fix: &rsigma_parser::lint::Fix,
-    text: &str,
-    index: &LineIndex,
-) -> Vec<TextEdit> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut edits = Vec::new();
-
-    for patch in &fix.patches {
-        match patch {
-            FixPatch::ReplaceValue { path, new_value } => {
-                let range = resolve_path(text, index, path);
-                let line_idx = range.start.line as usize;
-                if let Some(line) = lines.get(line_idx)
-                    && let Some(edit) = replace_value_edit(line, line_idx, new_value)
-                {
-                    edits.push(edit);
-                }
-            }
-            FixPatch::ReplaceKey { path, new_key } => {
-                let range = resolve_path(text, index, path);
-                let line_idx = range.start.line as usize;
-                if let Some(line) = lines.get(line_idx) {
-                    let old_key = path.rsplit('/').next().unwrap_or("");
-                    if let Some(edit) = replace_key_edit(line, line_idx, old_key, new_key) {
-                        edits.push(edit);
-                    }
-                }
-            }
-            FixPatch::Remove { path } => {
-                let range = resolve_path(text, index, path);
-                let line_idx = range.start.line as usize;
-                let start = Position::new(line_idx as u32, 0);
-                let end = if line_idx + 1 < lines.len() {
-                    Position::new((line_idx + 1) as u32, 0)
-                } else if let Some(line) = lines.get(line_idx) {
-                    Position::new(line_idx as u32, line.len() as u32)
-                } else {
-                    continue;
-                };
-                edits.push(TextEdit {
-                    range: Range::new(start, end),
-                    new_text: String::new(),
-                });
-            }
-        }
+/// Turn one warning's fix into a single LSP `TextEdit` covering the lines it
+/// changes. The fix goes through the shared applier, so the edit is the same
+/// verified change `rule lint --fix` makes, and a fix that does not apply
+/// cleanly yields no edit.
+fn fix_to_text_edits(warning: &LintWarning, text: &str, index: &LineIndex) -> Vec<TextEdit> {
+    let outcome = apply_fixes_to_source(text, &[warning]);
+    if outcome.applied != 1 || outcome.fixed_source == text {
+        return Vec::new();
     }
-
-    edits
-}
-
-/// Build a TextEdit that replaces the value portion of a `key: value` line.
-fn replace_value_edit(line: &str, line_idx: usize, new_value: &str) -> Option<TextEdit> {
-    let colon_pos = line.find(':')?;
-    // Value starts after ": " (colon + space)
-    let value_start = if line.as_bytes().get(colon_pos + 1) == Some(&b' ') {
-        colon_pos + 2
-    } else {
-        colon_pos + 1
-    };
+    let fixed = outcome.fixed_source;
+    let (old, new) = (text.as_bytes(), fixed.as_bytes());
+    let mut start = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    while start > 0 && old[start - 1] != b'\n' {
+        start -= 1;
+    }
+    let max_suffix = old.len().min(new.len()) - start;
+    let mut suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while suffix > 0 && old[old.len() - suffix - 1] != b'\n' {
+        suffix -= 1;
+    }
     let range = Range::new(
-        Position::new(line_idx as u32, value_start as u32),
-        Position::new(line_idx as u32, line.len() as u32),
+        index.position_at(text, start),
+        index.position_at(text, old.len() - suffix),
     );
-    Some(TextEdit {
+    vec![TextEdit {
         range,
-        new_text: new_value.to_string(),
-    })
-}
-
-/// Build a TextEdit that replaces a key name on a line.
-fn replace_key_edit(line: &str, line_idx: usize, old_key: &str, new_key: &str) -> Option<TextEdit> {
-    let key_start = line.find(old_key)?;
-    let key_end = key_start + old_key.len();
-    let range = Range::new(
-        Position::new(line_idx as u32, key_start as u32),
-        Position::new(line_idx as u32, key_end as u32),
-    );
-    Some(TextEdit {
-        range,
-        new_text: new_key.to_string(),
-    })
+        new_text: fixed[start..new.len() - suffix].to_string(),
+    }]
 }
 
 fn ranges_overlap(a: &Range, b: &Range) -> bool {
@@ -237,7 +185,7 @@ detection:
         assert!(!status_fix.is_empty(), "should have a status fix");
         assert_snapshot!(actions_summary(&status_fix), @r#"
         === replace 'expreimental' with 'experimental' ===
-          1:8-1:20: "experimental"
+          1:0-2:0: "status: experimental\n"
         "#);
     }
 
@@ -261,9 +209,9 @@ detection:
         assert!(!key_fix.is_empty(), "should have a key rename fix");
         assert_snapshot!(actions_summary(&key_fix), @r#"
         === rename 'Status' to 'status' ===
-          1:0-1:6: "status"
+          1:0-2:0: "status: experimental\n"
         === rename 'Status' to 'status' ===
-          1:0-1:6: "status"
+          1:0-2:0: "status: experimental\n"
         "#);
     }
 
@@ -362,9 +310,64 @@ detection:
         );
         assert_snapshot!(actions_summary(&fixable), @r#"
         === replace 'expreimental' with 'experimental' ===
-          1:8-1:20: "experimental"
+          1:0-2:0: "status: experimental\n"
         === remove duplicate tag 'attack.execution' ===
           4:0-5:0: ""
+        "#);
+    }
+
+    #[test]
+    fn quoted_key_fix_keeps_the_key_quoted() {
+        let yaml = "\
+title: Test
+logsource:
+    category: test
+detection:
+    sel:
+        'a: b|all': value
+    condition: sel
+";
+        let actions = code_actions(&test_uri(), yaml, &full_range(), &LintConfig::default());
+        let fix: Vec<_> = actions
+            .iter()
+            .filter(|a| a.title.contains("remove |all"))
+            .collect();
+        assert_snapshot!(actions_summary(&fix), @r#"
+        === remove |all from 'a: b|all' ===
+          5:0-6:0: "        'a: b': value\n"
+        "#);
+    }
+
+    #[test]
+    fn fix_from_a_later_document_edits_that_document() {
+        let yaml = "\
+title: One
+status: test
+logsource:
+    category: test
+detection:
+    sel:
+        a: b
+    condition: sel
+---
+title: Two
+Status: test
+logsource:
+    category: test
+detection:
+    sel:
+        a: b
+    condition: sel
+";
+        let actions = code_actions(&test_uri(), yaml, &full_range(), &LintConfig::default());
+        let fix: Vec<_> = actions
+            .iter()
+            .filter(|a| a.title.contains("rename"))
+            .take(1)
+            .collect();
+        assert_snapshot!(actions_summary(&fix), @r#"
+        === rename 'Status' to 'status' ===
+          10:0-11:0: "status: test\n"
         "#);
     }
 }

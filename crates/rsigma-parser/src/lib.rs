@@ -96,7 +96,10 @@ pub use ast::{
 };
 pub use condition::parse_condition;
 pub use diagnostic::{CollectionDiagnostic, DiagnosticKind, DiagnosticSeverity};
-pub use emit::{emit_collection_yaml, emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml};
+pub use emit::{
+    emit_collection_yaml, emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml,
+    quote_yaml_string, sanitize_single_line,
+};
 pub use error::{Result, SigmaParserError, SigmaParserErrorKind, SourceLocation};
 pub use exemplar::{
     EXEMPLARS_KEY, Exemplar, ExemplarErrorKind, ExemplarPayload, ExemplarRuleKind,
@@ -115,7 +118,10 @@ pub use lint::{
     lint_yaml_directory_with_config, lint_yaml_file, lint_yaml_file_with_config, lint_yaml_str,
     lint_yaml_str_with_config, lint_yaml_value, parse_inline_suppressions,
 };
-pub use parser::{parse_field_spec, parse_sigma_directory, parse_sigma_file, parse_sigma_yaml};
+pub use parser::{
+    is_reserved_attribute_name, parse_field_spec, parse_sigma_directory, parse_sigma_file,
+    parse_sigma_yaml,
+};
 pub use selector::detection_name_matches;
 pub use value::{SigmaString, SigmaValue, SpecialChar, StringPart, Timespan};
 pub use version::{

@@ -244,3 +244,60 @@ fn events_mode_without_the_feature_is_a_pointed_error() {
             "built without the 'hunt-postgres' feature",
         ));
 }
+
+/// A line break in a rule title or id must not end its `--` header comment:
+/// every query gets exactly one header line and the rest stays SQL.
+#[test]
+fn emit_sql_headers_stay_on_one_line() {
+    let rules = r#"
+title: "Title\nDROP TABLE security_events; --\rCR\r\nCRLF\NNEL\LLS\PPS"
+id: "id\nDELETE FROM security_events"
+logsource:
+    category: process_creation
+detection:
+    selection:
+        Image: /usr/bin/curl
+    condition: selection
+---
+title: "Second\u2028rule"
+id: "second\x01id"
+logsource:
+    category: process_creation
+detection:
+    selection:
+        Image: /usr/bin/wget
+    condition: selection
+"#;
+    let rule = temp_file(".yml", rules);
+    let output = rsigma()
+        .args([
+            "hunt",
+            "run",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--target",
+            "postgres",
+            "--since",
+            "2026-07-01T00:00:00Z",
+            "--until",
+            "2026-07-02T00:00:00Z",
+            "--emit",
+            "sql",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let sql = String::from_utf8(output).unwrap();
+    let headers = sql.lines().filter(|l| l.starts_with("-- rule:")).count();
+    assert_eq!(headers, 2, "{sql}");
+    for line in sql.split_inclusive(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']) {
+        let line = line.trim_end_matches('\n');
+        assert!(
+            line.is_empty() || line.starts_with("-- ") || line.starts_with("SELECT "),
+            "{line:?} in:\n{sql}"
+        );
+    }
+    common::assert_golden("hunt_sql_line_breaks.sql", &sql);
+}

@@ -524,7 +524,7 @@ fn yaml_scalar(value: &str) -> String {
     if bare_safe {
         value.to_string()
     } else {
-        format!("'{}'", value.replace('\'', "''"))
+        rsigma_parser::quote_yaml_string(value)
     }
 }
 
@@ -577,5 +577,21 @@ detection:
             ),
             "windows/fp.ndjson"
         );
+    }
+
+    #[test]
+    fn expectation_fragment_scalars_read_back_exactly() {
+        for value in [
+            "plain-id",
+            "Title: with # marks",
+            "line\nbreak",
+            "it's",
+            "a\u{2028}b",
+            "",
+        ] {
+            let parsed: yaml_serde::Value =
+                yaml_serde::from_str(&format!("rule: {}", yaml_scalar(value))).unwrap();
+            assert_eq!(parsed["rule"].as_str(), Some(value), "{value:?}");
+        }
     }
 }

@@ -1,0 +1,13 @@
+title: Drop system accounts with reserved custom attributes
+logsource:
+    product: windows
+filter:
+    selection:
+        User|endswith: '$'
+    condition: selection
+custom_attributes:
+    action: repeat
+    correlation:
+        type: event_count
+    generate: false
+    level: critical

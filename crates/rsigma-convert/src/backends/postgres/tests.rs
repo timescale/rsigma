@@ -2242,6 +2242,46 @@ detection:
 }
 
 #[test]
+fn template_rule_metadata_stays_on_its_comment_line() {
+    for line_break in [
+        "\n", "\r", "\r\n", "\u{85}", "\u{2028}", "\u{2029}", "\u{0}",
+    ] {
+        let mut rule = parse_sigma_yaml(
+            "title: T\nlogsource:\n    category: process_creation\ndetection:\n    selection:\n        field: x\n    condition: selection\n",
+        )
+        .unwrap()
+        .rules
+        .remove(0);
+        rule.title = format!("title{line_break}DROP TABLE t; --");
+        rule.id = Some(format!("id{line_break}DELETE FROM t"));
+        let mut pipeline_state = PipelineState::default();
+        pipeline_state.set_state(
+            "query_expression_template".to_string(),
+            serde_json::json!("-- {rule.title} ({rule.id})\nSELECT * FROM {table} WHERE {query}"),
+        );
+        let queries = PostgresBackend::new()
+            .convert_rule(&rule, "default", &pipeline_state)
+            .unwrap();
+        assert_eq!(
+            queries,
+            vec![
+                "-- title DROP TABLE t; -- (id DELETE FROM t)\n\
+                 SELECT * FROM security_events WHERE field ILIKE 'x'"
+                    .replace(
+                        "title DROP",
+                        &format!("title{}DROP", " ".repeat(line_break.chars().count()))
+                    )
+                    .replace(
+                        "id DELETE",
+                        &format!("id{}DELETE", " ".repeat(line_break.chars().count()))
+                    )
+            ],
+            "{line_break:?}"
+        );
+    }
+}
+
+#[test]
 fn resolve_table_rejects_quote_in_table_name() {
     let backend = PostgresBackend::new();
     let custom_attrs = HashMap::new();

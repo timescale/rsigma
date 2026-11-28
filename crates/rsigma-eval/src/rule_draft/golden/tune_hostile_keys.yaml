@@ -1,0 +1,14 @@
+title: Tuning filter for Suspicious Backup Tool
+id: 3f7b1c2e-9a44-4d1e-8f61-2b0c5d9e7a10
+description: 'Suppresses 2 observed false-positive exemplars; verified against 1 true-positive exemplars.'
+author: 'rsigma rule tune'
+logsource:
+    category: process_creation
+    product: windows
+filter:
+    rules:
+        - 929a690e-bef0-4204-a928-ef5e620d6fcc
+    selection:
+        'User: name #1': "svc\nbackup"
+        Image: 'C:\Program Files\Veeam\backup.exe'
+    condition: not selection

@@ -1,4 +1,5 @@
-//! Golden tests for the correlation and filter emitters.
+//! Golden tests for the correlation and filter emitters, and for custom
+//! attributes in all three emitters.
 //!
 //! Each case is an input file and the exact canonical output in
 //! `tests/emit/`. The test also asserts that emitting the output again is a
@@ -8,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 
-use rsigma_parser::{emit_correlation_yaml, emit_filter_yaml, parse_sigma_yaml};
+use rsigma_parser::{emit_correlation_yaml, emit_filter_yaml, emit_rule_yaml, parse_sigma_yaml};
 
 fn run_golden(name: &str) {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/emit");
@@ -24,6 +25,8 @@ fn run_golden(name: &str) {
         emit_correlation_yaml(rule)
     } else if let Some(rule) = collection.filters.first() {
         emit_filter_yaml(rule)
+    } else if let Some(rule) = collection.rules.first() {
+        emit_rule_yaml(rule)
     } else {
         panic!("'{name}' has no correlation or filter document");
     };
@@ -41,10 +44,26 @@ fn run_golden(name: &str) {
 
     let reparsed = parse_sigma_yaml(&expected)
         .unwrap_or_else(|error| panic!("re-parsing '{name}' output failed: {error}"));
+    assert_eq!(
+        reparsed.len(),
+        collection.len(),
+        "'{name}' output changed the document count"
+    );
+    assert_eq!(reparsed.rules, collection.rules, "'{name}' rule changed");
+    assert_eq!(
+        reparsed.correlations, collection.correlations,
+        "'{name}' correlation changed"
+    );
+    assert_eq!(
+        reparsed.filters, collection.filters,
+        "'{name}' filter changed"
+    );
     let again = if let Some(rule) = reparsed.correlations.first() {
         emit_correlation_yaml(rule)
     } else if let Some(rule) = reparsed.filters.first() {
         emit_filter_yaml(rule)
+    } else if let Some(rule) = reparsed.rules.first() {
+        emit_rule_yaml(rule)
     } else {
         panic!("'{name}' output has no correlation or filter document");
     };
@@ -79,4 +98,19 @@ fn golden_filter_any() {
 #[test]
 fn golden_filter_specific_logsource() {
     run_golden("filter_specific_logsource");
+}
+
+#[test]
+fn golden_rule_reserved_attributes() {
+    run_golden("rule_reserved_attributes");
+}
+
+#[test]
+fn golden_correlation_reserved_attributes() {
+    run_golden("correlation_reserved_attributes");
+}
+
+#[test]
+fn golden_filter_reserved_attributes() {
+    run_golden("filter_reserved_attributes");
 }

@@ -255,6 +255,20 @@ fn parse_document(
 // Shared helpers
 // =============================================================================
 
+/// Whether a custom attribute name is also a standard key of a detection,
+/// correlation, or filter document, or the collection `action` key.
+///
+/// Such an attribute never sets the standard key it is named after, so the
+/// parser warns about it in a `custom_attributes:` block, a ruleset overlay
+/// refuses to set it, and the emitter writes it under `custom_attributes:`
+/// instead of the document's top level.
+pub fn is_reserved_attribute_name(name: &str) -> bool {
+    name == "action"
+        || STANDARD_RULE_KEYS.contains(&name)
+        || STANDARD_CORRELATION_KEYS.contains(&name)
+        || STANDARD_FILTER_KEYS.contains(&name)
+}
+
 /// Build the unified `custom_attributes` map for a rule document.
 ///
 /// Merges two sources:
@@ -263,11 +277,18 @@ fn parse_document(
 /// 2. The entries of the top-level `custom_attributes:` mapping (if present),
 ///    which override (1) for colliding keys.
 ///
+/// An entry of the `custom_attributes:` mapping with a
+/// [reserved name](is_reserved_attribute_name) is kept and reported as a
+/// warning, the same way for every document kind. A top-level key that is
+/// standard only for another document kind, such as a `logsource` a global
+/// template merges into a correlation, is kept without a warning.
+///
 /// Pipeline transformations such as `SetCustomAttribute` are applied later
 /// and can further override both sources.
 pub(super) fn collect_custom_attributes(
     m: &yaml_serde::Mapping,
     standard_keys: &[&str],
+    warnings: &mut Vec<CollectionDiagnostic>,
 ) -> HashMap<String, Value> {
     let mut attrs: HashMap<String, Value> = m
         .iter()
@@ -283,9 +304,17 @@ pub(super) fn collect_custom_attributes(
 
     if let Some(Value::Mapping(explicit)) = m.get(val_key("custom_attributes")) {
         for (k, v) in explicit {
-            if let Some(key) = k.as_str() {
-                attrs.insert(key.to_string(), v.clone());
+            let Some(key) = k.as_str() else { continue };
+            if is_reserved_attribute_name(key) {
+                warnings.push(CollectionDiagnostic::warning(
+                    DiagnosticKind::CustomAttribute,
+                    format!(
+                        "custom attribute {key:?} is named after a standard Sigma key; \
+                         it is kept as a custom attribute and does not set that key"
+                    ),
+                ));
             }
+            attrs.insert(key.to_string(), v.clone());
         }
     }
 

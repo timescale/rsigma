@@ -306,10 +306,21 @@ pub enum FixDisposition {
     Unsafe,
 }
 
+/// Escape one key for a JSON-pointer path, so a `/` or `~` in a rule's own
+/// detection or field name does not split the path.
+pub(crate) fn pointer_segment(key: &str) -> std::borrow::Cow<'_, str> {
+    if key.contains(['~', '/']) {
+        std::borrow::Cow::Owned(key.replace('~', "~0").replace('/', "~1"))
+    } else {
+        std::borrow::Cow::Borrowed(key)
+    }
+}
+
 /// A single patch operation within a [`Fix`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum FixPatch {
     ReplaceValue { path: String, new_value: String },
+    ReplaceBool { path: String, new_value: bool },
     ReplaceKey { path: String, new_key: String },
     Remove { path: String },
 }

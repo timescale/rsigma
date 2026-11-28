@@ -33,7 +33,7 @@ The ADS bar (which statuses are enforced and which sections are required) is rea
 | `<RULES>...` | required unless `--ruleset` | One or more Sigma rule files or directories of rules. Conflicts with `--ruleset`. |
 | `--ruleset <NAME>` | none | Named ruleset from the configuration to document instead of rule paths. Conflicts with `--scaffold` and `--in-place`. {{ added "0.28.0" }} |
 | `--scaffold` | off | Emit a `rsigma.ads.*` template for a single rule instead of a report. |
-| `--in-place` | off | With `--scaffold`, merge the template into the rule file's `custom_attributes:` block instead of printing it. |
+| `--in-place` | off | With `--scaffold`, merge the template into the rule file's `custom_attributes:` block instead of printing it. The merge is refused, and the file left unchanged, when the result would not parse as the same rule plus the added sections. {{ added "unreleased" }} |
 | `--format <FORMAT>` | `auto` | `auto` renders through `--output-format`; `markdown` emits the canonical ADS document per rule. |
 | `--missing-only` | off | Report only rules below the configured ADS bar. Filters the output only; the exit code is unchanged. |
 | `--fail-on-missing` | off | Exit 1 when any requested rule is below the bar. Makes `rule doc` a standalone CI gate. |

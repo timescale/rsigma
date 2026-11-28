@@ -204,21 +204,7 @@ fn cmd_hunt_run(args: HuntRunArgs, ctx: &OutputCtx) {
 /// effective window/JSONB options are printed once at the top: they are the
 /// settings a reviewer needs to eyeball the predicates.
 fn emit_sql(plan: &query::HuntPlan, output: Option<&std::path::Path>) {
-    let mut rendered = format!("-- timestamp_field: {}\n", plan.timestamp_field);
-    if let Some(json_field) = &plan.json_field {
-        rendered.push_str(&format!("-- json_field: {json_field}\n"));
-    }
-    for (i, q) in plan.queries.iter().enumerate() {
-        if i > 0 {
-            rendered.push('\n');
-        }
-        let id = q
-            .rule_id
-            .as_deref()
-            .map(|id| format!(" (id: {id})"))
-            .unwrap_or_default();
-        rendered.push_str(&format!("-- rule: {}{}\n{};\n", q.rule_title, id, q.sql));
-    }
+    let rendered = render_sql(plan);
     match output {
         Some(path) => {
             if let Err(e) = std::fs::write(path, &rendered) {
@@ -228,6 +214,40 @@ fn emit_sql(plan: &query::HuntPlan, output: Option<&std::path::Path>) {
         }
         None => print!("{rendered}"),
     }
+}
+
+/// Render the `--emit sql` script. Every header is one `--` comment line, so a
+/// line break in a rule title or id cannot end the comment early.
+fn render_sql(plan: &query::HuntPlan) -> String {
+    use rsigma_parser::sanitize_single_line;
+
+    let mut rendered = format!(
+        "-- timestamp_field: {}\n",
+        sanitize_single_line(&plan.timestamp_field)
+    );
+    if let Some(json_field) = &plan.json_field {
+        rendered.push_str(&format!(
+            "-- json_field: {}\n",
+            sanitize_single_line(json_field)
+        ));
+    }
+    for (i, q) in plan.queries.iter().enumerate() {
+        if i > 0 {
+            rendered.push('\n');
+        }
+        let id = q
+            .rule_id
+            .as_deref()
+            .map(|id| format!(" (id: {})", sanitize_single_line(id)))
+            .unwrap_or_default();
+        rendered.push_str(&format!(
+            "-- rule: {}{}\n{};\n",
+            sanitize_single_line(&q.rule_title),
+            id,
+            q.sql
+        ));
+    }
+    rendered
 }
 
 /// `--emit events`: stream matching rows as NDJSON over a read-only

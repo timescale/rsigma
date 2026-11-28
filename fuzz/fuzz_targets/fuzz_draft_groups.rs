@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use libfuzzer_sys::fuzz_target;
 use rsigma_eval::DraftConfig;
 use rsigma_eval::rule_draft::correlation::{
-    CorrelationDraftConfig, GroupedExemplar, SourceLocation, TimedEvent, draft_correlation,
+    CorrelationDraftConfig, CorrelationDraftError, GroupedExemplar, SourceLocation, TimedEvent,
+    draft_correlation,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -56,5 +57,10 @@ fuzz_target!(|data: &[u8]| {
         },
         ..CorrelationDraftConfig::default()
     };
-    let _ = draft_correlation(&groups, &[], &[], &config);
+    if let Err(CorrelationDraftError::Internal { stage, message }) =
+        draft_correlation(&groups, &[], &[], &config)
+        && stage == "round-trip"
+    {
+        panic!("correlation draft failed its round-trip check: {message}");
+    }
 });

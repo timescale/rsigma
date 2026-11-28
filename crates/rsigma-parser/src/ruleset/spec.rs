@@ -541,9 +541,8 @@ const WINDOW_ATTRIBUTES: &[&str] = &[
 ];
 
 /// Check one `set` or `append` patch: unknown keys, an empty patch, and
-/// custom attributes that would shadow a standard key. The emitter flattens
-/// custom attributes to the document's top level, so such a key would emit a
-/// document that no longer parses.
+/// custom attributes with a [reserved name](crate::is_reserved_attribute_name),
+/// which would never set the standard key they are named after.
 pub(crate) fn validate_patch(
     ruleset: &str,
     patch: &OverlayPatch,
@@ -575,14 +574,7 @@ pub(crate) fn validate_patch(
         problems.push(format!("ruleset '{ruleset}': {at}.{form} is empty"));
     }
     for (key, value) in patch.custom_attributes.iter().flatten() {
-        let reserved = [
-            crate::parser::STANDARD_RULE_KEYS,
-            crate::parser::STANDARD_CORRELATION_KEYS,
-            crate::parser::STANDARD_FILTER_KEYS,
-        ]
-        .iter()
-        .any(|keys| keys.contains(&key.as_str()));
-        if reserved {
+        if crate::is_reserved_attribute_name(key) {
             problems.push(format!(
                 "ruleset '{ruleset}': {at}.{form}.custom_attributes cannot set '{key}', a standard Sigma key"
             ));
@@ -784,6 +776,8 @@ mod tests {
             "correlation",
             "filter",
             "custom_attributes",
+            "generate",
+            "action",
         ] {
             let spec: RulesetSpec = yaml_serde::from_str(&format!(
                 "sources: [rules]\noverlays:\n  - id: x\n    set:\n      custom_attributes:\n        {key}: v\n  - id: y\n    append:\n      custom_attributes:\n        {key}: [v]\n"

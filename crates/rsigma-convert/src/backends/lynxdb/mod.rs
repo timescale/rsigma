@@ -699,8 +699,11 @@ impl Backend for LynxDbBackend {
             self.config.query_expression,
             |key| match key {
                 "query" => Some(query.clone()),
-                "rule.title" => Some(rule.title.clone()),
-                "rule.id" => rule.id.clone(),
+                "rule.title" => Some(sanitize_single_line(&rule.title).into_owned()),
+                "rule.id" => rule
+                    .id
+                    .as_deref()
+                    .map(|id| sanitize_single_line(id).into_owned()),
                 _ => state
                     .processing_state
                     .get(key)

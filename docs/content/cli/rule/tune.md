@@ -19,7 +19,7 @@ rsigma rule tune [--rules <PATH> | --ruleset <NAME>] --from-dispositions <SPOOL_
 
 `rule tune` profiles events labeled as false positives against a required set of known true positives and emits a standard Sigma filter rule. The proposal targets one detection rule by id, or by `name` when the rule has no id, and falls back to the exact title with a warning only when the rule has neither. It copies the target's post-pipeline logsource and uses `condition: not selection` because the evaluation engine injects a filter condition exactly as written.
 
-The command verifies two invariants before printing anything. First, every supplied FP and TP must fire the unfiltered target rule; non-firing events are labeling errors. Second, after applying the emitted filter through the real `Engine::add_collection` path, no covered FP may fire and every TP must still fire. The command refuses to emit when no clean separator exists.
+The command verifies two invariants before printing anything. First, every supplied FP and TP must fire the unfiltered target rule; non-firing events are labeling errors. Second, after applying the emitted filter through the real `Engine::add_collection` path, no covered FP may fire and every TP must still fire. The command refuses to emit when no clean separator exists. The emitted filter must also parse back as exactly one filter with the planned title, id, target, logsource, selections, and condition. Field names and values are quoted so YAML reads them back exactly, and a field whose name cannot be a Sigma field (a line break, a control character, `|`, or over 256 bytes) is never used. {{ added "unreleased" }}
 
 ## Inputs
 
@@ -74,7 +74,7 @@ filter:
 rsigma rule tune -r rules/ --rule 929a690e-bef0-4204-a928-ef5e620d6fcc --fp @false-positives.ndjson --tp @true-positives.ndjson --expectations expectations.yml --emit report --output-format json
 ```
 
-The `expectation_diff` object records target fires over each supplied corpus before and after filtering, lists existing bounds for the target, and emits list entries with `exactly: 0` for a fully covered FP corpus plus `at_least: <TP count>` for the protected corpus. Insert the entries under the existing top-level `expectations` key.
+The `expectation_diff` object records target fires over each supplied corpus before and after filtering, lists existing bounds for the target, and emits list entries with `exactly: 0` for a fully covered FP corpus plus `at_least: <TP count>` for the protected corpus. Insert the entries under the existing top-level `expectations` key. Rule keys in those entries are quoted so YAML reads them back exactly. {{ added "unreleased" }}
 
 ## Exit codes
 

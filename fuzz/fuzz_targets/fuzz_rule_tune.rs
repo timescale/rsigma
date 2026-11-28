@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rsigma_eval::{TuneConfig, tune_rule};
+use rsigma_eval::{TuneConfig, TuneError, tune_rule};
 
 const RULE: &str = r#"
 title: Fuzz Target
@@ -39,5 +39,9 @@ fuzz_target!(|data: &[u8]| {
         max_clusters: 5,
         ..TuneConfig::default()
     };
-    let _ = tune_rule(&rule, &fps, &tps, &config);
+    if let Err(TuneError::Internal { stage, message }) = tune_rule(&rule, &fps, &tps, &config)
+        && stage == "round-trip"
+    {
+        panic!("tuning filter failed its round-trip check: {message}");
+    }
 });

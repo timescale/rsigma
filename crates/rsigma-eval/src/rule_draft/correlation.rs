@@ -11,7 +11,7 @@ use crate::correlation_engine::{CorrelationConfig, CorrelationEngine};
 use crate::event::{Event, JsonEvent};
 use crate::key_shape::cluster_by_key_shape;
 
-use super::draft_core::{ValueForm, yaml_str, yaml_title_str};
+use super::draft_core::{ValueForm, parse_without_errors, yaml_str, yaml_title_str};
 use super::{DraftCandidate, DraftConfig, DraftError};
 
 /// Source context attached by a grouped-input reader.
@@ -388,6 +388,20 @@ pub fn draft_correlation(
                 stage: "parse",
                 message: error.to_string(),
             }
+        })?;
+        verify_collection(
+            &yaml,
+            &groups,
+            &retained,
+            &slots,
+            correlation_type,
+            &group_by,
+            &correlation_id,
+            config,
+        )
+        .map_err(|message| CorrelationDraftError::Internal {
+            stage: "round-trip",
+            message,
         })?;
 
         if let Some((slot_index, local_event)) =
@@ -1028,11 +1042,10 @@ fn emit_collection(
         );
     }
     output.push_str("---\n");
-    let title = config
-        .title
-        .clone()
-        .unwrap_or_else(|| "Draft temporal correlation".to_string());
-    output.push_str(&format!("title: {}\n", yaml_title_str(&title)));
+    output.push_str(&format!(
+        "title: {}\n",
+        yaml_title_str(&correlation_title(config))
+    ));
     output.push_str(&format!("id: {}\n", yaml_str(correlation_id)));
     output.push_str("status: experimental\n");
     output.push_str("correlation:\n");
@@ -1053,30 +1066,181 @@ fn emit_collection(
     let representative = representative_group(groups, retained);
     output.push_str(&format!(
         "        - name: {}\n",
-        yaml_str(&format!("observed group {}", representative.id))
+        yaml_str(&exemplar_name(representative))
     ));
     output.push_str("          expect: match\n");
     output.push_str("          events:\n");
-    let first = representative
-        .events
-        .iter()
-        .find(|event| retained.contains(&event.cluster))
-        .map(|event| event.time)
-        .unwrap_or(0);
-    for event in representative
-        .events
-        .iter()
-        .filter(|event| retained.contains(&event.cluster))
-    {
-        output.push_str(&format!(
-            "              - offset: {}s\n",
-            event.time - first
-        ));
+    for (offset, event) in exemplar_events(representative, retained) {
+        output.push_str(&format!("              - offset: {offset}s\n"));
         output.push_str("                event:\n");
         emit_json_mapping(&mut output, &event.event, "                    ");
     }
     output.push_str("level: medium\n");
     output
+}
+
+fn correlation_title(config: &CorrelationDraftConfig) -> String {
+    config
+        .title
+        .clone()
+        .unwrap_or_else(|| "Draft temporal correlation".to_string())
+}
+
+fn exemplar_name(group: &NormalizedGroup) -> String {
+    format!("observed group {}", group.id)
+}
+
+/// The retained events of the exemplar group, with their offsets in seconds
+/// from the first of them.
+fn exemplar_events<'a>(
+    group: &'a NormalizedGroup,
+    retained: &BTreeSet<usize>,
+) -> Vec<(i64, &'a NormalizedEvent)> {
+    let events: Vec<&NormalizedEvent> = group
+        .events
+        .iter()
+        .filter(|event| retained.contains(&event.cluster))
+        .collect();
+    let first = events.first().map(|event| event.time).unwrap_or(0);
+    events
+        .into_iter()
+        .map(|event| (event.time - first, event))
+        .collect()
+}
+
+/// Check that the emitted collection parses back as exactly the planned slot
+/// rules and correlation, with the exemplar events carried unchanged.
+#[allow(clippy::too_many_arguments)]
+fn verify_collection(
+    yaml: &str,
+    groups: &[NormalizedGroup],
+    retained: &BTreeSet<usize>,
+    slots: &[Slot],
+    correlation_type: &str,
+    group_by: &[String],
+    correlation_id: &str,
+    config: &CorrelationDraftConfig,
+) -> Result<(), String> {
+    let documents = yaml_serde::Deserializer::from_str(yaml).count();
+    if documents != slots.len() + 1 {
+        return Err(format!(
+            "expected {} YAML documents, found {documents}",
+            slots.len() + 1
+        ));
+    }
+    let collection = parse_without_errors(yaml)?;
+    if collection.rules.len() != slots.len()
+        || collection.correlations.len() != 1
+        || !collection.filters.is_empty()
+    {
+        return Err(format!(
+            "expected {} rules and one correlation, found {} rules, {} correlations, and {} filters",
+            slots.len(),
+            collection.rules.len(),
+            collection.correlations.len(),
+            collection.filters.len()
+        ));
+    }
+    for slot in slots {
+        let rule = collection
+            .rules
+            .iter()
+            .find(|rule| rule.name.as_deref() == Some(slot.name.as_str()))
+            .ok_or_else(|| format!("slot rule {:?} is missing", slot.name))?;
+        let positives: Vec<Value> = slot
+            .members
+            .iter()
+            .map(|&(group, event)| groups[group].events[event].event.clone())
+            .collect();
+        let events: Vec<JsonEvent<'_>> = positives.iter().map(JsonEvent::borrow).collect();
+        slot.candidate
+            .verify_rule(rule, &events, &slot.config, Some(&slot.name))
+            .map_err(|message| format!("slot {:?}: {message}", slot.name))?;
+    }
+
+    let correlation = &collection.correlations[0];
+    let title = correlation_title(config);
+    let slot_names: Vec<String> = slots.iter().map(|slot| slot.name.clone()).collect();
+    if correlation.title != title
+        || correlation.id.as_deref() != Some(correlation_id)
+        || correlation.correlation_type.as_str() != correlation_type
+        || correlation.rules != slot_names
+        || correlation.group_by != group_by
+    {
+        return Err(format!(
+            "correlation reads back as title {:?}, id {:?}, type {}, rules {:?}, group-by {:?}",
+            correlation.title,
+            correlation.id,
+            correlation.correlation_type.as_str(),
+            correlation.rules,
+            correlation.group_by
+        ));
+    }
+    let representative = representative_group(groups, retained);
+    let mut expected_events = Vec::new();
+    for (offset, event) in exemplar_events(representative, retained) {
+        let mut entry = yaml_serde::Mapping::new();
+        entry.insert("offset".into(), format!("{offset}s").into());
+        entry.insert("event".into(), emitted_event(&event.event));
+        expected_events.push(yaml_serde::Value::Mapping(entry));
+    }
+    let mut exemplar = yaml_serde::Mapping::new();
+    exemplar.insert("name".into(), exemplar_name(representative).into());
+    exemplar.insert("expect".into(), "match".into());
+    exemplar.insert(
+        "events".into(),
+        yaml_serde::Value::Sequence(expected_events),
+    );
+    let expected = yaml_serde::Value::Sequence(vec![yaml_serde::Value::Mapping(exemplar)]);
+    if correlation.custom_attributes.len() != 1
+        || correlation.custom_attributes.get("rsigma.exemplars") != Some(&expected)
+    {
+        return Err("the exemplar events do not read back unchanged".to_string());
+    }
+    Ok(())
+}
+
+/// The YAML value [`emit_json_mapping`] writes for an exemplar event.
+fn emitted_event(value: &Value) -> yaml_serde::Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = yaml_serde::Mapping::new();
+            for (key, value) in map {
+                out.insert(key.as_str().into(), emitted_value(value, true));
+            }
+            yaml_serde::Value::Mapping(out)
+        }
+        other => {
+            let mut out = yaml_serde::Mapping::new();
+            out.insert("value".into(), other.to_string().into());
+            yaml_serde::Value::Mapping(out)
+        }
+    }
+}
+
+fn emitted_value(value: &Value, nested: bool) -> yaml_serde::Value {
+    match value {
+        Value::Null => yaml_serde::Value::Null,
+        Value::Bool(value) => yaml_serde::Value::Bool(*value),
+        Value::Number(number) => {
+            if let Some(n) = number.as_i64() {
+                n.into()
+            } else if let Some(n) = number.as_u64() {
+                n.into()
+            } else {
+                number.as_f64().unwrap_or_default().into()
+            }
+        }
+        Value::String(value) => value.as_str().into(),
+        Value::Object(_) if nested => emitted_event(value),
+        Value::Array(values) if nested => yaml_serde::Value::Sequence(
+            values
+                .iter()
+                .map(|value| emitted_value(value, false))
+                .collect(),
+        ),
+        other => other.to_string().into(),
+    }
 }
 
 fn representative_group<'a>(
@@ -1122,6 +1286,18 @@ fn emit_json_mapping(output: &mut String, value: &Value, indent: &str) {
 
 fn emit_json_value(output: &mut String, key: &str, value: &Value, indent: &str) {
     let key = yaml_str(key);
+    // YAML reads at most 1024 characters as a plain mapping key; a longer
+    // event key is written in the explicit `? key` form instead.
+    if key.chars().count() > 1000 {
+        output.push_str(&format!("{indent}? {key}\n"));
+        let mut entry = String::new();
+        emit_json_value(&mut entry, "value", value, indent);
+        let body = entry
+            .strip_prefix(&format!("{indent}value:"))
+            .expect("entry starts with its key");
+        output.push_str(&format!("{indent}:{body}"));
+        return;
+    }
     match value {
         Value::Null => output.push_str(&format!("{indent}{key}: null\n")),
         Value::Bool(value) => output.push_str(&format!("{indent}{key}: {value}\n")),
@@ -1749,5 +1925,42 @@ mod tests {
             Err(CorrelationDraftError::PositiveVerification { reason, .. })
                 if reason.contains("prematurely")
         ));
+    }
+
+    #[test]
+    fn hostile_event_keys_and_values_round_trip_in_exemplars() {
+        let long_key = "k".repeat(1500);
+        let hostile = |user: &str, reversed: bool| {
+            let mut values = group(user, user, reversed);
+            for event in &mut values.events {
+                let map = event.event.as_object_mut().unwrap();
+                map.insert("note: x".into(), json!("line one\nline two: # three"));
+                map.insert(
+                    "a\u{2028}b".into(),
+                    json!({"nested\nkey": ["x\ny", 1.5, null]}),
+                );
+                map.insert(long_key.clone(), json!({"inner": true}));
+                map.insert("---".into(), json!("..."));
+            }
+            values
+        };
+        let groups = vec![
+            hostile("alice", false),
+            hostile("bob", false),
+            hostile("carol", false),
+        ];
+        let report = draft_correlation(&groups, &[], &[], &config()).unwrap();
+        let collection = rsigma_parser::parse_sigma_yaml(&report.rule_yaml).unwrap();
+        assert!(!collection.has_errors(), "{}", report.rule_yaml);
+        assert_eq!(collection.correlations.len(), 1);
+        let exemplars = &collection.correlations[0].custom_attributes["rsigma.exemplars"];
+        let event = &exemplars[0]["events"][0]["event"];
+        assert_eq!(
+            event["note: x"].as_str(),
+            Some("line one\nline two: # three")
+        );
+        assert_eq!(event["a\u{2028}b"]["nested\nkey"][0].as_str(), Some("x\ny"));
+        assert_eq!(event[long_key.as_str()]["inner"].as_bool(), Some(true));
+        assert_eq!(event["---"].as_str(), Some("..."));
     }
 }

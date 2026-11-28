@@ -75,6 +75,10 @@ pub enum DiagnosticKind {
     /// A `status`, `level`, `related`, or `sigma-version` value is invalid
     /// and was ignored.
     Metadata,
+    /// An entry of the `custom_attributes:` block is named after a standard key
+    /// of a detection, correlation, or filter document, or the collection
+    /// `action` key. It was kept as a custom attribute.
+    CustomAttribute,
     /// A file could not be read or parsed at all.
     File(SigmaParserErrorKind),
 }

@@ -87,7 +87,7 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
         // The pipeline parser rejects inline `sources:` blocks, so read the
         // block straight out of the raw YAML instead. A pipeline that no
         // longer declares sources is simply skipped.
-        let sources = match extract_inline_sources(&content) {
+        let (sources, values) = match extract_inline_sources(&content) {
             Ok(sources) => sources,
             Err(e) => {
                 eprintln!("Error parsing sources in {}: {e}", path.display());
@@ -103,7 +103,7 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
         pipelines_with_sources += 1;
 
         let mut extracted = Vec::new();
-        for source in &sources {
+        for (source, value) in sources.iter().zip(values) {
             if let Some(prev_pipeline) = seen_ids.get(&source.id) {
                 eprintln!(
                     "Error: source ID '{}' declared in both '{}' and '{}'. \
@@ -117,6 +117,7 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
             seen_ids.insert(source.id.clone(), path.display().to_string());
             extracted.push(ExtractedSource {
                 raw_yaml: extract_source_yaml(&content, &source.id),
+                value,
             });
         }
 
@@ -204,6 +205,13 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
             }
         };
         let stripped = remove_sources_block(&content);
+        if stripped != content && !strips_only_sources(&content, &stripped) {
+            eprintln!(
+                "warning: could not remove the sources: block from {} without changing the rest of the file; remove it by hand",
+                path.display()
+            );
+            continue;
+        }
         if stripped != content {
             if let Err(e) = std::fs::write(path, &stripped) {
                 eprintln!("warning: could not rewrite {}: {e}", path.display());
@@ -217,24 +225,43 @@ pub(crate) fn cmd_migrate_sources(args: MigrateSourcesArgs, ctx: OutputCtx) {
 #[derive(Clone)]
 struct ExtractedSource {
     raw_yaml: String,
+    /// The parsed source entry the written YAML must read back as.
+    value: yaml_serde::Value,
+}
+
+/// Whether `stripped` reads back as `original` without its `sources` key.
+fn strips_only_sources(original: &str, stripped: &str) -> bool {
+    let Ok(yaml_serde::Value::Mapping(mut expected)) = yaml_serde::from_str(original) else {
+        return false;
+    };
+    expected.shift_remove("sources");
+    matches!(
+        yaml_serde::from_str::<yaml_serde::Value>(stripped),
+        Ok(yaml_serde::Value::Mapping(actual)) if actual == expected
+    )
 }
 
 /// Parse a pipeline file's raw YAML and return its inline `sources:`
 /// declarations, or an empty vector when the file declares none. Errors only
 /// on a malformed `sources:` block (an unknown source type, a missing `id`,
 /// etc.), so a clean, already-migrated pipeline is a no-op.
-fn extract_inline_sources(
-    content: &str,
-) -> Result<Vec<rsigma_eval::pipeline::sources::DynamicSource>, rsigma_eval::EvalError> {
+type InlineSources = (
+    Vec<rsigma_eval::pipeline::sources::DynamicSource>,
+    Vec<yaml_serde::Value>,
+);
+
+fn extract_inline_sources(content: &str) -> Result<InlineSources, rsigma_eval::EvalError> {
     let value: yaml_serde::Value = yaml_serde::from_str(content)
         .map_err(|e| rsigma_eval::EvalError::Pipeline(format!("YAML parse error: {e}")))?;
     let Some(node) = value
         .as_mapping()
         .and_then(|m| m.get(yaml_serde::Value::String("sources".to_string())))
     else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
-    parse_sources(node)
+    let sources = parse_sources(node)?;
+    let values = node.as_sequence().cloned().unwrap_or_default();
+    Ok((sources, values))
 }
 
 /// Extract the raw YAML text for a single source entry from a pipeline file.
@@ -297,24 +324,45 @@ fn extract_source_yaml(content: &str, source_id: &str) -> String {
     lines[start..end].iter().map(|l| format!("{l}\n")).collect()
 }
 
-/// Build a complete sources YAML file from extracted entries.
+/// Build a complete sources YAML file from extracted entries: each entry's
+/// original text re-indented as a whole, so nested keys keep their structure.
+/// When that text does not read back as exactly the extracted entries (an
+/// entry the line scan could not isolate), the entries are serialized instead.
 fn build_sources_yaml(sources: &[ExtractedSource]) -> String {
     let mut out = String::from("sources:\n");
     for src in sources {
+        let spaces = |line: &str| line.len() - line.trim_start_matches(' ').len();
+        let base = src
+            .raw_yaml
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(spaces)
+            .unwrap_or(0);
         for line in src.raw_yaml.lines() {
-            // Normalize indentation: source entries should be at 2-space indent
-            if line.trim().starts_with("- id:") {
-                out.push_str(&format!("  {}\n", line.trim()));
-            } else if line.trim().is_empty() {
+            if line.trim().is_empty() {
                 continue;
-            } else {
-                // Preserve relative indentation for non-id lines
-                let trimmed = line.trim();
-                out.push_str(&format!("    {trimmed}\n"));
             }
+            let indent = spaces(line);
+            out.push_str("  ");
+            out.push_str(&line[base.min(indent)..]);
+            out.push('\n');
         }
     }
-    out
+    let values: Vec<yaml_serde::Value> = sources.iter().map(|src| src.value.clone()).collect();
+    if reads_back_as(&out, &values) {
+        return out;
+    }
+    let mut file = yaml_serde::Mapping::new();
+    file.insert("sources".into(), yaml_serde::Value::Sequence(values));
+    yaml_serde::to_string(&file).unwrap_or_default()
+}
+
+/// Whether `yaml` holds a `sources:` list equal to `values`.
+fn reads_back_as(yaml: &str, values: &[yaml_serde::Value]) -> bool {
+    let Ok(yaml_serde::Value::Mapping(file)) = yaml_serde::from_str(yaml) else {
+        return false;
+    };
+    file.len() == 1 && file.get("sources").and_then(|s| s.as_sequence()) == Some(&values.to_vec())
 }
 
 /// Remove the `sources:` block from a pipeline YAML string.
@@ -393,14 +441,13 @@ transformations:
 
     #[test]
     fn test_build_sources_yaml() {
+        let source = |raw: &str| ExtractedSource {
+            raw_yaml: raw.to_string(),
+            value: yaml_serde::from_str::<Vec<yaml_serde::Value>>(raw).unwrap()[0].clone(),
+        };
         let sources = vec![
-            ExtractedSource {
-                raw_yaml: "  - id: feed_a\n    type: http\n    url: https://example.com\n"
-                    .to_string(),
-            },
-            ExtractedSource {
-                raw_yaml: "  - id: feed_b\n    type: file\n    path: /tmp/data.json\n".to_string(),
-            },
+            source("  - id: feed_a\n    type: http\n    url: https://example.com\n"),
+            source("  - id: feed_b\n    type: file\n    path: /tmp/data.json\n"),
         ];
         let yaml = build_sources_yaml(&sources);
         assert!(yaml.starts_with("sources:\n"));
@@ -436,5 +483,50 @@ transformations:
         assert!(extracted.contains("alpha"));
         assert!(extracted.contains("file"));
         assert!(!extracted.contains("beta"));
+    }
+
+    #[test]
+    fn nested_source_keys_keep_their_structure() {
+        let content = r#"name: test
+sources:
+    -   id: alpha
+        type: http
+        url: https://example.com
+        format: json
+        extract:
+            type: jq
+            expr: '.items[] | {ip: .addr}'
+        headers:
+            X-Key: "a: b # c"
+# trailing comment at column 0
+    -   id: 'beta'
+        type: file
+        path: /tmp/b.json
+        format: json
+transformations:
+    - type: value_placeholders
+"#;
+        let (sources, values) = extract_inline_sources(content).unwrap();
+        let extracted: Vec<ExtractedSource> = sources
+            .iter()
+            .zip(values.clone())
+            .map(|(source, value)| ExtractedSource {
+                raw_yaml: extract_source_yaml(content, &source.id),
+                value,
+            })
+            .collect();
+        let yaml = build_sources_yaml(&extracted);
+        assert!(reads_back_as(&yaml, &values), "{yaml}");
+        let (reparsed, _) = extract_inline_sources(&yaml).unwrap();
+        assert_eq!(reparsed.len(), 2);
+    }
+
+    #[test]
+    fn stripping_sources_is_checked() {
+        let content = "name: test\nsources:\n  - id: a\n    type: file\n    path: /tmp/a\n    format: json\n# note\n  - id: b\n    type: file\n    path: /tmp/b\n    format: json\ntransformations: []\n";
+        let stripped = remove_sources_block(content);
+        assert!(!strips_only_sources(content, &stripped), "{stripped}");
+        let clean = "name: test\nsources:\n  - id: a\n    type: file\n    path: /tmp/a\n    format: json\ntransformations: []\n";
+        assert!(strips_only_sources(clean, &remove_sources_block(clean)));
     }
 }

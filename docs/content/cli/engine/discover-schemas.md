@@ -44,6 +44,7 @@ The global [`--output-format`](../../reference/output.md) flag selects `json`, `
 - **Clustering.** Events collapse to distinct field-key shapes, which merge by Jaccard similarity. A diversity guard keeps two shapes that disagree on a single constant marker (for example `vendor: foo` vs `vendor: bar`) in separate clusters rather than fusing distinct schemas.
 - **Selection.** Each cluster's most discriminative fields become a minimal 1-3 predicate conjunction, weighted so a rarer marker beats a near-ubiquitous field. A low-cardinality, non-sensitive constant value becomes an `equals`/`in` marker; everything else becomes `field_present`. High-cardinality or free-form values (command lines, paths, IPs) are never emitted as value markers.
 - **Suggested specificity** sits above `generic_json` and below the strong built-ins, and each candidate is checked against the built-ins so a shadowed proposal is dropped.
+- **Writable keys.** A field key holding a line break or control character, or longer than 256 bytes, is left out of mining, both here and in the daemon's keys-only sample. Every other key and value is written plain only when it is an identifier-like token and quoted otherwise, so the `schemas:` block reads back as exactly the proposed signatures. {{ added "unreleased" }}
 
 ## Redaction
 

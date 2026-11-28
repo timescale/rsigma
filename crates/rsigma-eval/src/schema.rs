@@ -1662,12 +1662,15 @@ pub struct UnknownShapeEntry {
 const UNKNOWN_SHAPE_CAP: usize = 200;
 
 /// The field keys of an event for a redacted shape, within the default
-/// [`FieldKeyBudget`](crate::FieldKeyBudget), so no shape holds a key longer
-/// than its per-path cap.
+/// [`FieldKeyBudget`](crate::FieldKeyBudget), keeping only keys schema
+/// discovery can write back: none over 256 bytes or holding a line break or
+/// control character.
 fn shape_keys<E: Event + ?Sized>(event: &E) -> Vec<String> {
     let mut keys = Vec::new();
     event.visit_field_keys(&crate::FieldKeyBudget::default(), &mut |key| {
-        keys.push(key.to_owned())
+        if crate::schema_discovery::discoverable_key(key) {
+            keys.push(key.to_owned())
+        }
     });
     keys
 }
@@ -2743,6 +2746,26 @@ routing:
         assert_eq!(snap.unknown_shapes.len(), 1);
         assert_eq!(snap.unknown_shapes[0].count, 2);
         assert_eq!(snap.unknown_shapes[0].keys, vec!["shape", "weird"]);
+    }
+
+    #[test]
+    fn observer_shapes_skip_keys_discovery_cannot_write() {
+        let observer = SchemaObserver::new_with_discovery(SchemaClassifier::new(Vec::new()), true);
+        let long = "k".repeat(300);
+        let mut event = serde_json::Map::new();
+        for key in [
+            "shape",
+            "line\nbreak",
+            "sep\u{2028}arator",
+            "ctl\u{1}",
+            long.as_str(),
+        ] {
+            event.insert(key.to_string(), json!(1));
+        }
+        observer.observe(&JsonEvent::borrow(&serde_json::Value::Object(event)));
+        let snap = observer.snapshot();
+        assert_eq!(snap.unknown_shapes[0].keys, vec!["shape"]);
+        assert_eq!(snap.unrecognized_shapes[0].keys, vec!["shape"]);
     }
 
     // ─────────────────────────────────────────────────────────────────────

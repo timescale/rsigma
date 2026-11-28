@@ -175,6 +175,13 @@ pub(crate) fn profile_fields<E: Event>(
         if excluded(&field) {
             continue;
         }
+        if let Some(reason) = unwritable_field_name(&field) {
+            warnings.push(format!(
+                "skipped field {:?}: {reason}, so it cannot be written as a Sigma field",
+                truncate_for_message(&field)
+            ));
+            continue;
+        }
         let values: Vec<Option<DraftValue>> = exemplars
             .iter()
             .map(|e| {
@@ -746,7 +753,9 @@ pub(crate) fn escape_sigma_value(s: &str) -> String {
 // =============================================================================
 
 /// Quote a YAML scalar in Sigma's single-quote convention when it is not a
-/// plain-safe bare scalar. Numbers and booleans are emitted bare upstream.
+/// plain-safe bare scalar, falling back to a double-quoted scalar with escapes
+/// for line breaks and control characters. Numbers and booleans are emitted
+/// bare upstream.
 pub(crate) fn yaml_str(s: &str) -> String {
     let bare_safe = !s.is_empty()
         && s.chars()
@@ -754,15 +763,107 @@ pub(crate) fn yaml_str(s: &str) -> String {
         && !s.starts_with('-')
         // Bare scalars that YAML would type-coerce need quoting.
         && s.parse::<f64>().is_err()
-        && !matches!(
-            s.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "on" | "off"
-        );
+        && !is_yaml_keyword(s)
+        && reads_back_plain(s);
     if bare_safe {
         s.to_string()
     } else {
-        format!("'{}'", s.replace('\'', "''"))
+        rsigma_parser::quote_yaml_string(s)
     }
+}
+
+fn is_yaml_keyword(s: &str) -> bool {
+    matches!(
+        s.to_ascii_lowercase().as_str(),
+        "true" | "false" | "null" | "yes" | "no" | "on" | "off"
+    )
+}
+
+/// Whether YAML reads `s` written plain back as the string `s`, rather than
+/// as a number in another spelling (`0x1F`, `0o17`, `.inf`) or YAML 1.1's
+/// underscore-grouped integers (`1_000`), which pySigma would read as one.
+fn reads_back_plain(s: &str) -> bool {
+    let grouped_number = s.starts_with(|c: char| c.is_ascii_digit() || c == '.') && s.contains('_');
+    !grouped_number
+        && matches!(
+            yaml_serde::from_str::<yaml_serde::Value>(s),
+            Ok(yaml_serde::Value::String(ref v)) if v == s
+        )
+}
+
+/// Write a detection key (a field name plus its modifier chain) so YAML reads
+/// it back as exactly that string: bare when it starts with a letter or `_`
+/// and holds only characters a plain key keeps, quoted otherwise.
+pub(crate) fn yaml_key(key: &str) -> String {
+    let bare_safe = key
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '|' | '/'))
+        && !is_yaml_keyword(key)
+        && reads_back_plain(key);
+    if bare_safe {
+        key.to_string()
+    } else {
+        rsigma_parser::quote_yaml_string(key)
+    }
+}
+
+/// Longest field name a draft writes. YAML caps a plain mapping key at 1024
+/// characters, and a longer name is not a realistic event field.
+pub(crate) const MAX_FIELD_NAME_BYTES: usize = 256;
+
+/// Why an event field name cannot be written as a Sigma detection key, if it
+/// cannot: the parser splits keys on `|`, a bare `.` is the array-member
+/// reference, `\[`/`\]` read as escaped brackets, and line breaks and control
+/// characters do not survive as a field name.
+pub(crate) fn unwritable_field_name(field: &str) -> Option<&'static str> {
+    if field.is_empty() || field == "." {
+        return Some("it is empty or a bare '.'");
+    }
+    if field.len() > MAX_FIELD_NAME_BYTES {
+        return Some("it is longer than 256 bytes");
+    }
+    if field.contains('|') {
+        return Some("it contains '|', which separates modifiers");
+    }
+    if field.contains("\\[") || field.contains("\\]") {
+        return Some("it contains an escaped bracket");
+    }
+    if field.chars().any(is_line_break_or_control) {
+        return Some("it contains a line break or control character");
+    }
+    None
+}
+
+/// Line breaks YAML honours, control characters, and the characters YAML
+/// readers reject raw.
+pub(crate) fn is_line_break_or_control(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{FFFE}' | '\u{FFFF}'
+        )
+}
+
+/// The first 64 characters of a field name, for a warning.
+fn truncate_for_message(field: &str) -> String {
+    let mut chars = field.chars();
+    let head: String = chars.by_ref().take(64).collect();
+    if chars.next().is_some() {
+        format!("{head}...")
+    } else {
+        head
+    }
+}
+
+/// `s` on one line: line breaks and control characters become spaces.
+pub(crate) fn single_line(s: &str) -> String {
+    s.chars()
+        .map(|c| if is_line_break_or_control(c) { ' ' } else { c })
+        .collect()
 }
 
 /// Looser quoting for prose scalars (the title): plain YAML allows internal
@@ -788,13 +889,153 @@ pub(crate) fn emit_value(v: &DraftValue) -> String {
     match v {
         DraftValue::Str(s) => yaml_str(&escape_sigma_value(s)),
         DraftValue::Int(n) => n.to_string(),
-        DraftValue::Float(f) => f.to_string(),
+        DraftValue::Float(f) => float_token(*f),
         DraftValue::Bool(b) => b.to_string(),
     }
 }
 
+/// A float YAML reads back as the same float: `3.0` stays a float rather than
+/// collapsing to the integer `3`.
+fn float_token(f: f64) -> String {
+    if f.is_nan() {
+        return ".nan".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { ".inf" } else { "-.inf" }.to_string();
+    }
+    let s = f.to_string();
+    if s.contains(['.', 'e', 'E']) {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
+// =============================================================================
+// Round-trip verification
+// =============================================================================
+
+/// One selection a generator meant to write: its name and field forms.
+pub(crate) struct PlannedSelection<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) entries: &'a [(String, ValueForm)],
+}
+
+/// Parse generated YAML that must hold exactly one document without errors.
+pub(crate) fn parse_one_document(yaml: &str) -> Result<rsigma_parser::SigmaCollection, String> {
+    let documents = yaml_serde::Deserializer::from_str(yaml).count();
+    if documents != 1 {
+        return Err(format!("expected one YAML document, found {documents}"));
+    }
+    parse_without_errors(yaml)
+}
+
+/// Parse generated YAML, failing on any document error.
+pub(crate) fn parse_without_errors(yaml: &str) -> Result<rsigma_parser::SigmaCollection, String> {
+    let collection = rsigma_parser::parse_sigma_yaml(yaml).map_err(|e| e.to_string())?;
+    if let Some(error) = collection.errors().next() {
+        return Err(error.to_string());
+    }
+    Ok(collection)
+}
+
+/// Check that a parsed detection block is exactly the one a generator meant to
+/// write: the same selection names, the same field names, modifiers, and
+/// values in each, and the same condition.
+pub(crate) fn verify_detection(
+    detection: &rsigma_parser::Detections,
+    selections: &[PlannedSelection<'_>],
+    condition: &str,
+) -> Result<(), String> {
+    use rsigma_parser::Detection;
+
+    if detection.condition_strings != [condition] {
+        return Err(format!(
+            "condition is {:?}, expected {condition:?}",
+            detection.condition_strings
+        ));
+    }
+    if detection.timeframe.is_some() {
+        return Err("unexpected timeframe".to_string());
+    }
+    if detection.named.len() != selections.len() {
+        let mut found: Vec<&String> = detection.named.keys().collect();
+        found.sort();
+        return Err(format!(
+            "found selections {found:?}, expected {} selection(s)",
+            selections.len()
+        ));
+    }
+    for selection in selections {
+        let Some(Detection::AllOf(items)) = detection.named.get(selection.name) else {
+            return Err(format!(
+                "selection {:?} is missing or not a field mapping",
+                selection.name
+            ));
+        };
+        if items.len() != selection.entries.len() {
+            return Err(format!(
+                "selection {:?} has {} field(s), expected {}",
+                selection.name,
+                items.len(),
+                selection.entries.len()
+            ));
+        }
+        for (item, (field, form)) in items.iter().zip(selection.entries) {
+            let expected_name = rsigma_parser::fieldpath::escape_brackets(field);
+            if item.field.name.as_deref() != Some(expected_name.as_ref()) {
+                return Err(format!(
+                    "selection {:?} has field {:?}, expected {field:?}",
+                    selection.name, item.field.name
+                ));
+            }
+            let modifiers: Vec<rsigma_parser::Modifier> = form
+                .modifier()
+                .split('|')
+                .skip(1)
+                .filter_map(|m| m.parse().ok())
+                .collect();
+            if item.field.modifiers != modifiers {
+                return Err(format!(
+                    "field {field:?} has modifiers {:?}, expected {:?}",
+                    item.field.modifiers, modifiers
+                ));
+            }
+            let values = form_values(form);
+            if item.values != values {
+                return Err(format!(
+                    "field {field:?} has values {:?}, expected {values:?}",
+                    item.values
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The parsed values a form's emitted text must read back as.
+fn form_values(form: &ValueForm) -> Vec<rsigma_parser::SigmaValue> {
+    let string = |s: &str| {
+        rsigma_parser::SigmaValue::from_yaml(&yaml_serde::Value::String(escape_sigma_value(s)))
+    };
+    let value = |v: &DraftValue| match v {
+        DraftValue::Str(s) => string(s),
+        DraftValue::Int(n) => rsigma_parser::SigmaValue::Integer(*n),
+        DraftValue::Float(f) => rsigma_parser::SigmaValue::Float(*f),
+        DraftValue::Bool(b) => rsigma_parser::SigmaValue::Bool(*b),
+    };
+    match form {
+        ValueForm::Exact(v) => vec![value(v)],
+        ValueForm::OneOf(vs) => vs.iter().map(value).collect(),
+        ValueForm::EndsWith(s) | ValueForm::StartsWith(s) | ValueForm::Contains(s) => {
+            vec![string(s)]
+        }
+        ValueForm::ContainsAll(ts) => ts.iter().map(|t| string(t)).collect(),
+    }
+}
+
 pub(crate) fn emit_form(out: &mut String, field: &str, form: &ValueForm, indent: &str) {
-    let key = format!("{field}{}", form.modifier());
+    let key = yaml_key(&format!("{field}{}", form.modifier()));
     match form {
         ValueForm::Exact(v) => {
             out.push_str(&format!("{indent}{key}: {}\n", emit_value(v)));

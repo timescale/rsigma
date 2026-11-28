@@ -68,6 +68,74 @@ impl DocumentRef<'_> {
             Self::Filter(rule) => &rule.title,
         }
     }
+
+    fn name(&self) -> Option<&str> {
+        match self {
+            Self::Detection(rule) => rule.name.as_deref(),
+            Self::Correlation(rule) => rule.name.as_deref(),
+            Self::Filter(rule) => rule.name.as_deref(),
+        }
+    }
+
+    fn custom_attributes(&self) -> &std::collections::HashMap<String, yaml_serde::Value> {
+        match self {
+            Self::Detection(rule) => &rule.custom_attributes,
+            Self::Correlation(rule) => &rule.custom_attributes,
+            Self::Filter(rule) => &rule.custom_attributes,
+        }
+    }
+
+    /// Check that `yaml`, this document's emitted text, parses back as one
+    /// document of the same kind with the same id, name, title, and custom
+    /// attributes.
+    fn verify(&self, yaml: &str) -> Result<(), String> {
+        let label = || format!("{} '{}'", self.kind().as_str(), self.title());
+        let documents = yaml_serde::Deserializer::from_str(yaml).count();
+        if documents != 1 {
+            return Err(format!(
+                "{} emits {documents} YAML documents instead of one",
+                label()
+            ));
+        }
+        let collection = rsigma_parser::parse_sigma_yaml(yaml)
+            .map_err(|error| format!("{} emits YAML that does not parse: {error}", label()))?;
+        if let Some(error) = collection.errors().next() {
+            return Err(format!(
+                "{} emits YAML that does not parse: {error}",
+                label()
+            ));
+        }
+        let reparsed = match (
+            collection.rules.as_slice(),
+            collection.correlations.as_slice(),
+            collection.filters.as_slice(),
+        ) {
+            ([rule], [], []) => DocumentRef::Detection(rule),
+            ([], [rule], []) => DocumentRef::Correlation(rule),
+            ([], [], [rule]) => DocumentRef::Filter(rule),
+            _ => {
+                return Err(format!("{} does not read back as one document", label()));
+            }
+        };
+        if reparsed.kind() != self.kind() {
+            return Err(format!(
+                "{} reads back as a {}",
+                label(),
+                reparsed.kind().as_str()
+            ));
+        }
+        if reparsed.id() != self.id()
+            || reparsed.name() != self.name()
+            || reparsed.title() != self.title()
+            || reparsed.custom_attributes() != self.custom_attributes()
+        {
+            return Err(format!(
+                "{} reads back with a different id, name, title, or custom attributes",
+                label()
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn is_kept(decision: &Decision) -> bool {
@@ -186,15 +254,17 @@ pub(crate) fn portable_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Compute every file and lockfile entry a build would produce.
+/// Compute every file and lockfile entry a build would produce. Fails when a
+/// kept document's emitted YAML does not read back as the same document.
 pub(crate) fn plan_output(
     resolved: &ResolvedRuleset,
     spec: &RulesetSpec,
-) -> (Vec<PlannedFile>, Lockfile) {
+) -> Result<(Vec<PlannedFile>, Lockfile), String> {
     let mut files = Vec::new();
     let mut documents = Vec::new();
     for (entry, document) in kept_documents(resolved) {
         let yaml = document.yaml();
+        document.verify(&yaml)?;
         let sha256 = sha256_hex(yaml.as_bytes());
         let stem = stem_for(entry.id.as_deref(), &sha256);
         let rel = Path::new(subdir(document.kind())).join(format!("{stem}.yml"));
@@ -258,7 +328,7 @@ pub(crate) fn plan_output(
         pipelines: spec.pipelines.clone(),
         documents,
     };
-    (files, lock)
+    Ok((files, lock))
 }
 
 fn lockfile_contents(lock: &Lockfile) -> String {
@@ -428,7 +498,7 @@ pub(crate) fn materialize_temp(
     ensure_unique(resolved).map_err(|error| error.to_string())?;
     let dir = tempfile::tempdir()
         .map_err(|error| format!("cannot create a temporary directory: {error}"))?;
-    let (plan, lock) = plan_output(resolved, spec);
+    let (plan, lock) = plan_output(resolved, spec)?;
     write_output(dir.path(), &plan, &lock, true)?;
     Ok(dir)
 }
@@ -469,8 +539,8 @@ mod tests {
         };
         let resolved = resolve_ruleset("test", &spec, &ResolveOptions::default()).unwrap();
         ensure_unique(&resolved).unwrap();
-        let (first_files, first_lock) = plan_output(&resolved, &spec);
-        let (second_files, second_lock) = plan_output(&resolved, &spec);
+        let (first_files, first_lock) = plan_output(&resolved, &spec).unwrap();
+        let (second_files, second_lock) = plan_output(&resolved, &spec).unwrap();
         assert_eq!(first_files, second_files);
         assert_eq!(
             serde_json::to_string(&first_lock).unwrap(),
@@ -482,5 +552,58 @@ mod tests {
                 .rel
                 .ends_with("aaaaaaaa-0000-4000-8000-000000000001.yml")
         );
+    }
+
+    fn resolve_one(contents: &str) -> (tempfile::TempDir, ResolvedRuleset, RulesetSpec) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rule.yml"), contents).unwrap();
+        let spec = RulesetSpec {
+            sources: vec![dir.path().to_path_buf()],
+            ..Default::default()
+        };
+        let resolved = resolve_ruleset("test", &spec, &ResolveOptions::default()).unwrap();
+        (dir, resolved, spec)
+    }
+
+    #[test]
+    fn reserved_custom_attributes_build_under_their_block() {
+        let (_dir, resolved, spec) = resolve_one(
+            "title: Whoami\nid: aaaaaaaa-0000-4000-8000-000000000002\nlogsource:\n    product: windows\ndetection:\n    selection:\n        Image: x\n    condition: selection\ncustom_attributes:\n    correlation: c\n    action: reset\n    title: t\n",
+        );
+        let (files, _) = plan_output(&resolved, &spec).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(
+            files[0].contents.contains(
+                "custom_attributes:\n    action: reset\n    correlation: c\n    title: t\n"
+            ),
+            "{}",
+            files[0].contents
+        );
+    }
+
+    #[test]
+    fn emitted_text_that_reads_back_differently_fails_the_build() {
+        let (_dir, resolved, _) = resolve_one(
+            "title: Whoami\nid: aaaaaaaa-0000-4000-8000-000000000003\nlogsource:\n    product: windows\ndetection:\n    selection:\n        Image: x\n    condition: selection\npriority: high\n",
+        );
+        let documents = kept_documents(&resolved);
+        let (_, document) = &documents[0];
+        let yaml = document.yaml();
+        document.verify(&yaml).expect("untouched output verifies");
+        for tampered in [
+            format!("{yaml}---\n{yaml}"),
+            yaml.replace("title: Whoami", "title: Other"),
+            yaml.replace("id: aaaaaaaa", "id: bbbbbbbb"),
+            yaml.replace("priority: high", "priority: low"),
+            yaml.replace("priority: high", "correlation: high"),
+            yaml.replace(
+                "logsource:",
+                "filter:\n    selection:\n        a: b\n    condition: selection\nlogsource:",
+            ),
+            yaml.replace("condition: selection", "condition: missing"),
+        ] {
+            assert_ne!(tampered, yaml);
+            assert!(document.verify(&tampered).is_err(), "{tampered}");
+        }
     }
 }

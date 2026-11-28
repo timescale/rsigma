@@ -39,6 +39,8 @@ Guide: [Evaluating rules](https://rsigma.io/guide/evaluating-rules/), [Streaming
 
 `rule draft` proposes a detection from exemplar events, optionally contrasted with a baseline. `rule draft --groups` proposes a temporal correlation from grouped, timed exemplars. `rule draft --from-stix` proposes one rule per logsource from a STIX 2.1 bundle. Use draft when the user has events or indicators and wants a rule inferred from them.
 
+A draft skips a field whose name cannot be a Sigma field (a line break, a control character, `|`, or over 256 bytes) and says so in a `skipped field` warning; rename that field in the events, or with a pipeline, if the rule needs it.
+
 When the user describes the behavior in words, write the YAML with sigma-rules. Then run the loop above. Do not ask draft to invent a rule from a sentence.
 
 Guide: [Rule drafting](https://rsigma.io/guide/rule-drafting/).

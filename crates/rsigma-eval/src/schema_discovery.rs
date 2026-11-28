@@ -260,6 +260,7 @@ where
             .field_keys()
             .into_iter()
             .map(|k| k.into_owned())
+            .filter(|k| discoverable_key(k))
             .collect();
         keys.sort();
         keys.dedup();
@@ -317,17 +318,24 @@ fn shape_stats_from_entries(shapes: &[UnknownShapeEntry]) -> (Vec<ShapeStat>, u6
     let mut events_mined: u64 = 0;
     let shape_vec: Vec<ShapeStat> = shapes
         .iter()
-        .filter(|s| !s.keys.is_empty())
-        .map(|s| {
+        .filter_map(|s| {
+            let mut keys: Vec<String> = s
+                .keys
+                .iter()
+                .filter(|k| discoverable_key(k))
+                .cloned()
+                .collect();
+            if keys.is_empty() {
+                return None;
+            }
             events_mined += s.count;
-            let mut keys = s.keys.clone();
             keys.sort();
             keys.dedup();
-            ShapeStat {
+            Some(ShapeStat {
                 keys,
                 count: s.count,
                 values: HashMap::new(),
-            }
+            })
         })
         .collect();
     (shape_vec, events_mined)
@@ -866,43 +874,44 @@ fn predicate_to_yaml(p: &SchemaPredicate) -> String {
     }
 }
 
-/// Quote a scalar when needed so the emitted YAML always parses.
+/// Write a scalar plain only when it is a conservative identifier-like token
+/// YAML cannot read as anything else; quote everything else so the emitted
+/// YAML reads back as exactly `s`.
 fn yaml_scalar(s: &str) -> String {
-    let needs_quote = s.is_empty()
-        || s.chars().next().is_some_and(|c| {
-            matches!(
-                c,
-                '!' | '&'
-                    | '*'
-                    | '-'
-                    | '?'
-                    | '{'
-                    | '}'
-                    | '['
-                    | ']'
-                    | ','
-                    | '#'
-                    | '|'
-                    | '>'
-                    | '@'
-                    | '`'
-                    | '"'
-                    | '\''
-                    | '%'
-                    | ':'
-                    | ' '
-            )
-        })
-        || s.contains(": ")
-        || s.contains(" #")
-        || s.contains(['"', '\'', '\n', '\t'])
-        || s.ends_with(':')
-        || s.ends_with(' ');
-    if needs_quote {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
+    let plain = s
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '_' | '/'))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'))
+        && !matches!(
+            s.to_ascii_lowercase().as_str(),
+            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "y" | "n"
+        );
+    if plain {
         s.to_string()
+    } else {
+        rsigma_parser::quote_yaml_string(s)
     }
+}
+
+/// Longest field key discovery keeps. A longer key is not a realistic schema
+/// marker, and YAML caps a plain mapping key at 1024 characters.
+const MAX_DISCOVERY_KEY_BYTES: usize = 256;
+
+/// Whether a field key may enter a discovered signature: not over
+/// [`MAX_DISCOVERY_KEY_BYTES`], and free of line breaks and control
+/// characters.
+pub(crate) fn discoverable_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_DISCOVERY_KEY_BYTES
+        && !key.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{FFFE}' | '\u{FFFF}'
+                )
+        })
 }
 
 #[cfg(test)]
@@ -1120,5 +1129,192 @@ mod tests {
         for c in &report.candidates {
             assert!(c.specificity >= 55 && c.specificity <= 104);
         }
+    }
+
+    /// Strings that break naive YAML scalar quoting: every line break YAML
+    /// honours, flow indicators, comment and mapping markers, and document
+    /// markers.
+    const HOSTILE: &[&str] = &[
+        "a\nb",
+        "a\rb",
+        "a\r\nb",
+        "a\u{85}b",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a: b",
+        "a #b",
+        "#a",
+        "a#b",
+        "[a]",
+        "{a}",
+        "a,b",
+        "a]",
+        "- a",
+        "---",
+        "...",
+        "'q'",
+        "\"q\"",
+        "a|b",
+        "|",
+        ">",
+        "&a",
+        "*a",
+        "!a",
+        "%a",
+        "@a",
+        "?",
+        ":",
+        "a:",
+        "true",
+        "null",
+        "~",
+        "1.5",
+        "0x1F",
+        "2026-01-01",
+        " lead",
+        "trail ",
+        "\ttab",
+        "\u{1}",
+        "\u{7f}",
+        "\u{9f}",
+        "\u{feff}",
+        "\u{fffe}",
+        "",
+        "a\\b",
+    ];
+
+    fn assert_same_signature(parsed: &SchemaSignature, expected: &SchemaSignature) {
+        assert_eq!(parsed.name, expected.name);
+        assert_eq!(parsed.specificity, expected.specificity);
+        assert_eq!(
+            format!("{:?}", parsed.predicates),
+            format!("{:?}", expected.predicates)
+        );
+    }
+
+    #[test]
+    fn hostile_strings_round_trip_through_signature_yaml() {
+        let candidate = |name: &str, predicates: Vec<SchemaPredicate>| DiscoveryCandidate {
+            name: name.to_string(),
+            specificity: 60,
+            predicates,
+            support: 1,
+            coverage_of_unknown: 1.0,
+            sample_field_sets: Vec::new(),
+            overlap_warnings: Vec::new(),
+            source: CandidateSource::Corpus,
+        };
+        let mut candidates = Vec::new();
+        for (i, s) in HOSTILE.iter().enumerate() {
+            candidates.push(candidate(
+                &format!("n{i}{s}"),
+                vec![
+                    SchemaPredicate::FieldPresent(s.to_string()),
+                    SchemaPredicate::AnyOf(vec![s.to_string(), format!("{s}2")]),
+                    SchemaPredicate::Equals {
+                        field: format!("f{s}"),
+                        value: s.to_string(),
+                    },
+                    SchemaPredicate::In {
+                        field: s.to_string(),
+                        values: vec![s.to_string(), "x, y".to_string(), format!("[{s}]")],
+                    },
+                ],
+            ));
+        }
+        let report = DiscoveryReport {
+            candidates,
+            stats: DiscoveryStats::default(),
+        };
+        let yaml = report.to_signatures_yaml();
+        let parsed =
+            crate::schema::parse_schema_signatures(&yaml).unwrap_or_else(|e| panic!("{e}\n{yaml}"));
+        assert_eq!(parsed.len(), report.candidates.len());
+        for (parsed, candidate) in parsed.iter().zip(&report.candidates) {
+            assert_same_signature(parsed, &candidate.signature());
+            assert_eq!(parsed.predicates.len(), 4);
+        }
+    }
+
+    #[test]
+    fn mined_keys_with_yaml_syntax_round_trip_and_line_breaks_are_skipped() {
+        let mut corpus = Vec::new();
+        for _ in 0..5 {
+            corpus.push(json!({
+                "vendor": "acme",
+                "a: b": "x",
+                "#c": "y",
+                "[d]": "z",
+                "e, f": "w",
+                "line\nbreak": "v",
+                "sep\u{2028}arator": "u",
+                "long": "t",
+            }));
+        }
+        let config = DiscoveryConfig {
+            max_predicates: 8,
+            ..DiscoveryConfig::default()
+        };
+        let report = mine(&corpus, &config);
+        assert!(!report.candidates.is_empty());
+        let yaml = report.to_signatures_yaml();
+        let parsed =
+            crate::schema::parse_schema_signatures(&yaml).unwrap_or_else(|e| panic!("{e}\n{yaml}"));
+        for (parsed, candidate) in parsed.iter().zip(&report.candidates) {
+            assert_same_signature(parsed, &candidate.signature());
+        }
+        let fields: Vec<String> = report
+            .candidates
+            .iter()
+            .flat_map(|c| c.sample_field_sets.iter().flatten().cloned())
+            .collect();
+        assert!(fields.iter().any(|f| f == "a: b"), "{fields:?}");
+        assert!(
+            fields.iter().all(|f| !f.contains(['\n', '\u{2028}'])),
+            "{fields:?}"
+        );
+    }
+
+    #[test]
+    fn keys_only_shapes_skip_unwritable_keys() {
+        let long = "k".repeat(300);
+        let shapes = vec![UnknownShapeEntry {
+            keys: vec!["a".into(), "b\nc".into(), long.clone(), "d".into()],
+            count: 4,
+        }];
+        let report = mine_shapes(&shapes, &DiscoveryConfig::default());
+        for c in &report.candidates {
+            for set in &c.sample_field_sets {
+                assert!(set.iter().all(|k| k != "b\nc" && *k != long), "{set:?}");
+            }
+        }
+        let only_bad = vec![UnknownShapeEntry {
+            keys: vec!["b\nc".into()],
+            count: 4,
+        }];
+        assert_eq!(
+            mine_shapes(&only_bad, &DiscoveryConfig::default())
+                .stats
+                .events_mined,
+            0
+        );
+    }
+
+    #[test]
+    fn hostile_keys_golden() {
+        let corpus: Vec<Value> = (0..5)
+            .map(|_| {
+                json!({
+                    "vendor: name": "acme#1",
+                    "[kind]": "a,b:c",
+                    "line\nbreak": "skipped",
+                })
+            })
+            .collect();
+        let report = mine(&corpus, &DiscoveryConfig::default());
+        assert_eq!(
+            report.to_signatures_yaml(),
+            include_str!("golden/schema_discovery_hostile_keys.yaml")
+        );
     }
 }

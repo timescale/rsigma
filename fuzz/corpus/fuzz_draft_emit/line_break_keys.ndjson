@@ -1,0 +1,3 @@
+{"a\nb": "x\ny", "c\rd": "x\rz", "ef": "xy", "g h": "x y", "i j": "x y", "ctl\u0001": "v\u0001", "bom﻿": "﻿", "vendor": "acme"}
+{"a\nb": "x\ny", "c\rd": "x\rz", "ef": "xy", "g h": "x y", "i j": "x y", "ctl\u0001": "v\u0001", "bom﻿": "﻿", "vendor": "acme"}
+{"a\nb": "x\ny", "c\rd": "x\rz", "ef": "xy", "g h": "x y", "i j": "x y", "ctl\u0001": "v\u0001", "bom﻿": "﻿", "vendor": "acme"}

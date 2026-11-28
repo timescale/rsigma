@@ -24,6 +24,8 @@ The build refuses to write into an existing non-empty directory that has no `rul
 
 Every entry the build touches is physically inside the output directory. A `rules/`, `correlations/`, or `filters/` subdirectory that is a symlink fails the build with exit 3 (and counts as drift under `--check`), and a symlink where a generated file or the lockfile goes is replaced with a regular file rather than written through. {{ added "unreleased" }}
 
+Every emitted document is parsed back before anything is written. A document that does not read back as one document of the same kind with the same id, name, title, and custom attributes fails the build with exit 3, and so does the same check in `--check`, `ruleset diff`, and every command that loads a ruleset by name. Custom attributes named after a standard Sigma key or `action` are written under a `custom_attributes:` block so they read back unchanged. {{ added "unreleased" }}
+
 A source parse error fails the build with exit 2 and lists the errors. Resolution errors exit 3. With `--check`, the build writes nothing and exits 1 when the directory differs from what a build would write.
 
 The output defaults to the ruleset's `output` key. Pass `-o` to override it. A ruleset `output` from a project file (`./rsigma.yaml` or `.rsigmarc`) that resolves outside the project is ignored with a warning; see [Project config trust](../../reference/configuration.md#project-config-trust). {{ added "unreleased" }}
@@ -65,7 +67,7 @@ rsigma engine daemon --rules build/linux_edge
 | `0` | The build wrote the output, or `--check` found no drift. |
 | `1` | `--check` found drift. |
 | `2` | A source had parse errors. |
-| `3` | Resolution error, missing output directory, non-empty directory without `--force`, or unreadable configuration. |
+| `3` | Resolution error, missing output directory, non-empty directory without `--force`, unreadable configuration, or an emitted document that does not read back as itself. |
 
 ## See also
 

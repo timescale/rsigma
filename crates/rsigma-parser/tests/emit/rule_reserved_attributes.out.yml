@@ -1,0 +1,20 @@
+title: Whoami with reserved custom attributes
+id: 3f6b1c2e-0000-4000-8000-000000000001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\whoami.exe'
+    condition: selection
+level: medium
+rsigma.suppress: 5m
+priority: high
+custom_attributes:
+    action: reset
+    correlation: 'not a correlation'
+    filter:
+        rules:
+            - other
+    generate: true
+    title: 'not the title'

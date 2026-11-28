@@ -2,6 +2,7 @@
 # always LF. Pin them to LF so a Windows checkout does not rewrite them to CRLF.
 crates/rsigma-cli/tests/golden/** text eol=lf
 crates/rsigma-convert/tests/golden/** text eol=lf
+crates/rsigma-eval/src/golden/** text eol=lf
 crates/rsigma-eval/src/rule_draft/golden/** text eol=lf
 crates/rsigma-parser/tests/emit/** text eol=lf
 crates/rsigma-parser/tests/fmt/** text eol=lf

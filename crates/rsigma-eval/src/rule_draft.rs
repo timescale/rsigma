@@ -383,6 +383,60 @@ impl DraftCandidate {
         )
     }
 
+    /// Check that `yaml`, the text [`Self::emit`] produced, parses back as one
+    /// detection rule carrying exactly the planned title, id, and detection.
+    pub(crate) fn verify_document<E: Event>(
+        &self,
+        yaml: &str,
+        exemplars: &[E],
+        config: &DraftConfig,
+    ) -> Result<(), DraftError> {
+        let collection = parse_one_document(yaml).map_err(round_trip_error)?;
+        if collection.rules.len() != 1
+            || !collection.correlations.is_empty()
+            || !collection.filters.is_empty()
+        {
+            return Err(round_trip_error(
+                "expected exactly one detection rule".to_string(),
+            ));
+        }
+        self.verify_rule(&collection.rules[0], exemplars, config, None)
+            .map_err(round_trip_error)
+    }
+
+    /// Check one parsed rule against what [`Self::emit_named`] meant to write.
+    pub(crate) fn verify_rule<E: Event>(
+        &self,
+        rule: &rsigma_parser::SigmaRule,
+        exemplars: &[E],
+        config: &DraftConfig,
+        name: Option<&str>,
+    ) -> Result<(), String> {
+        let title = draft_title(&self.profiles, &self.selected, config);
+        if rule.title != title {
+            return Err(format!("title is {:?}, expected {title:?}", rule.title));
+        }
+        if rule.name.as_deref() != name {
+            return Err(format!("name is {:?}, expected {name:?}", rule.name));
+        }
+        if rule.id != config.rule_id {
+            return Err(format!(
+                "id is {:?}, expected {:?}",
+                rule.id, config.rule_id
+            ));
+        }
+        let detection = build_detection(&self.profiles, &self.selected, exemplars, config);
+        let planned: Vec<PlannedSelection<'_>> = detection
+            .selections
+            .iter()
+            .map(|selection| PlannedSelection {
+                name: &selection.name,
+                entries: &selection.entries,
+            })
+            .collect();
+        verify_detection(&rule.detection, &planned, &detection.condition)
+    }
+
     pub(crate) fn drop_lowest_eligible(&mut self, failing: Option<&[usize]>) -> Option<usize> {
         let absent_in_failing = |index: usize| {
             failing.is_some_and(|indexes| {
@@ -424,6 +478,7 @@ pub fn draft_rule<E: Event>(
     // ---- Emit + verify (bounded relaxation) --------------------------------
     let (yaml, matched, failing) = loop {
         let yaml = candidate.emit(exemplars, config);
+        candidate.verify_document(&yaml, exemplars, config)?;
         let engine = compile_draft(&yaml)?;
         let failing: Vec<usize> = exemplars
             .iter()
@@ -837,12 +892,23 @@ fn title_marker(profiles: &[DraftFieldProfile], selected: &[usize]) -> Option<St
         ValueForm::EndsWith(s) | ValueForm::StartsWith(s) | ValueForm::Contains(s) => s.clone(),
         ValueForm::ContainsAll(ts) => ts.first().cloned().unwrap_or_default(),
     };
+    let raw = single_line(&raw);
     let trimmed = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric());
     if trimmed.is_empty() {
         None
     } else {
         Some(format!("{trimmed} ({})", first.field()))
     }
+}
+
+/// The draft's title: the configured one, or one derived from the dominant
+/// field.
+fn draft_title(profiles: &[DraftFieldProfile], selected: &[usize], config: &DraftConfig) -> String {
+    config.title.clone().unwrap_or_else(|| {
+        title_marker(profiles, selected)
+            .map(|m| format!("Draft: {m}"))
+            .unwrap_or_else(|| "Draft rule".to_string())
+    })
 }
 
 fn emit_rule_yaml(
@@ -853,11 +919,7 @@ fn emit_rule_yaml(
     config: &DraftConfig,
     name: Option<&str>,
 ) -> String {
-    let title = config.title.clone().unwrap_or_else(|| {
-        title_marker(profiles, selected)
-            .map(|m| format!("Draft: {m}"))
-            .unwrap_or_else(|| "Draft rule".to_string())
-    });
+    let title = draft_title(profiles, selected, config);
     let date = config
         .date
         .clone()
@@ -869,7 +931,7 @@ fn emit_rule_yaml(
         out.push_str(&format!("name: {}\n", yaml_str(name)));
     }
     if let Some(id) = &config.rule_id {
-        out.push_str(&format!("id: {id}\n"));
+        out.push_str(&format!("id: {}\n", yaml_str(id)));
     }
     out.push_str("status: experimental\n");
     push_description(&mut out, None);
@@ -1013,8 +1075,82 @@ pub fn draft_rule_from_values(spec: &ValueDraftSpec) -> Result<String, DraftErro
     push_falsepositives(&mut out);
     push_level(&mut out, level.trim());
 
+    verify_value_draft(&out, spec, title.trim()).map_err(round_trip_error)?;
     compile_draft(&out)?;
     Ok(out)
+}
+
+/// Check that a value draft parses back as one rule with the requested title,
+/// id, and selections.
+fn verify_value_draft(yaml: &str, spec: &ValueDraftSpec, title: &str) -> Result<(), String> {
+    use rsigma_parser::{Detection, Modifier, SigmaValue};
+
+    let collection = parse_one_document(yaml)?;
+    let [rule] = collection.rules.as_slice() else {
+        return Err("expected exactly one detection rule".to_string());
+    };
+    if rule.title != title {
+        return Err(format!("title is {:?}, expected {title:?}", rule.title));
+    }
+    let id = spec
+        .rule_id
+        .as_deref()
+        .map(one_line)
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
+    if rule.id != id {
+        return Err(format!("id is {:?}, expected {id:?}", rule.id));
+    }
+    let detection = &rule.detection;
+    if detection.condition_strings != ["1 of selection_*"]
+        || detection.named.len() != spec.selections.len()
+    {
+        return Err(format!(
+            "detection has {} selection(s) and condition {:?}",
+            detection.named.len(),
+            detection.condition_strings
+        ));
+    }
+    for selection in &spec.selections {
+        let Some(Detection::AllOf(items)) = detection.named.get(&selection.name) else {
+            return Err(format!("selection {:?} is missing", selection.name));
+        };
+        let [item] = items.as_slice() else {
+            return Err(format!(
+                "selection {:?} has {} fields",
+                selection.name,
+                items.len()
+            ));
+        };
+        let modifiers: Vec<Modifier> = selection
+            .modifiers
+            .iter()
+            .filter_map(|m| m.parse().ok())
+            .collect();
+        let raw = modifiers.contains(&Modifier::Re);
+        let values: Vec<SigmaValue> = selection
+            .values
+            .iter()
+            .map(|value| escape_sigma_value(&one_line(value)))
+            .map(|value| {
+                if raw {
+                    SigmaValue::from_raw_string(&value)
+                } else {
+                    SigmaValue::from_yaml(&yaml_serde::Value::String(value))
+                }
+            })
+            .collect();
+        if item.field.name.as_deref() != Some(selection.field.as_str())
+            || item.field.modifiers != modifiers
+            || item.values != values
+        {
+            return Err(format!(
+                "selection {:?} reads back as {:?} {:?} {:?}",
+                selection.name, item.field.name, item.field.modifiers, item.values
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn push_description(out: &mut String, description: Option<&str>) {
@@ -1063,7 +1199,7 @@ fn push_string_list(out: &mut String, key: &str, values: &[String]) {
 }
 
 fn one_line(value: &str) -> String {
-    value.replace(['\n', '\r'], " ")
+    single_line(value)
 }
 
 fn valid_selection(selection: &ValueSelection) -> bool {
@@ -1106,6 +1242,13 @@ fn field_like(value: &str) -> bool {
 // =============================================================================
 // Verification
 // =============================================================================
+
+fn round_trip_error(message: String) -> DraftError {
+    DraftError::Internal {
+        stage: "round-trip".to_string(),
+        message,
+    }
+}
 
 fn compile_draft(yaml: &str) -> Result<Engine, DraftError> {
     let collection = rsigma_parser::parse_sigma_yaml(yaml).map_err(|e| DraftError::Internal {
@@ -1882,5 +2025,268 @@ mod tests {
             draft_rule_from_values(&bad_name),
             Err(DraftError::BadSelection { .. })
         ));
+    }
+
+    /// Field names that break naive YAML key emission.
+    fn hostile_keys() -> Vec<String> {
+        let mut keys: Vec<String> = [
+            "a\nb",
+            "a\rb",
+            "a\u{85}b",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "Field: x",
+            "#Field",
+            "Field #x",
+            "'Field'",
+            "\"Field\"",
+            "Field|contains",
+            "---",
+            "--- x",
+            "...x",
+            "[Field]",
+            "{Field}",
+            "Field,x",
+            "- Field",
+            "true",
+            "1",
+            "@Field",
+            "&Field",
+            "*Field",
+            "!Field",
+            "%Field",
+            "?Field",
+            "tab\tField",
+            " Field",
+            "Field\\x",
+            "Field\\[0\\]",
+            "Field[0]",
+            "\u{feff}Field",
+            "\u{1b}Field",
+        ]
+        .iter()
+        .map(|key| key.to_string())
+        .collect();
+        keys.push("F".repeat(300));
+        keys
+    }
+
+    fn hostile_exemplars(key: &str) -> Vec<Value> {
+        (0..3)
+            .map(|_| {
+                let mut event = serde_json::Map::new();
+                event.insert("Image".into(), json!("C:\\Windows\\evil.exe"));
+                event.insert(key.into(), json!("hostile: value #1"));
+                Value::Object(event)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hostile_field_names_round_trip_or_are_skipped() {
+        for key in hostile_keys() {
+            let cfg = DraftConfig {
+                min_fields: 1,
+                ..fixed_config()
+            };
+            let report = draft(&hostile_exemplars(&key), &[], &cfg)
+                .unwrap_or_else(|e| panic!("{key:?}: {e}"));
+            assert_eq!(report.exemplar_matched, report.exemplar_total, "{key:?}");
+            let collection = rsigma_parser::parse_sigma_yaml(&report.rule_yaml).unwrap();
+            assert!(!collection.has_errors(), "{key:?}:\n{}", report.rule_yaml);
+            assert_eq!(collection.len(), 1, "{key:?}:\n{}", report.rule_yaml);
+            let items: Vec<&rsigma_parser::DetectionItem> = collection.rules[0]
+                .detection
+                .named
+                .values()
+                .flat_map(|detection| match detection {
+                    rsigma_parser::Detection::AllOf(items) => items.iter(),
+                    _ => panic!("unexpected detection shape"),
+                })
+                .collect();
+            let written = rsigma_parser::fieldpath::escape_brackets(&key);
+            let found = items
+                .iter()
+                .find(|item| item.field.name.as_deref() == Some(written.as_ref()));
+            match unwritable_field_name(&key) {
+                Some(_) => {
+                    assert!(found.is_none(), "{key:?} must not be written");
+                    assert!(
+                        report
+                            .warnings
+                            .iter()
+                            .any(|w| w.starts_with("skipped field")),
+                        "{key:?}: {:?}",
+                        report.warnings
+                    );
+                    assert!(report.fields.iter().all(|f| f.field != key));
+                }
+                None => {
+                    let item = found
+                        .unwrap_or_else(|| panic!("{key:?} missing from:\n{}", report.rule_yaml));
+                    assert!(item.field.modifiers.is_empty(), "{key:?}");
+                    assert_eq!(
+                        item.values,
+                        [rsigma_parser::SigmaValue::from_yaml(
+                            &yaml_serde::Value::String("hostile: value #1".into())
+                        )],
+                        "{key:?}"
+                    );
+                    assert_eq!(collection.rules[0].detection.named.len(), 1, "{key:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hostile_metadata_round_trips() {
+        let cfg = DraftConfig {
+            title: Some("Title\n---\nlevel: low # x".to_string()),
+            rule_id: Some("id: 1\n...".to_string()),
+            logsource_category: Some("a\u{2028}b: c".to_string()),
+            ..fixed_config()
+        };
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"vendor": "acme\nlevel: low", "action": "it's: \"x\""}))
+            .collect();
+        let report = draft(&exemplars, &[], &cfg).unwrap();
+        let collection = rsigma_parser::parse_sigma_yaml(&report.rule_yaml).unwrap();
+        let rule = &collection.rules[0];
+        assert_eq!(rule.title, "Title\n---\nlevel: low # x");
+        assert_eq!(rule.id.as_deref(), Some("id: 1\n..."));
+        assert_eq!(rule.logsource.category.as_deref(), Some("a\u{2028}b: c"));
+        assert_eq!(rule.level, Some(rsigma_parser::Level::Medium));
+    }
+
+    #[test]
+    fn values_yaml_would_read_as_numbers_stay_strings() {
+        for value in ["0x1F", "0o17", ".inf", ".NaN", "1_000", "1e5", "0b101"] {
+            let exemplars: Vec<Value> = (0..3)
+                .map(|_| json!({"vendor": "acme", "code": value}))
+                .collect();
+            let report =
+                draft(&exemplars, &[], &fixed_config()).unwrap_or_else(|e| panic!("{value}: {e}"));
+            assert!(
+                report.rule_yaml.contains(&format!("code: '{value}'\n")),
+                "{value}:\n{}",
+                report.rule_yaml
+            );
+        }
+    }
+
+    #[test]
+    fn whole_floats_stay_floats() {
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"vendor": "acme", "ratio": 3.0}))
+            .collect();
+        let report = draft(&exemplars, &[], &fixed_config()).unwrap();
+        assert!(
+            report.rule_yaml.contains("ratio: 3.0\n"),
+            "{}",
+            report.rule_yaml
+        );
+    }
+
+    fn tamper_candidate() -> (Vec<Value>, DraftCandidate, String) {
+        let exemplars: Vec<Value> = (0..3)
+            .map(|_| json!({"vendor": "acme", "action": "alert"}))
+            .collect();
+        let events = events(&exemplars);
+        let candidate = DraftCandidate::build(&events, &[], &fixed_config()).unwrap();
+        let yaml = candidate.emit(&events, &fixed_config());
+        (exemplars, candidate, yaml)
+    }
+
+    #[test]
+    fn tampered_draft_output_is_rejected() {
+        let (exemplars, candidate, yaml) = tamper_candidate();
+        let events = events(&exemplars);
+        candidate
+            .verify_document(&yaml, &events, &fixed_config())
+            .expect("untouched output verifies");
+        let tampered = [
+            format!("{yaml}---\n{yaml}"),
+            format!("{yaml}---\naction: global\nlevel: low\n"),
+            yaml.replace(
+                "    condition: selection\n",
+                "    extra:\n        x: y\n    condition: selection\n",
+            ),
+            yaml.replace(
+                "    condition: selection\n",
+                "    condition: not selection\n",
+            ),
+            yaml.replace("action: alert", "action: alerts"),
+            yaml.replace("action: alert", "action|contains: alert"),
+            yaml.replace("action: alert", "actions: alert"),
+            yaml.replace("        action: alert\n", ""),
+            yaml.replace("title:", "name: x\ntitle:"),
+            yaml.replace(
+                "logsource:",
+                "correlation:\n    type: event_count\nlogsource:",
+            ),
+        ];
+        for text in tampered {
+            assert_ne!(text, yaml);
+            let error = candidate
+                .verify_document(&text, &events, &fixed_config())
+                .expect_err(&text);
+            assert!(
+                matches!(&error, DraftError::Internal { stage, .. } if stage == "round-trip"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn value_draft_rejects_line_breaks_in_every_form() {
+        let yaml = draft_rule_from_values(&ValueDraftSpec {
+            title: "Bad\u{2028}title\u{85}here".into(),
+            description: Some("a\u{2029}b".into()),
+            references: vec!["https://x\u{2028}y".into()],
+            tags: vec!["attack.t1\u{85}".into()],
+            rule_id: Some("id\u{2028}x".into()),
+            date: Some("2026-06-01".into()),
+            logsource_category: Some("cat\u{2028}x".into()),
+            logsource_product: None,
+            logsource_service: None,
+            level: Some("high".into()),
+            selections: vec![ValueSelection {
+                name: "selection_x".into(),
+                field: "Field".into(),
+                modifiers: Vec::new(),
+                values: vec!["v\u{2028}1".into(), "v\u{1b}2".into()],
+            }],
+        })
+        .unwrap();
+        assert!(
+            !yaml.contains(['\u{2028}', '\u{2029}', '\u{85}', '\u{1b}']),
+            "{yaml}"
+        );
+        assert_eq!(yaml.lines().count(), yaml.matches('\n').count());
+        let rule = &rsigma_parser::parse_sigma_yaml(&yaml).unwrap().rules[0];
+        assert_eq!(rule.title, "Bad title here");
+        assert_eq!(rule.id.as_deref(), Some("id x"));
+    }
+
+    #[test]
+    fn hostile_keys_golden() {
+        let mut event = serde_json::Map::new();
+        event.insert("Image".into(), json!("C:\\Windows\\evil.exe"));
+        event.insert("Field: x #y".into(), json!("line one\nline two"));
+        event.insert("'quoted'".into(), json!("it's"));
+        event.insert("---".into(), json!("..."));
+        event.insert("true".into(), json!("yes"));
+        event.insert("pipe|key".into(), json!("skipped"));
+        event.insert("line\nbreak".into(), json!("skipped"));
+        let exemplars = vec![Value::Object(event); 3];
+        let cfg = DraftConfig {
+            max_fields: 6,
+            ..fixed_config()
+        };
+        let report = draft(&exemplars, &[], &cfg).unwrap();
+        assert_eq!(
+            report.rule_yaml,
+            include_str!("rule_draft/golden/draft_hostile_keys.yaml")
+        );
     }
 }

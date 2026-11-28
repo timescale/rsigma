@@ -986,12 +986,16 @@ impl Backend for PostgresBackend {
             }
         };
 
-        // Rule metadata is free text, so it renders as string literal content.
+        // Rule metadata is free text, so it renders as string literal content
+        // on one line, which also keeps it inside a `--` comment.
         Ok(render_query_template(&effective_tmpl, |key| match key {
             "query" => Some(query.clone()),
             "table" => Some(qualified.clone()),
-            "rule.title" => Some(rule.title.replace('\'', "''")),
-            "rule.id" => rule.id.as_ref().map(|id| id.replace('\'', "''")),
+            "rule.title" => Some(sanitize_single_line(&rule.title).replace('\'', "''")),
+            "rule.id" => rule
+                .id
+                .as_ref()
+                .map(|id| sanitize_single_line(id).replace('\'', "''")),
             _ => None,
         }))
     }

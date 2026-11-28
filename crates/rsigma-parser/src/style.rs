@@ -98,12 +98,19 @@ pub(crate) fn plain_safe(s: &str) -> bool {
     if s.starts_with("---") || s.starts_with("...") {
         return false;
     }
-    if s.chars()
-        .any(|c| c.is_control() || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}'))
-    {
+    if s.chars().any(|c| c.is_control() || needs_escape(c)) {
         return false;
     }
     !coerces(s)
+}
+
+/// Characters YAML readers either reject raw or treat as a line break, so they
+/// must be written as an escape inside a double-quoted scalar.
+fn needs_escape(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{FFFE}' | '\u{FFFF}'
+    )
 }
 
 /// Choose the YAML form of a string scalar for the given context.
@@ -175,6 +182,8 @@ pub(crate) fn double_quote(s: &str) -> String {
             '\u{2028}' => out.push_str("\\L"),
             '\u{2029}' => out.push_str("\\P"),
             '\u{FEFF}' => out.push_str("\\uFEFF"),
+            '\u{FFFE}' => out.push_str("\\uFFFE"),
+            '\u{FFFF}' => out.push_str("\\uFFFF"),
             c if c.is_control() => {
                 let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\\x{:02X}", c as u32));
             }
@@ -216,11 +225,19 @@ pub(crate) fn push_scalar(out: &mut String, indent: &str, lead: Lead<'_>, s: &st
     }
 }
 
-fn single_quote_cannot_carry(c: char) -> bool {
-    matches!(
-        c,
-        '\n' | '\r' | '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}'
-    ) || (c.is_control() && c != '\t')
+pub(crate) fn single_quote_cannot_carry(c: char) -> bool {
+    c == '\n' || c == '\r' || needs_escape(c) || (c.is_control() && c != '\t')
+}
+
+/// Write `s` as a quoted YAML scalar on one line that reads back as exactly
+/// `s`: single-quoted when single quotes can carry every character, otherwise
+/// double-quoted with escapes.
+pub(crate) fn quote(s: &str) -> String {
+    if s.chars().any(single_quote_cannot_carry) {
+        double_quote(s)
+    } else {
+        single_quote(s)
+    }
 }
 
 /// Lines that end in a space or tab stay quoted: editors and pre-commit hooks
@@ -232,11 +249,8 @@ fn literal_ok(s: &str) -> bool {
     if s.split('\n').any(|line| line.ends_with([' ', '\t'])) {
         return false;
     }
-    !s.chars().any(|c| {
-        c == '\r'
-            || (c.is_control() && c != '\t' && c != '\n')
-            || matches!(c, '\u{FEFF}' | '\u{85}' | '\u{2028}' | '\u{2029}')
-    })
+    !s.chars()
+        .any(|c| c == '\r' || (c.is_control() && c != '\t' && c != '\n') || needs_escape(c))
 }
 
 fn literal(s: &str) -> Encoded {
