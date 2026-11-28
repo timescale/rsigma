@@ -412,18 +412,22 @@ pub fn render_template_url(text: &str, result: &EvaluationResult) -> String {
     })
 }
 
-/// Like [`render_template`], but JSON-string-escapes every substituted value.
+/// Like [`render_template`], but escapes every substituted value for a JSON
+/// body.
 ///
 /// Use this for a templated body that is a JSON document: interpolated values
 /// (rule titles, event field strings) are attacker-influenced, so a value
 /// containing a quote, backslash, or control character would otherwise break
-/// the rendered payload. The escaper serializes each substitution as a JSON
-/// string and strips the surrounding quotes, yielding content safe to drop
-/// inside a JSON string literal. A placeholder outside a string literal is
-/// still inserted as raw text. URLs use [`render_template_url`]; headers keep
+/// the rendered payload. A placeholder inside a JSON string literal receives
+/// the value JSON-string-escaped. When the template is a JSON object or array
+/// (with every placeholder read as `0`), a placeholder outside a string
+/// literal receives one JSON value: the value itself when it is a JSON
+/// number, `true`, `false`, or `null`, and a JSON string otherwise, so it
+/// cannot add keys or elements. Other templates receive every value
+/// JSON-string-escaped. URLs use [`render_template_url`]; headers keep
 /// [`render_template`] because header parsing rejects CR and LF.
 pub fn render_template_json(text: &str, result: &EvaluationResult) -> String {
-    render_with(text, result, false, |_, s| json_escape_value(s))
+    render_json_body(text, result, false, None)
 }
 
 /// Like [`render_template`], but `fields.<name>` falls back to the retained
@@ -445,10 +449,10 @@ pub(crate) fn render_enricher_template_url(text: &str, result: &EvaluationResult
     })
 }
 
-/// Like [`render_enricher_template`], but JSON-string-escapes every
-/// substituted value.
+/// Like [`render_enricher_template`], but escapes every substituted value
+/// for a JSON body, as [`render_template_json`] does.
 pub(crate) fn render_enricher_template_json(text: &str, result: &EvaluationResult) -> String {
-    render_with(text, result, true, |_, s| json_escape_value(s))
+    render_json_body(text, result, true, None)
 }
 
 /// Like [`render_template_json`], but `${detection.ocsf}` /
@@ -462,10 +466,107 @@ pub(crate) fn render_template_json_with_ocsf(
     result: &EvaluationResult,
     ocsf: impl Fn() -> String,
 ) -> String {
-    render_with(text, result, false, |source, s| match source {
-        ValueSource::Ocsf => ocsf(),
-        ValueSource::Env | ValueSource::Result => json_escape_value(s),
-    })
+    render_json_body(text, result, false, Some(&ocsf))
+}
+
+/// Render a JSON body template; see [`render_template_json`].
+fn render_json_body(
+    text: &str,
+    result: &EvaluationResult,
+    fallback: bool,
+    ocsf: Option<&dyn Fn() -> String>,
+) -> String {
+    let document = is_json_document_template(text);
+    let mut out = String::with_capacity(text.len());
+    let mut lexer = JsonLexer::default();
+    let mut pos = 0;
+    for caps in TEMPLATE_RE.captures_iter(text) {
+        let whole = caps.get(0).unwrap();
+        let literal = &text[pos..whole.start()];
+        lexer.feed(literal);
+        out.push_str(literal);
+        pos = whole.end();
+        let (source, raw) = resolve_reference(caps.get(1).unwrap().as_str(), result, fallback);
+        if source == ValueSource::Ocsf {
+            out.push_str(&ocsf.map(|f| f()).unwrap_or_default());
+            continue;
+        }
+        match lexer.position() {
+            JsonPosition::String => out.push_str(&json_escape_value(raw)),
+            JsonPosition::Escaped => {
+                // Finish the template's own escape as a literal backslash,
+                // so the value cannot complete it.
+                out.push('\\');
+                lexer.escape = false;
+                out.push_str(&json_escape_value(raw));
+            }
+            JsonPosition::Outside if document => out.push_str(&json_value_literal(raw)),
+            JsonPosition::Outside => out.push_str(&json_escape_value(raw)),
+        }
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+/// Whether `text`, with every placeholder read as `0`, is a JSON object or
+/// array.
+fn is_json_document_template(text: &str) -> bool {
+    let probe = TEMPLATE_RE.replace_all(text, "0");
+    matches!(
+        serde_json::from_str::<serde_json::Value>(&probe),
+        Ok(serde_json::Value::Object(_) | serde_json::Value::Array(_))
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonPosition {
+    Outside,
+    String,
+    /// Inside a string literal, right after a backslash.
+    Escaped,
+}
+
+/// Tracks whether a JSON text is inside a string literal.
+#[derive(Default)]
+struct JsonLexer {
+    string: bool,
+    escape: bool,
+}
+
+impl JsonLexer {
+    fn position(&self) -> JsonPosition {
+        match (self.string, self.escape) {
+            (false, _) => JsonPosition::Outside,
+            (true, false) => JsonPosition::String,
+            (true, true) => JsonPosition::Escaped,
+        }
+    }
+
+    fn feed(&mut self, text: &str) {
+        for c in text.chars() {
+            if !self.string {
+                self.string = c == '"';
+            } else if self.escape {
+                self.escape = false;
+            } else if c == '\\' {
+                self.escape = true;
+            } else if c == '"' {
+                self.string = false;
+            }
+        }
+    }
+}
+
+/// One JSON value holding `value`: the value itself when it is a JSON number,
+/// `true`, `false`, or `null`, and a JSON string otherwise.
+fn json_value_literal(value: String) -> String {
+    static NUMBER: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$").unwrap()
+    });
+    if matches!(value.as_str(), "true" | "false" | "null") || NUMBER.is_match(&value) {
+        return value;
+    }
+    format!("\"{}\"", json_escape_value(value))
 }
 
 /// Validate a webhook JSON body, then render it.
@@ -922,6 +1023,70 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed.as_object().unwrap().len(), 1);
         assert_eq!(parsed["user"], r#"a","admin":true,"x":"y"#);
+    }
+
+    fn render_json_field(template: &str, value: &str) -> String {
+        render_template_json(template, &detection("T", "f", serde_json::json!(value)))
+    }
+
+    #[test]
+    fn json_values_outside_a_string_cannot_add_keys() {
+        for value in [
+            r#"1, "admin": true"#,
+            r#"1} , {"x": 2"#,
+            "]",
+            "\"",
+            "1 ",
+            "01",
+            "0x10",
+            "NaN",
+            "",
+            "ünïcødé\n",
+        ] {
+            let body = render_json_field(r#"{"count": ${detection.fields.f}}"#, value);
+            let parsed: serde_json::Value = serde_json::from_str(&body)
+                .unwrap_or_else(|e| panic!("{value:?} rendered {body}: {e}"));
+            assert_eq!(parsed.as_object().unwrap().len(), 1, "{value:?}: {body}");
+            assert_eq!(parsed["count"], serde_json::json!(value), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn json_scalars_outside_a_string_keep_their_type() {
+        for (value, expected) in [
+            ("42", serde_json::json!(42)),
+            ("-1.5e3", serde_json::json!(-1500.0)),
+            ("0", serde_json::json!(0)),
+            ("true", serde_json::json!(true)),
+            ("false", serde_json::json!(false)),
+            ("null", serde_json::Value::Null),
+        ] {
+            let body =
+                render_json_field(r#"[${detection.fields.f}, "${detection.fields.f}"]"#, value);
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(parsed, serde_json::json!([expected, value]), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn json_value_after_a_backslash_stays_inside_its_string() {
+        let value = r#"", "admin": true, "x": ""#;
+        let body = render_json_field(r#"{"a": "\${detection.fields.f}"}"#, value);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 1, "{body}");
+        assert_eq!(parsed["a"], serde_json::json!(format!("\\{value}")));
+    }
+
+    #[test]
+    fn json_templates_that_are_not_documents_keep_escaping_content() {
+        assert_eq!(
+            render_json_field("text=${detection.fields.f}", "a\"b"),
+            r#"text=a\"b"#
+        );
+        assert_eq!(
+            render_json_field("${detection.fields.f}", "a\"b"),
+            r#"a\"b"#
+        );
     }
 
     fn render_url_field(value: &str) -> String {

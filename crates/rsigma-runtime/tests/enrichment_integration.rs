@@ -330,6 +330,55 @@ async fn http_templates_read_unmatched_fields_from_the_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn http_body_values_outside_strings_cannot_add_keys() {
+    let server = MockServer::start().await;
+    let hostile = r#"1, "admin": true"#;
+    Mock::given(method("POST"))
+        .and(path("/score"))
+        .and(body_json(
+            json!({"user": hostile, "count": hostile, "port": 443}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+
+    let mut det = detection("rule-x", "ps -ef");
+    det.as_detection_mut().unwrap().event =
+        Some(json!({"User": hostile, "Count": hostile, "Port": "443"}));
+    let enricher = Box::new(HttpEnricher::new(
+        "score".to_string(),
+        EnricherKind::Detection,
+        "score".to_string(),
+        "POST".to_string(),
+        format!("{}/score", server.uri()),
+        vec![],
+        Some(
+            r#"{"user": "${detection.fields.User}", "count": ${detection.fields.Count}, "port": ${detection.fields.Port}}"#
+                .to_string(),
+        ),
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        http_client_for_test(),
+        HttpResponseCache::new(Duration::from_secs(0)),
+    )) as Box<dyn rsigma_runtime::Enricher>;
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0]
+            .header
+            .enrichments
+            .as_ref()
+            .and_then(|m| m.get("score")),
+        Some(&json!({"ok": true})),
+        "the body should carry each value as one JSON value"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn http_500_triggers_on_error_policy() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
