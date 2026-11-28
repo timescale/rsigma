@@ -202,6 +202,8 @@ pub enum RiskConfigError {
     /// An `incident` block set neither `score_threshold` nor
     /// `tactic_count_threshold`.
     NoThreshold,
+    /// An `incident` value is out of range.
+    Incident(String),
     /// A `nats_subject` misuses the `{tenant}` token.
     NatsSubject(String),
 }
@@ -227,6 +229,7 @@ impl std::fmt::Display for RiskConfigError {
                 "incident is configured but neither score_threshold nor \
                  tactic_count_threshold is set; set at least one"
             ),
+            RiskConfigError::Incident(message) => write!(f, "incident.{message}"),
             RiskConfigError::NatsSubject(message) => write!(f, "nats_subject: {message}"),
         }
     }
@@ -328,6 +331,20 @@ fn build_incident_config(file: IncidentFile) -> Result<IncidentConfig, RiskConfi
     if file.score_threshold.is_none() && file.tactic_count_threshold.is_none() {
         return Err(RiskConfigError::NoThreshold);
     }
+    if let Some(threshold) = file.tactic_count_threshold
+        && !(1..=super::tactics::COUNT as u64).contains(&threshold)
+    {
+        return Err(RiskConfigError::Incident(format!(
+            "tactic_count_threshold must be between 1 and {} (the number of ATT&CK tactics)",
+            super::tactics::COUNT
+        )));
+    }
+    let window = file.window.unwrap_or(DEFAULT_WINDOW);
+    if window.as_secs() == 0 {
+        return Err(RiskConfigError::Incident(
+            "window must be at least 1s".to_string(),
+        ));
+    }
     let include = match file.include {
         IncludeLabel::Refs => IncludeMode::Refs,
         IncludeLabel::Results => IncludeMode::Results,
@@ -346,8 +363,13 @@ fn build_incident_config(file: IncidentFile) -> Result<IncidentConfig, RiskConfi
             .unwrap_or(defaults.max_results_per_incident),
         max_open_entities_per_tenant: None,
     };
+    if caps.max_open_entities == 0 {
+        return Err(RiskConfigError::Incident(
+            "caps.max_open_entities must be at least 1".to_string(),
+        ));
+    }
     Ok(IncidentConfig {
-        window: file.window.unwrap_or(DEFAULT_WINDOW),
+        window,
         score_threshold: file.score_threshold,
         tactic_count_threshold: file.tactic_count_threshold,
         cooldown: file.cooldown.unwrap_or(DEFAULT_COOLDOWN),
@@ -472,6 +494,41 @@ nats_subject: risk.events
                 "{key}: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn out_of_range_incident_values_are_rejected() {
+        let base = "objects:\n  - type: user\n    selector: enrichment.user\nincident:\n";
+        let cases = [
+            (
+                "  tactic_count_threshold: 0\n",
+                "incident.tactic_count_threshold",
+            ),
+            (
+                "  tactic_count_threshold: 15\n",
+                "incident.tactic_count_threshold",
+            ),
+            (
+                "  score_threshold: 10\n  window: 500ms\n",
+                "incident.window",
+            ),
+            (
+                "  score_threshold: 10\n  caps:\n    max_open_entities: 0\n",
+                "incident.caps.max_open_entities",
+            ),
+        ];
+        for (incident, field) in cases {
+            let err = parse_risk_config(&format!("{base}{incident}")).unwrap_err();
+            assert!(
+                matches!(err, RiskConfigError::Incident(_)),
+                "{field}: {err}"
+            );
+            assert!(err.to_string().starts_with(field), "{field}: {err}");
+        }
+        parse_risk_config(&format!(
+            "{base}  tactic_count_threshold: 14\n  window: 1s\n"
+        ))
+        .unwrap();
     }
 
     #[test]
