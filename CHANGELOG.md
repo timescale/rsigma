@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Rule directories load each file once and stay inside the directory, and windash expansion is bounded
+### Rule directories load each file once and stay inside the directory, and windash expansion is bounded (#821)
 
 `parse_sigma_directory` followed directory symlinks with no cycle detection, so a link back to the directory or to an ancestor repeated the walk (exponentially with two such links) and loaded every rule again, and it read links that resolve outside the directory, such as a `rule.yml` pointing at a private file whose content could then appear in parse errors. The daemon's file watcher followed the same links, so a link to `/` added a watch for every directory on the filesystem. The `rule lint --schema`, `rule hygiene`, `rule backtest`, `rule reverse`, and `rule coverage` corpus walkers recursed through links with no cycle detection at all.
 
