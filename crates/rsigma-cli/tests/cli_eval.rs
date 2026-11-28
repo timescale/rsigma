@@ -249,6 +249,55 @@ fn eval_ndjson_skips_blank_lines() {
 }
 
 #[test]
+fn eval_stdin_evaluates_the_lines_around_invalid_utf8() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    rsigma()
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
+        .write_stdin(
+            b"{\"CommandLine\": \"run malware.exe\"}\n{\"x\": \"\xff\"}\n{\"CommandLine\": \"malware again\"}\n"
+                .to_vec(),
+        )
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Processed 3 events"))
+        .stderr(predicate::str::contains("2 matches"))
+        .stderr(predicate::str::contains("Line 2 is not valid UTF-8"));
+}
+
+#[test]
+fn eval_stdin_skips_an_over_long_line() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let mut input = b"{\"CommandLine\": \"run malware.exe\"}\n".to_vec();
+    input.extend(std::iter::repeat_n(b'x', 2 * 1024 * 1024));
+    input.extend_from_slice(b"\n{\"CommandLine\": \"malware again\"}\n");
+    rsigma()
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
+        .write_stdin(input)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Skipping line 2: longer than"))
+        .stderr(predicate::str::contains("2 matches"));
+}
+
+#[cfg(unix)]
+#[test]
+fn eval_stdin_stops_on_a_read_error() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dir = tempfile::TempDir::new().unwrap();
+    let output = std::process::Command::new(common::rsigma_bin())
+        .args(["engine", "eval", "--rules", rule.path().to_str().unwrap()])
+        .stdin(std::fs::File::open(dir.path()).unwrap())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Error reading input after line 0"),
+        "a read error must end the stream, got: {stderr}"
+    );
+    assert_eq!(stderr.matches("Error reading input").count(), 1, "{stderr}");
+}
+
+#[test]
 fn eval_at_file_single_event() {
     let rule = temp_file(".yml", SIMPLE_RULE);
     let events = temp_file(".json", r#"{"CommandLine": "download malware.exe"}"#);
