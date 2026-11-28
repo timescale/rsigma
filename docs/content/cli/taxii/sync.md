@@ -71,6 +71,8 @@ Re-running sync against the same store is idempotent: unchanged objects incremen
 
 Structured summary via the global [`--output-format`](../index.md#global-flags) flag (`json`, `ndjson`, `table`, `csv`, `tsv`). Validation rejections are listed on stderr when progress output is enabled.
 
+The store is opened with the `--allow-custom` setting the command writes with. A file under `objects/` that cannot be read or parsed with that setting is skipped with a `warning: skipped store file <path>: <reason>` line on stderr, and the rest of the store still loads. A custom object in a store opened without `--allow-custom` is skipped this way and stays on disk. An object whose stored form would not load back is refused before anything is written, and the command exits `3`. {{ added "unreleased" }}
+
 ## Exit codes
 
 | Code | Meaning |

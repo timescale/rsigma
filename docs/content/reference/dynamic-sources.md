@@ -76,6 +76,7 @@ sources:
     refresh: <once|<duration>|watch|push|on_demand>
     required: <true|false>    # default true
     timeout: <duration>       # default 30s for http/command
+    poll_timeout: <duration>  # taxii type only; default 5m
     on_error: <use_cached|fail|use_default>
     default: <value>          # required if on_error=use_default
     max_body_size: <bytes>    # http type only; default 10485760 (10 MiB)
@@ -271,8 +272,11 @@ Polls a TAXII 2.1 collection and turns its indicators into the value described u
 | `auth.api_key_header` | string | no | Header for `api_key_env`. Default `X-API-Key`. |
 | `stix` | object | no | Same block as [`format: stix`](#format-stix). Omitted means every observable kind, no confidence floor, and a cap of 100000 active indicators. |
 | `timeout` | duration | no | Per-request timeout. Default 30s. |
+| `poll_timeout` | duration | no | Wall-clock cap on one poll, across its pages, preflight requests, and retries. Default `5m`. Must be greater than zero. {{ added "unreleased" }} |
 
 The first resolve reads the collection. Later resolves send `added_after` set to the previous poll's last `X-TAXII-Date-Added-Last` and merge what comes back. One poll reads at most `max_indicators` plus one page of objects, and at most the page budget that comes from that. When the server still has more, the poll keeps the pages it applied, logs a warning, and sets the cursor one microsecond before the last page's `X-TAXII-Date-Added-Last`. `added_after` is exclusive and objects on the next page can share that date, so the next refresh reads them again instead of skipping them. A collection larger than one poll therefore loads across refreshes. A poll fails when a budget stop cannot move the cursor (the last page has no added-date, or one added-date covers more objects than the budget), when a page repeats the cursor, or when HTTP 416 recovery would send the same filter again. A failed poll returns the error, keeps the pages it applied, and leaves the cached value and the cursor unchanged, so `on_error: use_cached` keeps serving the last good value and the next poll reads those pages again. The cursor lives in the process. After a restart the next poll is a full read.
+
+A poll that reaches `poll_timeout` after pages that moved the cursor ends like a budget stop: it keeps those pages, logs a warning, and the next refresh continues from the cursor. A poll that reaches it without moving the cursor fails with a timeout, and `on_error` applies. Retries honor the server's `Retry-After` up to the client's 60-second retry cap; a longer `Retry-After` fails the request instead of waiting. The cursor is server time from `X-TAXII-Date-Added-Last`, so it is sent as received and is not shifted by the server's `Date` header. {{ added "unreleased" }}
 
 The process keeps the indicators that are in the value. Indicators that lose the cap stay while the retained set is under twice `max_indicators`, so a freed slot can be filled from them without re-reading the collection. Past that bound they are dropped until a restart. Revoked and expired ids are kept only as a `modified` time, and that list is capped at `max_indicators`, so an older version cannot replace them and memory does not grow with every id the feed has ever sent. Not-yet-valid indicators use the room left under that bound. `rsigma_stix_source_skipped_total` counts an indicator when that resolve leaves it out. An id that stays out is not counted on later polls.
 
@@ -414,6 +418,8 @@ jq's `env`, `$ENV`, `halt`, `halt_error`, and `stderr` are not available in an e
 
 A `<duration>` refresh below `MIN_REFRESH_INTERVAL` (1 second) clamps silently with a runtime warning. Operators wishing to refresh more aggressively than that should use NATS push, on-demand triggers, or rethink the architecture.
 
+Sources resolve concurrently, at most eight at a time (`MAX_CONCURRENT_RESOLVES`), at startup and on every trigger. Each refresh runs on its own, so a slow or hung source delays only itself: the others publish their values as they finish, and startup waits for the slowest source's own timeout. A trigger for a source that is still resolving runs it once more when the current resolve ends. {{ added "unreleased" }}
+
 ## Error policies
 
 `on_error:` controls what happens when a fetch fails (network down, command exits non-zero, parse error, extract returns empty):
@@ -429,6 +435,8 @@ The `required` flag interacts with `on_error`:
 - `required: true` + `on_error: fail` -> startup fails; the daemon exits.
 - `required: true` + `on_error: use_cached` -> startup succeeds if a cached value exists from a prior run (with `--state-db`); fails otherwise.
 - `required: false` + `on_error: fail` -> source resolves to null; pipeline continues.
+
+A resolver that panics fails only its own source, with error kind `Panic`, and the policy above applies to it like any other failure. Other sources and later refreshes keep running. {{ added "unreleased" }}
 
 ## Consumers
 
@@ -481,6 +489,8 @@ Every dynamic source path enforces hard limits to bound resource consumption. Pe
 | Command stderr size | (hard-coded) | 64 KiB | not configurable |
 | Command execution timeout | `DEFAULT_COMMAND_TIMEOUT` | 30 s | `timeout` |
 | HTTP request timeout | (hard-coded default) | 30 s | `timeout` |
+| TAXII poll duration | `DEFAULT_TAXII_POLL_TIMEOUT` | 5 min | `poll_timeout` {{ added "unreleased" }} |
+| Concurrent source resolves | `MAX_CONCURRENT_RESOLVES` | 8 | not configurable {{ added "unreleased" }} |
 | Refresh interval minimum | `MIN_REFRESH_INTERVAL` | 1 s | not configurable (lower values clamp with a warning) |
 | NATS message size cap | `MAX_SOURCE_RESPONSE_BYTES` | 10 MiB | not configurable |
 | Include nesting depth | `MAX_INCLUDE_DEPTH` | 1 | not configurable |

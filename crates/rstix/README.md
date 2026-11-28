@@ -402,7 +402,7 @@ The optional **`store`** feature provides an object-safe [`StixStore`](store::St
 - **Typed queries:** [`StixQuery`](store::StixQuery) builder with type-indexed scans, id filter, `modified_after`, labels, **`text_search`**, pagination (`QueryCursor` / `next_cursor`), and `StoreError::InvalidQuery` for out-of-range cursors.
 - **SCO updates:** changed SCO content under the same asserted id updates the stored payload (`ImportReport::objects_updated`).
 - **Export / delete:** [`StixStore::export_bundle`](store::StixStore::export_bundle) and [`StixStore::delete`](store::StixStore::delete) on all store backends.
-- **`FsStore`** (`store-fs` feature): durable JSON-on-disk store with hot in-memory index; reopens persistently across process restarts. [`FsStore::reload_from_disk`](store::FsStore::reload_from_disk) re-reads object envelopes so long-lived handles (for example daemon `--stix-store` enrichment) observe writes from `taxii sync` without reopening the root directory.
+- **`FsStore`** (`store-fs` feature): durable JSON-on-disk store with hot in-memory index; reopens persistently across process restarts. [`FsStore::reload_from_disk`](store::FsStore::reload_from_disk) re-reads object envelopes so long-lived handles (for example daemon `--stix-store` enrichment) observe writes from `taxii sync` without reopening the root directory. A file that cannot be read or parsed under the store's `ParseOptions` is skipped and listed in the [`LoadReport`](store::LoadReport) that `reload_from_disk` returns and [`FsStore::load_report`](store::FsStore::load_report) keeps; the other files still load. A write whose stored form would not load back is refused with `StoreError::NotReloadable` before anything changes.
 
 ```rust
 use rstix::store::{FsStore, MemoryStore, StixQuery, StixStore};
@@ -432,6 +432,8 @@ Acceptance tests: `tests/store.rs` (`store` feature), `tests/store_fs.rs` (`stor
 | Store import refs | `ImportReport::unresolved_references` lists targets missing from **both** the imported bundle and the store. | Supports incremental TAXII ingest (`taxii-store`). |
 | Store search | Full-text index updated on upsert; `StixQuery::text_search` is case-insensitive substring match. | Typed filters compose with text search. |
 | FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. An id that does not map to a plain file name fails with `StoreError::InvalidObjectId` before anything is written. | `store-fs` feature implies `store`. |
+| FsStore load | Each `objects/*.json` file loads on its own. An unreadable or unparseable file, or one that holds an id other than its file name, is skipped and reported in `LoadReport::skipped`; leftover `*.json.tmp` files are ignored. Loading never applies RFC 2047 decoding, since stored values are already decoded. | Open the store with the `ParseOptions` it is written with, for example the same `allow_custom`. |
+| FsStore writes | Every object is serialized and parsed back under the store's `ParseOptions` before the in-memory index or disk changes; an object that fails is `StoreError::NotReloadable` and the whole call writes nothing. | Keeps every saved object loadable. |
 
 ## TAXII Client
 
@@ -452,7 +454,7 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | ------ | ---------------- |
 | `new(config)` | Build client with rustls (TLS 1.2 **and** 1.3). |
 | `discover()` | `GET /taxii2/` |
-| `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery |
+| `discover_via_srv(domain, config)` | DNS SRV `_taxii2._tcp.{domain}` then discovery. Unless the SRV record is DNSSEC-validated, the server certificate must be valid for `domain`, not the SRV target, and credentials are sent only after that check. |
 | `api_root(url)` | `GET {api_root}/` |
 | `collections(url)` / `collection(url, id)` | List / get collection |
 | `objects` / `objects_stream` / `poll_objects` / `poll_object_pages` | Paginated GET objects. `poll_object_pages` takes a [`PollBudget`](taxii::PollBudget) and delivers each page, returning [`PollStop::Budget`](taxii::PollStop) when the server still has more. `poll_objects` collects those pages and returns `PollBudgetExceeded` at that stop. |
@@ -472,14 +474,16 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | `auth(provider)` | none | [`BearerAuth`](taxii::BearerAuth), [`BasicAuth`](taxii::BasicAuth), [`ApiKeyHeader`](taxii::ApiKeyHeader). |
 | `timeout(d)` | 30s | HTTP timeout. |
 | `user_agent(s)` | `rstix/{version}` | User-Agent header. |
-| `retry_policy(p)` | exponential | [`RetryPolicy`](taxii::RetryPolicy). |
+| `retry_policy(p)` | exponential | [`RetryPolicy`](taxii::RetryPolicy). No wait exceeds `max_delay`; a `Retry-After` longer than that ends the retries with the server's error. |
 | `preflight(p)` | `Enabled` | [`PreflightPolicy`](taxii::PreflightPolicy): client-side `can_read`/`can_write` guards. |
 | `post_submit(p)` | `PollUntilComplete` | [`PostSubmitPolicy`](taxii::PostSubmitPolicy): poll status after POST 202. |
 | `capability(p)` | `Enforce` | [`CapabilityPolicy`](taxii::CapabilityPolicy): verify API Root `versions` + collection `media_types`. |
 | `server_trust(p)` | `SystemRoots` | [`ServerTrustPolicy`](taxii::ServerTrustPolicy): PKIX, SPKI pin, or DANE. |
 | `tlsa_cache(c)` | empty | [`TlsaCache`](taxii::TlsaCache): shared TLSA store for DANE. |
 | `dns_nameserver(addr)` | system resolver | Override DNS for SRV/TLSA lookups (local CoreDNS). |
-| `dane_require_dnssec(b)` | `true` | When `server_trust` is `Dane`: DNSSEC-validate TLSA prefetch and SRV; set `false` for unsigned lab DNS only. |
+| `dane_require_dnssec(b)` | `true` | When `server_trust` is `Dane`: DNSSEC-validate TLSA prefetch and SRV and use only records proven Secure; set `false` for unsigned lab DNS only. |
+| `server_identity(name)` | URL host | Check the server certificate (and, under `Dane`, look up TLSA) for `name` instead of the URL host. The connection, SNI, and `Host` header keep the URL host. |
+| `clock_skew_correction(b)` | `true` | Shift a caller-supplied `added_after` by the server's HTTP `Date` offset. Cursors taken from `X-TAXII-Date-Added-Last` during pagination are never shifted, and an offset over 24 hours is ignored. Turn off when the caller's own `added_after` came from the server. |
 | `client_certificate(c)` | none | [`ClientCertificate`](taxii::ClientCertificate): mTLS (PEM or PKCS#12, rustls). |
 | `allow_insecure_http(b)` | `false` | Allow `http://` (tests/interop only). |
 | `address_filter(f)` | none | Keep only destinations `f` accepts. Name lookup drops rejected addresses and fails when none remain. IP literals are checked on every request, including absolute URLs from the server. Redirects and proxies are disabled. With no filter, resolver, redirect, and proxy behavior stay unchanged. |
@@ -502,7 +506,9 @@ The optional **`taxii`** feature provides an OASIS TAXII 2.1 HTTP client for all
 | [`resolve_tlsa_with_options(...)`](taxii::resolve_tlsa_with_options) | TLSA lookup with [`DnsLookupOptions`](taxii::DnsLookupOptions). |
 | [`DnsLookupOptions`](taxii::DnsLookupOptions) | `validate_dnssec` for `*_with_options` helpers (default `false`; TAXII client sets from `dane_require_dnssec` when `Dane`). |
 
-[`ServerTrustPolicy::Dane`](taxii::ServerTrustPolicy::Dane) prefetches TLSA into [`TlsaCache`](taxii::TlsaCache) before HTTPS, then matches the server certificate at handshake (RFC 7671, fail-closed, usages 0-3). With default [`dane_require_dnssec(true)`](taxii::TaxiiClientConfig::dane_require_dnssec), those TLSA lookups and SRV records in [`discover_via_srv`](taxii::TaxiiClient::discover_via_srv) are DNSSEC-validated (TAXII §8.5.2 SHOULD). Set `dane_require_dnssec(false)` only for unsigned lab DNS. [`dns_nameserver`](taxii::TaxiiClientConfig::dns_nameserver) overrides the resolver target; it does not disable DNSSEC.
+[`ServerTrustPolicy::Dane`](taxii::ServerTrustPolicy::Dane) prefetches TLSA into [`TlsaCache`](taxii::TlsaCache) before HTTPS, then matches the server certificate at handshake (RFC 7671, fail-closed, usages 0-3). With default [`dane_require_dnssec(true)`](taxii::TaxiiClientConfig::dane_require_dnssec), those TLSA lookups and SRV records in [`discover_via_srv`](taxii::TaxiiClient::discover_via_srv) are DNSSEC-validated (TAXII §8.5.2 SHOULD), and only records the resolver proves Secure are used: an answer that is Insecure, Bogus, or Indeterminate is an `InvalidServerTrust` error before any connection. Set `dane_require_dnssec(false)` only for unsigned lab DNS. [`dns_nameserver`](taxii::TaxiiClientConfig::dns_nameserver) overrides the resolver target; it does not disable DNSSEC.
+
+Usage 3 (DANE-EE) accepts a matching end-entity certificate without PKIX. Usage 2 (DANE-TA) builds the chain to the TLSA-matched anchor and checks name and expiry. Usage 1 (PKIX-EE) requires a matching end-entity certificate and PKIX. Usage 0 (PKIX-TA) requires PKIX and a match on an intermediate or the trust anchor of the validated path itself; a matching certificate the server sends but the path does not use does not count.
 
 ```mermaid
 flowchart LR
@@ -564,7 +570,9 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 | `MissingPaginationHeaders` | `more=true` without `next` or `X-TAXII-Date-Added-Last`. |
 | `StatusPollTimeout` | Status polling exceeded `status_max_polls`. |
 | `UnsupportedApiRoot` / `UnsupportedCollectionMedia` | Capability checks failed. |
-| `InvalidServerTrust` | Pinning/DANE/TLS config error; DANE TLSA missing/mismatch; DNSSEC-validated DNS failure when `dane_require_dnssec(true)`. |
+| `InvalidServerTrust` | Pinning/DANE/TLS config error; DANE TLSA missing/mismatch; DNSSEC-validated DNS failure, or an answer with no Secure record, when `dane_require_dnssec(true)`; an invalid `server_identity`. |
+| `RateLimited` / `ServerError` | HTTP 429 / 5xx after retries, or at once when `Retry-After` exceeds `RetryPolicy::max_delay`. |
+| `RepeatedPaginationCursor` | A page did not advance `next` or `added_after`. |
 | `Unauthorized { challenges, .. }` | HTTP 401 with parsed auth challenges. |
 | `RequestedRangeNotSatisfiable` | HTTP 416 (streams recover automatically). |
 
@@ -574,6 +582,8 @@ TLS version policy: `build_rustls_config` passes `[&TLS12, &TLS13]` to rustls. N
 cargo test -p rstix --features taxii --test taxii_client
 cargo test -p rstix --features taxii-store --test taxii_store
 ```
+
+`tests/taxii/dane_tests.rs` runs discovery against a local DNS responder and TLS server: an unvalidated TLSA answer fails before any connection, and an SRV target whose certificate names only itself receives no request or credential.
 
 Optional live TLS / DNS / mTLS harness ([`tests/taxii-live/README.md`](tests/taxii-live/README.md)):
 
@@ -709,19 +719,21 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Envelope custom props | Flattened `x_*` on `TaxiiEnvelope` / `TaxiiStatus` | `with_custom`; CSD01 §3.15.1 |
 | Response media type | Success responses must include TAXII JSON `Content-Type` | `MissingContentType` / `InvalidContentType` |
 | TLS | rustls with **TLS 1.2 and TLS 1.3** (no 1.0/1.1); optional SPKI pinning and DANE | `ServerTrustPolicy`, `build_rustls_config`, `SpkiPin`, `TlsaCache`, `resolve_tlsa` |
-| DANE (`ServerTrustPolicy::Dane`) | Fail-closed TLSA association (RFC 7671 usages 0-3); default `dane_require_dnssec(true)` DNSSEC-validates TLSA prefetch and SRV | `evaluate_dane`, `dane_require_dnssec`, TLSA prefetch in `TaxiiHttp` |
+| DANE (`ServerTrustPolicy::Dane`) | Fail-closed TLSA association (RFC 7671 usages 0-3); default `dane_require_dnssec(true)` DNSSEC-validates TLSA prefetch and SRV and uses only Secure records. PKIX-TA matches only CAs on the validated path | `evaluate_dane`, `dane_require_dnssec`, TLSA prefetch in `TaxiiHttp` |
 | SPKI pin-only | `PinnedSpkiOnly` accepts matching pin without hostname or expiry checks (spec section 8.5.2 pinning) | Documented on `ServerTrustPolicy::PinnedSpkiOnly` |
 | Response size cap | Rejects when `Content-Length` exceeds `max_response_bytes` before read; streaming bodies capped chunk-by-chunk | `read_response_body` |
 | Capability checks | With `Enforce`: collection `media_types` must include TAXII 2.1 and/or STIX 2.1 object types; API Root `versions` must include TAXII 2.1; `max_content_length` must be integer **> 0** | `CapabilityPolicy::Disabled` skips checks (interop only); wire JSON is never coerced |
 | POST status | Poll until complete by default (`PostSubmitPolicy`) | `ReturnInitial` for one-shot 202 |
-| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last`. `poll_object_pages` returns `PollStop::Budget` when the page or object budget is exhausted and `RepeatedPaginationCursor` when the filter does not advance. `poll_objects` reports the budget stop as `PollBudgetExceeded` | `MissingPaginationHeaders`, `PollBudgetExceeded`, `RepeatedPaginationCursor` |
-| HTTP 416 recovery | Streams reset the cursor and restore baseline `added_after`. `poll_object_pages` does that once, then returns the 416 when recovery would repeat the same filter. `poll_objects` uses that loop | Pagination streams and `PollBudget` |
-| Clock skew | When a prior response cached skew seconds, adjust `added_after` by that delta; **when skew is unset, leave `added_after` unchanged** (do not drop the filter) | `with_clock_skew_*`; unit-tested |
+| Pagination continuation | `more=true` requires `next` or `X-TAXII-Date-Added-Last`. `poll_object_pages` returns `PollStop::Budget` when the page or object budget is exhausted. Every paginated call (`poll_object_pages`, the streams, and `ingest_collection`) ends with `RepeatedPaginationCursor` when a page does not advance the filter. `poll_objects` reports the budget stop as `PollBudgetExceeded` | `MissingPaginationHeaders`, `PollBudgetExceeded`, `RepeatedPaginationCursor` |
+| HTTP 416 recovery | Streams, `poll_object_pages`, and `ingest_collection` reset the cursor and restore baseline `added_after` once, then return the 416 when recovery would repeat the same filter | Pagination streams and `PollBudget` |
+| Clock skew | When a prior response cached skew seconds, adjust the caller's `added_after` by that delta; **when skew is unset, leave `added_after` unchanged** (do not drop the filter). A cursor taken from a response during pagination is sent unchanged, a `Date` more than 24 hours off is ignored, and `clock_skew_correction(false)` turns the shift off. Shifts saturate at the RFC 3339 range instead of overflowing | `with_clock_skew_*`; unit-tested |
+| Retry-After | A server delay up to `RetryPolicy::max_delay` is honored; a longer one, including a far-future date, ends the retries with the server's error instead of sleeping | `RateLimited` / `ServerError` keep `retry_after` |
 | HTTP 401 | `WWW-Authenticate` challenges parsed on `Unauthorized`; auth-params must not become fake schemes (CSD01 Table 2 multi-challenge) | `AuthChallenge`, `parse_www_authenticate` |
-| SRV selection | RFC 2782 weighted random; `"."` targets skipped | `resolve_taxii_srv` |
+| SRV selection | RFC 2782 weighted random; `"."` targets, port 0, and targets that are not plain host names are skipped | `resolve_taxii_srv` |
+| SRV identity | Without a DNSSEC-validated SRV record, `discover_via_srv` checks the certificate against the queried domain (RFC 6125 §6.2.1); `server_identity` overrides the name | Credentials leave only after the TLS check |
 | Discovery default | `TaxiiDiscovery::default_api_root()` helper | Optional `default` field |
 | Status detail version | Optional on wire (spec example omits it) | `StatusDetail.version: Option<String>` |
-| `added_after` precision | Six fractional digits via `TaxiiTimestamp` | Filter encode + header fallback consume |
+| `added_after` precision | Six fractional digits via `TaxiiTimestamp`; digits past the microsecond are dropped at parse so a timestamp equals its wire form | Filter encode + header fallback consume |
 | Pagination cursor | `next` is opaque; never constructed client-side | Header fallback when `next` absent |
 | Auth secrets | `SecretString`; redacted `Debug` | Credentials never in `TaxiiError` messages |
 | Pagination headers | `TaxiiPaged<T>` exposes `X-TAXII-Date-Added-First` / `Last` | One-shot GETs and streams |
@@ -818,7 +830,7 @@ The Validation Pipeline re-runs the same checks on typed objects during the sche
 
 SCO `*_enc` properties (§3.1 / §3.9.1) MUST be IANA character-set names and MUST NOT appear without their base property. Typed fields: **`file.name_enc`**, **`directory.path_enc`**, **`email-message.subject_enc`**, **`email-message.body_enc`**. Vendor `_enc` keys in [`ScoCommonProps::extra`](model::common::ScoCommonProps) follow the same pairing and charset rules via [`validate_vendor_enc_pairings`](model::common::ScoCommonProps::validate_vendor_enc_pairings) on every SCO type.
 
-`email-message` RFC 2047 encoded-words in header string fields (`subject`, `message_id`, `body`, `received_lines`, `additional_header_fields`) are decoded on ingest (§6.6). Pattern evaluation can still address vendor `_enc` siblings through `common.extra` (for example `[email-message:subject_enc = 'UTF-8']` when the wire object carries `subject_enc` alongside `subject`).
+`email-message` RFC 2047 encoded-words in header string fields (`subject`, `message_id`, `received_lines`, `additional_header_fields`) are decoded once, on wire ingest (§6.6): `parse_bundle`, `parse_object*`, and TAXII envelopes decode while [`ParseOptions::decode_email_encoded_words`](model::ParseOptions) is on (the default). `body` is message content and is not decoded. Serde deserialization never decodes, so serializing and deserializing a message returns it unchanged, and `FsStore` loads with decoding off. A malformed encoded-word or an unknown charset is kept as written. Pattern evaluation can still address vendor `_enc` siblings through `common.extra` (for example `[email-message:subject_enc = 'UTF-8']` when the wire object carries `subject_enc` alongside `subject`).
 
 Negative fixtures: `tests/fixtures/spec/sco/file-name-enc-*.json`, `directory-path-enc-*.json`, `file-extra-enc-without-base.json`; observed-data SRO embedding: `tests/fixtures/spec/sdo/observed-data-deprecated-objects-sro.json`; standalone `x_*` custom props: `tests/fixtures/spec/sdo/identity-standalone-extra.json`; bundle unmodeled top-level capture: `tests/bundle.rs` (`unmodeled_top_level_property_captured_in_extra_properties`).
 
@@ -1092,7 +1104,7 @@ The **Data Model + Serialization** phase validates STIX invariants at deserializ
 | `Relationship` per-type matrix | Advisory via `Bundle::validate()` (`ValidationCode::RelationshipEndpointMatrixInvalid`). | T1 |
 | `language-content` | `object_modified` is `Option<StixTimestamp>`; `lang` rejected on common props; bundle requires STIX Object `object_ref` to exist; `object_modified` mismatch and translation type/list-length/object-shape mirroring for existing target fields rejected at parse (§7.1.1); keys for properties that do not exist on the target MUST be ignored (no error, no warning). | T0 |
 | SCO `*_enc` (§3.1 / §3.9.1) | Typed `file.name_enc`, `directory.path_enc`, `email-message.subject_enc` / `body_enc`; all SCO types validate vendor `_enc` keys in `common.extra` via `validate_vendor_enc_pairings`. | T0 |
-| `email-message` headers (§6.6) | RFC 2047 encoded-words decoded on ingest for `subject`, `message_id`, `body`, `received_lines`, and `additional_header_fields`. | T0 |
+| `email-message` headers (§6.6) | RFC 2047 encoded-words decoded once on wire ingest for `subject`, `message_id`, `received_lines`, and `additional_header_fields` (`ParseOptions::decode_email_encoded_words`); serde round trips and `FsStore` reloads do not decode again. | T0 |
 | `marking-definition` | `spec_version` required; legacy `definition_type` + `definition` required when `extensions` empty. | T0 |
 | `extension-definition` | Rejects `extensions`, `confidence`, and `lang` on common props. | T0 |
 | SCO ref/format checks | `file.contains_refs` SCO kind; domain-name/email-addr/url RFC MUST format validation at parse; ipv4/ipv6/mac address format at parse; hash map key syntax and known-algorithm value formats (§2.7 / §10.7); observed-data `object_refs` SCO or SRO kind; artifact `encryption_algorithm` closed vocab at parse. | T0 |
