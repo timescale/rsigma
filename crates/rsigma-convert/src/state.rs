@@ -28,10 +28,10 @@ impl DeferredExpression for DeferredTextExpression {
         } else {
             self.operators.0
         };
-        self.template
-            .replace("{field}", &self.field)
-            .replace("{value}", &self.value)
-            .replace("{op}", op)
+        crate::backend::fill_placeholders(
+            &self.template,
+            &[("field", &self.field), ("value", &self.value), ("op", op)],
+        )
     }
 
     fn negate(&mut self) {
@@ -77,5 +77,24 @@ impl ConversionState {
 
     pub fn get_state_str(&self, key: &str) -> Option<&str> {
         self.processing_state.get(key)?.as_str()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deferred_placeholders_are_filled_in_one_pass() {
+        let mut expr = DeferredTextExpression {
+            template: "| where {field} {op} \"{value}\"".to_string(),
+            field: "a{value}".to_string(),
+            value: "{op}{field}".to_string(),
+            negated: false,
+            operators: ("=", "!="),
+        };
+        assert_eq!(expr.finalize(), "| where a{value} = \"{op}{field}\"");
+        expr.negate();
+        assert_eq!(expr.finalize(), "| where a{value} != \"{op}{field}\"");
     }
 }

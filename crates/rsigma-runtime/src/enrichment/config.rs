@@ -807,6 +807,24 @@ fn validate_values(cfg: &EnricherConfig) -> Result<(), EnrichersConfigError> {
             message: "has no effect when 'default' is set".to_string(),
         });
     }
+    if cfg.type_name == "http" {
+        if let Some(method) = &cfg.method
+            && reqwest::Method::from_bytes(method.as_bytes()).is_err()
+        {
+            return Err(EnrichersConfigError::InvalidValue {
+                enricher_id: cfg.id.clone(),
+                field: "method",
+                message: format!("'{method}' is not an HTTP method"),
+            });
+        }
+        super::http::validate_header_names(cfg.headers.keys().map(String::as_str)).map_err(
+            |message| EnrichersConfigError::InvalidValue {
+                enricher_id: cfg.id.clone(),
+                field: "headers",
+                message,
+            },
+        )?;
+    }
     if cfg.type_name == "command"
         && let Some(message) = super::command_argv::command_argv_problem(&cfg.command, &cfg.env)
     {
@@ -2466,6 +2484,40 @@ enrichers:
                     "enricher 'e': invalid 'miss_status': status {status} is outside 300..=599"
                 )
             );
+            let parsed = parse_enrichers_config(&yaml).unwrap_err();
+            assert_eq!(parsed.to_string(), built.to_string());
+        }
+    }
+
+    #[test]
+    fn http_headers_and_method_that_would_fail_every_request_are_rejected() {
+        let cases = [
+            (
+                "url: \"https://example.com/\"\nheaders: { 'Bad Name': x }",
+                "headers",
+                "invalid header name 'Bad Name'",
+            ),
+            (
+                "url: \"https://example.com/\"\nheaders: { X-Key: a, x-key: b }",
+                "headers",
+                "is configured more than once",
+            ),
+            (
+                "url: \"https://example.com/\"\nmethod: \"GE T\"",
+                "method",
+                "'GE T' is not an HTTP method",
+            ),
+        ];
+        for (body, expected_field, expected) in cases {
+            let yaml = entry_yaml("http", body);
+            let built = build_err(&yaml);
+            match &built {
+                EnrichersConfigError::InvalidValue { field, .. } => {
+                    assert_eq!(*field, expected_field, "{body}");
+                }
+                other => panic!("{body}: expected InvalidValue, got {other}"),
+            }
+            assert!(built.to_string().contains(expected), "{built}");
             let parsed = parse_enrichers_config(&yaml).unwrap_err();
             assert_eq!(parsed.to_string(), built.to_string());
         }

@@ -148,27 +148,34 @@ impl WebhookSigner {
             }
             SigningScheme::Custom(c) => {
                 let ts_str = ts.to_string();
-                let payload = c
-                    .signed_payload
-                    .replace("{body}", body)
-                    .replace("{timestamp}", &ts_str)
-                    .replace("{id}", id);
+                let payload_values = [("body", body), ("timestamp", ts_str.as_str()), ("id", id)];
                 let value = self
                     .keys
                     .iter()
                     .map(|k| {
                         let raw = match c.algorithm {
-                            Algorithm::Sha256 => hmac_sha256(k, payload.as_bytes()),
-                            Algorithm::Sha512 => hmac_sha512(k, payload.as_bytes()),
+                            Algorithm::Sha256 => {
+                                hmac_template::<HmacSha256>(k, &c.signed_payload, &payload_values)
+                            }
+                            Algorithm::Sha512 => {
+                                hmac_template::<HmacSha512>(k, &c.signed_payload, &payload_values)
+                            }
                         };
                         let sig = match c.encoding {
                             Encoding::Hex => hex::encode(raw),
                             Encoding::Base64 => BASE64.encode(raw),
                         };
-                        c.value_format
-                            .replace("{signature}", &sig)
-                            .replace("{timestamp}", &ts_str)
-                            .replace("{id}", id)
+                        let mut header = Vec::with_capacity(c.value_format.len() + sig.len());
+                        expand(
+                            &c.value_format,
+                            &[
+                                ("signature", sig.as_str()),
+                                ("timestamp", ts_str.as_str()),
+                                ("id", id),
+                            ],
+                            |part| header.extend_from_slice(part),
+                        );
+                        String::from_utf8(header).expect("UTF-8 parts concatenate to UTF-8")
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
@@ -185,6 +192,35 @@ impl WebhookSigner {
     }
 }
 
+/// Expand the `{name}` tokens of `template` from `values` in one pass,
+/// handing each literal run and each substituted value to `emit` in order.
+///
+/// Substituted text is never scanned again, so a value that itself contains
+/// `{body}` or `{id}` is emitted verbatim. A brace that does not open a known
+/// token is literal text.
+fn expand(template: &str, values: &[(&str, &str)], mut emit: impl FnMut(&[u8])) {
+    let mut literal = 0;
+    let mut pos = 0;
+    while let Some(offset) = template[pos..].find('{') {
+        let open = pos + offset;
+        let rest = &template[open + 1..];
+        let token = values.iter().find(|(name, _)| {
+            rest.strip_prefix(name)
+                .is_some_and(|after| after.starts_with('}'))
+        });
+        match token {
+            Some((name, value)) => {
+                emit(&template.as_bytes()[literal..open]);
+                emit(value.as_bytes());
+                pos = open + name.len() + 2;
+                literal = pos;
+            }
+            None => pos = open + 1,
+        }
+    }
+    emit(&template.as_bytes()[literal..]);
+}
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     hmac_sha256_parts(key, &[data])
 }
@@ -197,6 +233,14 @@ fn hmac_sha256_parts(key: &[u8], parts: &[&[u8]]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
+/// HMAC of `template` expanded from `values`, fed to the MAC part by part.
+fn hmac_template<M: Mac + KeyInit>(key: &[u8], template: &str, values: &[(&str, &str)]) -> Vec<u8> {
+    let mut mac = <M as KeyInit>::new_from_slice(key).expect("HMAC accepts a key of any length");
+    expand(template, values, |part| mac.update(part));
+    mac.finalize().into_bytes().to_vec()
+}
+
+#[cfg(test)]
 fn hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut mac = HmacSha512::new_from_slice(key).expect("HMAC accepts a key of any length");
     mac.update(data);
@@ -280,6 +324,69 @@ mod tests {
         // Independently recompute the HMAC over "{timestamp}.{body}".
         let expected = hex::encode(hmac_sha256(&key, format!("1700000000.{body}").as_bytes()));
         assert_eq!(headers[0].1, format!("t=1700000000,v1={expected}"));
+    }
+
+    #[test]
+    fn custom_tokens_inside_the_body_are_signed_verbatim() {
+        let scheme = SigningScheme::Custom(CustomScheme {
+            algorithm: Algorithm::Sha256,
+            encoding: Encoding::Hex,
+            signature_header: "X-Signature".to_string(),
+            value_format: "id={id},t={timestamp},v1={signature}".to_string(),
+            signed_payload: "{id}.{timestamp}.{body}".to_string(),
+            timestamp_header: None,
+            id_header: None,
+        });
+        let key = b"top-secret".to_vec();
+        let signer = WebhookSigner::new(scheme, vec![Zeroizing::new(key.clone())]);
+
+        let body = r#"{"msg":"{timestamp} {id} {body} {signature} {unknown"}"#;
+        let headers = signer.sign(body, at(1_700_000_000), "msg_{body}");
+
+        let expected = hex::encode(hmac_sha256(
+            &key,
+            format!("msg_{{body}}.1700000000.{body}").as_bytes(),
+        ));
+        assert_eq!(
+            headers[0].1,
+            format!("id=msg_{{body}},t=1700000000,v1={expected}"),
+            "inserted values are never expanded again"
+        );
+    }
+
+    #[test]
+    fn rotated_custom_signatures_each_expand_the_value_format_once() {
+        let scheme = SigningScheme::Custom(CustomScheme {
+            algorithm: Algorithm::Sha512,
+            encoding: Encoding::Base64,
+            signature_header: "X-Signature".to_string(),
+            value_format: "{timestamp}:{signature}".to_string(),
+            signed_payload: "{body}".to_string(),
+            timestamp_header: None,
+            id_header: None,
+        });
+        let signer = WebhookSigner::new(
+            scheme,
+            vec![
+                Zeroizing::new(b"new".to_vec()),
+                Zeroizing::new(b"old".to_vec()),
+            ],
+        );
+        let headers = signer.sign("{timestamp}", at(5), "msg");
+        let expected: Vec<String> = [b"new".as_slice(), b"old".as_slice()]
+            .iter()
+            .map(|key| format!("5:{}", BASE64.encode(hmac_sha512(key, b"{timestamp}"))))
+            .collect();
+        assert_eq!(headers[0].1, expected.join(" "));
+    }
+
+    #[test]
+    fn expand_writes_unknown_braces_literally() {
+        let mut out = Vec::new();
+        expand("{a}{{b}}{a", &[("a", "{b}"), ("b", "B")], |part| {
+            out.extend_from_slice(part)
+        });
+        assert_eq!(String::from_utf8(out).unwrap(), "{b}{B}{a");
     }
 
     #[test]

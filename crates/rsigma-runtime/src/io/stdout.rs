@@ -1,12 +1,13 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use rsigma_eval::{ProcessResult, TenantId};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
 use crate::io::DeliveryContext;
 use crate::io::SinkFormat;
+use crate::io::delivery::{DeliveryScope, IncidentScope, TenantScope};
 use crate::io::lines::{LineEncoding, LineWriter, WriterThread};
 
 /// Serializes ProcessResult to one line per result and writes it to stdout.
@@ -101,6 +102,22 @@ impl StdoutSink {
         writer
             .write_results(&self.out, items, self.encoding())
             .await
+    }
+
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        TenantScope::of(self.tenant_filter.as_ref(), IncidentScope::SameTenant)
+    }
+
+    /// The results of a delivery the worker gave up on that never reached
+    /// stdout.
+    pub(crate) fn abandon<'r>(
+        &self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        self.out
+            .lock()
+            .abandon(result, ctx, self.tenant_filter.as_ref())
     }
 
     /// Run `write` holding the process's stdout lock as well as this sink's

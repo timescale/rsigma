@@ -353,12 +353,14 @@ impl TextQueryTestBackend {
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(
-            c.field_in_list_expression?
-                .replace("{field}", &text_escape_and_quote_field(c, field))
-                .replace("{op}", op?)
-                .replace("{list}", &list.join(c.list_separator)),
-        )
+        Some(fill_placeholders(
+            c.field_in_list_expression?,
+            &[
+                ("field", &text_escape_and_quote_field(c, field)),
+                ("op", op?),
+                ("list", &list.join(c.list_separator)),
+            ],
+        ))
     }
 
     /// A value list of one item as an in-list.
@@ -602,10 +604,13 @@ impl Backend for TextQueryTestBackend {
         } else {
             ("{field}={value}", &value[..])
         };
-        Ok(ConvertResult::Query(
-            expr.replace("{field}", &text_escape_and_quote_field(c, field))
-                .replace("{value}", &quote_value(c, value)),
-        ))
+        Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[
+                ("field", &text_escape_and_quote_field(c, field)),
+                ("value", &quote_value(c, value)),
+            ],
+        )))
     }
 
     fn convert_field_eq_num(
@@ -660,9 +665,10 @@ impl Backend for TextQueryTestBackend {
             .config
             .re_expression
             .ok_or_else(|| ConvertError::UnsupportedModifier("regex".into()))?;
-        Ok(ConvertResult::Query(
-            expr.replace("{field}", &f).replace("{regex}", &re_val),
-        ))
+        Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", &f), ("regex", &re_val)],
+        )))
     }
 
     fn convert_field_eq_cidr(
@@ -675,9 +681,10 @@ impl Backend for TextQueryTestBackend {
             .config
             .cidr_expression
             .ok_or_else(|| ConvertError::UnsupportedModifier("cidr".into()))?;
-        Ok(ConvertResult::Query(
-            expr.replace("{field}", field).replace("{value}", cidr),
-        ))
+        Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field", field), ("value", cidr)],
+        )))
     }
 
     fn convert_field_compare_op(
@@ -708,10 +715,10 @@ impl Backend for TextQueryTestBackend {
             .ok_or_else(|| ConvertError::UnsupportedModifier("compare".into()))?;
 
         let val_str = value.to_string();
-        Ok(expr
-            .replace("{field}", &f)
-            .replace("{op}", op_token)
-            .replace("{value}", &val_str))
+        Ok(fill_placeholders(
+            expr,
+            &[("field", &f), ("op", op_token), ("value", &val_str)],
+        ))
     }
 
     fn convert_field_exists(
@@ -782,9 +789,10 @@ impl Backend for TextQueryTestBackend {
         } else {
             field2.to_string()
         };
-        Ok(ConvertResult::Query(
-            expr.replace("{field1}", &f1).replace("{field2}", &f2),
-        ))
+        Ok(ConvertResult::Query(fill_placeholders(
+            expr,
+            &[("field1", &f1), ("field2", &f2)],
+        )))
     }
 
     fn convert_keyword_str(
@@ -1151,6 +1159,29 @@ detection:
 "#,
         );
         assert_eq!(queries, vec!["CommandLine=\"{rule.title}\""]);
+    }
+
+    #[test]
+    fn placeholders_in_field_names_stay_literal() {
+        let queries = convert_rule_yaml(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    regex:
+        'a{regex}|re': 'x'
+    compare:
+        'n{op}{value}|gt': 5
+    cidr:
+        'ip{value}|cidr': 10.0.0.0/8
+    condition: regex and compare and cidr
+"#,
+        );
+        assert_eq!(
+            queries,
+            vec!["'a{regex}'=/x/ and 'n{op}{value}'>5 and cidrmatch('ip{value}', \"10.0.0.0/8\")"]
+        );
     }
 
     #[test]

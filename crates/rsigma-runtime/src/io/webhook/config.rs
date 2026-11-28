@@ -8,8 +8,11 @@
 //!   roadmap item #48),
 //! - a templated field (`url`, a header value, `body`) references the wrong
 //!   namespace for the declared `kind`, or is malformed,
-//! - `url` is empty, the `method` is invalid, `retry.attempts` is zero, a
-//!   duration fails to parse, or `scope` fails to compile.
+//! - `id` or `url` is empty, the `method` is invalid, `retry.attempts`,
+//!   `queue_size`, or `timeout` is zero, a duration fails to parse, or
+//!   `scope` fails to compile,
+//! - a header name (configured or custom signing) is not a valid HTTP header
+//!   name or repeats another one regardless of case.
 //!
 //! Core logic (template render, classification, rate limiting) lives in
 //! [`super::sink`]; the queue, retry/backoff, and DLQ routing are the shared
@@ -30,7 +33,8 @@ use zeroize::Zeroizing;
 
 use crate::enrichment::{
     EnricherKind, HttpEnricherClient, Scope, TemplateError, build_default_http_client,
-    validate_template_namespace, validate_url_tenant_position, validate_webhook_body_template,
+    validate_header_names, validate_template_namespace, validate_url_tenant_position,
+    validate_webhook_body_template,
 };
 use crate::io::DeliveryConfig;
 use crate::metrics::MetricsHook;
@@ -476,6 +480,12 @@ fn build_one(
         webhook_id: cfg.id.clone(),
         kind: cfg.kind.clone(),
     })?;
+    if cfg.id.trim().is_empty() {
+        return Err(WebhookConfigError::MissingField {
+            webhook_id: cfg.id.clone(),
+            field: "id",
+        });
+    }
     if cfg.url.trim().is_empty() {
         return Err(WebhookConfigError::MissingField {
             webhook_id: cfg.id.clone(),
@@ -489,6 +499,13 @@ fn build_one(
         webhook_id: cfg.id.clone(),
         field: "url",
         message,
+    })?;
+    validate_header_names(cfg.headers.keys().map(String::as_str)).map_err(|message| {
+        WebhookConfigError::InvalidField {
+            webhook_id: cfg.id.clone(),
+            field: "headers",
+            message,
+        }
     })?;
     for (name, value) in &cfg.headers {
         let field: &'static str = Box::leak(format!("headers.{name}").into_boxed_str());
@@ -560,8 +577,16 @@ fn build_one(
         });
     }
 
+    let queue_depth = cfg.queue_size.unwrap_or(DEFAULT_WEBHOOK_QUEUE_SIZE);
+    if queue_depth == 0 {
+        return Err(WebhookConfigError::InvalidField {
+            webhook_id: cfg.id.clone(),
+            field: "queue_size",
+            message: "queue_size must be at least 1".to_string(),
+        });
+    }
     let delivery = DeliveryConfig {
-        queue_depth: cfg.queue_size.unwrap_or(DEFAULT_WEBHOOK_QUEUE_SIZE),
+        queue_depth,
         // One rendered body per result; multi-result digest posts are out of
         // scope. The shared worker still owns the queue and retry schedule.
         batch_max: 1,
@@ -572,6 +597,13 @@ fn build_one(
     };
 
     let timeout = cfg.timeout.unwrap_or(DEFAULT_WEBHOOK_TIMEOUT);
+    if timeout.is_zero() {
+        return Err(WebhookConfigError::InvalidField {
+            webhook_id: cfg.id.clone(),
+            field: "timeout",
+            message: "timeout must be greater than zero".to_string(),
+        });
+    }
     let headers: Vec<(String, String)> = cfg
         .headers
         .iter()
@@ -865,6 +897,18 @@ fn build_custom_scheme(
     };
     if cfg.signature_header.trim().is_empty() {
         return Err(err("custom.signature_header must not be empty".to_string()));
+    }
+    let signing_headers = std::iter::once(cfg.signature_header.as_str())
+        .chain(cfg.timestamp_header.as_deref())
+        .chain(cfg.id_header.as_deref());
+    validate_header_names(signing_headers).map_err(|message| err(format!("custom: {message}")))?;
+    if cfg
+        .value_format
+        .contains(|c: char| c.is_ascii_control() && c != '\t')
+    {
+        return Err(err(
+            "custom.value_format must not contain control characters".to_string(),
+        ));
     }
     validate_signing_tokens(
         id,
@@ -1452,6 +1496,57 @@ webhooks:
                 err.to_string().contains(&format!("unknown field `{key}`")),
                 "{key}: {err}"
             );
+        }
+    }
+
+    #[test]
+    fn settings_that_would_fail_every_delivery_are_rejected_at_load() {
+        let hook =
+            "webhooks:\n  - id: soc\n    kind: detection\n    url: https://example.test/hook\n";
+        let cases = [
+            (
+                "webhooks:\n  - id: ' '\n    kind: detection\n    url: https://example.test/hook\n"
+                    .to_string(),
+                "missing required field 'id'",
+            ),
+            (
+                format!("{hook}    headers:\n      'Bad Name': x\n"),
+                "invalid header name 'Bad Name'",
+            ),
+            (
+                format!("{hook}    headers:\n      X-Team: a\n      x-team: b\n"),
+                "is configured more than once",
+            ),
+            (
+                format!("{hook}    queue_size: 0\n"),
+                "queue_size must be at least 1",
+            ),
+            (
+                format!("{hook}    timeout: 0s\n"),
+                "timeout must be greater than zero",
+            ),
+            (
+                format!(
+                    "{hook}    signing:\n      secret_env: RSIGMA_UNUSED\n      scheme: custom\n      custom:\n        signature_header: 'X Sig'\n        value_format: '{{signature}}'\n        signed_payload: '{{body}}'\n"
+                ),
+                "invalid header name 'X Sig'",
+            ),
+            (
+                format!(
+                    "{hook}    signing:\n      secret_env: RSIGMA_UNUSED\n      scheme: custom\n      custom:\n        signature_header: X-Sig\n        timestamp_header: x-sig\n        value_format: '{{signature}}'\n        signed_payload: '{{body}}'\n"
+                ),
+                "is configured more than once",
+            ),
+            (
+                format!(
+                    "{hook}    signing:\n      secret_env: RSIGMA_UNUSED\n      scheme: custom\n      custom:\n        signature_header: X-Sig\n        value_format: \"{{signature}}\\r\\nX-Other: 1\"\n        signed_payload: '{{body}}'\n"
+                ),
+                "must not contain control characters",
+            ),
+        ];
+        for (yaml, expected) in cases {
+            let msg = build_err(&yaml).to_string();
+            assert!(msg.contains(expected), "{expected}: {msg}");
         }
     }
 

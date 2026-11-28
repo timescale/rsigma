@@ -222,6 +222,7 @@ fn tenancy_denied(class: TenancyClass, identity: &AuthIdentity) -> bool {
 }
 
 /// Why [`authorize_ingest`] refused a request.
+#[cfg(feature = "daemon-otlp")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IngestRefusal {
     /// No credentials, or a token that is not recognized.
@@ -236,6 +237,7 @@ pub(crate) enum IngestRefusal {
 /// [`api_auth_middleware`] (OTLP/gRPC) from its `Authorization` value, with
 /// the same permission and tenancy checks and the same failure counters.
 /// `channel` labels a tenancy refusal in `rsigma_tenant_rejected_total`.
+#[cfg(feature = "daemon-otlp")]
 pub(crate) fn authorize_ingest(
     auth: &ApiAuth,
     tenancy: bool,

@@ -124,10 +124,11 @@ pub use io::webhook::{
     build_webhooks, load_webhooks_file,
 };
 pub use io::{
-    AckToken, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliverySink, Dispatcher,
-    EventSource, FileSink, FormattedIncidentEnvelope, FramedLine, IncidentEnvelope, LineFramer,
-    MAX_LINE_BYTES, OnFull, RawEvent, Sink, SinkFormat, StdinReadStatus, StdinSource, StdoutSink,
-    WithTenant, spawn_source, validate_nats_subject_template,
+    AckToken, DeadLetters, DeliveryConfig, DeliveryContext, DeliveryFailure, DeliveryScope,
+    DeliverySink, Dispatcher, EventSource, FileSink, FormattedIncidentEnvelope, FramedLine,
+    IncidentEnvelope, LineFramer, MAX_LINE_BYTES, OnFull, RawEvent, Sink, SinkFormat,
+    StdinReadStatus, StdinSource, StdoutSink, WithTenant, spawn_source,
+    validate_nats_subject_template,
 };
 #[cfg(all(unix, feature = "uds"))]
 pub use io::{

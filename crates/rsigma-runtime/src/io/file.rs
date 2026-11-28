@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 
-use rsigma_eval::{ProcessResult, TenantId};
+use rsigma_eval::{EvaluationResult, ProcessResult, TenantId};
 
 use crate::error::RuntimeError;
-use crate::io::lines::{LineEncoding, LineWriter, ResumeMap};
+use crate::io::delivery::{DeliveryScope, IncidentScope, TenantScope};
+use crate::io::lines::{LineEncoding, LineWriter, ResumeMap, unwritten};
 use crate::io::{DeliveryContext, SinkFormat, serialize_result};
 
 /// Appends ProcessResult to a file as one line per result.
@@ -213,6 +215,34 @@ impl FileSink {
         }
     }
 
+    pub(crate) fn delivery_scope(&self) -> Option<Arc<dyn DeliveryScope>> {
+        // A `{tenant}` path writes every incident to its tenant's file.
+        let incidents = if self.tenant_path.is_some() {
+            IncidentScope::All
+        } else {
+            IncidentScope::SameTenant
+        };
+        TenantScope::of(self.tenant_filter.as_ref(), incidents)
+    }
+
+    /// The results of a delivery the worker gave up on that never reached
+    /// the file.
+    pub(crate) fn abandon<'r>(
+        &mut self,
+        result: &'r ProcessResult,
+        ctx: &DeliveryContext,
+    ) -> Vec<&'r EvaluationResult> {
+        let filter = self.tenant_filter.as_ref();
+        if self.tenant_path.is_some() {
+            let written = self.tenant_resume.take(ctx).unwrap_or(0);
+            return unwritten(result, filter, written);
+        }
+        match self.out.as_mut() {
+            Some(out) => out.abandon(result, ctx, filter),
+            None => unwritten(result, filter, 0),
+        }
+    }
+
     fn render_path(&self, tenant: &TenantId) -> std::path::PathBuf {
         let template = self.tenant_path.as_ref().expect("checked above");
         std::path::PathBuf::from(format!(
@@ -409,6 +439,73 @@ mod tests {
         let b = std::fs::read_to_string(dir.path().join("b/findings.ndjson")).unwrap();
         assert_eq!(a.lines().count(), 1, "tenant a's line is not repeated");
         assert_eq!(b.lines().count(), 1);
+    }
+
+    #[test]
+    fn an_abandoned_tenant_delivery_reports_only_unwritten_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = format!("{}/", dir.path().display());
+        let mut sink = FileSink::open_template(before, "/findings.ndjson".to_string(), 4)
+            .unwrap()
+            .with_tenant_filter(None);
+        let blocker = dir.path().join("b");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let result = vec![tenanted("a", "a"), tenanted("b", "b"), tenanted("c", "c")];
+        let ctx = DeliveryContext::new();
+
+        assert!(sink.send_with_context(&result, &ctx).is_err());
+        let owed: Vec<&str> = sink
+            .abandon(&result, &ctx)
+            .iter()
+            .map(|r| r.header.rule_title.as_str())
+            .collect();
+        assert_eq!(owed, ["b", "c"]);
+        assert_eq!(sink.tenant_resume.len(), 0, "the progress is forgotten");
+    }
+
+    #[test]
+    fn an_abandoned_plain_delivery_skips_other_tenants() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink = FileSink::open(&dir.path().join("out.ndjson"))
+            .unwrap()
+            .with_tenant_filter(Some(TenantId::new("a").unwrap()));
+        let result = vec![
+            tenanted("a1", "a"),
+            tenanted("b1", "b"),
+            tenanted("a2", "a"),
+        ];
+        let owed: Vec<&str> = sink
+            .abandon(&result, &DeliveryContext::new())
+            .iter()
+            .map(|r| r.header.rule_title.as_str())
+            .collect();
+        assert_eq!(owed, ["a1", "a2"]);
+    }
+
+    #[test]
+    fn the_delivery_scope_matches_the_tenant_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = TenantId::new("a").unwrap();
+        let plain = FileSink::open(&dir.path().join("out.ndjson")).unwrap();
+        assert!(plain.delivery_scope().is_none());
+
+        let filtered = FileSink::open(&dir.path().join("out.ndjson"))
+            .unwrap()
+            .with_tenant_filter(Some(a.clone()));
+        let scope = filtered.delivery_scope().unwrap();
+        assert!(scope.accepts_result(&tenanted("x", "a")));
+        assert!(!scope.accepts_result(&tenanted("x", "b")));
+        assert!(!scope.accepts_incident(Some(&TenantId::new("b").unwrap())));
+
+        let before = format!("{}/", dir.path().display());
+        let templated = FileSink::open_template(before, ".ndjson".to_string(), 4)
+            .unwrap()
+            .with_tenant_filter(Some(a));
+        let scope = templated.delivery_scope().unwrap();
+        assert!(
+            scope.accepts_incident(Some(&TenantId::new("b").unwrap())),
+            "a {{tenant}} path writes every incident"
+        );
     }
 
     #[test]

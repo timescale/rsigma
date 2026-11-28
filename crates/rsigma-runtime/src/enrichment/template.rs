@@ -396,6 +396,23 @@ pub fn render_template(text: &str, result: &EvaluationResult) -> String {
     render_with(text, result, false, |_, s| s)
 }
 
+/// Make a rendered header value sendable: CR, LF, every other ASCII control
+/// character except horizontal tab, and DEL become a space.
+///
+/// Header templates insert event data as written, and a single control byte
+/// would make the whole request unbuildable. Replacing it keeps the header on
+/// one line, so a value cannot end the header and start another one.
+pub(crate) fn sanitize_header_value(value: String) -> String {
+    let is_control = |c: char| c.is_ascii_control() && c != '\t';
+    if !value.contains(is_control) {
+        return value;
+    }
+    value
+        .chars()
+        .map(|c| if is_control(c) { ' ' } else { c })
+        .collect()
+}
+
 /// Like [`render_template`], but percent-encodes every `${detection.*}` and
 /// `${correlation.*}` value for use inside a URL.
 ///
@@ -424,8 +441,8 @@ pub fn render_template_url(text: &str, result: &EvaluationResult) -> String {
 /// literal receives one JSON value: the value itself when it is a JSON
 /// number, `true`, `false`, or `null`, and a JSON string otherwise, so it
 /// cannot add keys or elements. Other templates receive every value
-/// JSON-string-escaped. URLs use [`render_template_url`]; headers keep
-/// [`render_template`] because header parsing rejects CR and LF.
+/// JSON-string-escaped. URLs use [`render_template_url`]; headers use
+/// [`render_template`] with control characters replaced by spaces.
 pub fn render_template_json(text: &str, result: &EvaluationResult) -> String {
     render_json_body(text, result, false, None)
 }

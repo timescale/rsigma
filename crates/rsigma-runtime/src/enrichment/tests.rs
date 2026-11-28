@@ -1693,6 +1693,53 @@ async fn cached_miss_status_counts_as_an_http_cache_hit() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn http_header_values_cannot_carry_control_characters() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!("owner")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let enricher = super::HttpEnricher::new(
+        "cmdb".to_string(),
+        EnricherKind::Detection,
+        "owner".to_string(),
+        "GET".to_string(),
+        server.uri(),
+        vec![("X-Host".to_string(), "${detection.event.Host}".to_string())],
+        None,
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        crate::build_default_http_client().unwrap(),
+        crate::HttpResponseCache::new(Duration::from_secs(60)),
+    );
+    let mut result = detection_result();
+    if let ResultBody::Detection(body) = &mut result.body {
+        body.event = Some(serde_json::json!({"Host": "dc01\r\nX-Injected: 1"}));
+    }
+    let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 1);
+    let mut results = vec![result];
+    pipeline.run(&mut results).await;
+
+    assert_eq!(
+        results[0].header.enrichments.as_ref().unwrap()["owner"],
+        "owner"
+    );
+    let requests = server.received_requests().await.unwrap();
+    let headers = &requests[0].headers;
+    assert!(headers.get("x-injected").is_none(), "{headers:?}");
+    assert_eq!(
+        headers.get("x-host").unwrap().to_str().unwrap(),
+        "dc01  X-Injected: 1"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn http_null_result_is_a_success_not_a_miss() {
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};

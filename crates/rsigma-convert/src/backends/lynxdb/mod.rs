@@ -559,10 +559,14 @@ impl Backend for LynxDbBackend {
             .config
             .compare_op_expression
             .ok_or_else(|| ConvertError::UnsupportedModifier("compare".into()))?;
-        Ok(expr
-            .replace("{field}", f)
-            .replace("{op}", op_token)
-            .replace("{value}", &value.to_string()))
+        Ok(fill_placeholders(
+            expr,
+            &[
+                ("field", f),
+                ("op", op_token),
+                ("value", &value.to_string()),
+            ],
+        ))
     }
 
     fn convert_field_exists(
