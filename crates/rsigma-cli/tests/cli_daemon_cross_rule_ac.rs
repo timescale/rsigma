@@ -2,7 +2,7 @@
 
 #![cfg(all(feature = "daemon", feature = "daachorse-index"))]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, http_get, poll_until, temp_file};
 use std::fmt::Write as _;

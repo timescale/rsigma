@@ -2,7 +2,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, http_get, http_post, poll_until, temp_file};
 use serde_json::Value;

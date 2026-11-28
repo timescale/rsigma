@@ -2,7 +2,7 @@
 
 #![cfg(all(feature = "daemon", feature = "stix-enrich"))]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, http_post, poll_until, temp_file};
 use rstix::store::{FsStore, StixStore};

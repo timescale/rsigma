@@ -8,6 +8,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+# The `cli_*.rs` integration tests are modules of the single `cli` target
+# below, so the suite compiles and links once instead of once per file.
+autotests = false
+
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
 
 [features]
 default = ["daemon"]

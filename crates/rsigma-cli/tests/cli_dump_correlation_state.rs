@@ -1,6 +1,6 @@
 //! Integration tests for `engine eval --dump-correlation-state`.
 
-mod common;
+use crate::common;
 
 use common::{rsigma, temp_file};
 use predicates::prelude::*;

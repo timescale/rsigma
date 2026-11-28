@@ -8,7 +8,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use std::process::{Command as StdCommand, Stdio};
 use std::time::Duration;

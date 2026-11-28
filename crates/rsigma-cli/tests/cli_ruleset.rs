@@ -4,7 +4,7 @@
 //! two config files: `rsigma.yaml` declares a working ruleset and a broken
 //! one, and `vendor-only.yaml` declares only the working ruleset.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::fs;

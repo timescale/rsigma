@@ -4,7 +4,7 @@
 
 #![cfg(feature = "mmdb-enrich")]
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

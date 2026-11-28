@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "daemon", feature = "mcp"))]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, SIMPLE_RULE, temp_file};
 use rmcp::model::CallToolRequestParams;

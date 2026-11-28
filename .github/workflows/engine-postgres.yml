@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # read repo for checkout
-    # Same pinned SigmaHQ commit as the corpus regression job in ci.yml.
+    # Same pinned SigmaHQ commit as the `cli-smoke` job in ci.yml.
     env:
       SIGMA_CORPUS_SHA: "994da16651194500b607a3007186c29779e1f961"
     steps:
@@ -58,6 +58,9 @@ jobs:
       - uses: $/.github/actions/setup-rust
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # The engine workflows all build `rsigma-convert` tests with default
+          # features, so they share one cache entry instead of saving three.
+          shared-key: rsigma-convert-engines
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Fetch SigmaHQ rules at pinned SHA
         run: |

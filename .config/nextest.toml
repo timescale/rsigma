@@ -1,0 +1,13 @@
+[profile.default]
+# The rstix interop suites use their own `main` (`harness = false`): it runs
+# every case in one process and writes the certification report at the end,
+# which nextest's process-per-test model cannot drive. Run them with
+# `cargo test -p rstix --test interop` and `--test taxii_interop`.
+default-filter = "not (package(rstix) and (binary(interop) or binary(taxii_interop)))"
+# Flag a test after 60 seconds and kill it after five minutes instead of
+# letting a hung daemon or container hold the job until the runner timeout.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.ci]
+# Report every failure on every platform rather than stopping at the first.
+fail-fast = false

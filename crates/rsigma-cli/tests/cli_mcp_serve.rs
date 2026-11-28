@@ -2,7 +2,7 @@
 
 #![cfg(feature = "mcp")]
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

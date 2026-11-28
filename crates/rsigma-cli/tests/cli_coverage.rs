@@ -4,7 +4,7 @@
 //! unit-tested in the command module; these tests cover the end-to-end CLI
 //! surface only and never touch the network.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

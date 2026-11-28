@@ -1,6 +1,6 @@
 //! Integration tests for `rsigma rule test`.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

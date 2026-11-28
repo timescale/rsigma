@@ -5,7 +5,7 @@
 //! unit-tested in the command and parser modules; these tests cover the
 //! end-to-end CLI surface only.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

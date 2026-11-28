@@ -16,6 +16,28 @@ Several other keys built from caller-controlled values could also run fields tog
 
 **Breaking changes:** `group_fingerprint` is replaced by `IdentityKey::group`, `IncidentStore::can_assign` takes an `IdentityKey`, `AdmittedEvent` gains `incident_key`, and `CacheKey` replaces `body_hash` and `headers_hash` with `body` and `headers`. Alert-pipeline snapshots move to version 3, which older releases cannot read.
 
+### CI keeps its build caches under the repository's 10 GB limit (#807)
+
+The Actions cache held about 10.8 GB, over the 10 GB that GitHub keeps per repository, so it evicted entries the next run needed. The three engine workflows built the same `rsigma-convert` dependencies into three entries and now share one. The weekly fuzz workflow no longer uses the cache at all: one job compiles every harness and the 33 fuzz jobs run its binaries, where each job used to compile the whole fuzz crate and install cargo-fuzz from source. Its corpus moves from the cache, which evicted it before the following week's run, to a `fuzz-corpus-<target>` artifact kept for 90 days, so each run on `main` starts from the inputs the previous one found.
+
+### The CLI integration tests build as one test binary (#806)
+
+Each of the 81 `cli_*.rs` files in `crates/rsigma-cli/tests/` was its own test target, so every build compiled and linked 81 executables, about 1 GB of linker output, and linking dominates the Windows and macOS test jobs. The files are now modules of a single `cli` target rooted at `tests/cli.rs` (`autotests = false`). The file layout and the 1,402 tests are unchanged; a rebuild of the suite with CI's settings drops from about 12.5 to 4.5 seconds on a 4-job macOS build. To run one file's tests, filter on its module, for example `cargo test -p rsigma --test cli cli_daemon_nats::`. The three `engine explain` insta snapshots are renamed for the new module path.
+
+### CI builds the CLI once for its smoke and SigmaHQ corpus checks (#805)
+
+The `Sigma Corpus Regression`, `MCP Smoke`, and `Output Format Smoke` jobs each compiled `rsigma` on their own, and the corpus job spent about six minutes on a release build (thin LTO, one codegen unit) to run about ten seconds of checks. They are now one `CLI smoke and Sigma corpus` job that builds an all-features debug binary once and runs the MCP smoke test over stdio and HTTP, the `--output-format` smoke test, and every corpus check: `rule validate`, the `rule fmt` round trip, validation with the dynamic pipelines, and the `pipeline resolve` goldens. The corpus checks take under a minute on the debug binary. The testing guide now lists the `rule fmt` check it was missing.
+
+### CI runs the test suite with cargo-nextest (#804)
+
+`cargo test` ran the workspace's 193 test binaries one after another, which took about 4 minutes of the Windows test job and 2.5 minutes on Linux. The `test` matrix and the `coverage` job now run the suite with [cargo-nextest](https://nexte.st/), which runs tests from every binary in parallel, each in its own process. Doc tests and the rstix `interop` and `taxii_interop` suites, which drive their own harness, still run through `cargo test`. The new `.config/nextest.toml` leaves those two suites out, flags tests that run past 60 seconds, and kills a test after five minutes so a hang fails the job instead of holding the runner. Plain `cargo test` still runs everything locally.
+
+`rsigma mcp serve --http` now prints the address it bound rather than the one it was given, so `--http 127.0.0.1:0` reports the port the OS picked. The MCP HTTP exposure tests use this to start on port 0 instead of probing for a free port, and send each request in a single write. The server answers 401 and 403 without reading the request body, and on Windows, closing a connection with unread bytes resets it and the client loses the response; under nextest's scheduling the test client hit that race regularly on the Windows runner.
+
+### CI no longer type-checks the workspace twice (#803)
+
+The `Check` job ran `cargo check --workspace --all-targets --all-features` on the same pinned toolchain, targets, and features that the `Clippy` job compiles with `cargo clippy`, so the step only repeated work. It is removed; `Check` keeps the fuzz crate and the `--no-default-features` builds that no other job covers.
+
 ### Correlation windows and suppression stay correct with far-future and out-of-order timestamps (#802)
 
 Correlation window state was kept in arrival order and expired only from the front, so one event with a far-future timestamp stopped every later entry from expiring: a sliding window grew without limit and kept firing, a tumbling window treated current events as late, a session stayed open, and an alert fired by such an event suppressed its group until the clock caught up. Any out-of-order arrival had milder versions of the same effects, and a temporal correlation could match hits further apart than its `timespan`.
@@ -25,6 +47,7 @@ Each event timestamp is now bounded by the wall clock. An event more than `max_f
 Window entries and retained events are kept ordered by timestamp. A sliding window ends at the newer of the event and the group's newest entry, so a late event cannot stretch it past its `timespan`; a session window discards an event from a session that already closed instead of restarting or extending the current one; and an older event never makes a session look idle. Suppression is measured on the group's newest event time on both direct and chained correlations, a last alert after that time counts as expired, and state eviction drops such records.
 
 `max_group_entries` now defaults to 10,000 entries per group instead of unbounded. For `event_count` and `value_count` the default rises to one more than the largest threshold in the condition, so the cap never stops a count short of a value the condition compares against. An explicit cap is used as given. The load-time warning about long windows without a cap is gone, since every group now has one.
+
 ### Rule partitioning keeps every rule an event can match, and prefilters apply under schema routing (#801)
 
 Per-schema rule partitioning (`--schema-partition-rules`) compiles each platform-locked pipeline-set with only the rules for its schemas' products. An event whose resolved product fell outside that set missed the removed rules, although the full rule set would have evaluated them: an event whose own `product` field contradicts its schema, and an event whose schema tied with one implying a different logsource. Such events are now also evaluated against the removed rules, compiled for that set the first time an event needs them from one shared copy of the parsed rules. With `--logsource-routing`, partitioning no longer changes any result.

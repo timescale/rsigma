@@ -1,6 +1,6 @@
 //! `rule draft --from-stix`: golden rules, the report, and the feature gate.
 
-mod common;
+use crate::common;
 
 #[cfg(feature = "stix-draft")]
 use std::path::PathBuf;

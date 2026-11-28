@@ -15,7 +15,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 use common::{temp_file, terminate_child};
 use std::io::{BufRead, BufReader, Write};
@@ -164,10 +164,13 @@ fn http_post(url: &str, body: &str) -> (u16, String) {
     }
 }
 
+/// Make sure a reload starts after this call. A 429 means reloads are already
+/// queued (the file watcher may have queued them for the same write), and a
+/// queued reload has not started yet, so it reads the current files too.
 fn retry_reload(daemon: &DaemonProcess) {
     for _ in 0..10 {
         let (status, _) = http_post(&daemon.url("/api/v1/reload"), "");
-        if status == 200 {
+        if status == 200 || status == 429 {
             return;
         }
         std::thread::sleep(Duration::from_millis(500));

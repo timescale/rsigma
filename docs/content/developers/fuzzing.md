@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 39 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 33 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual.
+The workspace ships 39 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 33 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -123,7 +123,7 @@ Differential fuzz harnesses (`fuzz_eval_matcher_diff`) are the canonical guard a
 
 ## Corpus
 
-Seed corpora are committed under `fuzz/seeds/<target>/`. CI restores and saves `fuzz/corpus/<target>` between runs (cache key `fuzz-corpus-<target>-…`). On failure, crashes upload as a workflow artifact named `fuzz-crashes-<target>` (not the corpus). Download a crash artifact to reproduce locally with `cargo fuzz run <target> path/to/crash`.
+Seed corpora are committed under `fuzz/seeds/<target>/`. Each run uploads `fuzz/corpus/<target>` as a workflow artifact named `fuzz-corpus-<target>`, kept for 90 days, and the next run starts from the newest one that a run on `main` uploaded. The corpus is not in the Actions cache, which evicts an entry used once a week before the next run. On failure, crashes upload as a workflow artifact named `fuzz-crashes-<target>`. Download a crash artifact to reproduce locally with `cargo fuzz run <target> path/to/crash`.
 
 ## See also
 

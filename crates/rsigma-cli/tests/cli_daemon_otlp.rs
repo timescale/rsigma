@@ -6,7 +6,7 @@
 
 #![cfg(feature = "daemon-otlp")]
 
-mod common;
+use crate::common;
 
 use common::{DaemonProcess, SIMPLE_RULE, http_get, poll_until, temp_file};
 use opentelemetry_proto::tonic::{

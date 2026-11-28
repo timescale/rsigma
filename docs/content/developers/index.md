@@ -51,7 +51,7 @@ For the runtime data flow and how the crates talk to each other, see [Architectu
 - **Edition 2024.** MSRV is `{{ rsigma.msrv }}` (the workspace's `rust-version` in `Cargo.toml`), enforced by the `check` CI job. Edition 2024 itself compiles on Rust 1.85+, but features and tests are written against the MSRV.
 - **No warnings.** `RUSTFLAGS=-Dwarnings` is set globally in CI.
 - **`cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`** must pass.
-- **All features for testing.** CI runs `cargo test --workspace --all-features --locked`; if your change is feature-gated, make sure the gate works in isolation too.
+- **All features for testing.** CI runs the suite with `cargo nextest run --workspace --all-features --locked` (see [Testing](testing.md#test-runner)); if your change is feature-gated, make sure the gate works in isolation too.
 - **Reproducible builds.** `Cargo.lock` is committed and reproducible builds are required.
 - **Hooks, not branches, gate releases.** PRs target `main`; only the release pipeline pushes tags.
 

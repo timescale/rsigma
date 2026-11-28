@@ -5,7 +5,7 @@
 //! rule + event fixtures so the format dimension is covered without
 //! duplicating per-command tests.
 
-mod common;
+use crate::common;
 
 use common::{SIMPLE_RULE, rsigma, temp_file, validate_ocsf_finding};
 use predicates::prelude::*;

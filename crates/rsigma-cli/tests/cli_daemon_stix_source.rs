@@ -2,7 +2,7 @@
 
 #![cfg(feature = "daemon")]
 
-mod common;
+use crate::common;
 
 #[cfg(not(feature = "stix-source"))]
 use std::process::{Command, Stdio};
