@@ -727,7 +727,9 @@ fn field_ops_reject_malformed_brackets() {
 
 #[test]
 fn field_ops_reject_keys_that_are_not_identifiers() {
-    for field in ["a]", "a b", "a'b", "1a", "a.b-c"] {
+    for field in [
+        "a]", "a b", "a'b", "1a", "a.b-", "a--b", "-a", "@", "a@b", "@@a",
+    ] {
         assert!(
             matches!(
                 parse_field_ops(field),
@@ -739,8 +741,24 @@ fn field_ops_reject_keys_that_are_not_identifiers() {
 }
 
 #[test]
+fn field_ops_accept_hyphenated_and_at_prefixed_keys() {
+    assert_eq!(
+        jsonb_path("data", "cs-method", true).unwrap(),
+        "data->>'cs-method'"
+    );
+    assert_eq!(
+        jsonb_path("data", "@timestamp", true).unwrap(),
+        "data->>'@timestamp'"
+    );
+    assert_eq!(
+        jsonb_path("data", "http.c-uri", true).unwrap(),
+        "data->'http'->>'c-uri'"
+    );
+}
+
+#[test]
 fn field_ops_reject_an_empty_path() {
-    for field in ["", ".", ".."] {
+    for field in ["", ".", "..", "a..b", ".a", "a."] {
         assert!(
             matches!(
                 parse_field_ops(field),

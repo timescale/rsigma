@@ -17,27 +17,24 @@ impl super::PostgresBackend {
         warnings: &mut Vec<String>,
     ) -> Result<Vec<String>> {
         let table = self.resolve_table(&rule.custom_attributes, &pipeline_state.state)?;
-        let ts = &self.timestamp_field;
+        let ts = &self.timestamp_column()?;
         let use_time_bucket =
             output_format == "timescaledb" || output_format == "continuous_aggregate";
 
-        let mut group_by_cols: Vec<String> = rule
-            .group_by
-            .iter()
-            .map(|g| self.field_expr(g))
-            .collect::<Result<_>>()?;
+        let (mut group_by_cols, mut group_by_items) = self.group_by_exprs(&rule.group_by)?;
         if use_time_bucket {
             group_by_cols.insert(0, format!("time_bucket('1 hour', {ts})"));
+            group_by_items.insert(0, format!("time_bucket('1 hour', {ts})"));
         }
         let group_by_clause = if group_by_cols.is_empty() {
             String::new()
         } else {
             format!(" GROUP BY {}", group_by_cols.join(", "))
         };
-        let group_by_select = if group_by_cols.is_empty() {
+        let group_by_select = if group_by_items.is_empty() {
             String::new()
         } else {
-            format!("{}, ", group_by_cols.join(", "))
+            format!("{}, ", group_by_items.join(", "))
         };
 
         let window_secs = rule.timespan.seconds;
@@ -172,31 +169,6 @@ impl super::PostgresBackend {
                     window_secs,
                     &rule.condition,
                 )?,
-            CorrelationType::EventCount => {
-                format!(
-                    "{cte_prefix}SELECT {group_by_select}COUNT(*) AS event_count \
-                     FROM {source_table}\
-                     {time_filter}\
-                     {group_by_clause} \
-                     HAVING {having_clause}",
-                    having_clause = having_clause.replace("{agg}", "COUNT(*)")
-                )
-            }
-            CorrelationType::ValueCount => {
-                let field = match value_field {
-                    Some(f) => self.field_expr(f)?,
-                    None => "'unknown_field'".to_string(),
-                };
-                let agg = format!("COUNT(DISTINCT {field})");
-                format!(
-                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_count \
-                     FROM {source_table}\
-                     {time_filter}\
-                     {group_by_clause} \
-                     HAVING {having_clause}",
-                    having_clause = having_clause.replace("{agg}", &agg)
-                )
-            }
             CorrelationType::Temporal | CorrelationType::TemporalOrdered => self
                 .build_temporal_query(
                     rule,
@@ -210,55 +182,10 @@ impl super::PostgresBackend {
                     &rule_tables,
                     pipeline_state,
                 )?,
-            CorrelationType::ValueSum => {
-                let field = match value_field {
-                    Some(f) => self.field_expr(f)?,
-                    None => "'unknown_field'".to_string(),
-                };
-                let agg = format!("SUM({field})");
+            _ => {
+                let (agg, alias) = self.correlation_aggregate(rule, value_field)?;
                 format!(
-                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_sum \
-                     FROM {source_table}\
-                     {time_filter}\
-                     {group_by_clause} \
-                     HAVING {having_clause}",
-                    having_clause = having_clause.replace("{agg}", &agg)
-                )
-            }
-            CorrelationType::ValueAvg => {
-                let field = match value_field {
-                    Some(f) => self.field_expr(f)?,
-                    None => "'unknown_field'".to_string(),
-                };
-                let agg = format!("AVG({field})");
-                format!(
-                    "{cte_prefix}SELECT {group_by_select}{agg} AS value_avg \
-                     FROM {source_table}\
-                     {time_filter}\
-                     {group_by_clause} \
-                     HAVING {having_clause}",
-                    having_clause = having_clause.replace("{agg}", &agg)
-                )
-            }
-            CorrelationType::ValuePercentile | CorrelationType::ValueMedian => {
-                let field = match value_field {
-                    Some(f) => self.field_expr(f)?,
-                    None => "'unknown_field'".to_string(),
-                };
-                let percentile = if rule.correlation_type == CorrelationType::ValueMedian {
-                    0.5
-                } else {
-                    match &rule.condition {
-                        CorrelationCondition::Threshold { percentile, .. } => {
-                            percentile.map(|p| p as f64 / 100.0).unwrap_or(0.95)
-                        }
-                        _ => 0.95,
-                    }
-                };
-                let agg = format!("PERCENTILE_CONT({percentile}) WITHIN GROUP (ORDER BY {field})");
-                format!(
-                    "{cte_prefix}SELECT {group_by_select}\
-                     {agg} AS pct_value \
+                    "{cte_prefix}SELECT {group_by_select}{agg} AS {alias} \
                      FROM {source_table}\
                      {time_filter}\
                      {group_by_clause} \
@@ -301,30 +228,22 @@ impl super::PostgresBackend {
         }
     }
 
-    /// Format a field name for use in a SELECT column list.
-    ///
-    /// Inspired by the pySigma Athena backend's `_format_select_field`:
-    /// - Expressions containing parentheses (function calls) pass through unchanged
-    /// - `field as alias` is split and both sides are quoted independently
-    /// - Plain field names are quoted via `field_expr`
-    pub(super) fn format_select_field(&self, field: &str) -> Result<String> {
-        if field == "*" {
-            return Ok("*".to_string());
+    /// The group-by fields as `(grouping expressions, SELECT list items)`.
+    /// A JSONB extraction has no column name of its own, so in JSONB mode
+    /// each item is aliased with its field name.
+    fn group_by_exprs(&self, group_by: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+        let mut exprs = Vec::with_capacity(group_by.len());
+        let mut items = Vec::with_capacity(group_by.len());
+        for field in group_by {
+            let expr = self.field_expr(field)?;
+            items.push(if self.json_field.is_some() {
+                format!("{expr} AS {}", self.quote_column(field)?)
+            } else {
+                expr.clone()
+            });
+            exprs.push(expr);
         }
-        if field.contains('(') && field.contains(')') {
-            return Ok(field.to_string());
-        }
-        if let Some((expr, alias)) = field.split_once(" as ") {
-            let quoted_expr = self.field_expr(expr.trim())?;
-            let quoted_alias = self.field_expr(alias.trim())?;
-            return Ok(format!("{quoted_expr} AS {quoted_alias}"));
-        }
-        if let Some((expr, alias)) = field.split_once(" AS ") {
-            let quoted_expr = self.field_expr(expr.trim())?;
-            let quoted_alias = self.field_expr(alias.trim())?;
-            return Ok(format!("{quoted_expr} AS {quoted_alias}"));
-        }
-        self.field_expr(field)
+        Ok((exprs, items))
     }
 
     /// Build the CTE prefix and source for non-temporal correlations.
@@ -484,16 +403,27 @@ impl super::PostgresBackend {
         rule: &CorrelationRule,
         value_field: Option<&str>,
     ) -> Result<(String, &'static str)> {
-        let field = match value_field {
-            Some(f) => self.field_expr(f)?,
-            None => "'unknown_field'".to_string(),
+        let field = || {
+            value_field.ok_or_else(|| {
+                ConvertError::UnsupportedCorrelation(format!(
+                    "{} correlation requires a field",
+                    rule.correlation_type.as_str()
+                ))
+            })
         };
+        // JSONB extractions are text, which SUM, AVG, and PERCENTILE_CONT
+        // reject, so they aggregate the value cast to numeric.
+        let numeric = || self.numeric_field(field()?, self.json_field.is_some());
         Ok(match rule.correlation_type {
             CorrelationType::EventCount => ("COUNT(*)".to_string(), "event_count"),
-            CorrelationType::ValueCount => (format!("COUNT(DISTINCT {field})"), "value_count"),
-            CorrelationType::ValueSum => (format!("SUM({field})"), "value_sum"),
-            CorrelationType::ValueAvg => (format!("AVG({field})"), "value_avg"),
+            CorrelationType::ValueCount => (
+                format!("COUNT(DISTINCT {})", self.field_expr(field()?)?),
+                "value_count",
+            ),
+            CorrelationType::ValueSum => (format!("SUM({})", numeric()?), "value_sum"),
+            CorrelationType::ValueAvg => (format!("AVG({})", numeric()?), "value_avg"),
             CorrelationType::ValuePercentile | CorrelationType::ValueMedian => {
+                let field = numeric()?;
                 let percentile = if rule.correlation_type == CorrelationType::ValueMedian {
                     0.5
                 } else {
@@ -538,15 +468,11 @@ impl super::PostgresBackend {
         } else {
             format!("date_bin('{window_secs} seconds', {ts}, TIMESTAMPTZ 'epoch')")
         };
-        let group_exprs: Vec<String> = rule
-            .group_by
-            .iter()
-            .map(|g| self.field_expr(g))
-            .collect::<Result<_>>()?;
-        let group_by_select = if group_exprs.is_empty() {
+        let (group_exprs, group_items) = self.group_by_exprs(&rule.group_by)?;
+        let group_by_select = if group_items.is_empty() {
             String::new()
         } else {
-            format!("{}, ", group_exprs.join(", "))
+            format!("{}, ", group_items.join(", "))
         };
         let mut gb = vec![bucket_expr.clone()];
         gb.extend(group_exprs);
@@ -585,21 +511,17 @@ impl super::PostgresBackend {
         warnings: &mut Vec<String>,
     ) -> Result<String> {
         let (agg, alias) = self.correlation_aggregate(rule, value_field)?;
-        let group_exprs: Vec<String> = rule
-            .group_by
-            .iter()
-            .map(|g| self.field_expr(g))
-            .collect::<Result<_>>()?;
+        let (group_exprs, group_items) = self.group_by_exprs(&rule.group_by)?;
 
         let partition = if group_exprs.is_empty() {
             String::new()
         } else {
             format!("PARTITION BY {} ", group_exprs.join(", "))
         };
-        let group_by_select = if group_exprs.is_empty() {
+        let group_by_select = if group_items.is_empty() {
             String::new()
         } else {
-            format!("{}, ", group_exprs.join(", "))
+            format!("{}, ", group_items.join(", "))
         };
         let mut final_group = group_exprs;
         final_group.push("session_id".to_string());
@@ -891,15 +813,11 @@ impl super::PostgresBackend {
         } else {
             format!("date_bin('{window_secs} seconds', {ts}, TIMESTAMPTZ 'epoch')")
         };
-        let group_exprs: Vec<String> = rule
-            .group_by
-            .iter()
-            .map(|g| self.field_expr(g))
-            .collect::<Result<_>>()?;
-        let group_by_select = if group_exprs.is_empty() {
+        let (group_exprs, group_items) = self.group_by_exprs(&rule.group_by)?;
+        let group_by_select = if group_items.is_empty() {
             String::new()
         } else {
-            format!("{}, ", group_exprs.join(", "))
+            format!("{}, ", group_items.join(", "))
         };
         let mut gb = vec![bucket_expr.clone()];
         gb.extend(group_exprs);
@@ -951,20 +869,16 @@ impl super::PostgresBackend {
             pipeline_state,
             false,
         )?;
-        let group_exprs: Vec<String> = rule
-            .group_by
-            .iter()
-            .map(|g| self.field_expr(g))
-            .collect::<Result<_>>()?;
+        let (group_exprs, group_items) = self.group_by_exprs(&rule.group_by)?;
         let partition = if group_exprs.is_empty() {
             String::new()
         } else {
             format!("PARTITION BY {} ", group_exprs.join(", "))
         };
-        let group_by_select = if group_exprs.is_empty() {
+        let group_by_select = if group_items.is_empty() {
             String::new()
         } else {
-            format!("{}, ", group_exprs.join(", "))
+            format!("{}, ", group_items.join(", "))
         };
         let mut final_group = group_exprs;
         final_group.push("session_id".to_string());

@@ -8,6 +8,7 @@
 
 mod correlation;
 mod jsonb;
+mod select;
 #[cfg(test)]
 mod tests;
 
@@ -36,6 +37,141 @@ fn validate_sql_identifier(s: &str) -> Result<()> {
     } else {
         Err(ConvertError::InvalidIdentifier(s.to_string()))
     }
+}
+
+/// One segment of a dotted field name: an identifier, optionally with a
+/// leading `@` and hyphenated parts, as in `@timestamp` and `cs-method`.
+fn is_field_key(s: &str) -> bool {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^@?[A-Za-z_][A-Za-z0-9_$]*(?:-[A-Za-z0-9_$]+)*$").unwrap());
+    RE.is_match(s)
+}
+
+/// PostgreSQL keywords that cannot name a column, table, or schema without
+/// quotes: the reserved and the type or function name categories of
+/// `pg_get_keywords()` in PostgreSQL 18. Unquoted, `user` and `current_user`
+/// read as the session user and `group` or `order` fail to parse. Sorted for
+/// binary search.
+const RESERVED_KEYWORDS: &[&str] = &[
+    "all",
+    "analyse",
+    "analyze",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "asymmetric",
+    "authorization",
+    "binary",
+    "both",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "collation",
+    "column",
+    "concurrently",
+    "constraint",
+    "create",
+    "cross",
+    "current_catalog",
+    "current_date",
+    "current_role",
+    "current_schema",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "default",
+    "deferrable",
+    "desc",
+    "distinct",
+    "do",
+    "else",
+    "end",
+    "except",
+    "false",
+    "fetch",
+    "for",
+    "foreign",
+    "freeze",
+    "from",
+    "full",
+    "grant",
+    "group",
+    "having",
+    "ilike",
+    "in",
+    "initially",
+    "inner",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "lateral",
+    "leading",
+    "left",
+    "like",
+    "limit",
+    "localtime",
+    "localtimestamp",
+    "natural",
+    "not",
+    "notnull",
+    "null",
+    "offset",
+    "on",
+    "only",
+    "or",
+    "order",
+    "outer",
+    "overlaps",
+    "placing",
+    "primary",
+    "references",
+    "returning",
+    "right",
+    "select",
+    "session_user",
+    "similar",
+    "some",
+    "symmetric",
+    "system_user",
+    "table",
+    "tablesample",
+    "then",
+    "to",
+    "trailing",
+    "true",
+    "union",
+    "unique",
+    "user",
+    "using",
+    "variadic",
+    "verbose",
+    "when",
+    "where",
+    "window",
+    "with",
+];
+
+fn is_reserved_keyword(name: &str) -> bool {
+    RESERVED_KEYWORDS
+        .binary_search(&name.to_ascii_lowercase().as_str())
+        .is_ok()
+}
+
+/// A validated table or schema name. PostgreSQL folds an unquoted name to
+/// lowercase, so a reserved word is quoted in its folded form to name the
+/// same relation.
+fn relation_ident(name: &str) -> Result<String> {
+    validate_sql_identifier(name)?;
+    Ok(if is_reserved_keyword(name) {
+        format!("\"{}\"", name.to_ascii_lowercase())
+    } else {
+        name.to_string()
+    })
 }
 
 /// Flatten a keyword [`IrPattern`] to its text form for full-text search,
@@ -262,41 +398,69 @@ impl PostgresBackend {
             .filter(|s| !s.is_empty());
 
         if let Some(s) = schema {
-            validate_sql_identifier(s)?;
-            Ok(format!("{s}.{table}"))
+            Ok(format!("{}.{table}", relation_ident(s)?))
         } else {
-            Ok(table.to_string())
+            Ok(table)
         }
     }
 
     /// The unqualified table name, with the same precedence as
-    /// [`resolve_table`](Self::resolve_table).
-    fn resolve_table_name<'a>(
-        &'a self,
-        custom_attrs: &'a HashMap<String, yaml_serde::Value>,
-        state: &'a HashMap<String, serde_json::Value>,
-    ) -> Result<&'a str> {
+    /// [`resolve_table`](Self::resolve_table), rendered for SQL.
+    fn resolve_table_name(
+        &self,
+        custom_attrs: &HashMap<String, yaml_serde::Value>,
+        state: &HashMap<String, serde_json::Value>,
+    ) -> Result<String> {
         let table = custom_attrs
             .get("postgres.table")
             .and_then(|v| v.as_str())
             .or(state.get("table").and_then(|v| v.as_str()))
             .unwrap_or(&self.table);
-        validate_sql_identifier(table)?;
-        Ok(table)
+        relation_ident(table)
     }
 
     /// Text of the whole event for a keyword search: the JSONB column, or the
     /// table row referenced by its unqualified name.
-    fn keyword_search_target(&self, state: &ConversionState) -> String {
+    fn keyword_search_target(&self, state: &ConversionState) -> Result<String> {
         match &self.json_field {
-            Some(json_col) => format!("{json_col}::text"),
-            None => format!(
-                "{}::text",
-                state
-                    .get_state_str(ROW_RELATION_STATE)
-                    .unwrap_or(&self.table)
-            ),
+            Some(json_col) => Ok(format!("{}::text", self.json_column(json_col)?)),
+            None => {
+                let row = match state.get_state_str(ROW_RELATION_STATE) {
+                    Some(row) => row.to_string(),
+                    None => relation_ident(&self.table)?,
+                };
+                Ok(format!("{row}::text"))
+            }
         }
+    }
+
+    /// A column name as SQL: a plain lowercase name that is not a reserved
+    /// word stays bare, and any other name is double-quoted with its case
+    /// kept and `"` doubled.
+    fn quote_column(&self, name: &str) -> Result<String> {
+        if name.is_empty() || name.contains('\0') {
+            return Err(ConvertError::InvalidIdentifier(name.to_string()));
+        }
+        let quoted = text_escape_and_quote_field(self.config, name);
+        Ok(if quoted == name && is_reserved_keyword(name) {
+            format!("\"{name}\"")
+        } else {
+            quoted
+        })
+    }
+
+    /// The `json_field` column (or an array element alias) as SQL.
+    fn json_column(&self, json_col: &str) -> Result<String> {
+        validate_sql_identifier(json_col)?;
+        self.quote_column(json_col)
+    }
+
+    /// The `timestamp_field` column as SQL, quoted the way field columns are.
+    /// Fails with [`ConvertError::InvalidIdentifier`] when the option is not a
+    /// plain SQL identifier.
+    pub fn timestamp_column(&self) -> Result<String> {
+        validate_sql_identifier(&self.timestamp_field)?;
+        self.quote_column(&self.timestamp_field)
     }
 
     /// Qualify a raw table name with schema. Precedence:
@@ -307,7 +471,7 @@ impl PostgresBackend {
         state: &HashMap<String, serde_json::Value>,
         per_rule_schema: Option<&str>,
     ) -> Result<String> {
-        validate_sql_identifier(table)?;
+        let table = relation_ident(table)?;
 
         let schema = per_rule_schema
             .or(state.get("schema").and_then(|v| v.as_str()))
@@ -315,10 +479,9 @@ impl PostgresBackend {
             .filter(|s| !s.is_empty());
 
         if let Some(s) = schema {
-            validate_sql_identifier(s)?;
-            Ok(format!("{s}.{table}"))
+            Ok(format!("{}.{table}", relation_ident(s)?))
         } else {
-            Ok(table.to_string())
+            Ok(table)
         }
     }
 
@@ -326,9 +489,15 @@ impl PostgresBackend {
         match &self.json_field {
             // JSONB navigation, with text extraction (`->>`) on the final hop.
             // Supports dotted paths and positional `[N]` indices.
-            Some(json_col) => jsonb::jsonb_path(json_col, field, true),
-            None => Ok(text_escape_and_quote_field(self.config, field)),
+            Some(json_col) => jsonb::jsonb_path(&self.json_column(json_col)?, field, true),
+            None => self.quote_column(field),
         }
+    }
+
+    /// A field as a JSONB value (`->` on every hop), which tells a JSON
+    /// `null` from a missing key and feeds `jsonb_array_elements`.
+    fn jsonb_value_expr(&self, json_col: &str, field: &str) -> Result<String> {
+        jsonb::jsonb_path(&self.json_column(json_col)?, field, false)
     }
 
     /// Whether `field` holds text: a JSONB extraction, or the element alias of
@@ -347,8 +516,14 @@ impl PostgresBackend {
     /// instead of failing the query, and a numeric string such as `"4"`
     /// matches as the engine does.
     fn numeric_expr(&self, field: &str, state: &ConversionState) -> Result<String> {
+        self.numeric_field(field, self.is_text_field(field, state))
+    }
+
+    /// [`numeric_expr`](Self::numeric_expr) for a field known to hold text
+    /// or not.
+    fn numeric_field(&self, field: &str, is_text: bool) -> Result<String> {
         let f = self.field_expr(field)?;
-        Ok(if self.is_text_field(field, state) {
+        Ok(if is_text {
             format!(
                 "(CASE WHEN {f} ~ '^[-+]?([0-9]{{1,100}}\\.?[0-9]{{0,100}}|\\.[0-9]{{1,100}})([eE][-+]?[0-9]{{1,3}})?$' \
                  THEN ({f})::numeric END)"
@@ -484,9 +659,7 @@ impl Backend for PostgresBackend {
         output_format: &str,
         pipeline_state: &PipelineState,
     ) -> Result<Vec<String>> {
-        let table = self
-            .resolve_table_name(&rule.custom_attributes, &pipeline_state.state)?
-            .to_string();
+        let table = self.resolve_table_name(&rule.custom_attributes, &pipeline_state.state)?;
         let mut state = pipeline_state.clone();
         state.set_state(ROW_RELATION_STATE.to_string(), table.into());
         convert_rule_via_ir(self, rule, output_format, &state)
@@ -540,7 +713,7 @@ impl Backend for PostgresBackend {
             .json_field
             .as_deref()
             .ok_or(ConvertError::UnsupportedArrayMatching)?;
-        let array_expr = jsonb::jsonb_path(json_col, field, false)?;
+        let array_expr = self.jsonb_value_expr(json_col, field)?;
         self.array_exists_from_expr_ir(&array_expr, quantifier, body, state)
     }
 
@@ -705,7 +878,7 @@ impl Backend for PostgresBackend {
         // `->` yields a jsonb `null` for a null value and SQL NULL only when
         // the key is absent, so it tells a null field from a missing one.
         let f = match &self.json_field {
-            Some(json_col) => jsonb::jsonb_path(json_col, field, false)?,
+            Some(json_col) => self.jsonb_value_expr(json_col, field)?,
             None => self.field_expr(field)?,
         };
         if exists {
@@ -755,7 +928,7 @@ impl Backend for PostgresBackend {
         state: &mut ConversionState,
     ) -> Result<String> {
         reject_nul_pattern("PostgreSQL", pattern)?;
-        let search_target = self.keyword_search_target(state);
+        let search_target = self.keyword_search_target(state)?;
         let plain = keyword_pattern_text(pattern);
         if plain.is_empty() {
             return Err(ConvertError::UnsupportedKeyword);
@@ -775,7 +948,7 @@ impl Backend for PostgresBackend {
         state: &mut ConversionState,
     ) -> Result<String> {
         reject_nul_pattern("PostgreSQL", pattern)?;
-        let search_target = self.keyword_search_target(state);
+        let search_target = self.keyword_search_target(state)?;
         let like_op = if case_insensitive { "ILIKE" } else { "LIKE" };
         let inner = self.build_like_value_ir(pattern);
         let val = self.wrap_like_wildcards(&inner, true, false, false);
@@ -787,7 +960,7 @@ impl Backend for PostgresBackend {
         value: NumericLiteral,
         state: &mut ConversionState,
     ) -> Result<String> {
-        let search_target = self.keyword_search_target(state);
+        let search_target = self.keyword_search_target(state)?;
         let v = value.to_string();
         Ok(format!(
             "to_tsvector('simple', {search_target}) @@ plainto_tsquery('simple', '{v}')"
@@ -804,34 +977,13 @@ impl Backend for PostgresBackend {
     ) -> Result<String> {
         let qualified = self.resolve_table(&rule.custom_attributes, &state.processing_state)?;
 
-        let is_timescaledb = state
-            .get_state_str("_output_format")
-            .is_some_and(|f| f == "timescaledb" || f == "continuous_aggregate");
-
-        let base_cols = if rule.fields.is_empty() {
-            "*".to_string()
-        } else {
-            rule.fields
-                .iter()
-                .map(|f| self.format_select_field(f))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        };
-
-        let select_cols = if is_timescaledb {
-            format!(
-                "time_bucket('1 hour', {}) AS bucket, {}",
-                self.timestamp_field, base_cols
-            )
-        } else {
-            base_cols
-        };
-
-        let custom_tmpl = state.get_state_str("query_expression_template");
-
-        let effective_tmpl = match custom_tmpl {
+        let effective_tmpl = match state.get_state_str("query_expression_template") {
             Some(t) => t.to_string(),
-            None => format!("SELECT {select_cols} FROM {{table}} WHERE {{query}}"),
+            None => {
+                let (select, group_by) =
+                    self.select_list(&rule.fields, state.get_state_str("_output_format"), state)?;
+                format!("SELECT {select} FROM {{table}} WHERE {{query}}{group_by}")
+            }
         };
 
         // Rule metadata is free text, so it renders as string literal content.

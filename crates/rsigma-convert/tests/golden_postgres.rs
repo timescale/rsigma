@@ -20,6 +20,10 @@ use std::fs;
 use std::path::Path;
 
 fn run_golden(name: &str) {
+    run_golden_with(name, &PostgresBackend::new());
+}
+
+fn run_golden_with(name: &str, backend: &PostgresBackend) {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/postgres");
     let yaml_path = base.join(format!("{name}.yml"));
     let sql_path = base.join(format!("{name}.sql"));
@@ -32,9 +36,8 @@ fn run_golden(name: &str) {
 
     let collection = parse_sigma_yaml(&yaml)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", yaml_path.display()));
-    let backend = PostgresBackend::new();
 
-    let output = convert_collection(&backend, &collection, &[], "default")
+    let output = convert_collection(backend, &collection, &[], "default")
         .unwrap_or_else(|e| panic!("conversion failed for {name}: {e}"));
     assert!(
         output.errors.is_empty(),
@@ -168,4 +171,9 @@ fn golden_large_integers() {
 #[test]
 fn golden_quoted_identifiers() {
     run_golden("quoted_identifiers");
+}
+
+#[test]
+fn golden_select_fields() {
+    run_golden("select_fields");
 }

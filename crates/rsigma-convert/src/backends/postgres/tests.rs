@@ -885,8 +885,9 @@ detection:
         vec![
             "CREATE MATERIALIZED VIEW sigma_abcdef01_2345_6789_abcd_ef0123456789 \
              WITH (timescaledb.continuous) AS \
-             SELECT time_bucket('1 hour', time) AS bucket, * \
-             FROM security_events WHERE \"FieldA\" ILIKE 'val1' WITH NO DATA"
+             SELECT time_bucket('1 hour', time) AS bucket, count(*) AS event_count \
+             FROM security_events WHERE \"FieldA\" ILIKE 'val1' \
+             GROUP BY time_bucket('1 hour', time) WITH NO DATA"
         ]
     );
 }
@@ -1607,7 +1608,7 @@ fields:
 }
 
 #[test]
-fn test_select_fields_with_function_passthrough() {
+fn test_select_fields_with_aggregate_group_by_the_other_fields() {
     let queries = convert(
         r#"
 title: Test
@@ -1624,7 +1625,9 @@ fields:
     );
     assert_eq!(
         queries,
-        vec!["SELECT count(*), user_id FROM security_events WHERE action ILIKE 'login'"]
+        vec![
+            "SELECT count(*), user_id FROM security_events WHERE action ILIKE 'login' GROUP BY user_id"
+        ]
     );
 }
 
@@ -2699,4 +2702,332 @@ detection:
         matches!(&err, ConvertError::UnsupportedValue(m) if m.contains("NUL")),
         "got: {err}"
     );
+}
+
+// --- Reserved words and identifier rendering ---
+
+fn backend_with(opts: &[(&str, &str)]) -> PostgresBackend {
+    PostgresBackend::from_options(
+        &opts
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    )
+}
+
+fn convert_corr_with(yaml: &str, format: &str, backend: &PostgresBackend) -> Result<String> {
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let errors: Vec<_> = collection.errors().collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            format,
+            &PipelineState::default(),
+        )
+        .map(|mut q| q.remove(0))
+}
+
+const USER_COUNT: &str = r#"
+title: Per user
+correlation:
+    type: event_count
+    rules:
+        - base
+    group-by:
+        - user
+    timespan: 5m
+    condition:
+        gte: 5
+"#;
+
+#[test]
+fn reserved_word_fields_are_quoted_in_predicates() {
+    let queries = convert(
+        r#"
+title: Test
+logsource:
+    category: test
+detection:
+    selection:
+        user: alice
+        group: admins
+        order|contains: x
+        current_user: bob
+        time: noon
+        name: n
+    condition: selection
+"#,
+    );
+    assert_eq!(
+        queries,
+        vec![
+            "SELECT * FROM security_events WHERE \"user\" ILIKE 'alice' AND \"group\" ILIKE 'admins' \
+             AND \"order\" ILIKE '%x%' AND \"current_user\" ILIKE 'bob' AND time ILIKE 'noon' \
+             AND name ILIKE 'n'"
+        ]
+    );
+}
+
+#[test]
+fn every_reserved_keyword_is_quoted_and_others_stay_bare() {
+    let backend = PostgresBackend::new();
+    assert!(RESERVED_KEYWORDS.is_sorted());
+    for kw in RESERVED_KEYWORDS {
+        assert_eq!(backend.field_expr(kw).unwrap(), format!("\"{kw}\""));
+        let upper = kw.to_ascii_uppercase();
+        assert_eq!(backend.field_expr(&upper).unwrap(), format!("\"{upper}\""));
+    }
+    for name in [
+        "time", "name", "action", "values", "between", "type", "user_id",
+    ] {
+        assert_eq!(backend.field_expr(name).unwrap(), name);
+    }
+}
+
+#[test]
+fn empty_and_nul_column_names_are_rejected() {
+    let backend = PostgresBackend::new();
+    for name in ["", "a\0b"] {
+        assert!(matches!(
+            backend.quote_column(name),
+            Err(ConvertError::InvalidIdentifier(_))
+        ));
+    }
+}
+
+#[test]
+fn reserved_word_group_by_is_quoted_in_every_correlation_shape() {
+    let backend = PostgresBackend::new();
+    assert_eq!(
+        convert_corr_with(USER_COUNT, "default", &backend).unwrap(),
+        "SELECT \"user\", COUNT(*) AS event_count FROM security_events \
+         WHERE time >= NOW() - INTERVAL '300 seconds' GROUP BY \"user\" HAVING COUNT(*) >= 5"
+    );
+    assert_eq!(
+        convert_corr_with(USER_COUNT, "timescaledb", &backend).unwrap(),
+        "SELECT time_bucket('1 hour', time), \"user\", COUNT(*) AS event_count FROM security_events \
+         WHERE time >= NOW() - INTERVAL '300 seconds' GROUP BY time_bucket('1 hour', time), \"user\" \
+         HAVING COUNT(*) >= 5"
+    );
+    assert!(
+        convert_corr_with(USER_COUNT, "sliding_window", &backend)
+            .unwrap()
+            .contains("PARTITION BY \"user\" ORDER BY time")
+    );
+    for (window, extra) in [("tumbling", ""), ("session", "    gap: 1m\n")] {
+        let yaml = USER_COUNT.replace(
+            "    timespan:",
+            &format!("    window: {window}\n{extra}    timespan:"),
+        );
+        let q = convert_corr_with(&yaml, "default", &backend).unwrap();
+        assert!(q.contains("\"user\", "), "{window}: {q}");
+        assert!(
+            !q.contains(" user,") && !q.contains("(user"),
+            "{window}: {q}"
+        );
+    }
+    let temporal = USER_COUNT
+        .replace("event_count", "temporal_ordered")
+        .replace("        - base\n", "        - a\n        - b\n");
+    for window in ["sliding", "tumbling", "session\n    gap: 1m"] {
+        let yaml = temporal.replace(
+            "    timespan:",
+            &format!("    window: {window}\n    timespan:"),
+        );
+        let q = convert_corr_with(&yaml, "default", &backend).unwrap();
+        assert!(
+            q.contains("PARTITION BY") && q.contains("\"user\""),
+            "{window}: {q}"
+        );
+        assert!(
+            !q.contains(" user,") && !q.contains("(user"),
+            "{window}: {q}"
+        );
+    }
+}
+
+#[test]
+fn reserved_word_value_field_is_quoted() {
+    let yaml = USER_COUNT
+        .replace("event_count", "value_count")
+        .replace("gte: 5", "gte: 5\n        field: order");
+    assert_eq!(
+        convert_corr_with(&yaml, "default", &PostgresBackend::new()).unwrap(),
+        "SELECT \"user\", COUNT(DISTINCT \"order\") AS value_count FROM security_events \
+         WHERE time >= NOW() - INTERVAL '300 seconds' GROUP BY \"user\" \
+         HAVING COUNT(DISTINCT \"order\") >= 5"
+    );
+}
+
+#[test]
+fn reserved_word_tables_and_schemas_are_quoted_in_folded_form() {
+    let rule = "title: T\nlogsource: {category: test}\ndetection:\n  sel: {action: x}\n  keywords: [evil]\n  condition: sel and keywords\n";
+    let queries = convert_with(
+        rule,
+        &backend_with(&[("table", "User"), ("schema", "select")]),
+    );
+    assert_eq!(
+        queries,
+        vec![
+            "SELECT * FROM \"select\".\"user\" WHERE action ILIKE 'x' AND \
+             to_tsvector('simple', \"user\"::text) @@ plainto_tsquery('simple', 'evil')"
+        ]
+    );
+    let queries = convert_with(rule, &backend_with(&[("table", "Events")]));
+    assert_eq!(
+        queries,
+        vec![
+            "SELECT * FROM Events WHERE action ILIKE 'x' AND \
+             to_tsvector('simple', Events::text) @@ plainto_tsquery('simple', 'evil')"
+        ]
+    );
+    assert_eq!(
+        convert_corr_with(USER_COUNT, "default", &backend_with(&[("table", "order")])).unwrap(),
+        "SELECT \"user\", COUNT(*) AS event_count FROM \"order\" \
+         WHERE time >= NOW() - INTERVAL '300 seconds' GROUP BY \"user\" HAVING COUNT(*) >= 5"
+    );
+}
+
+#[test]
+fn timestamp_field_is_rendered_as_a_column() {
+    for (ts, rendered) in [
+        ("user", "\"user\""),
+        ("EventTime", "\"EventTime\""),
+        ("event_time", "event_time"),
+    ] {
+        let backend = backend_with(&[("timestamp_field", ts)]);
+        assert_eq!(backend.timestamp_column().unwrap(), rendered);
+        let q = convert_corr_with(USER_COUNT, "timescaledb", &backend).unwrap();
+        assert!(
+            q.contains(&format!("time_bucket('1 hour', {rendered})")),
+            "{q}"
+        );
+        assert!(q.contains(&format!("WHERE {rendered} >= NOW()")), "{q}");
+    }
+    let rule = parse_sigma_yaml(
+        "title: T\nlogsource: {category: test}\ndetection:\n  sel: {action: x}\n  condition: sel\n",
+    )
+    .unwrap();
+    for ts in ["time; DROP TABLE x", "now()", "", "a b"] {
+        let backend = backend_with(&[("timestamp_field", ts)]);
+        assert!(matches!(
+            convert_corr_with(USER_COUNT, "default", &backend),
+            Err(ConvertError::InvalidIdentifier(_))
+        ));
+        assert!(matches!(
+            backend.convert_rule(&rule.rules[0], "timescaledb", &PipelineState::default()),
+            Err(ConvertError::InvalidIdentifier(_))
+        ));
+    }
+}
+
+#[test]
+fn json_field_is_rendered_as_a_column() {
+    let rule = "title: T\nlogsource: {category: test}\ndetection:\n  sel: {action: x}\n  keywords: [evil]\n  condition: sel and keywords\n";
+    for (col, rendered) in [("user", "\"user\""), ("Data", "\"Data\""), ("data", "data")] {
+        assert_eq!(
+            convert_with(rule, &backend_with(&[("json_field", col)])),
+            vec![format!(
+                "SELECT * FROM security_events WHERE {rendered}->>'action' ILIKE 'x' AND \
+                 to_tsvector('simple', {rendered}::text) @@ plainto_tsquery('simple', 'evil')"
+            )]
+        );
+    }
+    let collection = parse_sigma_yaml(rule).unwrap();
+    for col in ["data; DROP TABLE x", "data->'a'", ""] {
+        let err = backend_with(&[("json_field", col)])
+            .convert_rule(&collection.rules[0], "default", &PipelineState::default())
+            .unwrap_err();
+        assert!(
+            matches!(err, ConvertError::InvalidIdentifier(_)),
+            "{col:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn jsonb_correlation_names_group_columns_and_casts_numeric_aggregates() {
+    let backend = backend_with(&[("json_field", "data")]);
+    let num = "(CASE WHEN data->>'bytes' ~ '^[-+]?([0-9]{1,100}\\.?[0-9]{0,100}|\\.[0-9]{1,100})([eE][-+]?[0-9]{1,3})?$' \
+               THEN (data->>'bytes')::numeric END)";
+    let yaml = |ty: &str| {
+        USER_COUNT
+            .replace("event_count", ty)
+            .replace("gte: 5", "gte: 5\n        field: bytes")
+    };
+    assert_eq!(
+        convert_corr_with(&yaml("value_sum"), "default", &backend).unwrap(),
+        format!(
+            "SELECT data->>'user' AS \"user\", SUM({num}) AS value_sum FROM security_events \
+             WHERE time >= NOW() - INTERVAL '300 seconds' GROUP BY data->>'user' HAVING SUM({num}) >= 5"
+        )
+    );
+    let q = convert_corr_with(&yaml("value_avg"), "default", &backend).unwrap();
+    assert!(q.contains(&format!("AVG({num}) AS value_avg")), "{q}");
+    let q = convert_corr_with(&yaml("value_median"), "default", &backend).unwrap();
+    assert!(
+        q.contains(&format!(
+            "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {num})"
+        )),
+        "{q}"
+    );
+    let q = convert_corr_with(&yaml("value_count"), "default", &backend).unwrap();
+    assert!(q.contains("COUNT(DISTINCT data->>'bytes')"), "{q}");
+    let q = convert_corr_with(
+        &yaml("value_sum").replace("    timespan:", "    window: tumbling\n    timespan:"),
+        "default",
+        &backend,
+    )
+    .unwrap();
+    assert!(q.contains("data->>'user' AS \"user\", SUM("), "{q}");
+    assert!(
+        q.contains("GROUP BY date_bin('300 seconds', time, TIMESTAMPTZ 'epoch'), data->>'user'"),
+        "{q}"
+    );
+}
+
+#[test]
+fn flat_correlation_keeps_numeric_aggregates_on_the_column() {
+    let yaml = USER_COUNT
+        .replace("event_count", "value_sum")
+        .replace("gte: 5", "gte: 5\n        field: bytes");
+    let q = convert_corr_with(&yaml, "default", &PostgresBackend::new()).unwrap();
+    assert!(q.contains("SUM(bytes) AS value_sum"), "{q}");
+}
+
+#[test]
+fn value_correlation_without_a_field_is_rejected() {
+    let yaml = USER_COUNT
+        .replace("event_count", "value_sum")
+        .replace("gte: 5", "gte: 5\n        field: bytes");
+    let mut rule = parse_sigma_yaml(&yaml).unwrap().correlations.remove(0);
+    if let CorrelationCondition::Threshold { field, .. } = &mut rule.condition {
+        *field = None;
+    }
+    for window in [None, Some("tumbling")] {
+        let backend = match window {
+            Some(m) => backend_with(&[("correlation_method", m)]),
+            None => PostgresBackend::new(),
+        };
+        let err = backend
+            .convert_correlation_rule(&rule, "default", &PipelineState::default())
+            .unwrap_err();
+        assert!(
+            matches!(&err, ConvertError::UnsupportedCorrelation(m) if m.contains("requires a field")),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn jsonb_paths_with_empty_segments_are_rejected() {
+    let collection = parse_sigma_yaml(
+        "title: T\nlogsource: {category: test}\ndetection:\n  sel: {'a..b': x}\n  condition: sel\n",
+    )
+    .unwrap();
+    let err = backend_with(&[("json_field", "data")])
+        .convert_rule(&collection.rules[0], "default", &PipelineState::default())
+        .unwrap_err();
+    assert!(matches!(err, ConvertError::InvalidIdentifier(_)), "{err}");
 }

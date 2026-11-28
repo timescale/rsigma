@@ -1,0 +1,27 @@
+title: Columns From Fields
+id: select-columns
+logsource:
+    category: proxy
+detection:
+    selection:
+        cs-method: POST
+    condition: selection
+fields:
+    - c-uri
+    - CommandLine as cmd
+    - user
+    - userIdentity.arn
+    - src_ip
+---
+title: Aggregates From Fields
+id: select-aggregates
+logsource:
+    category: proxy
+detection:
+    selection:
+        cs-method: POST
+    condition: selection
+fields:
+    - count(*) AS hits
+    - max(EventID)
+    - SUM(bytes) as total
