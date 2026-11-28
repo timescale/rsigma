@@ -96,6 +96,8 @@ Inside a container the API has to bind a non-loopback address to be reachable th
 
 A non-loopback bind also needs authentication, so the examples pass `--api-token-env RSIGMA_API_TOKEN` and forward the secret from the host with `-e RSIGMA_API_TOKEN` (generate one with `openssl rand -hex 32`). Clients send it as `Authorization: Bearer <token>`; `GET /healthz` and `GET /readyz` stay open for probes. Use the `daemon.api.auth` config block for per-client roles, `--tls-client-ca` for certificate-based authentication, or `--allow-unauthenticated` only when an authenticating proxy fronts the container. See [Daemon API authentication](../reference/security.md#daemon-api-authentication).
 
+With a token, the API accepts any `Host` header. An unauthenticated container accepts only `localhost`, `127.0.0.1`, and `::1`, so add `--api-allowed-host` for each name clients use (for example `--api-allowed-host rsigma` on a Compose network); requests addressed to other names get `403`. `/healthz` and `/readyz` answer any host. See [Host and Origin validation](../cli/engine/daemon.md#host-and-origin-validation). {{ added "unreleased" }}
+
 | Flag | Why |
 |------|-----|
 | `--read-only` | Root filesystem is immutable. Combined with `--tmpfs /tmp` for any scratch writes. |

@@ -23,8 +23,11 @@ This split keeps the evaluation hot path independent of any external system: a d
 Pass a YAML file to `--enrichers <path>` on `engine daemon`. The file is hot-reloaded on `SIGHUP`, file-watcher changes, and `POST /api/v1/reload`; a reload that fails validation logs the error and keeps the previous pipeline active, so a typo never silently degrades production to "no enrichment".
 
 ```yaml
-# Bound on concurrent enrichment chains. Defaults to 16.
+# Detections enriched at once. Defaults to 16.
 max_concurrent_enrichments: 16
+# How long a timed-out or failed http, dns, or command request is remembered.
+# Defaults to 60s; 0s turns it off.
+failure_cache_ttl: 60s
 
 enrichers:
   - id: <unique-string>            # required, used as a Prometheus label
@@ -42,6 +45,14 @@ enrichers:
 ```
 
 Keys that are unknown, or that do not apply to the entry's `type:`, are rejected at load with an error that names the key and lists the supported ones. The same holds for keys under `scope` and at the top level of the file. A key set to an empty value (`headers: {}`, `attack_technique: false`, `miss_status: []`, `mmap: false`) counts as absent. `default` counts whenever it is written, `default: null` included. Bespoke types registered with `register_builtin` receive unknown keys and validate them themselves. {{ added "0.28.0" }}
+
+## Concurrency and slow upstreams
+
+{{ added "unreleased" }}
+
+The daemon enriches up to `max_concurrent_enrichments` detections at once, in their own tasks, so a slow or dead upstream holds up neither the alert pipeline's timers nor every detection behind it. The enricher chain of one detection still runs in order, and detections reach the sinks, and their source events are acknowledged, in the order they arrived.
+
+For `http`, `dns`, and `command` entries, each distinct request (the rendered URL, body, and headers; the query name and record type; the command line and environment) is made once at a time: detections whose request is already in flight wait for it and take its outcome. A request that times out or fails to fetch (a connection error, an unlisted non-2xx status, a DNS SERVFAIL, a non-zero exit) is remembered for `failure_cache_ttl`, and later detections with the same request get the same failure, under their `on_error` policy, without waiting for the timeout again. Misses are not remembered here; the `http` `miss_status` cache and the `dns` negative cache handle those. Both the in-flight sharing and the failure cache count in `rsigma_enrichment_short_circuits_total`, and a reload starts with an empty failure cache.
 
 ## Misses and errors
 
@@ -741,6 +752,7 @@ A miss without `default` logs at debug level (`Enricher found no data`), so rout
 | `rsigma_enrichment_total` | `enricher_id`, `kind`, `status` | Per-call outcome counter; `status` is `success`/`skip`/`error`/`timeout`/`miss`/`drop`. A miss that is skipped or injected as `null` reports `miss` {{ added "0.28.0" }} |
 | `rsigma_enrichment_duration_seconds` | `enricher_id`, `kind` | Per-enricher latency histogram |
 | `rsigma_enrichment_queue_depth` | none | Pending enrichment calls (sum across both kinds) |
+| `rsigma_enrichment_short_circuits_total` | `enricher_id` | Calls skipped because the same request was in flight or timed out or failed within `failure_cache_ttl` {{ added "unreleased" }} |
 | `rsigma_enrichment_http_cache_hits_total` | `enricher_id` | HTTP enricher response-cache hits |
 | `rsigma_enrichment_http_cache_misses_total` | `enricher_id` | HTTP enricher response-cache misses |
 | `rsigma_enrichment_http_cache_expirations_total` | `enricher_id` | HTTP enricher response-cache entries evicted on expiry |
@@ -754,7 +766,7 @@ A miss without `default` logs at debug level (`Enricher found no data`), so rout
 
 DNS counters are per query, not per enrichment call: an `IP` lookup counts two queries. A query cut off by the pipeline's outer enricher timeout never completes, so it is not counted in `queries_total`; it shows up in `rsigma_enrichment_total{status="timeout"}` instead. Key errors send no query and are not counted here.
 
-Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, both MMDB reload `result` values, every DNS cache hit and miss `enricher_id` row, and all three DNS query `result` values are pre-registered at startup, so all thirteen families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
+Every `(enricher_id, kind, status)` triple, every HTTP-cache `enricher_id` row, every MMDB hit and miss `enricher_id` row, both MMDB reload `result` values, every DNS cache hit and miss `enricher_id` row, all three DNS query `result` values, and every short-circuit `enricher_id` row are pre-registered at startup, so all fourteen families render at zero on the first `/metrics` scrape, before any event has fired. Filtered (kind- or scope-mismatched) calls do not increment any counters.
 
 ## See also
 

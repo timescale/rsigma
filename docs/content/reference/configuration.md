@@ -65,6 +65,7 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `eval.output` | Only when it resolves outside the project. `engine eval` creates or truncates the file. |
 | `scorecard.report` | Only when it resolves outside the project. `rule scorecard` creates or truncates the file. |
 | `daemon.api.auth` | A planted token could name any environment variable, such as `HOME`, as its secret, and a project `auth` block replaces the operator's. |
+| `daemon.api.allowed_hosts` | Widens the `Host` headers the API accepts, which reopens the API to DNS-rebinding pages. {{ added "unreleased" }} |
 | `daemon.api.allow_unauthenticated` | Serves the API without authentication on a non-loopback address. |
 | `daemon.api.tls.allow_plaintext` | Serves plaintext on a non-loopback address. |
 | `daemon.api.tls.client_ca` | Decides which client certificates the API accepts. |
@@ -144,6 +145,11 @@ daemon:
     addr: "0.0.0.0:9090"   # TCP host:port, or unix:///run/rsigma/api.sock (Unix; no TLS)
                            # non-loopback TCP needs TLS (or tls.allow_plaintext) and auth, tls.client_ca, or allow_unauthenticated
     # allow_unauthenticated: false
+    # allowed_hosts: [rsigma.internal]   # extra Host values; "*" accepts any host and needs auth
+    max_connections: 1024  # open API connections; more clients wait in the backlog
+    read_timeout: 30s      # first bytes, each request head, and each request body chunk
+    # tls:
+    #   handshake_timeout: 10s
   input:
     source: stdin          # stdin | http | nats://... | unix:///run/rsigma/ingest.sock (Unix)
     format: auto

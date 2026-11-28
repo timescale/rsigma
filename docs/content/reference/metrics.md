@@ -98,6 +98,7 @@ Exposed when the daemon is built with `daemon` and `--enrichers` is passed. Ever
 | `rsigma_enrichment_total` | counter | `enricher_id`, `kind` (`detection`, `correlation`), `status` (`success`, `skip`, `error`, `timeout`, `miss`, `drop`) | Per-call outcome counter. `kind` is the enricher's declared kind (the YAML `kind:` field), not a per-result discriminator. A miss (the lookup found no data for its key) reports `miss` when it is skipped or injected as `null`, and `drop` when it drops the result; a miss covered by `default` reports `success`. {{ added "0.28.0" }} |
 | `rsigma_enrichment_duration_seconds` | histogram | `enricher_id`, `kind` | Per-enricher latency. Buckets target both fast `template` calls and slower `http`/`command` invocations. |
 | `rsigma_enrichment_queue_depth` | gauge | none | Pending enrichment calls (sum across both kinds). Watch this versus `max_concurrent_enrichments`. |
+| `rsigma_enrichment_short_circuits_total` | counter | `enricher_id` | Enricher calls skipped because the same request was already in flight (the detection took that call's outcome) or timed out or failed to fetch within `failure_cache_ttl`. A rising rate with `status="timeout"` in `rsigma_enrichment_total` points at a dead upstream. {{ added "unreleased" }} |
 | `rsigma_enrichment_http_cache_hits_total` | counter | `enricher_id` | HTTP enricher response-cache hits. Mandatory signal for any rate-limited API recipe. |
 | `rsigma_enrichment_http_cache_misses_total` | counter | `enricher_id` | HTTP enricher response-cache misses. |
 | `rsigma_enrichment_http_cache_expirations_total` | counter | `enricher_id` | HTTP enricher response-cache entries evicted on expiry. |
@@ -170,7 +171,8 @@ Exposed when the daemon is built with `daemon-tls`. Both metrics render with the
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `rsigma_tls_certificate_expiry_seconds` | gauge | none | Seconds until the active TLS server certificate's `not_after`. Signed: negative once expired. Updated at startup and after every successful SIGHUP-triggered reload. |
-| `rsigma_tls_active_connections` | gauge | none | Currently active TLS-terminated connections on the API listener. Decrements on connection close (including handshake failure). |
+| `rsigma_tls_active_connections` | gauge | none | Currently active TLS-terminated connections on the API listener. Counts connections whose handshake completed; decrements on connection close. |
+| `rsigma_tls_handshake_failures_total` | counter | `reason` (`timeout`, `error`) | TLS handshakes on the API listener that did not complete within `--tls-handshake-timeout` or failed. A burst of `timeout` means clients are connecting without speaking TLS. {{ added "unreleased" }} |
 
 ## Field observability (5 metrics)
 

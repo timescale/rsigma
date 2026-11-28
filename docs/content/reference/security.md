@@ -131,7 +131,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-six harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-seven harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -179,6 +179,24 @@ To prevent accidental exposure, every build refuses to start on a non-loopback T
 
 Opting out of authentication on a non-loopback address logs a startup warning. Loopback (`127.0.0.0/8`, `::1`) is exempt from both checks. A `unix://` address is treated as local: it is exempt from both checks and, because TLS terminates on TCP only, combining it with `--tls-cert`/`--tls-key` is rejected at startup.
 
+### Browser requests to a local API
+
+{{ added "unreleased" }} An unauthenticated daemon on loopback is reachable from every web page the operator opens. A cross-origin `fetch` can send a `text/plain` POST to `http://127.0.0.1:9090/api/v1/events` without a CORS preflight, and a DNS-rebinding page can point its own name at `127.0.0.1` and read the API. The daemon therefore checks the `Host` and `Origin` headers of every request on a TCP listener, before authentication, routing, and body buffering, OTLP included:
+
+- **Host.** Accepted: `localhost`, `127.0.0.1`, `::1`, a specific bind IP, and each `--api-allowed-host` (config `daemon.api.allowed_hosts`). Other hosts get `403`; a missing or malformed `Host` gets `400`. An authenticated non-loopback listener (bearer tokens or `--tls-client-ca`) accepts every host unless `--api-allowed-host` narrows it, and `*` asks for that explicitly but needs authentication. A project config file cannot set `daemon.api.allowed_hosts`.
+- **Origin.** A request with an `Origin` header must come from `http` or `https` on an accepted host, or, when every host is accepted, from the host the request addresses. Everything else, including `Origin: null`, gets `403`. This also covers mTLS listeners, where the browser would present the operator's client certificate on a cross-site request. Requests without `Origin` (curl, log shippers, the `rsigma` client commands, OTLP exporters) are unaffected.
+- `GET /healthz` and `GET /readyz` skip the checks so probes by pod address work, and a `unix://` listener skips them because the socket permissions are the boundary.
+
+The MCP HTTP transport applies the same rules from the same code (see [MCP Streamable HTTP](#mcp-streamable-http)).
+
+### Connection limits and timeouts
+
+{{ added "unreleased" }} The daemon API and the MCP HTTP transport bound what one client can hold:
+
+- **Connection cap.** At most `--api-max-connections` (default 1024; `--max-connections` for MCP) connections are served at once; further clients wait in the kernel's listen backlog instead of exhausting file descriptors.
+- **Read timeout.** A client must send its first bytes, each HTTP/1 request head, and each chunk of a request body within `--api-read-timeout` (default 30 s; `--read-timeout` for MCP), so a silent or trickling client, or an idle keep-alive connection, is closed. Responses are not time-limited, so the `tap` and `tail` streams keep running. HTTP/2 connections are pinged every 30 s and closed when a ping goes unanswered for 20 s.
+- **TLS handshakes off the accept path.** Each handshake runs in its own task with a deadline (`--tls-handshake-timeout`, default 10 s), at most 256 at once, so a client that connects and never sends a `ClientHello` holds one slot until the deadline instead of blocking every new connection. Timeouts and failures count in `rsigma_tls_handshake_failures_total{reason}`, and their warnings are rate-limited.
+
 NATS connections from the daemon (source, sink, DLQ) support five auth methods (creds file, token, user+password, NKey, mTLS) and TLS-required mode. See [NATS Streaming: authentication](../guide/nats-streaming.md#authentication).
 
 ### TLS termination for the API listener
@@ -209,7 +227,7 @@ Use `--tls-min-version 1.2` only when a legacy agent cannot negotiate TLS 1.3. T
 
 Hot-reload: cert rotation funnels through the daemon's central debounced reload task, which is triggered by `POST /api/v1/reload` (works on every platform, including Windows), `SIGHUP` (Unix), or a YAML change picked up by the file watcher. All three paths re-read the certificate and key from disk and atomically swap the rustls `ServerConfig` via `Arc<ArcSwap<…>>`. Inflight TLS connections are not dropped. Failed reloads keep the previous certificate active, bump `rsigma_reloads_failed_total`, and log an error so a typo in the cert path cannot black-hole the listener. The same trigger also reloads rules, pipelines, and enrichers, so cert rotation typically piggy-backs on a routine reload.
 
-Observability: `/metrics` exposes `rsigma_tls_certificate_expiry_seconds` (signed; negative once expired) and `rsigma_tls_active_connections`. A single WARN is logged at startup (and on every successful reload) when the active cert expires within 30 days; wire that line into the existing log-based alerting.
+Observability: `/metrics` exposes `rsigma_tls_certificate_expiry_seconds` (signed; negative once expired), `rsigma_tls_active_connections`, and `rsigma_tls_handshake_failures_total{reason="timeout"|"error"}`. {{ added "unreleased" }} A single WARN is logged at startup (and on every successful reload) when the active cert expires within 30 days; wire that line into the existing log-based alerting.
 
 Out of scope for this feature today: ACME/Let's Encrypt automation. Operators point `--tls-cert` and `--tls-key` at renewed files (cert-manager, certbot, Vault PKI, ...) and send SIGHUP. Encrypted private keys are not supported; `--tls-key-password`/`RSIGMA_TLS_KEY_PASSWORD` is rejected at startup with a clear `openssl rsa` hint. Decrypt the key before loading it.
 
@@ -295,7 +313,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `mcp.rules_dir` and `mcp.lint_config` when they resolve outside the project file's directory, following symlinks.
 - `daemon.sources`, `daemon.enrichers`, and `daemon.dispositions.source`, which can run `command` sources and enrichers and make HTTP requests.
 - `daemon.output.sinks`, `daemon.output.dlq`, `daemon.output.webhooks`, `daemon.api.audit`, `daemon.nats.consumer_group`, and a NATS `daemon.input.source`, which send detections, events, or audit lines off the host, or connect with the operator's NATS credentials.
-- `daemon.api.auth`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API.
+- `daemon.api.auth`, `daemon.api.allowed_hosts`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, and `daemon.api.tls.client_ca`, which decide who can reach the API. `daemon.api.allowed_hosts` is new. {{ added "unreleased" }}
 - `daemon.tenancy`, `daemon.input.tenant`, and `daemon.input.nats_tenants`, which decide whether tenancy is on and which tenant each event belongs to. A project file may not turn tenancy off, because that is the dangerous direction. {{ added "0.28.0" }}
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
@@ -320,7 +338,8 @@ The MCP server ([`rsigma mcp serve`](../cli/mcp/serve.md)) treats every tool arg
 
 - **Auth is required off loopback.** A non-loopback bind without `--auth-token` refuses to start unless `--allow-unauthenticated` is set. Loopback binds work without a token.
 - **Host header validation.** Every request's `Host` must be accepted, or it gets `403`. This stops a DNS-rebinding web page from driving a server bound to loopback through the user's browser. Loopback binds accept `localhost`, `127.0.0.1`, `::1`, and the bind IP. A non-loopback bind with a token accepts any host, because the bearer token is the access control; `--allowed-host` (repeatable) restricts it to named hosts. An unauthenticated non-loopback bind keeps validation on, so clients must use a name passed with `--allowed-host`.
-- **Origin header validation.** A request carrying an `Origin` header must name an accepted host over `http` or `https`, or it gets `403`. This stops a web page on another site from sending tool calls to a local server through the user's browser, which the `Host` check alone does not catch because the browser sends the server's real host. Requests without `Origin`, which is how MCP clients connect, are unaffected. A token-guarded bind that accepts any host skips the check, since a page on another site does not know the token. {{ added "0.27.0" }}
+- **Origin header validation.** A request carrying an `Origin` header must name an accepted host over `http` or `https`, or it gets `403`. This stops a web page on another site from sending tool calls to a local server through the user's browser, which the `Host` check alone does not catch because the browser sends the server's real host. Requests without `Origin`, which is how MCP clients connect, are unaffected. {{ added "0.27.0" }} A token-guarded bind that accepts any host accepts an `Origin` only when it names the host the request addresses. {{ added "unreleased" }}
+- **Connection limits.** The connection cap, read timeout, and TLS handshake handling described in [Connection limits and timeouts](#connection-limits-and-timeouts) apply to the MCP transport too. {{ added "unreleased" }}
 - **Plaintext needs an opt-in.** A non-loopback bind without `--tls-cert`/`--tls-key` needs `--allow-plaintext`, for deployments where a proxy terminates TLS.
 
 ## Filesystem footprint
@@ -352,7 +371,7 @@ See [`.github/workflows/docker.yml`](https://github.com/timescale/rsigma/blob/ma
 
 ## Threat model summary
 
-RSigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. Daemon HTTP and OTLP listeners can be hardened in-process by building with the `daemon-tls` feature and pairing `--tls-cert`/`--tls-key` with `--tls-client-ca` for mTLS, plus opt-in bearer-token authentication with per-token `resource:action` permissions; without TLS, deploy behind a reverse proxy. NATS connections (source, sink, DLQ) support five auth methods plus TLS-required mode.
+RSigma assumes a trusted operator providing rules, pipelines, and source declarations on disk, plus an event stream from a trusted upstream agent. The hardening here exists to defend against malformed input, unbounded resource consumption (an attacker-controlled JSON event, a rule that recurses without bound, a dynamic source serving 100 GiB of garbage), and supply-chain attacks against dependencies. Daemon HTTP and OTLP listeners validate `Host` and `Origin` against browser-driven requests, cap connections, and time out slow clients and TLS handshakes; they can be hardened further in-process by building with the `daemon-tls` feature and pairing `--tls-cert`/`--tls-key` with `--tls-client-ca` for mTLS, plus opt-in bearer-token authentication with per-token `resource:action` permissions; without TLS, deploy behind a reverse proxy. NATS connections (source, sink, DLQ) support five auth methods plus TLS-required mode.
 
 ## See also
 

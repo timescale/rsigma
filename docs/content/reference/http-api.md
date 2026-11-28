@@ -57,6 +57,10 @@ Endpoint details are split across three pages:
 - [HTTP API: Detection State](http-api-state.md): status and counters, correlations, incidents and incident bundles, risk, silences, the audit trail, dispositions, and rules.
 - [HTTP API: Live Observability](http-api-observability.md): field and schema observability, the live event tap, and the live detection tail.
 
+## Host and Origin checks
+
+{{ added "unreleased" }} Before authentication and routing, a TCP listener refuses a request whose `Host` is not an accepted host (`403`, or `400` when it is missing or malformed) or whose `Origin` names another site (`403`). Both answer with a JSON body such as `{"error": "Host header is not allowed"}`. Probes and `unix://` listeners skip the checks. See [Host and Origin validation](../cli/engine/daemon.md#host-and-origin-validation) for the accepted hosts and `--api-allowed-host`.
+
 ## Authentication
 
 Bearer-token authentication is off by default, so loopback and `unix://` deployments are untouched. {{ added "0.25.0" }} A non-loopback TCP `--api-addr` refuses to start without it unless the listener requires client certificates (`--tls-client-ca`) or `--allow-unauthenticated` is passed (see [Daemon network exposure](security.md#daemon-network-exposure)). Enable it either with the `--api-token-env <ENV_VAR>` flag (a single token with full `admin` permissions, read from the named environment variable) or with the `daemon.api.auth` config block for per-token roles:
