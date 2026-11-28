@@ -6791,3 +6791,17 @@ fn stalest_eviction_drops_absence_groups_without_a_deadline() {
     assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
     assert_eq!(engine.absence_pending(), 1);
 }
+
+#[test]
+fn importing_clocks_without_absence_rules_drops_them() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let snapshot = engine.export_state();
+    assert_eq!(snapshot.version, 3);
+
+    let threshold = TEMPORAL.replace("a and not b", "a and b");
+    let mut restored = absence_engine(&threshold, CorrelationConfig::default());
+    assert!(restored.import_state(snapshot));
+    assert!(restored.clocks().is_empty());
+    assert_eq!(restored.export_state().version, 2);
+}

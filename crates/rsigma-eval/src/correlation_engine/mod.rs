@@ -3217,7 +3217,9 @@ impl<L> CorrelationEngine<L> {
                 continue;
             }
 
-            if let Some(clock) = clock {
+            if let Some(clock) = clock
+                && self.absence_compiled
+            {
                 let entry = self.clocks.entry(tenant.clone()).or_insert(clock);
                 *entry = (*entry).max(clock);
             }
