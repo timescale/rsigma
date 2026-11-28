@@ -284,8 +284,13 @@ pub(crate) fn parse_error_body(text: &str) -> Option<TaxiiErrorResponse> {
     serde_json::from_str(text).ok()
 }
 
+/// Parse a `Retry-After` value: delay seconds or an HTTP date (RFC 9110 section 10.2.3).
+///
+/// A date in the past is a zero delay.
 pub(crate) fn parse_retry_after(value: &str) -> Option<std::time::Duration> {
-    if let Ok(secs) = value.parse::<u64>() {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+        let secs = value.parse::<u64>().unwrap_or(u64::MAX);
         return Some(std::time::Duration::from_secs(secs));
     }
     time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc2822)
@@ -294,7 +299,7 @@ pub(crate) fn parse_retry_after(value: &str) -> Option<std::time::Duration> {
             let now = time::OffsetDateTime::now_utc();
             dt.unix_timestamp()
                 .checked_sub(now.unix_timestamp())
-                .map(|s| std::time::Duration::from_secs(s.max(0) as u64))
+                .map(|s| std::time::Duration::from_secs(u64::try_from(s).unwrap_or(0)))
         })
 }
 
@@ -323,6 +328,31 @@ mod tests {
             }
             .is_retryable()
         );
+    }
+
+    #[test]
+    fn retry_after_parses_extreme_values() {
+        use std::time::Duration;
+        assert_eq!(parse_retry_after("120"), Some(Duration::from_secs(120)));
+        assert_eq!(parse_retry_after(" 7 "), Some(Duration::from_secs(7)));
+        assert_eq!(
+            parse_retry_after("999999999"),
+            Some(Duration::from_secs(999_999_999))
+        );
+        assert_eq!(
+            parse_retry_after("99999999999999999999999999"),
+            Some(Duration::from_secs(u64::MAX))
+        );
+        assert_eq!(parse_retry_after("-5"), None);
+        assert_eq!(parse_retry_after("+5"), None);
+        assert_eq!(parse_retry_after(""), None);
+        assert_eq!(parse_retry_after("soon"), None);
+        assert_eq!(
+            parse_retry_after("Thu, 01 Jan 1970 00:00:00 GMT"),
+            Some(Duration::ZERO)
+        );
+        let far = parse_retry_after("Fri, 31 Dec 9999 23:59:59 GMT").expect("far date");
+        assert!(far > Duration::from_secs(200 * 365 * 24 * 3600));
     }
 
     #[test]
