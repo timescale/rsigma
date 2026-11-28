@@ -233,3 +233,8 @@ doc = false
 name = "fuzz_ocsf_sidecar"
 path = "fuzz_targets/fuzz_ocsf_sidecar.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_host_guard"
+path = "fuzz_targets/fuzz_host_guard.rs"
+doc = false

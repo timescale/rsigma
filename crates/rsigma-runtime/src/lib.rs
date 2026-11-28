@@ -51,6 +51,7 @@ pub mod engine;
 pub mod enrichment;
 pub mod error;
 pub mod finding_links;
+pub mod http_guard;
 pub mod input;
 pub mod io;
 mod log_throttle;
@@ -113,6 +114,7 @@ pub use enrichment::{MmdbDatabase, MmdbEnricher, MmdbFields, MmdbLookupError};
 pub use enrichment::{StixEnricher, StixEnricherQuery};
 pub use error::RuntimeError;
 pub use finding_links::FindingLinks;
+pub use http_guard::{HostGuard, Rejection as HostRejection};
 pub use input::{EventInputDecoded, InputFormat, parse_line};
 pub use io::webhook::{
     BuiltWebhook, WebhookConfig, WebhookConfigError, WebhookKind, WebhookSink, WebhooksFile,
