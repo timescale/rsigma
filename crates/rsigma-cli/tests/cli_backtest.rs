@@ -625,3 +625,67 @@ fn backtest_dry_run_prints_config() {
         .success()
         .stdout(predicate::str::contains("input_format"));
 }
+
+#[test]
+fn backtest_counts_an_absence_fire_at_end_of_input() {
+    let rules = temp_file(
+        ".yml",
+        r#"
+title: Login
+id: 00000000-0000-0000-0000-0000000000b1
+status: test
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: 00000000-0000-0000-0000-0000000000b2
+status: test
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: 00000000-0000-0000-0000-0000000000b3
+correlation:
+    type: temporal_ordered
+    rules:
+        - 00000000-0000-0000-0000-0000000000b1
+        - 00000000-0000-0000-0000-0000000000b2
+    group-by:
+        - User
+    timespan: 5m
+    condition: 00000000-0000-0000-0000-0000000000b1 and not 00000000-0000-0000-0000-0000000000b2
+level: high
+"#,
+    );
+    let corpus = temp_file(
+        ".ndjson",
+        r#"{"EventType": "login", "User": "admin", "@timestamp": "2025-01-01T00:00:01Z"}
+"#,
+    );
+    let exp = temp_file(
+        ".yml",
+        "expectations:\n  - rule: 00000000-0000-0000-0000-0000000000b3\n    at_least: 1\n",
+    );
+    rsigma()
+        .args([
+            "rule",
+            "backtest",
+            "--rules",
+            rules.path().to_str().unwrap(),
+            "--corpus",
+            corpus.path().to_str().unwrap(),
+            "--expectations",
+            exp.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Login without MFA"));
+}

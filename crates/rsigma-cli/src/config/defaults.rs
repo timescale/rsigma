@@ -32,6 +32,10 @@ pub(crate) const MAX_CORRELATION_EVENTS: usize = 10;
 /// `CorrelationConfig::default().max_state_entries` in rsigma-eval; a
 /// drift-guard test pins the two together.
 pub(crate) const MAX_STATE_ENTRIES: usize = 100_000;
+/// Default cap on absence groups with a pending obligation or an armed
+/// deadman. Must match `CorrelationConfig::default().max_absence_entries` in
+/// rsigma-eval; a drift-guard test pins the two together.
+pub(crate) const MAX_ABSENCE_ENTRIES: usize = 100_000;
 /// Default bound on how far an event timestamp may run ahead of the wall
 /// clock. Must parse to `CorrelationConfig::default().max_future_skew` in
 /// rsigma-eval; a drift-guard test pins the two together.
@@ -200,6 +204,7 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 event_mode: Some(CORRELATION_EVENT_MODE.to_string()),
                 max_events: Some(MAX_CORRELATION_EVENTS),
                 max_state_entries: Some(MAX_STATE_ENTRIES),
+                max_absence_entries: Some(MAX_ABSENCE_ENTRIES),
                 max_group_entries: None,
                 max_future_skew: Some(MAX_FUTURE_SKEW.to_string()),
                 timestamp_fields: None,

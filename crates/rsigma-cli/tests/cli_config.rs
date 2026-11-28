@@ -776,3 +776,25 @@ fn documented_rsigma_yaml_examples_validate() {
         blocks.len()
     );
 }
+
+#[test]
+fn config_template_and_schema_include_max_absence_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("rsigma.yaml");
+    rsigma()
+        .args(["config", "init", "-o", cfg.to_str().unwrap()])
+        .assert()
+        .success();
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    assert!(text.contains("max_absence_entries"), "{text}");
+
+    let output = rsigma()
+        .args(["config", "schema"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema = String::from_utf8(output).unwrap();
+    assert!(schema.contains("max_absence_entries"), "{schema}");
+}

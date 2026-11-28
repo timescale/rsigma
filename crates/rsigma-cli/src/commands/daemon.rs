@@ -146,6 +146,12 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "max-state-entries", default_value_t = config::defaults::MAX_STATE_ENTRIES)]
     pub max_state_entries: usize,
 
+    /// Hard cap on absence groups with a pending obligation or an armed
+    /// deadman. A hit that would make a group pending at the cap is refused
+    /// and counted.
+    #[arg(long = "max-absence-entries", default_value_t = config::defaults::MAX_ABSENCE_ENTRIES)]
+    pub max_absence_entries: usize,
+
     /// Cap on retained entries within a single correlation group's window
     /// state. Bounds within-window growth of chatty groups; oldest entries
     /// are dropped (session windows keep their span anchor). Unset = 10000,
@@ -885,6 +891,7 @@ pub(crate) fn cmd_daemon(
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         max_future_skew,
         tenancy: _cli_tenancy,
@@ -1116,6 +1123,7 @@ pub(crate) fn cmd_daemon(
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         max_future_skew,
         tenancy,
@@ -1789,6 +1797,11 @@ fn apply_daemon_config(
         {
             args.max_state_entries = v;
         }
+        if !explicit("max_absence_entries")
+            && let Some(v) = correlation.max_absence_entries
+        {
+            args.max_absence_entries = v;
+        }
         if !explicit("max_group_entries")
             && let Some(v) = correlation.max_group_entries
         {
@@ -2194,6 +2207,7 @@ fn run_daemon(
     correlation_event_mode: String,
     max_correlation_events: usize,
     max_state_entries: usize,
+    max_absence_entries: usize,
     max_group_entries: Option<usize>,
     max_future_skew: String,
     tenancy: daemon::tenancy::TenancySettings,
@@ -2324,6 +2338,7 @@ fn run_daemon(
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         &max_future_skew,
         timestamp_fields,
@@ -2857,6 +2872,19 @@ mod tests {
         apply_daemon_config(&mut args, &matches, base);
         assert!(!args.emit_detections);
         assert!(args.no_detections);
+    }
+
+    #[test]
+    fn max_absence_entries_flag_beats_config_file() {
+        let (mut args, matches) = parse(&["daemon", "--max-absence-entries", "7"]);
+        let base = partial("daemon:\n  correlation:\n    max_absence_entries: 5\n");
+        apply_daemon_config(&mut args, &matches, base);
+        assert_eq!(args.max_absence_entries, 7);
+
+        let (mut args, matches) = parse(&["daemon"]);
+        let base = partial("daemon:\n  correlation:\n    max_absence_entries: 5\n");
+        apply_daemon_config(&mut args, &matches, base);
+        assert_eq!(args.max_absence_entries, 5);
     }
 
     #[test]

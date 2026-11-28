@@ -406,3 +406,74 @@ fn hygiene_dry_run_prints_config_section() {
         .success()
         .stdout(predicate::str::contains("silent_threshold"));
 }
+
+#[test]
+fn an_absence_rule_that_fires_at_finalize_is_not_silent() {
+    let rules = temp_file(
+        ".yml",
+        r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#,
+    );
+    let corpus = temp_file(
+        ".ndjson",
+        r#"{"EventType": "login", "User": "admin", "@timestamp": "2025-01-01T00:00:01Z"}
+"#,
+    );
+    let output = rsigma()
+        .args([
+            "rule",
+            "hygiene",
+            "-r",
+            rules.path().to_str().unwrap(),
+            "--corpus",
+            corpus.path().to_str().unwrap(),
+            "--output-format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let silent: Vec<&str> = report["rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|rule| {
+            rule["signals"]
+                .as_array()
+                .is_some_and(|signals| signals.iter().any(|signal| signal == "silent"))
+        })
+        .filter_map(|rule| rule["rule"].as_str())
+        .collect();
+    assert!(
+        !silent.contains(&"Login without MFA"),
+        "absence rule must not be silent: {report}"
+    );
+}

@@ -866,6 +866,7 @@ pub(crate) fn build_correlation_config(
     correlation_event_mode: String,
     max_correlation_events: usize,
     max_state_entries: usize,
+    max_absence_entries: usize,
     max_group_entries: Option<usize>,
     max_future_skew: &str,
     extra_timestamp_fields: Vec<String>,
@@ -915,6 +916,7 @@ pub(crate) fn build_correlation_config(
         correlation_event_mode: event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         max_future_skew,
         timestamp_fallback: ts_fallback,
@@ -1156,6 +1158,10 @@ mod config_default_drift {
             Some(defaults::MAX_STATE_ENTRIES.to_string())
         );
         assert_eq!(
+            daemon_default("max_absence_entries"),
+            Some(defaults::MAX_ABSENCE_ENTRIES.to_string())
+        );
+        assert_eq!(
             daemon_default("state_save_interval"),
             Some(defaults::STATE_SAVE_INTERVAL.to_string())
         );
@@ -1172,6 +1178,14 @@ mod config_default_drift {
         assert_eq!(
             defaults::MAX_STATE_ENTRIES,
             CorrelationConfig::default().max_state_entries
+        );
+    }
+
+    #[test]
+    fn max_absence_entries_matches_engine_default() {
+        assert_eq!(
+            defaults::MAX_ABSENCE_ENTRIES,
+            CorrelationConfig::default().max_absence_entries
         );
     }
 

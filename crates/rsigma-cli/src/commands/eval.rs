@@ -155,6 +155,12 @@ pub(crate) struct EvalArgs {
     #[arg(long = "max-state-entries", default_value_t = crate::config::defaults::MAX_STATE_ENTRIES, value_parser = clap::value_parser!(usize))]
     pub max_state_entries: usize,
 
+    /// Hard cap on absence groups with a pending obligation or an armed
+    /// deadman. A hit that would make a group pending at the cap is refused
+    /// and counted.
+    #[arg(long = "max-absence-entries", default_value_t = crate::config::defaults::MAX_ABSENCE_ENTRIES, value_parser = clap::value_parser!(usize))]
+    pub max_absence_entries: usize,
+
     /// Cap on retained entries within a single correlation group's window
     /// state (timestamps, value pairs, or per-rule hits). Bounds the
     /// within-window growth of chatty groups; oldest entries are dropped
@@ -541,6 +547,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         max_future_skew,
         timestamp_fields,
@@ -641,6 +648,7 @@ pub(crate) fn cmd_eval(args: EvalArgs, ctx: OutputCtx) -> bool {
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         &max_future_skew,
         timestamp_fields,
@@ -813,6 +821,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         max_future_skew,
         timestamp_fields,
@@ -923,6 +932,7 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
         correlation_event_mode,
         max_correlation_events,
         max_state_entries,
+        max_absence_entries,
         max_group_entries,
         &max_future_skew,
         timestamp_fields,
@@ -1143,6 +1153,11 @@ fn cmd_eval_rulesets(args: EvalArgs, ctx: OutputCtx) -> bool {
                     count_ruleset_match(&mut counts, &name_to_index, m);
                     renderer.emit(m);
                 }
+            }
+            for m in &engines.finalize() {
+                had_matches = true;
+                count_ruleset_match(&mut counts, &name_to_index, m);
+                renderer.emit(m);
             }
         }
         EventSource::NdjsonFile(path) => {
@@ -1399,6 +1414,14 @@ fn cmd_eval_routed(
                     renderer.emit(m);
                 }
             }
+            for m in &router.finalize() {
+                if m.is_correlation() {
+                    corr_count += 1;
+                } else {
+                    det_count += 1;
+                }
+                renderer.emit(m);
+            }
         }
         EventSource::NdjsonFile(path) => {
             let file = File::open(&path).unwrap_or_else(|e| {
@@ -1628,6 +1651,10 @@ fn cmd_eval_with_correlations(
                         renderer.emit(m);
                     }
                 }
+            }
+            for m in &engine.finalize() {
+                had_matches = true;
+                renderer.emit(m);
             }
             had_matches
         }
