@@ -287,6 +287,383 @@ async fn postgres_temporal_ordered_agrees_with_eval() {
     }
 }
 
+/// A detection rule and correlations over columns named with reserved words,
+/// with `fields` that select columns, aliases, and aggregates.
+const RESERVED_RULES: &str = r#"
+title: Reserved
+id: reserved-words
+logsource: {category: test}
+detection:
+  selection:
+    user: alice
+    group: admins
+    order|startswith: '42'
+    current_user: postgres
+  condition: selection
+fields:
+  - user
+  - group AS grp
+  - CommandLine as cmd
+  - c-uri
+  - order
+---
+title: Totals
+id: totals
+logsource: {category: test}
+detection:
+  selection:
+    group: admins
+  condition: selection
+fields:
+  - count(*) AS hits
+  - max(EventID) AS top
+  - sum(bytes) AS total
+  - min(user)
+---
+title: Per user
+generate: true
+correlation:
+  type: event_count
+  rules: [reserved-words]
+  group-by: [user]
+  timespan: 1h
+  condition: {gte: 3}
+---
+title: Distinct orders
+correlation:
+  type: value_count
+  rules: [reserved-words]
+  group-by: [user, group]
+  timespan: 1h
+  condition: {gte: 3, field: order}
+---
+title: Bytes
+correlation:
+  type: value_sum
+  rules: [totals]
+  group-by: [user]
+  timespan: 1h
+  condition: {gte: 30, field: bytes}
+---
+title: Average
+correlation:
+  type: value_avg
+  rules: [totals]
+  group-by: [user]
+  timespan: 1h
+  condition: {gte: 10, field: bytes}
+---
+title: Median
+correlation:
+  type: value_median
+  rules: [totals]
+  group-by: [user]
+  timespan: 1h
+  condition: {gte: 10, field: bytes}
+"#;
+
+/// `(user, group, order, current_user, CommandLine, c-uri, EventID, bytes)`.
+type ReservedRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    i64,
+    i64,
+);
+
+const RESERVED_ROWS: &[ReservedRow] = &[
+    ("alice", "admins", "42a", "postgres", "a1", "/a", 1, 10),
+    ("alice", "admins", "42b", "postgres", "a2", "/b", 2, 10),
+    ("alice", "admins", "42c", "postgres", "a3", "/c", 3, 15),
+    ("bob", "admins", "17", "postgres", "b1", "/d", 9, 1),
+];
+
+/// Create a reserved schema and table holding [`RESERVED_ROWS`] in columns,
+/// and a reserved table holding them in a reserved JSONB column with a
+/// mixed-case timestamp column. Every row falls in the current hour.
+async fn load_reserved(client: &tokio_postgres::Client, hypertables: bool) {
+    client
+        .batch_execute(
+            r#"
+            CREATE SCHEMA "select";
+            CREATE TABLE "select"."user" (
+                time TIMESTAMPTZ NOT NULL, "user" text, "group" text, "order" text,
+                "current_user" text, "CommandLine" text, "c-uri" text, "EventID" bigint, bytes bigint
+            );
+            CREATE TABLE "order" ("EventTime" TIMESTAMPTZ NOT NULL, "user" jsonb);
+            "#,
+        )
+        .await
+        .unwrap();
+    if hypertables {
+        client
+            .batch_execute(
+                r#"
+                SELECT create_hypertable('"select"."user"', 'time');
+                SELECT create_hypertable('"order"', 'EventTime');
+                "#,
+            )
+            .await
+            .unwrap();
+    }
+    for (i, (user, group, order, current_user, cmd, uri, event_id, bytes)) in
+        RESERVED_ROWS.iter().enumerate()
+    {
+        let at = "date_bin('3600 seconds', now(), TIMESTAMPTZ 'epoch') + make_interval(secs => $1)";
+        client
+            .execute(
+                &format!(
+                    r#"INSERT INTO "select"."user" VALUES ({at}, $2, $3, $4, $5, $6, $7, $8, $9)"#
+                ),
+                &[
+                    &(i as f64 / 1e6),
+                    user,
+                    group,
+                    order,
+                    current_user,
+                    cmd,
+                    uri,
+                    event_id,
+                    bytes,
+                ],
+            )
+            .await
+            .unwrap();
+        let event = serde_json::json!({
+            "user": user, "group": group, "order": order, "current_user": current_user,
+            "CommandLine": cmd, "c-uri": uri, "EventID": event_id, "bytes": bytes,
+        });
+        client
+            .execute(
+                &format!(r#"INSERT INTO "order" VALUES ({at}, $2::text::jsonb)"#),
+                &[&(i as f64 / 1e6), &event.to_string()],
+            )
+            .await
+            .unwrap();
+    }
+}
+
+/// The two storage modes of [`load_reserved`], each as `(label, backend)`.
+fn reserved_backends() -> [(&'static str, PostgresBackend); 2] {
+    [
+        (
+            "columns",
+            PostgresBackend::from_options(&HashMap::from([
+                ("schema".to_string(), "select".to_string()),
+                ("table".to_string(), "User".to_string()),
+            ])),
+        ),
+        (
+            "jsonb",
+            PostgresBackend::from_options(&HashMap::from([
+                ("table".to_string(), "order".to_string()),
+                ("json_field".to_string(), "user".to_string()),
+                ("timestamp_field".to_string(), "EventTime".to_string()),
+            ])),
+        ),
+    ]
+}
+
+/// Run a generated query and return its rows. A view is created and read; a
+/// continuous aggregate is created, refreshed, and read.
+async fn run_generated(
+    client: &tokio_postgres::Client,
+    context: &str,
+    sql: &str,
+) -> Vec<tokio_postgres::Row> {
+    let fail = |e: tokio_postgres::Error| -> ! { panic!("{context}: {}\n{sql}", db_error(&e)) };
+    let view = sql
+        .strip_prefix("CREATE OR REPLACE VIEW ")
+        .or_else(|| sql.strip_prefix("CREATE MATERIALIZED VIEW "))
+        .map(|rest| rest.split_once(' ').unwrap().0);
+    let query = match view {
+        Some(name) => {
+            client.batch_execute(sql).await.unwrap_or_else(|e| fail(e));
+            if sql.starts_with("CREATE MATERIALIZED VIEW ") {
+                client
+                    .batch_execute(&format!(
+                        "CALL refresh_continuous_aggregate('{name}', NULL, NULL)"
+                    ))
+                    .await
+                    .unwrap_or_else(|e| fail(e));
+            }
+            format!("SELECT * FROM {name}")
+        }
+        None => sql.to_string(),
+    };
+    client
+        .query(query.as_str(), &[])
+        .await
+        .unwrap_or_else(|e| fail(e))
+}
+
+/// Run [`RESERVED_RULES`] in `formats` against the tables of
+/// [`load_reserved`] and check every query's rows.
+async fn check_reserved(client: &tokio_postgres::Client, formats: &[&str]) {
+    use std::collections::BTreeSet;
+
+    let collection = rsigma_parser::parse_sigma_yaml(RESERVED_RULES).unwrap();
+    for (label, backend) in reserved_backends() {
+        for format in formats {
+            let output =
+                rsigma_convert::convert_collection(&backend, &collection, &[], format).unwrap();
+            let errors: Vec<_> = output
+                .errors
+                .iter()
+                .filter(|(_, e)| !e.to_string().contains("unknown output format"))
+                .collect();
+            assert!(errors.is_empty(), "{label} {format}: {errors:?}");
+            let query = |title: &str| {
+                output
+                    .queries
+                    .iter()
+                    .find(|r| r.rule_title == title)
+                    .map(|r| {
+                        r.queries[0].replacen(" VIEW sigma_", &format!(" VIEW sigma_{label}_"), 1)
+                    })
+            };
+            let context = |title: &str| format!("{label} {format} {title}");
+
+            if let Some(sql) = query("Reserved") {
+                let rows = run_generated(client, &context("Reserved"), &sql).await;
+                let seen: BTreeSet<(String, String, String, String, String)> = rows
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.get("user"),
+                            r.get("grp"),
+                            r.get("cmd"),
+                            r.get("c-uri"),
+                            r.get("order"),
+                        )
+                    })
+                    .collect();
+                let expected: BTreeSet<_> = [
+                    ("a1", "/a", "42a"),
+                    ("a2", "/b", "42b"),
+                    ("a3", "/c", "42c"),
+                ]
+                .map(|(cmd, uri, order)| {
+                    (
+                        "alice".to_string(),
+                        "admins".to_string(),
+                        cmd.to_string(),
+                        uri.to_string(),
+                        order.to_string(),
+                    )
+                })
+                .into();
+                assert_eq!(seen, expected, "{}", context("Reserved"));
+            }
+
+            if let Some(sql) = query("Totals") {
+                let rows = run_generated(client, &context("Totals"), &sql).await;
+                assert_eq!(rows.len(), 1, "{}", context("Totals"));
+                let hits: i64 = rows[0].get("hits");
+                let min_user: String = rows[0].get("min");
+                assert_eq!(
+                    (hits, min_user.as_str()),
+                    (4, "alice"),
+                    "{}",
+                    context("Totals")
+                );
+                if label == "columns" {
+                    let top: i64 = rows[0].get("top");
+                    assert_eq!(top, 9, "{}", context("Totals"));
+                }
+            }
+
+            let sql = query("Per user").expect("Per user");
+            let rows = run_generated(client, &context("Per user"), &sql).await;
+            if *format == "sliding_window" && label == "jsonb" {
+                assert_eq!(rows.len(), 1, "{}", context("Per user"));
+            } else {
+                let users: BTreeSet<String> = rows.iter().map(|r| r.get("user")).collect();
+                assert_eq!(
+                    users,
+                    ["alice".to_string()].into(),
+                    "{}",
+                    context("Per user")
+                );
+            }
+
+            for title in ["Distinct orders", "Bytes", "Average", "Median"] {
+                let sql = query(title).expect(title);
+                let rows = run_generated(client, &context(title), &sql).await;
+                let users: Vec<String> = rows.iter().map(|r| r.get("user")).collect();
+                assert_eq!(users, ["alice"], "{}", context(title));
+                if title == "Distinct orders" {
+                    let group: String = rows[0].get("group");
+                    assert_eq!(group, "admins", "{}", context(title));
+                }
+            }
+        }
+    }
+}
+
+/// Columns named with reserved words, a reserved schema and table, aliased
+/// and aggregated `fields`, and correlations grouping by them run in
+/// PostgreSQL, in columns mode and in JSONB mode with a reserved JSONB column
+/// and a mixed-case timestamp column. The projected `user` column must hold
+/// the event's value, not the session user.
+#[tokio::test]
+#[ignore = "engine test: needs Docker; run by the PostgreSQL engine workflow"]
+async fn postgres_runs_reserved_words_and_select_fields() {
+    let (_container, client) = start_postgres().await;
+    load_reserved(&client, false).await;
+    check_reserved(&client, &["default", "view", "sliding_window"]).await;
+}
+
+const TIMESCALEDB_TAG: &str =
+    "2.24.0-pg18@sha256:5ab97a9fd9d7708f4c7472efcc771c34d6dfb0cf40ca278cae1c397c606ff5b6";
+
+/// The `timescaledb` and `continuous_aggregate` formats run in TimescaleDB
+/// over hypertables: every continuous aggregate is created, refreshed, and
+/// read.
+#[tokio::test]
+#[ignore = "engine test: needs Docker; run by the PostgreSQL engine workflow"]
+async fn timescaledb_runs_reserved_words_and_select_fields() {
+    engines::require_docker();
+    let container = Postgres::default()
+        .with_name("timescale/timescaledb")
+        .with_tag(TIMESCALEDB_TAG)
+        .start()
+        .await
+        .expect("failed to start TimescaleDB");
+    let port = container.get_host_port_ipv4(5432).await.unwrap();
+    let (client, connection) = tokio_postgres::connect(
+        &format!("host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres"),
+        NoTls,
+    )
+    .await
+    .expect("failed to connect to TimescaleDB");
+    tokio::spawn(connection);
+    load_reserved(&client, true).await;
+    check_reserved(&client, &["timescaledb", "continuous_aggregate"]).await;
+
+    // A rule without `fields` becomes an hourly event count.
+    let rule = rsigma_parser::parse_sigma_yaml(
+        "title: Admins\nlogsource: {category: test}\ndetection:\n  sel: {group: admins}\n  condition: sel\n",
+    )
+    .unwrap();
+    for (label, backend) in reserved_backends() {
+        let output =
+            rsigma_convert::convert_collection(&backend, &rule, &[], "continuous_aggregate")
+                .unwrap();
+        let sql = output.queries[0].queries[0].replacen(
+            " VIEW sigma_",
+            &format!(" VIEW sigma_{label}_"),
+            1,
+        );
+        let rows = run_generated(&client, label, &sql).await;
+        let counts: Vec<i64> = rows.iter().map(|r| r.get("event_count")).collect();
+        assert_eq!(counts, [4], "{label}: {sql}");
+    }
+}
+
 /// Differential test against eval over the SigmaHQ rules whose conditions
 /// need grouping (see `engines::corpus`).
 #[tokio::test]
