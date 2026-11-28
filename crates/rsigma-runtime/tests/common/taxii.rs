@@ -1,6 +1,6 @@
 //! In-process TAXII 2.1 collection for source tests.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -22,6 +22,9 @@ struct State {
     unauthorized_after: AtomicUsize,
     over_count: AtomicBool,
     date_header: AtomicU8,
+    slow_after: AtomicUsize,
+    slow_millis: AtomicU64,
+    clock_ahead_secs: AtomicU64,
     collection: String,
 }
 
@@ -55,6 +58,9 @@ impl Server {
             unauthorized_after: AtomicUsize::new(usize::MAX),
             over_count: AtomicBool::new(false),
             date_header: AtomicU8::new(DateHeader::Always as u8),
+            slow_after: AtomicUsize::new(usize::MAX),
+            slow_millis: AtomicU64::new(0),
+            clock_ahead_secs: AtomicU64::new(0),
             collection: collection.to_owned(),
         });
         Mock::given(wiremock::matchers::method("GET"))
@@ -108,6 +114,19 @@ impl Server {
     pub fn date_header(&self, mode: DateHeader) {
         self.state.date_header.store(mode as u8, Ordering::SeqCst);
     }
+
+    /// Send an HTTP `Date` this many seconds ahead of the local clock.
+    pub fn clock_ahead(&self, secs: u64) {
+        self.state.clock_ahead_secs.store(secs, Ordering::SeqCst);
+    }
+
+    /// Objects requests after the first `prompt` answer only after `delay`.
+    pub fn slow_after(&self, prompt: usize, delay: std::time::Duration) {
+        self.state
+            .slow_millis
+            .store(delay.as_millis() as u64, Ordering::SeqCst);
+        self.state.slow_after.store(prompt, Ordering::SeqCst);
+    }
 }
 
 struct Responder {
@@ -116,6 +135,21 @@ struct Responder {
 
 impl Respond for Responder {
     fn respond(&self, request: &Request) -> ResponseTemplate {
+        let response = self.route(request);
+        let ahead = self.state.clock_ahead_secs.load(Ordering::SeqCst);
+        if ahead == 0 {
+            return response;
+        }
+        let date = time::OffsetDateTime::now_utc() + time::Duration::seconds(ahead as i64);
+        let date = date
+            .format(&time::format_description::well_known::Rfc2822)
+            .expect("http date");
+        response.insert_header("Date", date)
+    }
+}
+
+impl Responder {
+    fn route(&self, request: &Request) -> ResponseTemplate {
         let path = request.url.path().to_owned();
         if path.ends_with("/objects/") {
             return self.objects(request);
@@ -215,6 +249,10 @@ impl Responder {
         };
         if send_date && let Some(added) = page.last().map(|(_, item)| item.added.clone()) {
             response = response.insert_header("X-TAXII-Date-Added-Last", added);
+        }
+        if hits >= self.state.slow_after.load(Ordering::SeqCst) {
+            let delay = self.state.slow_millis.load(Ordering::SeqCst);
+            response = response.set_delay(std::time::Duration::from_millis(delay));
         }
         response
     }

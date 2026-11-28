@@ -1195,8 +1195,10 @@ sources:
             collection,
             auth,
             page_size,
+            poll_timeout,
             stix,
         } => {
+            assert_eq!(*poll_timeout, sources::DEFAULT_TAXII_POLL_TIMEOUT);
             assert_eq!(url, "https://taxii.example/api/");
             assert_eq!(collection, "91a7b528-80eb-42ed-a74d-c6fbd5a26116");
             assert_eq!(auth.bearer_token_env.as_deref(), Some("TAXII_TOKEN"));
@@ -1225,8 +1227,27 @@ sources:
 }
 
 #[test]
+fn test_parse_taxii_poll_timeout() {
+    let yaml = "sources:\n  - id: ti\n    type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    poll_timeout: 90s\n";
+    match &parse_source_list(yaml).unwrap()[0].source_type {
+        sources::SourceType::Taxii { poll_timeout, .. } => {
+            assert_eq!(*poll_timeout, std::time::Duration::from_secs(90));
+        }
+        other => panic!("expected Taxii, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_parse_taxii_and_stix_rejections() {
     let cases = [
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    poll_timeout: 0s\n",
+            "invalid poll_timeout '0s'",
+        ),
+        (
+            "type: taxii\n    url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    poll_timeout: soon\n",
+            "invalid poll_timeout 'soon'",
+        ),
         (
             "type: taxii\n    url: https://taxii.example/api/\n    collection: not-a-uuid\n",
             "collection must be a UUID",
@@ -2432,7 +2453,7 @@ fn test_parse_source_accepts_every_key_its_type_lists() {
         ),
         (
             "taxii",
-            "url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth: { bearer_token_env: TOKEN }\n    page_size: 100\n    stix: { max_indicators: 10 }\n    refresh: 1h\n    timeout: 30s\n",
+            "url: https://taxii.example/api/\n    collection: 91a7b528-80eb-42ed-a74d-c6fbd5a26116\n    auth: { bearer_token_env: TOKEN }\n    page_size: 100\n    poll_timeout: 10m\n    stix: { max_indicators: 10 }\n    refresh: 1h\n    timeout: 30s\n",
         ),
     ];
     let common = "on_error: use_default\n    required: false\n    default: []\n";
