@@ -184,10 +184,15 @@ fn stix_store_reload_picks_up_new_indicators_for_token_searches() {
         .expect("open store")
         .upsert(&indicator)
         .expect("upsert");
-    let (status, _) = http_post(&daemon.url("/api/v1/reload"), "");
-    assert_eq!(status, 200, "reload was not accepted");
+    // 429 means a reload is already pending, which reloads the store too.
+    let reload = || {
+        let (status, _) = http_post(&daemon.url("/api/v1/reload"), "");
+        assert!(matches!(status, 200 | 429), "reload returned {status}");
+    };
+    reload();
 
     let enriched = poll_until(Duration::from_secs(10), || {
+        reload();
         let (status, _) = http_post(&daemon.url("/api/v1/events"), &event);
         assert_eq!(status, 200);
         lines().into_iter().find_map(|line| {
