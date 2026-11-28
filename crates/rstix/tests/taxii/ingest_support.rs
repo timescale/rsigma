@@ -1,26 +1,35 @@
 //! Wiremock helpers for TAXII collection ingest tests.
 
+#[cfg(feature = "validate")]
 #[path = "../support/attck_corpus.rs"]
 mod attck_corpus;
 
+#[cfg(feature = "validate")]
 pub use attck_corpus::{ATTCK_CORPUS_DEFAULT_FILE, resolve_attck_bundle_path};
 
+#[cfg(feature = "validate")]
 use rstix::model::ParseOptions;
 use rstix::taxii::{
     CapabilityPolicy, PostSubmitPolicy, PreflightPolicy, TaxiiClient, TaxiiClientConfig,
 };
+#[cfg(feature = "validate")]
+use wiremock::Mock;
+#[cfg(feature = "validate")]
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{MockServer, ResponseTemplate};
 
 const TAXII_MEDIA_TYPE: &str = "application/taxii+json;version=2.1";
 
 /// TAXII page size for ATT&CK-scale paginated ingest tests.
+#[cfg(feature = "validate")]
 pub const ATTCK_INGEST_PAGE_SIZE: usize = 64;
 
 /// Fixed relationship id for synthetic forward-ref fixtures.
+#[cfg(feature = "validate")]
 pub const SYNTHETIC_FORWARD_REF_RELATIONSHIP_ID: &str =
     "relationship--aaaaaaaa-0000-4000-8000-000000000001";
 
+#[cfg(feature = "validate")]
 pub fn synthetic_identity_id(index: usize) -> String {
     format!("identity--{index:08x}-0000-4000-8000-{index:012x}")
 }
@@ -44,6 +53,7 @@ pub fn api_root_url(server: &MockServer) -> String {
     format!("{}/api1/", server.uri().trim_end_matches('/'))
 }
 
+#[cfg(feature = "validate")]
 pub fn wiremock_client_attck(server: &MockServer) -> TaxiiClient {
     TaxiiClient::new(
         TaxiiClientConfig::new(server.uri())
@@ -56,6 +66,7 @@ pub fn wiremock_client_attck(server: &MockServer) -> TaxiiClient {
     .expect("client")
 }
 
+#[cfg(feature = "validate")]
 pub fn synthetic_identity_objects(count: usize) -> Vec<serde_json::Value> {
     (0..count)
         .map(|index| {
@@ -73,6 +84,7 @@ pub fn synthetic_identity_objects(count: usize) -> Vec<serde_json::Value> {
 }
 
 /// Relationship on page 1 whose `target_ref` is the identity at `target_index` (typically last page).
+#[cfg(feature = "validate")]
 pub fn synthetic_forward_ref_relationship(
     source_index: usize,
     target_index: usize,
@@ -90,6 +102,7 @@ pub fn synthetic_forward_ref_relationship(
 }
 
 /// Mount paginated TAXII object pages for `ingest_collection` (opaque `next` cursors).
+#[cfg(feature = "validate")]
 pub async fn mount_paginated_taxii_objects(
     server: &MockServer,
     api_root: &str,
