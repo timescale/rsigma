@@ -189,6 +189,8 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     absence_groups: usize,
     /// Absence outcome counters, drained by `take_absence_counters`.
     absence_counters: AbsenceCounters,
+    /// Whether at least one loaded correlation uses deferred absence semantics.
+    absence_compiled: bool,
     /// Per-tenant event-time clock: the maximum event time seen. Only tracked
     /// while an absence correlation is compiled.
     clocks: HashMap<Option<TenantId>, i64>,
@@ -238,6 +240,7 @@ impl<L> CorrelationEngine<L> {
             retention_dirty: true,
             absence_groups: 0,
             absence_counters: AbsenceCounters::default(),
+            absence_compiled: false,
             clocks: HashMap::new(),
             deadlines: HashMap::new(),
         }
@@ -433,6 +436,9 @@ impl<L> CorrelationEngine<L> {
             }
         }
 
+        if compiled.absence.is_some() {
+            self.absence_compiled = true;
+        }
         self.correlations.push(compiled);
         self.retention_dirty = true;
         Ok(())
@@ -2885,9 +2891,7 @@ impl<L> CorrelationEngine<L> {
 
     /// Whether at least one correlation uses deferred absence semantics.
     pub fn has_absence_correlations(&self) -> bool {
-        self.correlations
-            .iter()
-            .any(|correlation| correlation.absence.is_some())
+        self.absence_compiled
     }
 
     /// Number of absence groups with a pending obligation or an armed deadman.
