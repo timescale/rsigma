@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Event ingestion keeps going past bad input and stays bounded in memory
+### Event ingestion keeps going past bad input and stays bounded in memory (#809)
 
 One stdin line that was not valid UTF-8 stopped the input for good, and a line with no newline grew without limit. Stdin, `unix://`, and `POST /api/v1/events` now cut lines with a shared framer: a line over 1 MiB is dropped as it arrives and counted in `rsigma_input_dropped_total`, and bytes that are not valid UTF-8 are replaced with `U+FFFD` and counted in `rsigma_input_invalid_utf8_total`, so only an I/O error or the end of input stops a source. `POST /api/v1/events` no longer refuses a whole batch over one bad byte, and an over-long line now refuses the request before any of its lines is queued, so a retry cannot duplicate events. A stdin read error in `--stdin-mode stream` was held open like the end of input; it now marks `/readyz` not ready (`"input_failed": true`), counts in `rsigma_input_source_failed_total`, drains, and exits `4`. The `engine eval`, `rule backtest`, and hygiene stream loop read the same way and stops at a read error instead of retrying it forever.
 
