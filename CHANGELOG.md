@@ -4,6 +4,10 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### CI keeps its build caches under the repository's 10 GB limit
+
+The Actions cache held about 10.8 GB, over the 10 GB that GitHub keeps per repository, so it evicted entries the next run needed. The three engine workflows built the same `rsigma-convert` dependencies into three entries and now share one. The weekly fuzz workflow no longer uses the cache at all: one job compiles every harness and the 33 fuzz jobs run its binaries, where each job used to compile the whole fuzz crate and install cargo-fuzz from source. Its corpus moves from the cache, which evicted it before the following week's run, to a `fuzz-corpus-<target>` artifact kept for 90 days, so each run on `main` starts from the inputs the previous one found.
+
 ### The CLI integration tests build as one test binary (#806)
 
 Each of the 81 `cli_*.rs` files in `crates/rsigma-cli/tests/` was its own test target, so every build compiled and linked 81 executables, about 1 GB of linker output, and linking dominates the Windows and macOS test jobs. The files are now modules of a single `cli` target rooted at `tests/cli.rs` (`autotests = false`). The file layout and the 1,402 tests are unchanged; a rebuild of the suite with CI's settings drops from about 12.5 to 4.5 seconds on a 4-job macOS build. To run one file's tests, filter on its module, for example `cargo test -p rsigma --test cli cli_daemon_nats::`. The three `engine explain` insta snapshots are renamed for the new module path.
