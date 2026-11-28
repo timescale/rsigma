@@ -857,8 +857,48 @@ fn emit_yaml_value(out: &mut String, key: &str, value: &yaml_serde::Value, inden
         yaml_serde::Value::String(s) => {
             push_scalar(out, indent, Lead::Key(key), s, ScalarCtx::Value);
         }
+        yaml_serde::Value::Tagged(tagged) => {
+            emit_tagged(out, &format!("{indent}{key}:"), tagged, indent);
+        }
         scalar => {
             let _ = writeln!(out, "{indent}{key}: {}", yaml_scalar(scalar));
+        }
+    }
+}
+
+/// Emit a tagged value after `prefix` (`key:` or `-`): the tag, then the value
+/// inline when it is a scalar or below it when it is a collection.
+fn emit_tagged(
+    out: &mut String,
+    prefix: &str,
+    tagged: &yaml_serde::value::TaggedValue,
+    indent: &str,
+) {
+    let tag = &tagged.tag;
+    match &tagged.value {
+        yaml_serde::Value::Mapping(map) if !map.is_empty() => {
+            let _ = writeln!(out, "{prefix} {tag}");
+            for (k, v) in map {
+                emit_yaml_value(out, &yaml_key(k), v, &deeper(indent));
+            }
+        }
+        yaml_serde::Value::Sequence(seq) if !seq.is_empty() => {
+            let _ = writeln!(out, "{prefix} {tag}");
+            for v in seq {
+                emit_yaml_seq_item(out, v, &deeper(indent));
+            }
+        }
+        yaml_serde::Value::Mapping(_) => {
+            let _ = writeln!(out, "{prefix} {tag} {{}}");
+        }
+        yaml_serde::Value::Sequence(_) => {
+            let _ = writeln!(out, "{prefix} {tag} []");
+        }
+        yaml_serde::Value::String(s) => {
+            let _ = writeln!(out, "{prefix} {tag} {}", crate::style::quote(s));
+        }
+        scalar => {
+            let _ = writeln!(out, "{prefix} {tag} {}", yaml_scalar(scalar));
         }
     }
 }
@@ -894,6 +934,9 @@ fn emit_yaml_seq_item(out: &mut String, value: &yaml_serde::Value, indent: &str)
         }
         yaml_serde::Value::String(s) => {
             push_scalar(out, indent, Lead::Dash, s, ScalarCtx::Value);
+        }
+        yaml_serde::Value::Tagged(tagged) => {
+            emit_tagged(out, &format!("{indent}-"), tagged, indent);
         }
         scalar => {
             let _ = writeln!(out, "{indent}- {}", yaml_scalar(scalar));
@@ -1567,6 +1610,23 @@ rsigma.suppress:
             let read = key.as_mapping().unwrap().keys().next().unwrap();
             assert_eq!(read.as_str(), Some(*s), "{quoted}");
         }
+    }
+
+    #[test]
+    fn tagged_custom_attribute_values_round_trip() {
+        let rule = parse_sigma_yaml(
+            "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\nscalar: !foo 'a: b'\nnumber: !n 5\nmap: !m\n    k: v\nseq: !s\n    - !i x\n    - y\nempty: !e {}\n",
+        )
+        .unwrap()
+        .rules
+        .remove(0);
+        assert!(matches!(
+            rule.custom_attributes["map"],
+            yaml_serde::Value::Tagged(_)
+        ));
+        let emitted = emit_rule_yaml(&rule);
+        let reparsed = parse_sigma_yaml(&emitted).unwrap();
+        assert_eq!(reparsed.rules, [rule], "{emitted}");
     }
 
     #[test]
