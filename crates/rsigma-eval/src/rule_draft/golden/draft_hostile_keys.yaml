@@ -1,0 +1,19 @@
+title: 'Draft: it''s (''quoted'')'
+id: 00000000-0000-4000-8000-000000000000
+status: experimental
+description: 'TODO: describe what this rule detects and why it matters.'
+author: 'TODO: your name'
+date: 2026-07-03
+logsource:
+    product: todo
+detection:
+    selection:
+        '''quoted''': 'it''s'
+        '---': '...'
+        'Field: x #y': "line one\nline two"
+        Image: 'C:\Windows\evil.exe'
+        'true': 'yes'
+    condition: selection
+falsepositives:
+    - 'TODO: list known benign triggers.'
+level: medium

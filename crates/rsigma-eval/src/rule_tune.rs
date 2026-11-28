@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rsigma_parser::ast::{LogSource, SigmaCollection, SigmaRule};
+use rsigma_parser::ast::{FilterRuleTarget, LogSource, SigmaCollection, SigmaRule};
 use rsigma_parser::lint::Severity;
 use serde::Serialize;
 use serde_json::Value;
@@ -14,7 +14,8 @@ use serde_json::Value;
 use crate::Engine;
 use crate::event::JsonEvent;
 use crate::rule_draft::draft_core::{
-    ValueForm, emit_form, infer_form, profile_fields, score_field, yaml_str, yaml_title_str,
+    PlannedSelection, ValueForm, emit_form, infer_form, parse_one_document, profile_fields,
+    score_field, unwritable_field_name, verify_detection, yaml_str, yaml_title_str,
 };
 use crate::rule_draft::{DraftConfig, Stability};
 
@@ -292,7 +293,7 @@ pub fn tune_rule(
         .as_deref()
         .or(rule.name.as_deref())
         .unwrap_or(&rule.title);
-    let mut warnings = Vec::new();
+    let mut warnings = skipped_field_warnings(false_positives);
     if rule.id.is_none() && rule.name.is_none() {
         warnings.push(format!(
             "target rule has no id or name; filter targets exact title '{}'",
@@ -308,7 +309,7 @@ pub fn tune_rule(
         true_positives.len(),
         config,
     );
-    validate_filter_yaml(&filter_yaml)?;
+    validate_filter_yaml(&filter_yaml, rule, target, &selections, config)?;
 
     let fp_after = firing_indexes_with_filter(rule, &filter_yaml, false_positives)?;
     let tp_after = firing_indexes_with_filter(rule, &filter_yaml, true_positives)?;
@@ -334,7 +335,7 @@ pub fn tune_rule(
             true_positives.len(),
             config,
         );
-        validate_filter_yaml(&filter_yaml)?;
+        validate_filter_yaml(&filter_yaml, rule, target, &selections, config)?;
     }
     if !uncovered.is_empty() {
         warnings.push(format!(
@@ -381,6 +382,29 @@ pub fn tune_rule(
         warnings,
         expectation_diff: None,
     })
+}
+
+/// One warning per false-positive field whose name cannot be a Sigma field,
+/// so it was never considered for the filter.
+fn skipped_field_warnings(false_positives: &[Value]) -> Vec<String> {
+    let mut skipped: BTreeMap<String, &'static str> = BTreeMap::new();
+    for value in false_positives {
+        let event = JsonEvent::borrow(value);
+        for field in crate::event::Event::field_keys(&event) {
+            if let Some(reason) = unwritable_field_name(&field) {
+                skipped.entry(field.into_owned()).or_insert(reason);
+            }
+        }
+    }
+    skipped
+        .into_iter()
+        .map(|(field, reason)| {
+            format!(
+                "skipped field {:?}: {reason}, so it cannot be written as a Sigma field",
+                field.chars().take(64).collect::<String>()
+            )
+        })
+        .collect()
 }
 
 fn propose_group(
@@ -664,10 +688,7 @@ fn emit_filter_yaml(
     config: &TuneConfig,
 ) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "title: {}\n",
-        yaml_title_str(&format!("Tuning filter for {}", rule.title))
-    ));
+    out.push_str(&format!("title: {}\n", yaml_title_str(&filter_title(rule))));
     if let Some(id) = &config.filter_id {
         out.push_str(&format!("id: {}\n", yaml_str(id)));
     }
@@ -688,17 +709,28 @@ fn emit_filter_yaml(
             emit_form(&mut out, field, form, "        ");
         }
     }
+    out.push_str(&format!(
+        "    condition: {}\n",
+        filter_condition(selections)
+    ));
+    out
+}
+
+fn filter_title(rule: &SigmaRule) -> String {
+    format!("Tuning filter for {}", rule.title)
+}
+
+fn filter_condition(selections: &[Selection]) -> String {
     if selections.len() == 1 {
-        out.push_str("    condition: not selection\n");
+        "not selection".to_string()
     } else {
         let names = selections
             .iter()
             .map(|selection| selection.name.as_str())
             .collect::<Vec<_>>()
             .join(" or ");
-        out.push_str(&format!("    condition: not ({names})\n"));
+        format!("not ({names})")
     }
-    out
 }
 
 fn emit_logsource(out: &mut String, logsource: &LogSource) {
@@ -720,25 +752,19 @@ fn emit_logsource(out: &mut String, logsource: &LogSource) {
     }
 }
 
-fn validate_filter_yaml(yaml: &str) -> Result<(), TuneError> {
-    let collection =
-        rsigma_parser::parse_sigma_yaml(yaml).map_err(|error| TuneError::Internal {
-            stage: "parse".to_string(),
-            message: error.to_string(),
-        })?;
-    if collection.filters.len() != 1 || collection.has_errors() {
-        return Err(TuneError::Internal {
-            stage: "parse".to_string(),
-            message: format!(
-                "expected one filter and no document errors, got {} filters and {:?}",
-                collection.filters.len(),
-                collection
-                    .errors()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            ),
-        });
-    }
+fn validate_filter_yaml(
+    yaml: &str,
+    rule: &SigmaRule,
+    target: &str,
+    selections: &[Selection],
+    config: &TuneConfig,
+) -> Result<(), TuneError> {
+    verify_filter_document(yaml, rule, target, selections, config).map_err(|message| {
+        TuneError::Internal {
+            stage: "round-trip".to_string(),
+            message,
+        }
+    })?;
     let errors: Vec<_> = rsigma_parser::lint_yaml_str(yaml)
         .into_iter()
         .filter(|warning| warning.severity == Severity::Error)
@@ -752,6 +778,51 @@ fn validate_filter_yaml(yaml: &str) -> Result<(), TuneError> {
             message: errors.join("; "),
         })
     }
+}
+
+/// Check that the emitted filter parses back as exactly one filter with the
+/// planned title, id, target, logsource, and detection.
+fn verify_filter_document(
+    yaml: &str,
+    rule: &SigmaRule,
+    target: &str,
+    selections: &[Selection],
+    config: &TuneConfig,
+) -> Result<(), String> {
+    let collection = parse_one_document(yaml)?;
+    let [filter] = collection.filters.as_slice() else {
+        return Err("expected exactly one filter".to_string());
+    };
+    if !collection.rules.is_empty() || !collection.correlations.is_empty() {
+        return Err("expected exactly one filter".to_string());
+    }
+    let title = filter_title(rule);
+    if filter.title != title {
+        return Err(format!("title is {:?}, expected {title:?}", filter.title));
+    }
+    if filter.id != config.filter_id {
+        return Err(format!(
+            "id is {:?}, expected {:?}",
+            filter.id, config.filter_id
+        ));
+    }
+    if filter.rules != FilterRuleTarget::Specific(vec![target.to_string()]) {
+        return Err(format!("targets {:?}, expected [{target:?}]", filter.rules));
+    }
+    if filter.logsource.as_ref() != Some(&rule.logsource) {
+        return Err(format!(
+            "logsource is {:?}, expected {:?}",
+            filter.logsource, rule.logsource
+        ));
+    }
+    let planned: Vec<PlannedSelection<'_>> = selections
+        .iter()
+        .map(|selection| PlannedSelection {
+            name: &selection.name,
+            entries: &selection.entries,
+        })
+        .collect();
+    verify_detection(&filter.detection, &planned, &filter_condition(selections))
 }
 
 fn firing_indexes(rule: &SigmaRule, events: &[Value]) -> Result<Vec<usize>, TuneError> {
@@ -1085,5 +1156,143 @@ level: medium
         assert!(report.filter_yaml.contains("- suspicious_backup_tool"));
         assert!(!report.filter_yaml.contains("Suspicious Backup Tool'"));
         assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn hostile_field_names_round_trip_or_are_skipped() {
+        for key in [
+            "a\nb",
+            "a\u{2028}b",
+            "User: x",
+            "#User",
+            "User #x",
+            "'User'",
+            "User|endswith",
+            "---",
+            "...x",
+            "[User]",
+            "- User",
+            "true",
+            "1",
+            "@User",
+            " User",
+        ] {
+            let event = |user: &str| {
+                let mut map = serde_json::Map::new();
+                map.insert("Image".into(), json!(r"C:\Program Files\Veeam\backup.exe"));
+                map.insert(key.into(), json!(user));
+                Value::Object(map)
+            };
+            let fps = vec![event("svc: backup"), event("svc: backup")];
+            let tps = vec![event("attacker")];
+            let result = tune_rule(&rule(), &fps, &tps, &config());
+            let skipped = crate::rule_draft::draft_core::unwritable_field_name(key).is_some();
+            if skipped {
+                assert!(
+                    matches!(result, Err(TuneError::NoCleanSeparator { .. })),
+                    "{key:?}: {result:?}"
+                );
+                continue;
+            }
+            let report = result.unwrap_or_else(|e| panic!("{key:?}: {e}"));
+            let filter = &rsigma_parser::parse_sigma_yaml(&report.filter_yaml)
+                .unwrap()
+                .filters[0];
+            let items = match &filter.detection.named["selection"] {
+                rsigma_parser::Detection::AllOf(items) => items,
+                other => panic!("{other:?}"),
+            };
+            let written = rsigma_parser::fieldpath::escape_brackets(key);
+            let item = items
+                .iter()
+                .find(|item| item.field.name.as_deref() == Some(written.as_ref()))
+                .unwrap_or_else(|| panic!("{key:?}:\n{}", report.filter_yaml));
+            assert_eq!(item.values.len(), 1);
+            assert_eq!(item.values[0].to_string(), "svc: backup");
+            assert_eq!(report.verification.true_positives_after, 1);
+        }
+    }
+
+    #[test]
+    fn hostile_target_title_round_trips() {
+        let mut target = rule();
+        target.id = None;
+        target.title = "Backup\n---\nlevel: low # tool".to_string();
+        let fps = vec![
+            json!({"Image": r"C:\Program Files\Veeam\backup.exe", "User": "svc_backup"}),
+            json!({"Image": r"C:\Program Files\Veeam\backup.exe", "User": "svc_backup"}),
+        ];
+        let tps = vec![json!({"Image": r"C:\Temp\backup.exe", "User": "attacker"})];
+        let report = tune_rule(&target, &fps, &tps, &config()).unwrap();
+        let filter = &rsigma_parser::parse_sigma_yaml(&report.filter_yaml)
+            .unwrap()
+            .filters[0];
+        assert_eq!(
+            filter.rules,
+            FilterRuleTarget::Specific(vec![target.title.clone()])
+        );
+        assert_eq!(report.verification.false_positives_after, 0);
+    }
+
+    #[test]
+    fn tampered_filter_output_is_rejected() {
+        let target = rule();
+        let selection = Selection {
+            name: "selection".to_string(),
+            entries: vec![(
+                "User".to_string(),
+                ValueForm::Exact(crate::rule_draft::draft_core::DraftValue::Str(
+                    "svc_backup".to_string(),
+                )),
+            )],
+            fp_indexes: vec![0, 1],
+        };
+        let selections = vec![selection];
+        let target_id = target.id.clone().unwrap();
+        let yaml = emit_filter_yaml(&target, &target_id, &selections, 2, 1, &config());
+        verify_filter_document(&yaml, &target, &target_id, &selections, &config())
+            .expect("untouched output verifies");
+        for text in [
+            format!("{yaml}---\n{yaml}"),
+            yaml.replace(
+                "    condition: not selection\n",
+                "    condition: selection\n",
+            ),
+            yaml.replace("User: svc_backup", "User: svc_admin"),
+            yaml.replace("User: svc_backup", "User|contains: svc_backup"),
+            yaml.replace(&format!("- {target_id}"), "- other"),
+            yaml.replace("    condition:", "    extra:\n        a: b\n    condition:"),
+            yaml.replace("category: process_creation", "category: file_event"),
+        ] {
+            assert_ne!(text, yaml);
+            assert!(
+                verify_filter_document(&text, &target, &target_id, &selections, &config()).is_err(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_keys_golden() {
+        let event = |user: &str| {
+            let mut map = serde_json::Map::new();
+            map.insert("Image".into(), json!(r"C:\Program Files\Veeam\backup.exe"));
+            map.insert("User: name #1".into(), json!(user));
+            map.insert("line\nbreak".into(), json!(user));
+            Value::Object(map)
+        };
+        let fps = vec![event("svc\nbackup"), event("svc\nbackup")];
+        let tps = vec![event("attacker")];
+        let report = tune_rule(&rule(), &fps, &tps, &config()).unwrap();
+        assert_eq!(
+            report.filter_yaml,
+            include_str!("rule_draft/golden/tune_hostile_keys.yaml")
+        );
+        assert_eq!(
+            report.warnings,
+            [
+                "skipped field \"line\\nbreak\": it contains a line break or control character, so it cannot be written as a Sigma field"
+            ]
+        );
     }
 }

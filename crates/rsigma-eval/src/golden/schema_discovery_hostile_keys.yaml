@@ -1,0 +1,7 @@
+schemas:
+  - name: discovered_a_b_c
+    specificity: 70
+    match:
+      - equals:
+          field: '[kind]'
+          value: 'a,b:c'
