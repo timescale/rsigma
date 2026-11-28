@@ -125,6 +125,8 @@ coverage:
 
 CLI flags always win over the config file. When `-r`/`--rules` is omitted, `coverage.rules` fills it.
 
+A project file (`./rsigma.yaml` or `.rsigmarc`) may set `atomics` and `baseline` only to local files. A URL there is ignored with a warning, because a cloned repository could otherwise make the command download from any address; put the URL in the user config (`~/.config/rsigma/config.yaml`), pass the file with `--config`, or use the flag. Every download follows the [`default` egress policy](../reference/security.md#cli-downloads). {{ added "unreleased" }}
+
 ## See also
 
 - [`rule coverage`](../cli/rule/coverage.md) for the full flag reference.

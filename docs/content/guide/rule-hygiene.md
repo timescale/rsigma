@@ -98,6 +98,8 @@ Use `--fail-on any` to fail on any finding, or set the policy in the config file
 
 Hygiene is the static, coverage-structural half of the retirement story: it surfaces candidates from owner, tag, status, silence, noise, and field-coverage signals, and stops at flagging them. The [Detection Scorecard](detection-scorecard.md) is the quantitative keep/tune/retire verdict that fuses a backtest and coverage report (and optionally the same Prometheus volume) into a precision-driven decision. Run hygiene for the cheap, no-backtest sweep; run the scorecard when you have the backtest and coverage reports and want the graded verdict.
 
+A `hygiene.metrics` URL is honored from the user or system config, `--config`, or the flag, but not from a project file (`./rsigma.yaml`, `.rsigmarc`), which may name only a local snapshot. Fetches follow the [`default` egress policy](../reference/security.md#cli-downloads), so loopback and private Prometheus addresses work and link-local or cloud-metadata addresses are refused. {{ added "unreleased" }}
+
 ## See also
 
 - [`rule hygiene` reference](../cli/rule/hygiene.md) for the full flag and exit-code tables.

@@ -33,6 +33,15 @@ For binding syntax see [Dynamic Pipelines](../../reference/dynamic-pipelines.md)
 | `-s, --source <ID>` | unset | Resolve only the named source ID instead of every loaded source. |
 | `--pretty` | off | Pretty-print JSON output. Applies when the effective format is JSON (including the historical default when `--output-format` is unset). Ignored for table/csv/tsv/ndjson. |
 | `--dry-run` | off | List each source's type, refresh policy, and `required` flag without performing any fetch. |
+| `--nats-creds <PATH>` | unset | NATS credentials file (`.creds`) for JWT and NKey authentication of `type: nats` sources. Also read from `NATS_CREDS`. {{ added "unreleased" }} |
+| `--nats-token <TOKEN>` | unset | NATS authentication token. Conflicts with `--nats-creds`. Also read from `NATS_TOKEN`. {{ added "unreleased" }} |
+| `--nats-user <USER>` | unset | NATS username; requires `--nats-password`. Also read from `NATS_USER`. {{ added "unreleased" }} |
+| `--nats-password <PASSWORD>` | unset | NATS password; requires `--nats-user`. Also read from `NATS_PASSWORD`. {{ added "unreleased" }} |
+| `--nats-nkey <SEED>` | unset | NATS NKey seed. Also read from `NATS_NKEY`. {{ added "unreleased" }} |
+| `--nats-tls-cert <PATH>`, `--nats-tls-key <PATH>` | unset | Client certificate and key for mutual TLS with NATS. Pass both. {{ added "unreleased" }} |
+| `--nats-require-tls` | off | Require TLS for every NATS source connection. A server that does not offer TLS fails the source before any credential or subscription is sent. {{ added "unreleased" }} |
+
+The `--nats-*` flags are the ones [`engine daemon`](../engine/daemon.md) takes, and they read the same environment variables. They exist in builds with the `daemon-nats` feature; without it a `type: nats` source fails to resolve. {{ added "unreleased" }}
 
 The global [`--output-format`](../../reference/output.md) flag applies. When unset, the historical default is compact JSON (or pretty JSON with `--pretty`), with a single object when exactly one source is reported and an array otherwise. Explicit `json`/`ndjson`/`table`/`csv`/`tsv` use the tabular row shape (`pipeline`, `source_id`, `source_type`, `status`, `data_or_error`).
 

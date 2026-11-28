@@ -83,6 +83,8 @@ visibility:
 
 CLI flags always win over the config file. `rules` and `observed` are intentionally not config keys: they are invocation-specific arguments.
 
+A project file may set `mapping` only to a local table; a URL there is ignored with a warning and must come from the user or system config, `--config`, or the flag. {{ added "unreleased" }}
+
 ## See also
 
 - [`rule visibility` reference](../cli/rule/visibility.md) for the full flag table and report shape.

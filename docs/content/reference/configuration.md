@@ -14,10 +14,12 @@ From highest to lowest:
 
 1. **CLI flags** on the command line (e.g. `--rules /tmp/r`).
 2. **Environment variables**: uniform `RSIGMA_<SECTION>__<KEY>` (see [Environment layer](#environment-layer)) plus the legacy clap-bound names listed in [Environment Variables](environment-variables.md).
-3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "0.27.0" }}
+3. **Project config**: `./rsigma.yaml` (or `./rsigma.yml`) in the current directory, then the nearest `.rsigmarc` found by walking up from the current directory. The walk stops after `$HOME` and does not leave the filesystem the current directory is on. {{ added "unreleased" }} Project files cannot set the security-sensitive keys listed in [Project config trust](#project-config-trust); those are ignored with a warning and resolve from the other layers. {{ added "0.27.0" }}
 4. **User config**: `$XDG_CONFIG_HOME/rsigma/config.yaml` (defaulting to `~/.config/rsigma/config.yaml`).
-5. **System config**: `/etc/rsigma/config.yaml`.
+5. **System config**: `/etc/rsigma/config.yaml` on Linux and macOS, `%ProgramData%\rsigma\config.yaml` (usually `C:\ProgramData\rsigma\config.yaml`) on Windows. {{ added "unreleased" }}
 6. **Compiled defaults** baked into the binary.
+
+Every file layer also accepts the `.yml` extension (`config.yml`, `rsigma.yml`); `.yaml` wins when both exist. A discovered file is read only when it passes the [ownership check](#file-ownership).
 
 Higher layers override lower ones **per leaf**, not whole sections; a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config. This matches the [clig.dev guidance](https://clig.dev/#configuration) and is what most modern CLIs implement.
 
@@ -25,13 +27,34 @@ Use [`rsigma config show`](../cli/config/show.md) to see the resolved value for 
 
 ## Discovery
 
-All layers that exist are loaded and merged. There is no first-match-wins fallback: a file at `/etc/rsigma/config.yaml` is always loaded if it exists, even when a project `rsigma.yaml` is also present.
+All layers that exist are loaded and merged. There is no first-match-wins fallback: a system config file is always loaded if it exists and passes the ownership check, even when a project `rsigma.yaml` is also present.
 
-Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately).
+The Windows system directory comes from the `ProgramData` known folder, not from the environment, and is always an absolute path on the system drive. {{ added "unreleased" }} [`rsigma config path`](../cli/config/path.md) prints every location discovery searched, with whether each file was loaded, missing, or skipped.
+
+Passing `--config <PATH>` replaces the discovery chain entirely: only that file is loaded (and a bad path is a hard error, so misspellings surface immediately). It is read without the ownership check.
 
 An unknown key in any loaded file stops the command with exit 3 and prints `error: unknown config key '<key>' in <path>` for each one. [`rsigma config validate`](../cli/config/validate.md) lists them without running anything, and [`rsigma config show`](../cli/config/show.md) still prints the effective config. {{ added "0.28.0" }}
 
 The `~/.config/rsigma` location is computed by honoring `XDG_CONFIG_HOME` explicitly rather than `dirs::config_dir()`, so on macOS the path stays under `~/.config/rsigma` instead of `~/Library/Application Support/`. The `rsigma install` workflow uses the same layout.
+
+## File ownership
+
+{{ added "unreleased" }}
+
+Discovery reads a system, user, or project file only when no other account could have written it. Otherwise it skips the file, prints a warning, and resolves the keys from the other layers:
+
+```text
+warning: skipping config ./rsigma.yaml: the file is owned by uid 1001, not by you or root; pass it with --config to read it anyway
+```
+
+| Platform | The file must | Its directory must |
+|----------|---------------|--------------------|
+| Linux, macOS | Belong to you or root, and not be writable by its group or other users. A group-writable file is accepted when the group is your private group: your primary group, named after you, with no other members. | Meet the same rules. When the file is a symlink, the directory holding its target must meet them too. |
+| Windows | Belong to you, Administrators, SYSTEM, or TrustedInstaller. A system or user config file must also not grant write, delete, or permission-change access to any other account. | Belong to you, Administrators, SYSTEM, or TrustedInstaller. |
+
+The Windows rules leave out two write checks on purpose. Every user may create files in a folder under `%ProgramData%` by default; such a file belongs to the account that created it, so the owner check refuses it. Folders on secondary drives grant every authenticated user modify access by default, so a project file there is checked by its owner alone.
+
+Running `rsigma` as root (or from a container as root) in a checkout owned by another user skips that checkout's project files. Pass the file with `--config`, which is read as given, or fix the ownership (`chown`) or mode (`chmod go-w`). [`rsigma config validate`](../cli/config/validate.md) and [`rsigma config show`](../cli/config/show.md) list skipped files under `skipped_files`.
 
 ## Project config trust
 
@@ -80,6 +103,11 @@ A project file (`./rsigma.yaml`, `./rsigma.yml`, or the nearest `.rsigmarc` abov
 | `daemon.capture.spool_dir` | Decides where retained payloads are written. |
 | `daemon.engine.egress_policy` | Can turn off the SSRF defense for HTTP sources and enrichers. |
 | `daemon.engine.allow_remote_include` | Lets pipelines include remote (HTTP or NATS) sources. |
+| `coverage.atomics` | Only when it is an `http://` or `https://` URL, which `rule coverage` downloads. A local index or `atomics/` directory is kept. {{ added "unreleased" }} |
+| `coverage.baseline` | Only when it is a URL, which `rule coverage` downloads. A local Navigator layer is kept. {{ added "unreleased" }} |
+| `visibility.mapping` | Only when it is a URL, which `rule visibility` downloads. A local mapping table is kept. {{ added "unreleased" }} |
+| `scorecard.metrics` | Only when it is a URL, which `rule scorecard` fetches. A local exposition snapshot is kept. {{ added "unreleased" }} |
+| `hygiene.metrics` | Only when it is a URL, which `rule hygiene` fetches. A local exposition snapshot is kept. {{ added "unreleased" }} |
 
 The boolean opt-ins in the table (`mcp.allow_unconfined_paths`, `mcp.allow_sigma_cli`, `mcp.allow_operate_writes`, `daemon.api.allow_unauthenticated`, `daemon.api.tls.allow_plaintext`, `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.engine.allow_remote_include`) are ignored only when a project file sets them to `true`. A project file may still set them to `false`. {{ added "0.27.0" }}
 
