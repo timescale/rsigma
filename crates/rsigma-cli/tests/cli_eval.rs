@@ -1205,7 +1205,7 @@ fn eval_chained_correlation_without_event_mode_has_no_events() {
 }
 
 // ---------------------------------------------------------------------------
-// eval subcommand — absence correlations
+// eval subcommand - absence correlations
 // ---------------------------------------------------------------------------
 
 const ABSENCE_RULES: &str = r#"

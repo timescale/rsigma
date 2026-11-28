@@ -756,7 +756,7 @@ impl RulesetEngines {
         &mut self,
         snapshot: &CorrelationSnapshot,
     ) -> Option<crate::ImportStats> {
-        if !matches!(snapshot.version, 1 | 2 | 3) {
+        if !matches!(snapshot.version, 1..=3) {
             return None;
         }
         if snapshot.rulesets.is_empty() {

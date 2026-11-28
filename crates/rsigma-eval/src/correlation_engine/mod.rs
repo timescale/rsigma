@@ -1494,9 +1494,7 @@ impl<L> CorrelationEngine<L> {
         via: Option<&Arc<str>>,
         _out: &mut Vec<EvaluationResult>,
     ) -> Option<Retained> {
-        let Some(absence) = self.correlations[corr_idx].absence.clone() else {
-            return None;
-        };
+        let absence = self.correlations[corr_idx].absence.clone()?;
         let timespan = self.correlations[corr_idx].timespan_secs;
         let window_mode = self.correlations[corr_idx].window_mode;
         let gap_secs = self.correlations[corr_idx].gap_secs;
@@ -1662,9 +1660,7 @@ impl<L> CorrelationEngine<L> {
             }
             _ => None,
         };
-        let Some((s_min, s_max, positives)) = satisfying else {
-            return None;
-        };
+        let (s_min, s_max, positives) = satisfying?;
 
         let tumbling = window_mode == WindowMode::Tumbling;
         let bucket = if tumbling {
@@ -1933,14 +1929,11 @@ impl<L> CorrelationEngine<L> {
         }
         let tenant_key = tenant.cloned();
         let mut out = Vec::new();
-        loop {
-            let Some((fire_at, group, corr_idx)) = self
-                .deadlines
-                .get(&tenant_key)
-                .and_then(|set| set.iter().next().cloned())
-            else {
-                break;
-            };
+        while let Some((fire_at, group, corr_idx)) = self
+            .deadlines
+            .get(&tenant_key)
+            .and_then(|set| set.iter().next().cloned())
+        {
             if fire_at >= before {
                 break;
             }
@@ -3153,7 +3146,7 @@ impl<L> CorrelationEngine<L> {
         &mut self,
         mut snapshot: CorrelationSnapshot,
     ) -> Option<ImportStats> {
-        if !matches!(snapshot.version, 1 | 2 | 3) {
+        if !matches!(snapshot.version, 1..=3) {
             return None;
         }
         if !snapshot.rulesets.is_empty() {
