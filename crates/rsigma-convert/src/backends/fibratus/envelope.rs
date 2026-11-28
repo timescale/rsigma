@@ -337,6 +337,11 @@ fn needs_yaml_quoting(s: &str) -> bool {
     if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
         return true;
     }
+    // Other YAML-typed spellings, such as `0x1F` or `.inf`.
+    if !matches!(yaml_serde::from_str::<yaml_serde::Value>(s), Ok(yaml_serde::Value::String(ref v)) if v == s)
+    {
+        return true;
+    }
     let first = s.chars().next().unwrap();
     if matches!(
         first,
@@ -359,6 +364,7 @@ fn needs_yaml_quoting(s: &str) -> bool {
             | '@'
             | '`'
     ) || first.is_whitespace()
+        || s.ends_with(char::is_whitespace)
     {
         return true;
     }
@@ -501,6 +507,54 @@ detection:
         assert_eq!(yaml_inline_str("a: b"), "'a: b'");
         assert_eq!(yaml_inline_str("- hi"), "'- hi'");
         assert_eq!(yaml_inline_str("Tom's"), "'Tom''s'");
+    }
+
+    #[test]
+    fn metadata_with_yaml_syntax_reads_back_exactly() {
+        for text in [
+            "trailing ",
+            "trailing\t",
+            " leading",
+            "a #b",
+            "a: b",
+            "#a",
+            "[a]",
+            "{a}",
+            "a,b",
+            "---",
+            "...",
+            "- a",
+            "'q'",
+            "\"q\"",
+            "|",
+            ">",
+            "&a",
+            "*a",
+            "!a",
+            "%a",
+            "@a",
+            "~",
+            "true",
+            "1.5",
+            "0x1F",
+        ] {
+            let mut r = rule(
+                "title: T\nlogsource:\n  category: test\ndetection:\n  s:\n    ps.name: x\n  condition: s\n",
+            );
+            r.title = text.to_string();
+            r.id = Some(text.to_string());
+            r.tags = vec![text.to_string()];
+            let out = render_rule_yaml(&r, "ps.name = 'x'", &cfg());
+            let doc = load(&out);
+            assert_eq!(doc["name"].as_str(), Some(text), "{out}");
+            assert_eq!(doc["id"].as_str(), Some(text), "{out}");
+            let labels = doc["labels"].as_mapping().unwrap();
+            assert_eq!(
+                labels[format!("tag.{text}").as_str()].as_str(),
+                Some(text),
+                "{out}"
+            );
+        }
     }
 
     #[test]

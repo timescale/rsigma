@@ -781,8 +781,11 @@ pub fn text_finish_query(
     // State defaults take precedence over state values.
     let mut result = render_query_template(cfg.query_expression, |key| match key {
         "query" => Some(main_query.to_string()),
-        "rule.title" => Some(rule.title.clone()),
-        "rule.id" => rule.id.clone(),
+        "rule.title" => Some(sanitize_single_line(&rule.title).into_owned()),
+        "rule.id" => rule
+            .id
+            .as_deref()
+            .map(|id| sanitize_single_line(id).into_owned()),
         _ => cfg
             .state_defaults
             .iter()
@@ -983,5 +986,26 @@ mod tests {
         );
         assert_eq!(render_query_template("", lookup), "");
         assert_eq!(render_query_template("{query", lookup), "{query");
+    }
+
+    #[test]
+    fn text_finish_query_keeps_rule_metadata_on_one_line() {
+        static CONFIG: super::TextQueryConfig = super::TextQueryConfig {
+            query_expression: "# {rule.title} {rule.id}\n{query}",
+            ..crate::backends::test::TEXT_QUERY_TEST_CONFIG
+        };
+        let mut rule = rsigma_parser::parse_sigma_yaml(
+            "title: T\nlogsource:\n    category: test\ndetection:\n    selection:\n        a: b\n    condition: selection\n",
+        )
+        .unwrap()
+        .rules
+        .remove(0);
+        rule.title = "a\nb\r\u{85}c\u{2028}d".to_string();
+        rule.id = Some("x\u{2029}y".to_string());
+        let state = crate::state::ConversionState::new(Default::default());
+        assert_eq!(
+            super::text_finish_query(&CONFIG, "q", &state, &rule),
+            "# a b  c d x y\nq"
+        );
     }
 }

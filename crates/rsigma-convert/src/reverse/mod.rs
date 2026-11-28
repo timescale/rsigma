@@ -28,7 +28,7 @@ use std::collections::HashMap;
 
 use rsigma_ir::{
     IrCondition, IrDetection, IrDetectionItem, IrMatcher, IrPattern, IrPatternPart, IrRule,
-    IrRuleMetadata, IrStrOp, RaiseOptions, raise_rule,
+    IrRuleMetadata, IrStrOp, LowerOptions, RaiseOptions, lower_rule, raise_rule,
 };
 use rsigma_parser::{Level, LogSource, SigmaRule, SigmaString, Status, StringPart};
 
@@ -253,11 +253,43 @@ fn convert_one(frontend: &dyn Frontend, query: &str, ctx: &ReverseCtx) -> Result
     let rule = raise_rule(&ir, &RaiseOptions::default())
         .map_err(|e| ConvertError::RuleConversion(e.to_string()))?;
     let yaml = rsigma_parser::emit_rule_yaml(&rule);
+    verify_emitted_rule(&rule, &yaml).map_err(|reason| {
+        ConvertError::RuleConversion(format!(
+            "the raised rule cannot be written as Sigma YAML that reads back the same: {reason}"
+        ))
+    })?;
     Ok(ReverseResult {
         query: query.to_string(),
         rule,
         yaml,
     })
+}
+
+/// Check that `yaml`, emitted from `rule`, parses back as exactly one rule
+/// that lowers to the same HIR: a field name holding `|`, for example, would
+/// read back as a field plus modifiers.
+fn verify_emitted_rule(rule: &SigmaRule, yaml: &str) -> std::result::Result<(), String> {
+    let documents = yaml_serde::Deserializer::from_str(yaml).count();
+    if documents != 1 {
+        return Err(format!("expected one YAML document, found {documents}"));
+    }
+    let collection = rsigma_parser::parse_sigma_yaml(yaml).map_err(|e| e.to_string())?;
+    if let Some(error) = collection.errors().next() {
+        return Err(error.to_string());
+    }
+    let [reparsed] = collection.rules.as_slice() else {
+        return Err("expected exactly one detection rule".to_string());
+    };
+    if !collection.correlations.is_empty() || !collection.filters.is_empty() {
+        return Err("expected exactly one detection rule".to_string());
+    }
+    let options = LowerOptions::default();
+    let expected = lower_rule(rule, &options).map_err(|e| e.to_string())?;
+    let actual = lower_rule(reparsed, &options).map_err(|e| e.to_string())?;
+    if expected != actual {
+        return Err("the emitted rule matches differently".to_string());
+    }
+    Ok(())
 }
 
 // =============================================================================
@@ -983,5 +1015,21 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("condition: selection"), "{out}");
+    }
+
+    #[test]
+    fn emitted_rule_that_reads_back_differently_is_rejected() {
+        let mut rule = convert_one(&LuceneFrontend, "Image:whoami", &ctx())
+            .expect("converts")
+            .rule;
+        verify_emitted_rule(&rule, &rsigma_parser::emit_rule_yaml(&rule)).expect("verifies");
+        let detection = rule.detection.named.values_mut().next().unwrap();
+        let rsigma_parser::Detection::AllOf(items) = detection else {
+            panic!("unexpected detection shape");
+        };
+        items[0].field.name = Some("Image|contains".to_string());
+        let yaml = rsigma_parser::emit_rule_yaml(&rule);
+        assert!(verify_emitted_rule(&rule, &yaml).is_err(), "{yaml}");
+        assert!(verify_emitted_rule(&rule, &format!("{yaml}---\n{yaml}")).is_err());
     }
 }

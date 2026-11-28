@@ -517,6 +517,29 @@ pub fn quote_yaml_string(s: &str) -> String {
     crate::style::quote(s)
 }
 
+/// Replace every line break and control character in `s` with a space, so
+/// rule text such as a title or id stays on one line when it is written into
+/// a SQL comment, a query template, or another line-oriented output.
+///
+/// Line breaks are LF, CR, NEL (U+0085), and the Unicode line and paragraph
+/// separators (U+2028, U+2029); control characters are the C0 and C1 ranges
+/// and DEL.
+///
+/// ```rust
+/// use rsigma_parser::sanitize_single_line;
+///
+/// assert_eq!(sanitize_single_line("title\nDROP TABLE x; --"), "title DROP TABLE x; --");
+/// assert_eq!(sanitize_single_line("plain"), "plain");
+/// ```
+pub fn sanitize_single_line(s: &str) -> std::borrow::Cow<'_, str> {
+    let breaks = |c: char| c.is_control() || matches!(c, '\u{85}' | '\u{2028}' | '\u{2029}');
+    if s.contains(breaks) {
+        std::borrow::Cow::Owned(s.replace(breaks, " "))
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
 // =============================================================================
 // Detection section
 // =============================================================================
