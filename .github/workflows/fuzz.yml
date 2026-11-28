@@ -25,11 +25,54 @@ env:
   FUZZ_TOOLCHAIN: nightly-2026-07-23
 
 jobs:
-  fuzz:
-    name: Fuzz (${{ matrix.target }})
+  # Every target links the same dependency graph, so compile them in one job
+  # and hand the binaries to the matrix instead of compiling 33 times. There is
+  # no rust-cache here: a weekly entry is the least recently used in the repo's
+  # cache, so it is evicted before the next run, and saving it evicts CI's.
+  build:
+    name: Build fuzz targets
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain
+        run: |
+          rustup toolchain install "${FUZZ_TOOLCHAIN}" --profile minimal --component llvm-tools-preview
+          rustup default "${FUZZ_TOOLCHAIN}"
+
+      - name: Install cargo-fuzz
+        # Build cargo-fuzz with the pinned nightly explicitly. The repo's
+        # rust-toolchain.toml pins ambient `cargo` to the MSRV, which is too
+        # old to compile recent cargo-fuzz dependencies, so select the fuzz
+        # toolchain with `+${FUZZ_TOOLCHAIN}` to match the build below.
+        run: cargo "+${FUZZ_TOOLCHAIN}" install cargo-fuzz --locked
+
+      - name: Build every target
+        working-directory: fuzz
+        run: |
+          cargo "+${FUZZ_TOOLCHAIN}" fuzz build
+          # tar keeps the executable bit, which artifact uploads drop.
+          cd target/x86_64-unknown-linux-gnu/release
+          find . -maxdepth 1 -type f -executable -name 'fuzz_*' -printf '%f\n' \
+            | tar -cf "${GITHUB_WORKSPACE}/fuzz-targets.tar" -T -
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-targets
+          path: fuzz-targets.tar
+          retention-days: 1
+
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repo
+      actions: read # download the corpus a previous run uploaded
     strategy:
       fail-fast: false
       matrix:
@@ -105,29 +148,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install nightly toolchain
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fuzz-targets
+          path: ${{ runner.temp }}
+
+      # The corpus lives in an artifact rather than the cache, which evicts a
+      # weekly entry before the next run. Only runs on main feed it forward.
+      - name: Restore the corpus from the last run on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FUZZ_TARGET: ${{ matrix.target }}
         run: |
-          rustup toolchain install "${FUZZ_TOOLCHAIN}" --profile minimal --component llvm-tools-preview
-          rustup default "${FUZZ_TOOLCHAIN}"
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: fuzz -> target
-
-      - name: Install cargo-fuzz
-        # Build cargo-fuzz with the pinned nightly explicitly. The repo's
-        # rust-toolchain.toml pins ambient `cargo` to the MSRV, which is too
-        # old to compile recent cargo-fuzz dependencies, so select the fuzz
-        # toolchain with `+${FUZZ_TOOLCHAIN}` to match the run below.
-        run: cargo "+${FUZZ_TOOLCHAIN}" install cargo-fuzz --locked
-
-      - name: Restore corpus cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: fuzz/corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
-          restore-keys: |
-            fuzz-corpus-${{ matrix.target }}-
+          mkdir -p "fuzz/corpus/${FUZZ_TARGET}"
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=fuzz-corpus-${FUZZ_TARGET}&per_page=100" \
+            --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_branch == "main")][0].id // empty')
+          if [ -z "${id}" ]; then
+            echo "No corpus from an earlier run on main; starting from the committed inputs."
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "${RUNNER_TEMP}/corpus.zip"
+          unzip -q -o "${RUNNER_TEMP}/corpus.zip" -d "fuzz/corpus/${FUZZ_TARGET}"
 
       - name: Run fuzzer
         working-directory: fuzz
@@ -135,13 +176,25 @@ jobs:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_MAX_LEN: ${{ matrix.max_len }}
           FUZZ_DURATION: ${{ github.event.inputs.duration || '180' }}
+          # `cargo fuzz run` sets this for ASan builds; the binary runs directly here.
+          ASAN_OPTIONS: detect_odr_violation=0
         run: |
-          mkdir -p "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}"
-          cargo "+${FUZZ_TOOLCHAIN}" fuzz run "${FUZZ_TARGET}" \
-            "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}" -- \
+          tar -xf "${RUNNER_TEMP}/fuzz-targets.tar" -C "${RUNNER_TEMP}" "${FUZZ_TARGET}"
+          mkdir -p "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}" "artifacts/${FUZZ_TARGET}"
+          "${RUNNER_TEMP}/${FUZZ_TARGET}" \
+            -artifact_prefix="artifacts/${FUZZ_TARGET}/" \
             -max_total_time="${FUZZ_DURATION}" \
             -timeout=10 \
-            -max_len="${FUZZ_MAX_LEN}"
+            -max_len="${FUZZ_MAX_LEN}" \
+            "corpus/${FUZZ_TARGET}" "seeds/${FUZZ_TARGET}"
+
+      - name: Upload corpus
+        if: success() || failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}/
+          retention-days: 90
 
       - name: Upload crash artifacts
         if: failure()
