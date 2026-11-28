@@ -18,7 +18,9 @@ mod tests;
 
 pub use detection::parse_field_spec;
 pub(crate) use {
-    correlation::{GAP_ATTRIBUTE, STANDARD_CORRELATION_KEYS, WINDOW_ATTRIBUTE},
+    correlation::{
+        GAP_ATTRIBUTE, STANDARD_CORRELATION_KEYS, WINDOW_ATTRIBUTE, condition_identifiers,
+    },
     detection::STANDARD_RULE_KEYS,
     filter::STANDARD_FILTER_KEYS,
 };

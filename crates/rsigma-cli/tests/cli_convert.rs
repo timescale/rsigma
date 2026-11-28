@@ -578,3 +578,49 @@ fn delegates_to_sigma_cli_when_no_native_backend() {
         "expected a LogQL query matching the rule value, got: {stdout}"
     );
 }
+
+#[test]
+fn convert_postgres_explains_an_absence_rejection() {
+    let rule = temp_file(
+        ".yml",
+        r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#,
+    );
+    rsigma()
+        .args([
+            "backend",
+            "convert",
+            rule.path().to_str().unwrap(),
+            "--target",
+            "postgres",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("negated rules"))
+        .stderr(predicate::str::contains("deadline"));
+}

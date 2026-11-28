@@ -351,6 +351,12 @@ impl FindingSubject for EvaluationResult {
                 unmapped.insert("group_key".to_string(), json!(body.group_key));
                 unmapped.insert("aggregated_value".to_string(), json!(body.aggregated_value));
                 unmapped.insert("timespan_secs".to_string(), json!(body.timespan_secs));
+                if let Some(absence) = &body.absence {
+                    unmapped.insert(
+                        "absence".to_string(),
+                        serde_json::to_value(absence).unwrap_or(Value::Null),
+                    );
+                }
                 correlation_evidences(body)
             }
         }

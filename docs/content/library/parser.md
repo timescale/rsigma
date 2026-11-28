@@ -43,6 +43,7 @@ The crate has no RSigma dependencies and pulls in `yaml_serde` 0.10 (the maintai
 | `version::{resolve_major, array_matching_enabled, is_unsupported, SPEC_VERSION_*}` | Sigma specification-version targeting: resolves the optional `sigma-version` attribute (absent ⇒ fixed floor, major 2) and gates version-sensitive syntax such as array-matching brackets (active at major 3+). |
 | `ConditionExpr`, `ConditionOperator` | The parsed condition expression AST (Pratt parser, `not > and > or` precedence). |
 | `parse_condition(&str) -> Result<ConditionExpr, SigmaParserError>` | Standalone condition-expression parser. |
+| `absence::{analyze_absence, analyze_absence_parts, AbsenceKind, AbsenceShape, AbsenceShapeError}` | Analyze a `temporal` or `temporal_ordered` string condition for deferred absence semantics: negation normal form, the accepted shapes, and the reasons a deadline cannot decide one. `analyze_absence_parts` takes the correlation type, window mode, `rules:`, and whether a `group-by` is present, which is what the linter resolves from raw YAML. `analyze_absence` wraps it for a parsed `CorrelationRule`. {{ added "unreleased" }} |
 | `Detection`, `DetectionItem`, `FieldSpec`, `SigmaValue`, `Modifier` | Detection-block building blocks. |
 | `LogSource` | The `logsource:` block (`product`, `category`, `service`). |
 | `validate::{check_detection_item, check_modifiers, check_regex, check_cidr, exists_flag}` | The semantic checks the parser runs on every detection item, exposed for tools that build or rewrite detection items in code. {{ added "0.24.0" }} |
@@ -176,6 +177,8 @@ println!("{ast:#?}");
 Bounds: `MAX_CONDITION_LEN = 64 KiB`, `MAX_CONDITION_DEPTH = 64`. See [Security Hardening](../reference/security.md#input-size-and-depth-caps).
 
 Parentheses and each `not` in a run of `not` operators count toward `MAX_CONDITION_DEPTH` together. Deserializing a `ConditionExpr` fails once the tree is deeper than `condition::MAX_CONDITION_TREE_DEPTH` (256 nodes from the root), which leaves room for every condition the parser accepts plus the levels that filters add. {{ added "unreleased" }}
+
+A `temporal` or `temporal_ordered` correlation with a string `condition:` may omit `rules:`, in which case the parser derives the references from the condition in order of first appearance; a selector there requires `rules:`. Every identifier in the condition must appear in `rules:`, and a missing one is an `InvalidCorrelation` parse error. A listed rule the condition never references is left for the linter. {{ added "unreleased" }}
 
 ## Semantic validation
 

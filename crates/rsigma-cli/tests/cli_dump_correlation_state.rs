@@ -117,3 +117,46 @@ detection:
             "--dump-correlation-state needs correlation rules",
         ));
 }
+
+#[test]
+fn dump_shows_an_armed_deadman() {
+    let rule = temp_file(
+        ".yml",
+        r#"
+title: Heartbeat
+id: heartbeat-rule
+logsource:
+    category: test
+detection:
+    selection:
+        EventType: heartbeat
+    condition: selection
+---
+title: Host stopped sending heartbeats
+correlation:
+    type: temporal
+    group-by: [Host]
+    timespan: 10m
+    condition: not heartbeat-rule
+"#,
+    );
+    rsigma()
+        .args([
+            "engine",
+            "eval",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--dump-correlation-state",
+            "--no-stats",
+        ])
+        .write_stdin(
+            r#"{"EventType":"heartbeat","Host":"h1","@timestamp":"2026-01-01T00:00:00Z"}
+"#,
+        )
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("correlation state snapshot"))
+        .stderr(predicate::str::contains("\"absence\""))
+        .stderr(predicate::str::contains("\"pending\": 0"))
+        .stderr(predicate::str::contains("\"deadman_deadline\""));
+}

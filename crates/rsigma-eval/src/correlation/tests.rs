@@ -95,7 +95,7 @@ fn test_window_event_count_eviction() {
         state.push_event_count(1000 + i);
     }
     // Evict events before ts=1005
-    state.evict(1005);
+    state.evict(1005, 60);
     let cond = CompiledCondition {
         field: None,
         predicates: vec![(ConditionOperator::Gte, 5.0)],
@@ -1488,7 +1488,7 @@ fn test_evict_removes_every_entry_before_the_cutoff() {
     for ts in [100, 50, 200, 10, 150] {
         state.push_event_count(ts);
     }
-    state.evict(120);
+    state.evict(120, 60);
     assert_eq!(state.entry_count(), 2);
     assert_eq!(state.earliest_timestamp(), Some(150));
 }

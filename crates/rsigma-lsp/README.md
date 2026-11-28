@@ -17,7 +17,7 @@ cargo install --path crates/rsigma-lsp
 | Capability | Details |
 |------------|---------|
 | Text document sync | Full (entire document on every change) |
-| Diagnostics | Lint (91 rules), parse errors, compile errors |
+| Diagnostics | Lint (97 rules), parse errors, compile errors |
 | Code actions | Quick-fix actions for auto-fixable lint warnings |
 | Completions | Context-aware; trigger characters: `\|`, `:`, ` `, `\n` |
 | Hover | Field modifiers, MITRE ATT&CK tactics and techniques |
@@ -30,7 +30,7 @@ Diagnostics run through three layers, each adding errors from a different stage:
 
 ### Layer 1: Lint
 
-Runs all 91 lint rules from `rsigma-parser` (Sigma spec v2.1.0). Loads `.rsigma-lint.yml` config from ancestor directories and respects inline `# rsigma-disable` comments.
+Runs all 97 lint rules from `rsigma-parser` (Sigma spec v2.1.0). Loads `.rsigma-lint.yml` config from ancestor directories and respects inline `# rsigma-disable` comments.
 
 | Lint severity | LSP severity |
 |---------------|-------------|

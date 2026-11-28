@@ -407,3 +407,73 @@ fn config_validate_reports_ruleset_list_errors() {
         );
     }
 }
+
+#[test]
+fn absence_result_carries_the_ruleset_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules_dir = dir.path().join("rules");
+    fs::create_dir_all(&rules_dir).unwrap();
+    fs::write(
+        rules_dir.join("absence.yml"),
+        r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#,
+    )
+    .unwrap();
+    let config = dir.path().join("rsigma.yaml");
+    fs::write(
+        &config,
+        format!(
+            "rulesets:\n  absence:\n    sources: ['{}']\n",
+            rules_dir.display()
+        ),
+    )
+    .unwrap();
+
+    let output = rsigma()
+        .current_dir(&dir)
+        .args([
+            "engine",
+            "eval",
+            "--config",
+            config.to_str().unwrap(),
+            "--ruleset",
+            "absence",
+            "--output-format",
+            "ndjson",
+        ])
+        .write_stdin(
+            r#"{"EventType": "login", "User": "alice", "@timestamp": 1735689600}
+"#,
+        )
+        .output()
+        .expect("run rsigma");
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("Login without MFA"), "{text}");
+    assert!(text.contains("\"ruleset\":\"absence\""), "{text}");
+}

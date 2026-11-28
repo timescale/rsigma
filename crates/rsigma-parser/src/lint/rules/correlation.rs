@@ -1,4 +1,5 @@
-use super::super::{LintRule, LintWarning, err, get_str, info, key};
+use super::super::{LintRule, LintWarning, err, get_str, info, key, reference_list, warning};
+use crate::ast::{CorrelationType, WindowMode};
 
 /// Valid correlation types.
 const VALID_CORRELATION_TYPES: &[&str] = &[
@@ -50,6 +51,31 @@ fn is_valid_timespan(s: &str) -> bool {
         && num_part.parse::<u64>().is_ok_and(|n| n > 0)
 }
 
+/// Resolve the winning spelling of an `rsigma.*` attribute: the
+/// `custom_attributes:` block, then the top level, then the first-class
+/// `correlation.*` key. Returns the value, whether any spelling is present, and
+/// the diagnostic path of the winning spelling.
+fn attribute_spelling<'a>(
+    m: &'a yaml_serde::Mapping,
+    corr: &'a yaml_serde::Mapping,
+    attribute: &str,
+    first_class: Option<&str>,
+) -> (Option<&'a str>, bool, String) {
+    let block = m.get(key("custom_attributes")).and_then(|v| v.as_mapping());
+    if let Some(v) = block.and_then(|b| b.get(key(attribute))) {
+        (v.as_str(), true, format!("/custom_attributes/{attribute}"))
+    } else if let Some(v) = m.get(key(attribute)) {
+        (v.as_str(), true, format!("/{attribute}"))
+    } else if let Some(first_class) = first_class {
+        match corr.get(key(first_class)) {
+            Some(v) => (v.as_str(), true, format!("/correlation/{first_class}")),
+            None => (None, false, format!("/correlation/{first_class}")),
+        }
+    } else {
+        (None, false, format!("/{attribute}"))
+    }
+}
+
 pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<LintWarning>) {
     let Some(corr_val) = m.get(key("correlation")) else {
         warnings.push(err(
@@ -93,22 +119,59 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
     }
 
     // ── rules ────────────────────────────────────────────────────────────
-    if let Some(rules) = corr.get(key("rules")) {
-        if let Some(seq) = rules.as_sequence()
-            && seq.is_empty()
-        {
-            warnings.push(super::super::warning(
+    let rules = reference_list(corr.get(key("rules")));
+    let rules_present = corr.contains_key(key("rules"));
+    let condition_is_string = corr
+        .get(key("condition"))
+        .and_then(|v| v.as_str())
+        .is_some();
+    if let Some(rules_val) = corr.get(key("rules")) {
+        if rules_val.as_sequence().is_some_and(|seq| seq.is_empty()) {
+            warnings.push(warning(
                 LintRule::EmptyCorrelationRules,
                 "correlation.rules should not be empty",
                 "/correlation/rules",
             ));
         }
-    } else {
+    } else if !condition_is_string {
         warnings.push(err(
             LintRule::MissingCorrelationRules,
             "missing required field 'correlation.rules'",
             "/correlation/rules",
         ));
+    }
+
+    // ── string condition references ──────────────────────────────────────
+    // A string condition names the rules it aggregates. Every name must be in
+    // `rules:`, and every listed rule should be used. A selector's
+    // identifiers come from the detection set, so with one present a listed
+    // rule may be used without being named.
+    if condition_is_string
+        && rules_present
+        && let Some(cond) = get_str(corr, "condition")
+        && let Ok(expr) = crate::condition::parse_condition(cond)
+    {
+        let (identifiers, selector) = crate::parser::condition_identifiers(&expr);
+        for name in &identifiers {
+            if !rules.contains(name) {
+                warnings.push(err(
+                    LintRule::ExtendedConditionUndefinedRule,
+                    format!("condition references '{name}', which is not in correlation.rules"),
+                    "/correlation/condition",
+                ));
+            }
+        }
+        for rule in &rules {
+            if !selector && !identifiers.iter().any(|name| name == rule) {
+                warnings.push(warning(
+                    LintRule::ExtendedConditionUnreferencedRule,
+                    format!(
+                        "correlation.rules lists '{rule}', which the condition never references"
+                    ),
+                    "/correlation/rules",
+                ));
+            }
+        }
     }
 
     // ── timespan ─────────────────────────────────────────────────────────
@@ -138,20 +201,9 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
     // `correlation.*`), and the diagnostic points at the winning key.
     // Presence is checked before type so a key set to a non-string value (e.g.
     // an unquoted `gap: 300`) is reported as invalid instead of missing.
-    let block = m.get(key("custom_attributes")).and_then(|v| v.as_mapping());
-    let spelling = |attribute: &str, first_class: &str| {
-        if let Some(v) = block.and_then(|b| b.get(key(attribute))) {
-            (v.as_str(), true, format!("/custom_attributes/{attribute}"))
-        } else if let Some(v) = m.get(key(attribute)) {
-            (v.as_str(), true, format!("/{attribute}"))
-        } else if let Some(v) = corr.get(key(first_class)) {
-            (v.as_str(), true, format!("/correlation/{first_class}"))
-        } else {
-            (None, false, format!("/correlation/{first_class}"))
-        }
-    };
-    let (window, window_present, window_ptr) = spelling("rsigma.window", "window");
-    let (gap, gap_present, gap_ptr) = spelling("rsigma.gap", "gap");
+    let (window, window_present, window_ptr) =
+        attribute_spelling(m, corr, "rsigma.window", Some("window"));
+    let (gap, gap_present, gap_ptr) = attribute_spelling(m, corr, "rsigma.gap", Some("gap"));
     let (window_ptr, gap_ptr) = (window_ptr.as_str(), gap_ptr.as_str());
 
     let window_known = match (window_present, window) {
@@ -219,6 +271,78 @@ pub(crate) fn lint_correlation_rule(m: &yaml_serde::Mapping, warnings: &mut Vec<
                 "'gap' is only valid with window: session",
                 gap_ptr,
             ));
+        }
+    }
+
+    // ── absence semantics ────────────────────────────────────────────────
+    // The engine evaluates negated rule references at a deadline. The linter
+    // resolves the window from raw YAML using the parser's precedence, so a
+    // document without pipelines or overlays is rejected at load exactly when
+    // it is flagged here.
+    let mut is_absence = false;
+    if let Some(ct) = corr_type.and_then(|t| t.parse::<CorrelationType>().ok())
+        && let Some(cond) = get_str(corr, "condition")
+        && let Ok(expr) = crate::condition::parse_condition(cond)
+    {
+        let window_mode = match (window_present, window) {
+            (false, _) => Some(WindowMode::Sliding),
+            (true, Some(w)) => w.parse::<WindowMode>().ok(),
+            (true, None) => None,
+        };
+        if let Some(window_mode) = window_mode {
+            let condition_rules = if rules_present {
+                rules.clone()
+            } else {
+                crate::parser::condition_identifiers(&expr).0
+            };
+            let has_group_by = !crate::lint::reference_list(corr.get(key("group-by"))).is_empty();
+            match crate::absence::analyze_absence_parts(
+                &expr,
+                ct,
+                window_mode,
+                &condition_rules,
+                has_group_by,
+            ) {
+                Ok(Some(_)) => {
+                    is_absence = true;
+                    warnings.push(info(
+                        LintRule::AbsenceSemantics,
+                        "this correlation is evaluated at a deadline by the rsigma engine; that \
+                         evaluation is an rsigma extension, and the PostgreSQL and Fibratus \
+                         backends reject it",
+                        "/correlation/condition",
+                    ));
+                }
+                Ok(None) => {}
+                Err(error) => warnings.push(err(
+                    LintRule::AbsenceConditionUnsupported,
+                    error.to_string(),
+                    "/correlation/condition",
+                )),
+            }
+        }
+    }
+
+    // ── rsigma.absence_grace ─────────────────────────────────────────────
+    let (grace, grace_present, grace_ptr) =
+        attribute_spelling(m, corr, "rsigma.absence_grace", None);
+    if grace_present {
+        match grace {
+            Some(g) if crate::value::Timespan::parse(g).is_ok() => {
+                if !is_absence {
+                    warnings.push(warning(
+                        LintRule::AbsenceGraceWithoutAbsence,
+                        "rsigma.absence_grace has no effect on a correlation that is not an \
+                         absence correlation",
+                        grace_ptr,
+                    ));
+                }
+            }
+            _ => warnings.push(err(
+                LintRule::InvalidAbsenceGrace,
+                "rsigma.absence_grace must be a duration like 30s (0s is allowed)",
+                grace_ptr,
+            )),
         }
     }
 
@@ -797,5 +921,257 @@ custom_attributes:
         );
         assert!(!has_rule(&w, LintRule::InvalidWindowMode));
         assert!(!has_rule(&w, LintRule::MissingSessionGap));
+    }
+
+    #[test]
+    fn extended_condition_undefined_rule_is_an_error() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+    }
+
+    #[test]
+    fn extended_condition_unreferenced_rule_is_a_warning() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ExtendedConditionUnreferencedRule));
+    }
+
+    #[test]
+    fn string_condition_does_not_report_missing_rules() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::MissingCorrelationRules));
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+    }
+
+    #[test]
+    fn selector_condition_skips_only_the_unreferenced_check() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, login_ok]
+    group-by: [User]
+    timespan: 5m
+    condition: a and 1 of login_*
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+        assert!(!has_rule(&w, LintRule::ExtendedConditionUnreferencedRule));
+
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition: b and 1 of a*
+"#,
+        );
+        assert!(has_rule(&w, LintRule::ExtendedConditionUndefinedRule));
+    }
+
+    #[test]
+    fn deadman_with_an_empty_group_by_is_unsupported() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    group-by: []
+    timespan: 5m
+    condition: not hb
+"#,
+        );
+        assert!(has_rule(&w, LintRule::AbsenceConditionUnsupported));
+        assert!(!has_rule(&w, LintRule::AbsenceSemantics));
+    }
+
+    #[test]
+    fn a_first_class_absence_grace_key_is_not_read() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+    absence_grace: bogus
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::InvalidAbsenceGrace));
+
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+rsigma.absence_grace: bogus
+"#,
+        );
+        let invalid = w
+            .iter()
+            .find(|w| w.rule == LintRule::InvalidAbsenceGrace)
+            .expect("invalid top-level grace");
+        assert_eq!(invalid.path, "/rsigma.absence_grace");
+    }
+
+    #[test]
+    fn absence_semantics_is_reported_for_negated_conditions() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal_ordered
+    rules: [login, mfa]
+    group-by: [User]
+    timespan: 5m
+    condition: login and not mfa
+"#,
+        );
+        assert!(has_rule(&w, LintRule::AbsenceSemantics));
+        assert!(!has_rule(&w, LintRule::AbsenceConditionUnsupported));
+    }
+
+    #[test]
+    fn absence_condition_under_or_is_unsupported() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a or not b
+"#,
+        );
+        assert!(has_rule(&w, LintRule::AbsenceConditionUnsupported));
+        assert!(!has_rule(&w, LintRule::AbsenceSemantics));
+    }
+
+    #[test]
+    fn absence_condition_in_a_session_window_is_unsupported() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+custom_attributes:
+    rsigma.window: session
+    rsigma.gap: 1m
+"#,
+        );
+        let unsupported = w
+            .iter()
+            .find(|w| w.rule == LintRule::AbsenceConditionUnsupported)
+            .expect("session window is unsupported");
+        assert!(
+            unsupported.message.contains("session"),
+            "{}",
+            unsupported.message
+        );
+    }
+
+    #[test]
+    fn invalid_absence_grace_is_reported_at_its_winning_spelling() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+rsigma.absence_grace: 30seconds
+custom_attributes:
+    rsigma.absence_grace: 30seconds
+"#,
+        );
+        let invalid = w
+            .iter()
+            .find(|w| w.rule == LintRule::InvalidAbsenceGrace)
+            .expect("invalid grace");
+        assert_eq!(invalid.path, "/custom_attributes/rsigma.absence_grace");
+    }
+
+    #[test]
+    fn block_grace_wins_over_a_top_level_value() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 5m
+    condition: a and not b
+rsigma.absence_grace: bogus
+custom_attributes:
+    rsigma.absence_grace: 30s
+"#,
+        );
+        assert!(!has_rule(&w, LintRule::InvalidAbsenceGrace));
+        assert!(has_rule(&w, LintRule::AbsenceSemantics));
+    }
+
+    #[test]
+    fn absence_grace_without_absence_is_a_warning() {
+        let w = lint(
+            r#"
+title: Test
+correlation:
+    type: event_count
+    rules: [a]
+    group-by: [User]
+    timespan: 5m
+    condition:
+        gte: 3
+rsigma.absence_grace: 30s
+"#,
+        );
+        assert!(has_rule(&w, LintRule::AbsenceGraceWithoutAbsence));
+        assert!(!has_rule(&w, LintRule::InvalidAbsenceGrace));
     }
 }

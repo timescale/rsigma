@@ -196,6 +196,8 @@ The cap bounds the number of groups, not the bytes within one. A single group's 
 
 Window modes (`sliding`/`tumbling`/`session`) have identical per-event cost; they differ only in how long entries are retained. `tumbling` resets per-group state at each bucket boundary and is the cheapest under sustained load; `session` retains everything between the first event and the `timespan` cap, so it is the mode to watch on chatty groups.
 
+Absence correlations have a separate cap: `--max-absence-entries` (or `daemon.correlation.max_absence_entries`) defaults to 100,000 groups with a pending obligation or an armed deadman. At the cap, a hit that would make a group pending is refused and counted instead of evicting a pending deadline, so pending deadlines are never lost to a cardinality flood. Pending obligations per group default to 1,000 when neither `--max-group-entries` nor `rsigma.max_group_entries` is set. Measured at 100,000 groups: pending obligations held about 87 MiB, and armed deadmen about 43 MiB settled. {{ added "unreleased" }}
+
 Two workload shapes deserve attention:
 
 - **`value_count` with high-cardinality values.** Every `(timestamp, value)` pair is retained for the window, and the distinct count is recomputed per event over the whole window: O(window size) per event. At 1,800 distinct values per window, measured throughput drops from ~1.1M to 63K events/s. CPU collapses before memory does. Prefer `event_count` where distinctness is not required, shorten the window, or set `--max-group-entries` to bound the retained pairs.

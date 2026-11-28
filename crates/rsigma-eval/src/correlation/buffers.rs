@@ -289,6 +289,50 @@ impl EventBuffer {
             .unzip()
     }
 
+    /// Decompress the newest `n` entries whose timestamps fall in `[lo, hi]`,
+    /// oldest first, with their sources index for index.
+    pub(crate) fn newest_events_between(
+        &self,
+        n: usize,
+        lo: i64,
+        hi: i64,
+    ) -> (Vec<serde_json::Value>, Vec<EventSource>) {
+        let selected: Vec<&FullEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.ts >= lo && e.ts <= hi)
+            .collect();
+        let start = selected.len().saturating_sub(n);
+        selected[start..]
+            .iter()
+            .filter_map(|e| Some((decompress_event(&e.data)?, event_source(&e.rule, &e.via))))
+            .unzip()
+    }
+
+    /// Convert the newest `n` entries whose timestamps fall in `[lo, hi]` to
+    /// event references, oldest first, with their sources index for index.
+    pub(crate) fn newest_refs_between(
+        &self,
+        n: usize,
+        lo: i64,
+        hi: i64,
+    ) -> (Vec<EventRef>, Vec<EventSource>) {
+        let selected: Vec<&FullEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.ts >= lo && e.ts <= hi)
+            .collect();
+        let start = selected.len().saturating_sub(n);
+        selected[start..]
+            .iter()
+            .filter_map(|e| e.to_ref())
+            .map(|e| {
+                let source = event_source(&e.rule, &e.via);
+                (e.r, source)
+            })
+            .unzip()
+    }
+
     /// Highest sequence number currently retained.
     pub(crate) fn max_seq(&self) -> u64 {
         self.entries.iter().map(|e| e.seq).max().unwrap_or(0)
@@ -482,6 +526,26 @@ impl EventRefBuffer {
         self.entries
             .iter()
             .skip(start)
+            .map(|e| (e.r.clone(), event_source(&e.rule, &e.via)))
+            .unzip()
+    }
+
+    /// Clone the newest `n` entries whose timestamps fall in `[lo, hi]`, oldest
+    /// first, with their sources index for index.
+    pub(crate) fn newest_refs_between(
+        &self,
+        n: usize,
+        lo: i64,
+        hi: i64,
+    ) -> (Vec<EventRef>, Vec<EventSource>) {
+        let selected: Vec<&RefEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.r.timestamp >= lo && e.r.timestamp <= hi)
+            .collect();
+        let start = selected.len().saturating_sub(n);
+        selected[start..]
+            .iter()
             .map(|e| (e.r.clone(), event_source(&e.rule, &e.via)))
             .unzip()
     }

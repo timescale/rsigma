@@ -640,6 +640,10 @@ pub(crate) struct CorrelationPartial {
     /// stalest-first eviction (default 100,000).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_state_entries: Option<usize>,
+    /// Hard cap on absence groups with a pending obligation or an armed
+    /// deadman (default 100,000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_absence_entries: Option<usize>,
     /// Cap on retained entries within a single group's window state.
     /// Unset means 10,000, raised for count conditions with a larger
     /// threshold.
@@ -673,6 +677,7 @@ impl Merge for CorrelationPartial {
             event_mode: over.event_mode.or(self.event_mode),
             max_events: over.max_events.or(self.max_events),
             max_state_entries: over.max_state_entries.or(self.max_state_entries),
+            max_absence_entries: over.max_absence_entries.or(self.max_absence_entries),
             max_group_entries: over.max_group_entries.or(self.max_group_entries),
             max_future_skew: over.max_future_skew.or(self.max_future_skew),
             timestamp_fields: over.timestamp_fields.or(self.timestamp_fields),

@@ -176,6 +176,7 @@ daemon:
     event_mode: none
     max_events: 10
     max_state_entries: 100000   # hard cap across all correlations and groups
+    max_absence_entries: 100000 # hard cap on absence groups with a pending deadline
     # max_group_entries: 10000  # per-group window-state cap; unset = 10000, raised for larger count thresholds
     max_future_skew: 5m         # timestamps further ahead of the wall clock skip correlation
     emit_detections: false      # include detection and correlation matches that only feed correlations

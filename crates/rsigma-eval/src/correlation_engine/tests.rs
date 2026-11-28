@@ -5885,3 +5885,992 @@ fn test_no_event_mode_emits_no_sources() {
     assert!(a.event_sources.is_none());
     assert!(fired(&r, "correlation B").unwrap().event_sources.is_some());
 }
+
+#[test]
+fn test_chained_and_direct_correlations_share_suppression_and_reset() {
+    let detection = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+"#;
+    let direct = format!(
+        "{detection}---
+title: Direct
+correlation:
+    type: temporal
+    rules: [login-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule
+rsigma.suppress: 10m
+rsigma.action: reset
+"
+    );
+    let chained = format!(
+        "{detection}---
+title: Child
+name: child
+correlation:
+    type: temporal
+    rules: [login-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule
+---
+title: Parent
+correlation:
+    type: event_count
+    rules: [child]
+    group-by: [User]
+    timespan: 60s
+    condition:
+        gte: 1
+rsigma.suppress: 10m
+rsigma.action: reset
+"
+    );
+
+    fn fires(yaml: &str, title: &str) -> usize {
+        let collection = parse_sigma_yaml(yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+        let mut count = 0;
+        for ts in [100, 110, 120] {
+            let v = json!({"EventType": "login", "User": "alice"});
+            let r = engine.process_event_at(&JsonEvent::borrow(&v), ts);
+            count += r.iter().filter(|m| m.header.rule_title == title).count();
+        }
+        count
+    }
+
+    let direct_fires = fires(&direct, "Direct");
+    assert_eq!(direct_fires, 1);
+    assert_eq!(fires(&chained, "Parent"), direct_fires);
+}
+
+// =========================================================================
+// Absence state
+// =========================================================================
+
+fn absence_detections() -> &'static str {
+    r#"
+title: A
+id: a
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: C
+id: c
+logsource:
+    category: test
+detection:
+    selection:
+        Action: c
+    condition: selection
+---
+title: D
+id: d
+logsource:
+    category: test
+detection:
+    selection:
+        Action: d
+    condition: selection
+"#
+}
+
+fn absence_engine(correlation: &str, config: CorrelationConfig) -> CorrelationEngine {
+    let yaml = format!("{}{correlation}", absence_detections());
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+    assert!(
+        collection.diagnostics.is_empty(),
+        "{:?}",
+        collection.diagnostics
+    );
+    let mut engine = CorrelationEngine::new(config);
+    engine.add_collection(&collection).unwrap();
+    engine
+}
+
+fn hit(engine: &mut CorrelationEngine, action: &str, user: &str, ts: i64) {
+    let event = json!({"Action": action, "User": user});
+    let results = engine.process_event_at(&JsonEvent::borrow(&event), ts);
+    assert!(
+        results
+            .iter()
+            .all(|r| r.is_detection() || r.is_correlation())
+    );
+}
+
+fn absence_state<'a>(
+    engine: &'a CorrelationEngine,
+    title: &str,
+    user: &str,
+) -> Option<&'a WindowState> {
+    let corr_idx = engine
+        .correlations
+        .iter()
+        .position(|c| c.title == title)
+        .unwrap();
+    let key = StateKey {
+        tenant: None,
+        corr_idx,
+        group_key: GroupKey(vec![Some(user.to_string())]),
+    };
+    engine.state.get(&key)
+}
+
+fn obligations(engine: &CorrelationEngine, title: &str, user: &str) -> Vec<crate::Obligation> {
+    match absence_state(engine, title, user) {
+        Some(WindowState::Absence { obligations, .. }) => obligations.iter().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn deadman(engine: &CorrelationEngine, title: &str, user: &str) -> Option<crate::Deadman> {
+    match absence_state(engine, title, user) {
+        Some(WindowState::Absence { deadman, .. }) => deadman.clone(),
+        _ => None,
+    }
+}
+
+const TEMPORAL: &str = r#"---
+title: Missing
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and not b
+"#;
+
+#[test]
+fn absence_obligation_cancellation_boundaries() {
+    for (b_ts, cancelled) in [(40, true), (39, false), (160, true)] {
+        let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+        hit(&mut engine, "a", "alice", 100);
+        let pending = obligations(&engine, "Missing", "alice");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].cancel_lo, 40);
+        assert_eq!(pending[0].deadline, 160);
+        hit(&mut engine, "b", "alice", b_ts);
+        assert_eq!(
+            obligations(&engine, "Missing", "alice").is_empty(),
+            cancelled,
+            "b at {b_ts}"
+        );
+    }
+
+    // One second past the deadline, the obligation fires before B is applied.
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "b", "User": "alice"})),
+        161,
+    );
+    assert!(results.iter().any(|r| r.header.rule_title == "Missing"));
+}
+
+#[test]
+fn negated_hit_before_a_is_pre_empted_for_temporal() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "b", "alice", 50);
+    hit(&mut engine, "a", "alice", 100);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn ordered_negated_hit_before_a_does_not_cancel() {
+    let ordered = TEMPORAL.replace("type: temporal", "type: temporal_ordered");
+    let mut engine = absence_engine(&ordered, CorrelationConfig::default());
+    hit(&mut engine, "b", "alice", 50);
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].cancel_lo, 101);
+}
+
+#[test]
+fn each_positive_hit_opens_its_own_obligation() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "a", "alice", 4);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].key, 0);
+    assert_eq!(pending[1].key, 4);
+}
+
+#[test]
+fn duplicate_positive_hit_dedupes_by_key() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "a", "alice", 10);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+}
+
+#[test]
+fn positive_disjunction_minimizes_the_satisfying_set() {
+    let yaml = r#"---
+title: Either
+correlation:
+    type: temporal
+    rules: [a, b, c]
+    group-by: [User]
+    timespan: 60s
+    condition: (a or c) and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "c", "alice", 90);
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Either", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[1].s_min, 100);
+    assert_eq!(pending[1].s_max, 100);
+    assert_eq!(pending[1].positives, 1);
+}
+
+#[test]
+fn ordered_satisfying_set_uses_the_latest_start() {
+    let yaml = r#"---
+title: Sequence
+correlation:
+    type: temporal_ordered
+    rules: [a, c, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and c and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "c", "alice", 20);
+    hit(&mut engine, "a", "alice", 30);
+    hit(&mut engine, "c", "alice", 40);
+    let pending = obligations(&engine, "Sequence", "alice");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[1].s_min, 30);
+    assert_eq!(pending[1].s_max, 40);
+    assert_eq!(pending[1].positives, 2);
+}
+
+#[test]
+fn tumbling_obligation_cancels_until_the_bucket_end() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending[0].key, 60);
+    assert_eq!(pending[0].cancel_lo, 60);
+    assert_eq!(pending[0].deadline, 119);
+    hit(&mut engine, "b", "alice", 119);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn late_negated_hit_cancels_an_earlier_bucket() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 10s\n";
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 125);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 2);
+    hit(&mut engine, "b", "alice", 110);
+    let pending = obligations(&engine, "Missing", "alice");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].key, 120);
+}
+
+#[test]
+fn deadman_arms_and_slides() {
+    let yaml = r#"---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let armed = deadman(&engine, "Silent", "alice").expect("armed");
+    assert_eq!(armed.last_heartbeat, 100);
+    assert_eq!(armed.deadline, 160);
+    hit(&mut engine, "a", "alice", 120);
+    let armed = deadman(&engine, "Silent", "alice").expect("slid");
+    assert_eq!(armed.last_heartbeat, 120);
+    assert_eq!(armed.deadline, 180);
+    assert_eq!(engine.absence_pending(), 1);
+}
+
+#[test]
+fn global_absence_cap_refuses_a_new_pending_group() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_absence_entries: 1,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "bob", 100);
+    let counters = engine.take_absence_counters();
+    assert_eq!(counters.refused_global_cap, 1);
+    assert_eq!(engine.absence_pending(), 1);
+}
+
+#[test]
+fn tenant_quota_refuses_a_new_absence_group() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries_per_tenant: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t1").unwrap();
+    let alice = json!({"Action": "a", "User": "alice"});
+    let bob = json!({"Action": "a", "User": "bob"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&alice), 100, Some(&tenant));
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&bob), 100, Some(&tenant));
+    let counters = engine.take_absence_counters();
+    assert_eq!(counters.refused_tenant_quota, 1);
+}
+
+#[test]
+fn group_cap_refuses_another_obligation() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_group_entries: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 10);
+    hit(&mut engine, "a", "alice", 20);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.take_absence_counters().refused_group_cap, 1);
+}
+
+#[test]
+fn absence_group_cap_defaults_to_one_thousand() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 1h");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    for i in 0..=DEFAULT_ABSENCE_GROUP_ENTRIES as i64 {
+        hit(&mut engine, "a", "alice", i);
+    }
+    assert_eq!(
+        obligations(&engine, "Missing", "alice").len(),
+        DEFAULT_ABSENCE_GROUP_ENTRIES
+    );
+    assert_eq!(engine.take_absence_counters().refused_group_cap, 1);
+}
+
+#[test]
+fn stalest_eviction_skips_pending_absence_groups() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries: 1,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "bob", 101);
+    assert!(absence_state(&engine, "Missing", "alice").is_some());
+    assert_eq!(engine.absence_pending(), 2);
+}
+
+// =========================================================================
+// Absence firing
+// =========================================================================
+
+fn absence_results(
+    engine: &mut CorrelationEngine,
+    title: &str,
+    clock: i64,
+) -> Vec<EvaluationResult> {
+    engine
+        .advance_clock(None, clock)
+        .into_iter()
+        .filter(|r| r.header.rule_title == title)
+        .collect()
+}
+
+#[test]
+fn absence_fires_strictly_after_the_deadline() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert!(absence_results(&mut engine, "Missing", 160).is_empty());
+    let fired = absence_results(&mut engine, "Missing", 161);
+    assert_eq!(fired.len(), 1);
+    let body = fired[0].as_correlation().unwrap();
+    assert_eq!(body.absence.as_ref().unwrap().missing, ["b"]);
+    assert_eq!(body.absence.as_ref().unwrap().deadline, 160);
+    assert_eq!(body.absence.as_ref().unwrap().window_start, 40);
+    assert_eq!(body.aggregated_value, 1.0);
+}
+
+#[test]
+fn absence_grace_delays_firing() {
+    let yaml = format!("{TEMPORAL}rsigma.absence_grace: 10s\n");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert!(absence_results(&mut engine, "Missing", 169).is_empty());
+    assert_eq!(absence_results(&mut engine, "Missing", 171).len(), 1);
+}
+
+#[test]
+fn absence_suppression_uses_the_deadline() {
+    let yaml = format!("{TEMPORAL}rsigma.suppress: 30s\n");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    // The first obligation fires at 161 and records its deadline as the alert.
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    // The second deadline (170) is inside the suppression window opened at 160.
+    assert!(absence_results(&mut engine, "Missing", 171).is_empty());
+}
+
+#[test]
+fn absence_alert_keeps_other_obligations_and_reset_clears_them() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+
+    let reset = format!("{TEMPORAL}rsigma.action: reset\n");
+    let mut engine = absence_engine(&reset, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn deadman_fires_drops_and_rearms() {
+    let yaml = r#"---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let fired = absence_results(&mut engine, "Silent", 161);
+    assert_eq!(fired.len(), 1);
+    let body = fired[0].as_correlation().unwrap();
+    let absence = body.absence.as_ref().unwrap();
+    assert_eq!(absence.window_start, 100);
+    assert_eq!(absence.deadline, 160);
+    assert_eq!(body.aggregated_value, 0.0);
+    assert!(deadman(&engine, "Silent", "alice").is_none());
+
+    hit(&mut engine, "a", "alice", 200);
+    let armed = deadman(&engine, "Silent", "alice").expect("re-armed");
+    assert_eq!(armed.deadline, 260);
+}
+
+#[test]
+fn fallback_timestamps_do_not_advance_the_clock() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event(&JsonEvent::borrow(&event));
+    assert_eq!(engine.clock(None), None);
+}
+
+#[test]
+fn absence_tenant_isolation() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let tenant_a = TenantId::new("a").unwrap();
+    let tenant_b = TenantId::new("b").unwrap();
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event), 100, Some(&tenant_a));
+    assert_eq!(engine.advance_clock(Some(&tenant_b), 161).len(), 0);
+    assert_eq!(engine.advance_clock(Some(&tenant_a), 161).len(), 1);
+}
+
+#[test]
+fn deadlines_fire_before_the_events_own_correlations() {
+    let yaml = format!(
+        "{TEMPORAL}---
+title: Many B
+correlation:
+    type: event_count
+    rules: [b]
+    group-by: [User]
+    timespan: 60s
+    condition:
+        gte: 1
+"
+    );
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "b", "User": "alice"})),
+        200,
+    );
+    let titles: Vec<&str> = results
+        .iter()
+        .map(|r| r.header.rule_title.as_str())
+        .collect();
+    assert_eq!(titles, ["Missing", "Many B"]);
+}
+
+#[test]
+fn an_overdue_obligation_fires_after_the_hit_is_applied() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    // Advance the tenant clock through another group.
+    hit(&mut engine, "b", "bob", 300);
+    // A late positive hit opens an obligation whose deadline already passed.
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "alice"})),
+        100,
+    );
+    let titles: Vec<&str> = results
+        .iter()
+        .map(|r| r.header.rule_title.as_str())
+        .collect();
+    assert_eq!(titles, ["Missing"]);
+}
+
+#[test]
+fn finalize_fires_obligations_and_leaves_deadmen_armed() {
+    let yaml = r#"---
+title: Missing
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and not b
+---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let fired = engine.finalize();
+    let titles: Vec<&str> = fired.iter().map(|r| r.header.rule_title.as_str()).collect();
+    assert_eq!(titles, ["Missing"]);
+    assert!(deadman(&engine, "Silent", "alice").is_some());
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn absence_index_stays_consistent() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "a", "alice", 100);
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "b", "alice", 120);
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "a", "bob", 130);
+    engine.assert_absence_index_consistent();
+    let _ = absence_results(&mut engine, "Missing", 161);
+    engine.assert_absence_index_consistent();
+    engine.evict_expired(500);
+    engine.assert_absence_index_consistent();
+    let snapshot = engine.export_state();
+    assert!(engine.import_state(snapshot));
+    engine.assert_absence_index_consistent();
+}
+
+#[test]
+fn absence_clocks_are_listed_per_tenant() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let tenant = TenantId::new("t1").unwrap();
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event), 100, Some(&tenant));
+    assert_eq!(engine.clock(Some(&tenant)), Some(100));
+    assert_eq!(engine.clocks(), vec![(Some(tenant.clone()), 100)]);
+    assert_eq!(engine.absence_tenants(), vec![Some(tenant)]);
+}
+
+#[test]
+fn absence_pending_counter_matches_introspection_after_firing() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 1_000_000);
+    assert_eq!(engine.absence_pending(), 1);
+    assert_eq!(
+        engine
+            .introspect()
+            .groups
+            .iter()
+            .filter(|g| g.absence.as_ref().is_some_and(|a| a.pending > 0))
+            .count(),
+        1
+    );
+    let fired = engine.advance_clock(None, 1_000_061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            require_tenant: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    assert_eq!(engine.absence_pending(), 1);
+    let fired = engine.advance_clock(Some(&tenant), 1_000_061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+}
+
+#[test]
+fn fuzz_seed_negated_disjunction_pending_counter() {
+    let yaml = r#"---
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: D
+id: d-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: d
+    condition: selection
+---
+title: A without B or D
+correlation:
+    type: temporal
+    rules: [a-rule, b-rule, d-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: a-rule and not (b-rule or d-rule)
+"#;
+    let mut engine = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"@timestamp": 1_000_000, "Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    assert_eq!(engine.absence_pending(), 1);
+    engine.advance_clock(Some(&tenant), 1_000_005);
+    assert_eq!(engine.absence_pending(), 1);
+    engine.advance_clock(Some(&tenant), 1_000_061);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+}
+
+#[test]
+fn cancelling_an_obligation_decrements_the_pending_count() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert_eq!(engine.absence_pending(), 1);
+    hit(&mut engine, "b", "alice", 110);
+    assert_eq!(engine.absence_pending(), 0);
+    engine.assert_absence_index_consistent();
+}
+
+#[test]
+fn deadman_snapshot_round_trip_preserves_the_group() {
+    let yaml = r#"---
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a-rule
+"#;
+    let mut engine = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    let snapshot = engine.export_state();
+    assert_eq!(snapshot.window_entries(), 1);
+    let mut restored = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    assert!(restored.import_state(snapshot));
+    assert_eq!(restored.state_count(), 1);
+}
+
+#[test]
+fn a_late_positive_hit_after_an_obligation_is_retained() {
+    let yaml = r#"---
+title: Either
+correlation:
+    type: temporal
+    rules: [a, b, c]
+    group-by: [User]
+    timespan: 60s
+    condition: (a or c) and not b
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "c", "alice", 90);
+    match absence_state(&engine, "Either", "alice") {
+        Some(WindowState::Absence { positive_hits, .. }) => {
+            assert_eq!(positive_hits.get("c").map(|hits| hits.len()), Some(1));
+        }
+        other => panic!("expected absence state, got {other:?}"),
+    }
+}
+
+#[test]
+fn time_eviction_keeps_a_pending_tumbling_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 5m\n";
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    // Another tenant's newer event time drives eviction while alice's
+    // obligation still waits out its grace.
+    engine.evict_expired(300);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.absence_pending(), 1);
+    engine.assert_absence_index_consistent();
+    assert_eq!(absence_results(&mut engine, "Missing", 420).len(), 1);
+    assert_eq!(engine.absence_pending(), 0);
+}
+
+#[test]
+fn tenant_quota_eviction_keeps_a_pending_tumbling_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 5m\n";
+    let mut engine = absence_engine(
+        &yaml,
+        CorrelationConfig {
+            max_state_entries_per_tenant: Some(1),
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t1").unwrap();
+    let alice = json!({"Action": "a", "User": "alice"});
+    let bob = json!({"Action": "a", "User": "bob"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&alice), 100, Some(&tenant));
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&bob), 300, Some(&tenant));
+    assert_eq!(engine.absence_pending(), 1);
+    engine.assert_absence_index_consistent();
+    let fired = engine.advance_clock(Some(&tenant), 420);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(engine.absence_pending(), 0);
+}
+
+#[test]
+fn a_tumbling_reset_keeps_the_evidence_of_a_pending_obligation() {
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 30s\n";
+    let mut engine = absence_engine(
+        &yaml,
+        CorrelationConfig {
+            correlation_event_mode: CorrelationEventMode::Refs,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    // The next bucket's first hit resets the window before the first
+    // obligation's grace has passed.
+    hit(&mut engine, "a", "alice", 125);
+    let fired = absence_results(&mut engine, "Missing", 150);
+    assert_eq!(fired.len(), 1);
+    let refs = fired[0]
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .clone()
+        .unwrap();
+    assert_eq!(refs.iter().map(|r| r.timestamp).collect::<Vec<_>>(), [100]);
+    let fired = absence_results(&mut engine, "Missing", 210);
+    let refs = fired[0]
+        .as_correlation()
+        .unwrap()
+        .event_refs
+        .clone()
+        .unwrap();
+    assert_eq!(refs.iter().map(|r| r.timestamp).collect::<Vec<_>>(), [125]);
+}
+
+#[test]
+fn stalest_eviction_drops_absence_groups_without_a_deadline() {
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            max_state_entries: 10,
+            ..CorrelationConfig::default()
+        },
+    );
+    hit(&mut engine, "a", "alice", 100);
+    for i in 0..50 {
+        hit(&mut engine, "b", &format!("user{i}"), 101 + i);
+    }
+    assert!(engine.state_count() <= 10, "{}", engine.state_count());
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+    assert_eq!(engine.absence_pending(), 1);
+}
+
+#[test]
+fn importing_clocks_without_absence_rules_drops_them() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let snapshot = engine.export_state();
+    assert_eq!(snapshot.version, 3);
+
+    let threshold = TEMPORAL.replace("a and not b", "a and b");
+    let mut restored = absence_engine(&threshold, CorrelationConfig::default());
+    assert!(restored.import_state(snapshot));
+    assert!(restored.clocks().is_empty());
+    assert_eq!(restored.export_state().version, 2);
+}
+
+#[test]
+fn a_negated_hit_between_two_triggers_covers_both_only_under_temporal() {
+    let five_minutes = TEMPORAL.replace("timespan: 60s", "timespan: 5m");
+    let mut engine = absence_engine(&five_minutes, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "b", "alice", 60);
+    hit(&mut engine, "a", "alice", 240);
+    assert!(engine.finalize().is_empty());
+
+    let ordered = five_minutes.replace("type: temporal", "type: temporal_ordered");
+    let mut engine = absence_engine(&ordered, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "b", "alice", 60);
+    hit(&mut engine, "a", "alice", 240);
+    let fired = engine.finalize();
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        fired[0]
+            .as_correlation()
+            .unwrap()
+            .absence
+            .as_ref()
+            .unwrap()
+            .deadline,
+        540
+    );
+}
+
+#[test]
+fn an_invalid_absence_grace_fails_to_compile_only_on_an_absence_correlation() {
+    for grace in ["30seconds", "30"] {
+        let yaml = format!(
+            "{}{TEMPORAL}rsigma.absence_grace: {grace}\n",
+            absence_detections()
+        );
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let error = engine.add_collection(&collection).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid rsigma.absence_grace"),
+            "{grace}: {error}"
+        );
+    }
+
+    let threshold = TEMPORAL.replace("a and not b", "a and b") + "rsigma.absence_grace: 30\n";
+    absence_engine(&threshold, CorrelationConfig::default());
+}
+
+#[test]
+fn the_latest_event_decides_whether_a_tenant_follows_the_wall_clock() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let untimed = json!({"Action": "z", "User": "alice"});
+    engine.process_event(&JsonEvent::borrow(&untimed));
+    assert!(engine.follows_wall_clock(None));
+    assert_eq!(engine.clock(None), None);
+
+    let timed = json!({"Action": "z", "User": "alice", "@timestamp": 1_000});
+    engine.process_event(&JsonEvent::borrow(&timed));
+    assert!(!engine.follows_wall_clock(None));
+    assert_eq!(engine.clock(None), Some(1_000));
+
+    let mut plain = absence_engine(
+        &TEMPORAL.replace("a and not b", "a and b"),
+        CorrelationConfig::default(),
+    );
+    plain.process_event(&JsonEvent::borrow(&untimed));
+    assert!(!plain.follows_wall_clock(None));
+}

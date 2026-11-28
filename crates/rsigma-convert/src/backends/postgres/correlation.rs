@@ -38,7 +38,7 @@ impl super::PostgresBackend {
         };
 
         let window_secs = rule.timespan.seconds;
-        let having_clause = self.build_having_clause(&rule.condition)?;
+        let having_clause = self.build_having_clause(rule)?;
 
         let field_from_condition = match &rule.condition {
             CorrelationCondition::Threshold { field, .. } => {
@@ -167,7 +167,7 @@ impl super::PostgresBackend {
                     &rule.group_by,
                     ts,
                     window_secs,
-                    &rule.condition,
+                    rule,
                 )?,
             CorrelationType::Temporal | CorrelationType::TemporalOrdered => self
                 .build_temporal_query(
@@ -315,7 +315,7 @@ impl super::PostgresBackend {
         group_by: &[String],
         ts: &str,
         window_secs: u64,
-        condition: &CorrelationCondition,
+        rule: &CorrelationRule,
     ) -> Result<String> {
         let partition_clause = if group_by.is_empty() {
             String::new()
@@ -327,7 +327,7 @@ impl super::PostgresBackend {
             format!("PARTITION BY {} ", cols.join(", "))
         };
 
-        let where_clause = self.build_threshold_where("correlation_event_count", condition)?;
+        let where_clause = self.build_threshold_where("correlation_event_count", rule)?;
 
         // When there is a CTE prefix (combined_events), chain the window CTE
         // onto it. Otherwise, build a standalone source CTE from the table.
@@ -368,8 +368,8 @@ impl super::PostgresBackend {
     }
 
     /// Build a WHERE clause from a correlation condition for sliding window queries.
-    fn build_threshold_where(&self, column: &str, cond: &CorrelationCondition) -> Result<String> {
-        match cond {
+    fn build_threshold_where(&self, column: &str, rule: &CorrelationRule) -> Result<String> {
+        match &rule.condition {
             CorrelationCondition::Threshold { predicates, .. } => {
                 let parts: Vec<String> = predicates
                     .iter()
@@ -387,9 +387,21 @@ impl super::PostgresBackend {
                     .collect();
                 Ok(parts.join(" AND "))
             }
-            CorrelationCondition::Extended(_) => Err(ConvertError::UnsupportedCorrelation(
-                "extended boolean conditions not yet supported for PostgreSQL".into(),
-            )),
+            CorrelationCondition::Extended(_) => {
+                if rsigma_parser::analyze_absence(rule)
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    Err(ConvertError::UnsupportedCorrelation(
+                        "condition contains negated rules, which the rsigma engine evaluates at a deadline and which PostgreSQL cannot express as a query".into(),
+                    ))
+                } else {
+                    Err(ConvertError::UnsupportedCorrelation(
+                        "extended boolean conditions not yet supported for PostgreSQL".into(),
+                    ))
+                }
+            }
         }
     }
 
@@ -477,9 +489,7 @@ impl super::PostgresBackend {
         let mut gb = vec![bucket_expr.clone()];
         gb.extend(group_exprs);
         let group_by_clause = format!(" GROUP BY {}", gb.join(", "));
-        let having = self
-            .build_having_clause(&rule.condition)?
-            .replace("{agg}", &agg);
+        let having = self.build_having_clause(rule)?.replace("{agg}", &agg);
 
         Ok(format!(
             "{cte_prefix}SELECT {bucket_expr} AS correlation_bucket, \
@@ -527,9 +537,7 @@ impl super::PostgresBackend {
         final_group.push("session_id".to_string());
         let final_group_clause = final_group.join(", ");
 
-        let having = self
-            .build_having_clause(&rule.condition)?
-            .replace("{agg}", &agg);
+        let having = self.build_having_clause(rule)?.replace("{agg}", &agg);
 
         warnings.push(format!(
             "PostgreSQL session window: the {gap_secs}s gap is exact, but the {window_secs}s \
@@ -578,8 +586,8 @@ impl super::PostgresBackend {
 
     /// Build HAVING clause from correlation condition predicates.
     /// Uses `{agg}` as placeholder for the aggregate expression.
-    fn build_having_clause(&self, cond: &CorrelationCondition) -> Result<String> {
-        match cond {
+    fn build_having_clause(&self, rule: &CorrelationRule) -> Result<String> {
+        match &rule.condition {
             CorrelationCondition::Threshold { predicates, .. } => {
                 let parts: Vec<String> = predicates
                     .iter()
@@ -597,9 +605,21 @@ impl super::PostgresBackend {
                     .collect();
                 Ok(parts.join(" AND "))
             }
-            CorrelationCondition::Extended(_) => Err(ConvertError::UnsupportedCorrelation(
-                "extended boolean conditions not yet supported for PostgreSQL".into(),
-            )),
+            CorrelationCondition::Extended(_) => {
+                if rsigma_parser::analyze_absence(rule)
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    Err(ConvertError::UnsupportedCorrelation(
+                        "condition contains negated rules, which the rsigma engine evaluates at a deadline and which PostgreSQL cannot express as a query".into(),
+                    ))
+                } else {
+                    Err(ConvertError::UnsupportedCorrelation(
+                        "extended boolean conditions not yet supported for PostgreSQL".into(),
+                    ))
+                }
+            }
         }
     }
 

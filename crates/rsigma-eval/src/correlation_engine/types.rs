@@ -190,6 +190,13 @@ pub struct CorrelationConfig {
     /// bound in force.
     pub max_state_entries_per_tenant: Option<usize>,
 
+    /// Maximum number of absence groups with a pending obligation or an armed
+    /// deadman across all tenants. A hit that would make a group pending at the
+    /// cap is refused and counted, so pending deadlines are never evicted.
+    ///
+    /// Default: 100_000.
+    pub max_absence_entries: usize,
+
     /// Skip correlation for events that carry no tenant, counting them in
     /// [`crate::CorrelationEngine::untenanted_skipped`].
     ///
@@ -238,6 +245,7 @@ impl Default for CorrelationConfig {
             correlation_event_mode: CorrelationEventMode::default(),
             max_correlation_events: 10,
             max_state_entries_per_tenant: None,
+            max_absence_entries: 100_000,
             require_tenant: false,
             max_future_skew: DEFAULT_MAX_FUTURE_SKEW_SECS,
         }
@@ -264,8 +272,10 @@ pub type ProcessResult = Vec<EvaluationResult>;
 /// Inner maps use `Vec<(GroupKey, T)>` instead of `HashMap<GroupKey, T>` because
 /// `GroupKey` cannot be used as a JSON object key.
 ///
-/// Version 2 nests state under [`Self::tenants`]; the top-level maps hold the
-/// version 1 layout and are read as tenant `None` but never written.
+/// Version 3 adds absence state and per-tenant clocks; version 2 nests state
+/// under [`Self::tenants`]; version 1 snapshots keep their top-level layout and
+/// are read as tenant `None`. The engine writes version 2 unless absence state
+/// or a clock is present.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CorrelationSnapshot {
     /// Schema version — used to detect incompatible snapshots on load.
@@ -293,7 +303,7 @@ pub struct CorrelationSnapshot {
     pub rulesets: BTreeMap<String, CorrelationSnapshot>,
 }
 
-/// State belonging to one tenant in a version 2 snapshot.
+/// State belonging to one tenant in a version 2 or 3 snapshot.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TenantStateSnapshot {
     /// Tenant that owns this state. `None` for the untenanted bucket.
@@ -306,6 +316,9 @@ pub struct TenantStateSnapshot {
     pub event_buffers: HashMap<String, Vec<(GroupKey, EventBuffer)>>,
     /// Per-correlation, per-group event reference buffers.
     pub event_ref_buffers: HashMap<String, Vec<(GroupKey, EventRefBuffer)>>,
+    /// The tenant's event-time clock, when absence correlations are loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<i64>,
 }
 
 impl TenantStateSnapshot {
@@ -317,6 +330,7 @@ impl TenantStateSnapshot {
             last_alert: HashMap::new(),
             event_buffers: HashMap::new(),
             event_ref_buffers: HashMap::new(),
+            clock: None,
         }
     }
 
@@ -324,6 +338,25 @@ impl TenantStateSnapshot {
     pub fn window_entries(&self) -> usize {
         self.windows.values().map(Vec::len).sum::<usize>()
     }
+}
+
+/// Counters for absence correlation outcomes, drained by
+/// [`crate::CorrelationEngine::take_absence_counters`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AbsenceCounters {
+    /// Obligations and deadmen that fired without cancellation.
+    pub fired: u64,
+    /// Obligations cancelled by a negated hit.
+    pub cancelled: u64,
+    /// Hits refused because the global absence cap was reached.
+    pub refused_global_cap: u64,
+    /// Hits refused because their tenant was at its state quota.
+    pub refused_tenant_quota: u64,
+    /// Obligations refused because the group's pending cap was reached.
+    pub refused_group_cap: u64,
+    /// Negated hits that arrived after their obligation fired, and late
+    /// deadman heartbeats.
+    pub late_negatives: u64,
 }
 
 /// Outcome of importing a snapshot.

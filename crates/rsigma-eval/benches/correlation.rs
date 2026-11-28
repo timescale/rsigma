@@ -550,6 +550,156 @@ fn bench_correlation_chained_events(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: absence obligations and deadline firing
+// ---------------------------------------------------------------------------
+
+fn absence_rules_yaml(timespan: &str, deadman: bool) -> String {
+    let (corr_type, condition) = if deadman {
+        ("temporal", "    condition: not a-rule\n".to_string())
+    } else {
+        (
+            "temporal_ordered",
+            "    condition: a-rule and not b-rule\n".to_string(),
+        )
+    };
+    format!(
+        r#"
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: C
+id: c-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: c
+    condition: selection
+---
+title: Absence Bench
+correlation:
+    type: {corr_type}
+    rules: [a-rule, b-rule]
+    group-by: [User]
+    timespan: {timespan}
+{condition}"#
+    )
+}
+
+fn bench_correlation_absence(c: &mut Criterion) {
+    let mut group = c.benchmark_group("correlation_absence");
+    group.sample_size(10);
+
+    for n_groups in [1_000usize, 10_000] {
+        let yaml = absence_rules_yaml("24h", false);
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+
+        group.throughput(criterion::Throughput::Elements((n_groups * 2) as u64));
+        group.bench_with_input(
+            BenchmarkId::new("obligation_churn", n_groups),
+            &n_groups,
+            |b, &n_groups| {
+                b.iter_with_setup(
+                    || {
+                        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                        engine.add_collection(&collection).unwrap();
+                        engine
+                    },
+                    |mut engine| {
+                        let base_ts = 1_000_000i64;
+                        for i in 0..n_groups {
+                            let ts = base_ts + i as i64;
+                            let user = format!("user_{i:06}");
+                            let a = serde_json::json!({"Action": "a", "User": user});
+                            let b = serde_json::json!({"Action": "b", "User": user});
+                            let _ = engine
+                                .process_event_at(black_box(&JsonEvent::borrow(&a)), black_box(ts));
+                            let _ = engine
+                                .process_event_at(black_box(&JsonEvent::borrow(&b)), black_box(ts));
+                        }
+                        black_box(engine.absence_pending());
+                    },
+                );
+            },
+        );
+
+        group.throughput(criterion::Throughput::Elements(n_groups as u64));
+        group.bench_with_input(
+            BenchmarkId::new("deadline_firing", n_groups),
+            &n_groups,
+            |b, &n_groups| {
+                b.iter_with_setup(
+                    || {
+                        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                        engine.add_collection(&collection).unwrap();
+                        let base_ts = 1_000_000i64;
+                        for i in 0..n_groups {
+                            let user = format!("user_{i:06}");
+                            let a = serde_json::json!({"Action": "a", "User": user});
+                            let _ =
+                                engine.process_event_at(&JsonEvent::borrow(&a), base_ts + i as i64);
+                        }
+                        (engine, base_ts + n_groups as i64 + 86_401)
+                    },
+                    |(mut engine, deadline)| {
+                        let fired = engine.advance_clock(None, deadline);
+                        black_box(fired.len());
+                    },
+                );
+            },
+        );
+    }
+
+    // Steady-state events for a set that contains an absence rule but never
+    // matches it: measures the per-event clock check.
+    let yaml = absence_rules_yaml("60s", false);
+    let collection = parse_sigma_yaml(&yaml).unwrap();
+    let n_events = 100_000usize;
+    let values: Vec<serde_json::Value> = (0..n_events)
+        .map(|i| serde_json::json!({"Action": "c", "User": format!("user_{:06}", i % 1000)}))
+        .collect();
+    let events: Vec<JsonEvent> = values.iter().map(JsonEvent::borrow).collect();
+    group.throughput(criterion::Throughput::Elements(n_events as u64));
+    group.bench_with_input(
+        BenchmarkId::new("steady_state", n_events),
+        &events,
+        |b, events| {
+            b.iter_with_setup(
+                || {
+                    let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+                    engine.add_collection(&collection).unwrap();
+                    engine
+                },
+                |mut engine| {
+                    let base_ts = 1_000_000i64;
+                    for (i, event) in events.iter().enumerate() {
+                        let result = engine.process_event_at(black_box(event), base_ts + i as i64);
+                        black_box(&result);
+                    }
+                },
+            );
+        },
+    );
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -564,5 +714,6 @@ criterion_group!(
     bench_correlation_numeric_window,
     bench_correlation_tenants,
     bench_correlation_chained_events,
+    bench_correlation_absence,
 );
 criterion_main!(benches);

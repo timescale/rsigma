@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use rsigma_parser::{
     ConditionExpr, ConditionOperator, CorrelationCondition, CorrelationRule, CorrelationType,
-    FieldAlias, WindowMode,
+    FieldAlias, Timespan, WindowMode,
 };
 
 use crate::error::{EvalError, Result};
 
-use super::{CompiledCondition, CompiledCorrelation, GroupByField};
+use super::{CompiledAbsence, CompiledCondition, CompiledCorrelation, GroupByField};
 
 // =============================================================================
 // Compilation
@@ -59,6 +59,46 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
     // Resolve per-correlation overrides from custom attributes.
     // These mirror the engine-level `rsigma.*` attributes but apply only
     // to this correlation rule, taking precedence over engine defaults.
+    let absence = match rsigma_parser::analyze_absence(rule) {
+        Ok(Some(shape)) => {
+            let grace_secs = rule
+                .custom_attributes
+                .get("rsigma.absence_grace")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|s| Timespan::parse(s).ok())
+                        .map(|ts| ts.seconds)
+                        .ok_or_else(|| {
+                            let shown = value
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("{value:?}"));
+                            EvalError::CorrelationError(format!(
+                                "invalid rsigma.absence_grace '{shown}', expected a duration such as 30s (correlation: {})",
+                                rule.title
+                            ))
+                        })
+                })
+                .transpose()?
+                .unwrap_or(0);
+            Some(CompiledAbsence {
+                kind: shape.kind,
+                positive: shape.positive,
+                positive_refs: shape.positive_refs,
+                negated: shape.negated,
+                grace_secs,
+            })
+        }
+        Ok(None) => None,
+        Err(error) => {
+            return Err(EvalError::CorrelationError(format!(
+                "{error} (correlation: {})",
+                rule.title
+            )));
+        }
+    };
+
     let suppress_secs = rule
         .custom_attributes
         .get("rsigma.suppress")
@@ -114,6 +154,7 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
         gap_secs,
         condition,
         extended_expr,
+        absence,
         generate: rule.generate,
         suppress_secs,
         action,

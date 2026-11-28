@@ -56,6 +56,18 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_webhook_requests_total` | counter | `webhook_id`, `outcome` (`success`, `permanent_failure`, `rate_limited_wait`) | Webhook requests by outcome. `rate_limited_wait` counts token-bucket waits and can co-occur with a later `success` or `permanent_failure` on the same attempt. Queue depth, retries, drops, and DLQ routing are read from the shared per-sink series above, keyed by `sink=<webhook id>` (one-to-one with `webhook_id`). |
 | `rsigma_webhook_request_duration_seconds` | histogram | `webhook_id` | Per-webhook HTTP request latency. |
 
+## Absence correlations (5 metrics)
+
+Exposed unconditionally. The pending gauge and the refused counter's `reason` label set are pre-registered so they appear on the first scrape; the other counters surface after their first increment. See [Missing events and silent entities](../guide/correlations.md#missing-events-and-silent-entities).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `rsigma_correlation_absence_pending` | gauge | none | Absence groups with a pending obligation or an armed deadman, which is the quantity `--max-absence-entries` bounds. {{ added "unreleased" }} |
+| `rsigma_correlation_absence_fired_total` | counter | none | Absence obligations and deadmen that fired without cancellation, including alerts that suppression then dropped. Emitted alerts also count in `rsigma_correlation_matches_total` and `rsigma_correlation_matches_by_rule_total`. {{ added "unreleased" }} |
+| `rsigma_correlation_absence_cancelled_total` | counter | none | Absence obligations cancelled by a negated hit. A deadman slide is not a cancellation, and an obligation never opened because of the pre-check is not counted. {{ added "unreleased" }} |
+| `rsigma_correlation_absence_refused_total` | counter | `reason` (`global_cap`, `tenant_quota`, `group_cap`) | Absence hits refused because the global absence cap, a tenant's state quota, or the group's pending cap was reached. {{ added "unreleased" }} |
+| `rsigma_correlation_absence_late_negatives_total` | counter | none | Negated hits that arrived after their obligation fired, and late deadman heartbeats. A rising count is how to size `rsigma.absence_grace`. {{ added "unreleased" }} |
+
 ## Per-rule labels (2 metrics)
 
 These counters carry labels that identify which rule fired. They surface on `/metrics` only after the first match for that kind.

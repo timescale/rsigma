@@ -64,6 +64,7 @@ fn correlation_for_ip(ip: &str) -> EvaluationResult {
             events: None,
             event_refs: None,
             event_sources: None,
+            absence: None,
         }),
     }
 }

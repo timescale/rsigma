@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rsigma_parser::{ConditionExpr, ConditionOperator, CorrelationType, Level, WindowMode};
+use rsigma_parser::{
+    AbsenceKind, ConditionExpr, ConditionOperator, CorrelationType, Level, WindowMode,
+};
 
 // =============================================================================
 // Compiled types
@@ -39,6 +41,9 @@ pub struct CompiledCorrelation {
     /// When set, evaluates this expression against fired rules instead of
     /// a simple threshold count.
     pub extended_expr: Option<ConditionExpr>,
+    /// Deferred absence semantics for a temporal condition with negated rule
+    /// references. `None` keeps today's immediate evaluation.
+    pub(crate) absence: Option<CompiledAbsence>,
     /// Whether referenced detection rules should also generate standalone matches.
     pub generate: bool,
     /// Per-correlation suppression window in seconds, resolved from the
@@ -60,6 +65,16 @@ pub struct CompiledCorrelation {
     /// Custom attributes from the original Sigma correlation rule (merged).
     /// Wrapped in `Arc` so that per-match cloning is a pointer bump.
     pub custom_attributes: Arc<HashMap<String, serde_json::Value>>,
+}
+
+/// Compiled deferred absence semantics.
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledAbsence {
+    pub(crate) kind: AbsenceKind,
+    pub(crate) positive: Option<ConditionExpr>,
+    pub(crate) positive_refs: Vec<String>,
+    pub(crate) negated: Vec<String>,
+    pub(crate) grace_secs: u64,
 }
 
 /// A group-by field, potentially aliased per referenced rule.

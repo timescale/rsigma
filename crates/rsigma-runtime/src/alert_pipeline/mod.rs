@@ -1027,6 +1027,7 @@ mod tests {
                 events: None,
                 event_refs: Some(vec![]),
                 event_sources: Some(vec![]),
+                absence: None,
             }),
         };
         strip_event_payloads(&mut result);
@@ -1093,6 +1094,7 @@ mod tests {
                     rule: Some("rule-1".to_string()),
                     via: None,
                 }]),
+                absence: None,
             }),
         };
         let before = serde_json::to_value(&result.body).unwrap();
@@ -1514,6 +1516,7 @@ mod tests {
                 events: None,
                 event_refs: None,
                 event_sources: None,
+                absence: None,
             }),
         };
         p.process_with_capture(vec![correlation], &mut st, 0, &NoopMetrics, Some(&mut sink));

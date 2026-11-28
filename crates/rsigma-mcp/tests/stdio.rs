@@ -229,7 +229,7 @@ async fn resources_list_and_read_round_trip() {
         })
         .expect("text resource");
     let catalogue: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(catalogue.as_array().unwrap().len(), 92);
+    assert_eq!(catalogue.as_array().unwrap().len(), 98);
 
     let ads = client
         .read_resource(ReadResourceRequestParams::new("rsigma://ads/schema"))
@@ -352,6 +352,57 @@ async fn call_tune_rules_round_trip() {
     assert_eq!(value["ok"], true);
     assert_eq!(value["report"]["verification"]["false_positives_after"], 0);
     assert_eq!(value["report"]["verification"]["true_positives_after"], 1);
+
+    client.cancel().await.ok();
+    server.cancel().await.ok();
+}
+
+#[tokio::test]
+async fn call_evaluate_events_reports_an_absence_at_end_of_input() {
+    let (server, client) = connect().await;
+
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#;
+    let mut req = CallToolRequestParams::new("evaluate_events");
+    req.arguments = Some(object!({
+        "yaml": yaml,
+        "events": [ { "@timestamp": 1735689600, "EventType": "login", "User": "alice" } ],
+    }));
+    let result = client.call_tool(req).await.expect("call evaluate_events");
+    let v = result_json(&result);
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["summary"]["correlation_matches"], 1);
+    assert_eq!(v["results"][0]["event_index"], serde_json::Value::Null);
+    assert_eq!(
+        v["results"][0]["result"]["absence"]["missing"][0],
+        "mfa-rule"
+    );
 
     client.cancel().await.ok();
     server.cancel().await.ok();

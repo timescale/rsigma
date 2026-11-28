@@ -27,6 +27,52 @@ pub enum WindowState {
     /// For `value_sum`, `value_avg`, `value_percentile`, `value_median`:
     /// (timestamp, numeric_value) pairs.
     NumericAgg { entries: VecDeque<(i64, f64)> },
+    /// For an absence correlation: retained positive hits, the latest negated
+    /// hit per rule, and the obligations and deadman deadline it tracks.
+    Absence {
+        #[serde(default)]
+        positive_hits: HashMap<String, VecDeque<i64>>,
+        #[serde(default)]
+        last_negative: HashMap<String, i64>,
+        #[serde(default)]
+        obligations: VecDeque<Obligation>,
+        #[serde(default)]
+        deadman: Option<Deadman>,
+        #[serde(default)]
+        last_fired: Option<(i64, i64)>,
+    },
+}
+
+/// One pending absence obligation, opened when a positive condition matched
+/// and the negated rules must stay absent until `deadline`.
+///
+/// `cancel_lo` and `deadline` bound the interval in which a negated hit
+/// cancels the obligation; both ends are inclusive.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct Obligation {
+    /// Deduplication key: the sequence start for sliding windows, or the
+    /// bucket start for tumbling windows.
+    pub key: i64,
+    /// Earliest timestamp in the satisfying positive set.
+    pub s_min: i64,
+    /// Latest timestamp in the satisfying positive set.
+    pub s_max: i64,
+    /// First timestamp at which a negated hit cancels this obligation.
+    pub cancel_lo: i64,
+    /// Last second in which the negated rules may still arrive.
+    pub deadline: i64,
+    /// Number of distinct positive rules in the satisfying set.
+    pub positives: u32,
+}
+
+/// An armed deadman entity: a heartbeat was seen and no further heartbeat has
+/// arrived by `deadline`.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct Deadman {
+    /// Latest heartbeat timestamp.
+    pub last_heartbeat: i64,
+    /// Last second in which another heartbeat can arrive.
+    pub deadline: i64,
 }
 
 impl WindowState {
@@ -51,8 +97,23 @@ impl WindowState {
         }
     }
 
+    /// Create a new empty absence window state.
+    pub fn new_absence() -> Self {
+        WindowState::Absence {
+            positive_hits: HashMap::new(),
+            last_negative: HashMap::new(),
+            obligations: VecDeque::new(),
+            deadman: None,
+            last_fired: None,
+        }
+    }
+
     /// Remove all entries older than the cutoff timestamp.
-    pub fn evict(&mut self, cutoff: i64) {
+    ///
+    /// For an absence window, `timespan_secs` also bounds the latest negated
+    /// hits: a hit older than `cutoff - timespan_secs` can no longer cancel a
+    /// future obligation.
+    pub fn evict(&mut self, cutoff: i64, timespan_secs: u64) {
         match self {
             WindowState::EventCount { timestamps } => {
                 while timestamps.front().is_some_and(|&t| t < cutoff) {
@@ -78,6 +139,20 @@ impl WindowState {
                     entries.pop_front();
                 }
             }
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                ..
+            } => {
+                for timestamps in positive_hits.values_mut() {
+                    while timestamps.front().is_some_and(|&t| t < cutoff) {
+                        timestamps.pop_front();
+                    }
+                }
+                positive_hits.retain(|_, ts| !ts.is_empty());
+                let negative_cutoff = cutoff.saturating_sub(timespan_secs as i64);
+                last_negative.retain(|_, ts| *ts >= negative_cutoff);
+            }
         }
     }
 
@@ -88,6 +163,39 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.is_empty(),
             WindowState::Temporal { rule_hits } => rule_hits.is_empty(),
             WindowState::NumericAgg { entries } => entries.is_empty(),
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                obligations,
+                deadman,
+                ..
+            } => {
+                positive_hits.is_empty()
+                    && last_negative.is_empty()
+                    && obligations.is_empty()
+                    && deadman.is_none()
+            }
+        }
+    }
+
+    /// Whether this absence group has a pending obligation or an armed
+    /// deadman, so it occupies a deadline-index entry.
+    pub fn absence_pending(&self) -> bool {
+        match self {
+            WindowState::Absence {
+                obligations,
+                deadman,
+                ..
+            } => !obligations.is_empty() || deadman.is_some(),
+            _ => false,
+        }
+    }
+
+    /// The interval of the most recently fired obligation, if one has fired.
+    pub fn last_fired(&self) -> Option<(i64, i64)> {
+        match self {
+            WindowState::Absence { last_fired, .. } => *last_fired,
+            _ => None,
         }
     }
 
@@ -100,6 +208,17 @@ impl WindowState {
                 rule_hits.values().filter_map(|ts| ts.back().copied()).max()
             }
             WindowState::NumericAgg { entries } => entries.back().map(|(t, _)| *t),
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                deadman,
+                ..
+            } => positive_hits
+                .values()
+                .filter_map(|ts| ts.back().copied())
+                .chain(last_negative.values().copied())
+                .chain(deadman.iter().map(|d| d.last_heartbeat))
+                .max(),
         }
     }
 
@@ -115,6 +234,17 @@ impl WindowState {
                 .filter_map(|ts| ts.front().copied())
                 .min(),
             WindowState::NumericAgg { entries } => entries.front().map(|(t, _)| *t),
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                deadman,
+                ..
+            } => positive_hits
+                .values()
+                .filter_map(|ts| ts.front().copied())
+                .chain(last_negative.values().copied())
+                .chain(deadman.iter().map(|d| d.last_heartbeat))
+                .min(),
         }
     }
 
@@ -163,6 +293,11 @@ impl WindowState {
             WindowState::NumericAgg { entries } => {
                 truncate_deque(entries, cap, preserve_front);
             }
+            WindowState::Absence { positive_hits, .. } => {
+                for timestamps in positive_hits.values_mut() {
+                    truncate_deque(timestamps, cap, preserve_front);
+                }
+            }
         }
     }
 
@@ -173,6 +308,36 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.clear(),
             WindowState::Temporal { rule_hits } => rule_hits.clear(),
             WindowState::NumericAgg { entries } => entries.clear(),
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                obligations,
+                deadman,
+                ..
+            } => {
+                positive_hits.clear();
+                last_negative.clear();
+                obligations.clear();
+                *deadman = None;
+            }
+        }
+    }
+
+    /// Clear what a tumbling bucket reset clears: the retained positive hits
+    /// and the latest negated hits. Pending obligations, the armed deadman, and
+    /// the most recently fired interval survive, so a reset cannot drop a
+    /// deadline that has not fired yet.
+    pub fn clear_window(&mut self) {
+        match self {
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                ..
+            } => {
+                positive_hits.clear();
+                last_negative.clear();
+            }
+            other => other.clear(),
         }
     }
 
@@ -205,6 +370,61 @@ impl WindowState {
     pub fn push_numeric(&mut self, ts: i64, value: f64) {
         if let WindowState::NumericAgg { entries } = self {
             insert_ordered(entries, (ts, value), |(t, _)| *t);
+        }
+    }
+
+    /// Record a positive hit for an absence correlation.
+    pub fn push_positive_hit(&mut self, ts: i64, rule_ref: &str) {
+        if let WindowState::Absence { positive_hits, .. } = self {
+            let hits = match positive_hits.get_mut(rule_ref) {
+                Some(hits) => hits,
+                None => positive_hits.entry(rule_ref.to_string()).or_default(),
+            };
+            insert_ordered(hits, ts, |&t| t);
+        }
+    }
+
+    /// Remember the latest hit of a negated rule, which is all a pre-check
+    /// needs: every earlier hit is at or before it.
+    pub fn set_last_negative(&mut self, rule_ref: &str, ts: i64) {
+        if let WindowState::Absence { last_negative, .. } = self {
+            let entry = last_negative.entry(rule_ref.to_string()).or_insert(ts);
+            *entry = (*entry).max(ts);
+        }
+    }
+
+    /// Cancel every pending obligation whose inclusive interval contains `ts`.
+    /// Returns how many were cancelled.
+    pub fn cancel_obligations_at(&mut self, ts: i64) -> usize {
+        if let WindowState::Absence { obligations, .. } = self {
+            let before = obligations.len();
+            obligations.retain(|o| ts < o.cancel_lo || ts > o.deadline);
+            return before - obligations.len();
+        }
+        0
+    }
+
+    /// Add an obligation unless one with the same key is already pending.
+    /// Keeps the deque ordered by key. Returns whether it was inserted.
+    pub fn push_obligation(&mut self, obligation: Obligation) -> bool {
+        if let WindowState::Absence { obligations, .. } = self {
+            if obligations.iter().any(|o| o.key == obligation.key) {
+                return false;
+            }
+            let pos = obligations.partition_point(|o| o.key <= obligation.key);
+            obligations.insert(pos, obligation);
+            return true;
+        }
+        false
+    }
+
+    /// Arm or slide the deadman deadline.
+    pub fn arm_deadman(&mut self, last_heartbeat: i64, deadline: i64) {
+        if let WindowState::Absence { deadman, .. } = self {
+            *deadman = Some(Deadman {
+                last_heartbeat,
+                deadline,
+            });
         }
     }
 
@@ -246,6 +466,46 @@ impl WindowState {
             }
             WindowState::NumericAgg { entries } => {
                 bound(entries, clamp_to, drop_after, |(t, _)| t, |(t, _)| *t);
+            }
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                obligations,
+                deadman,
+                last_fired,
+            } => {
+                for hits in positive_hits.values_mut() {
+                    bound(hits, clamp_to, drop_after, |t| t, |&t| t);
+                }
+                positive_hits.retain(|_, hits| !hits.is_empty());
+                last_negative.retain(|_, ts| {
+                    if *ts > drop_after {
+                        return false;
+                    }
+                    *ts = (*ts).min(clamp_to);
+                    true
+                });
+                obligations.retain(|o| o.deadline <= drop_after);
+                for o in obligations.iter_mut() {
+                    o.key = o.key.min(clamp_to);
+                    o.s_min = o.s_min.min(clamp_to);
+                    o.s_max = o.s_max.min(clamp_to);
+                    o.cancel_lo = o.cancel_lo.min(clamp_to);
+                    o.deadline = o.deadline.min(clamp_to);
+                }
+                obligations.make_contiguous().sort_by_key(|o| o.key);
+                if let Some(d) = deadman {
+                    if d.deadline > drop_after {
+                        *deadman = None;
+                    } else {
+                        d.last_heartbeat = d.last_heartbeat.min(clamp_to);
+                        d.deadline = d.deadline.min(clamp_to);
+                    }
+                }
+                if let Some((lo, hi)) = last_fired {
+                    *lo = (*lo).min(clamp_to);
+                    *hi = (*hi).min(clamp_to);
+                }
             }
         }
     }
@@ -340,6 +600,18 @@ impl WindowState {
             WindowState::ValueCount { entries } => entries.len(),
             WindowState::Temporal { rule_hits } => rule_hits.values().map(VecDeque::len).sum(),
             WindowState::NumericAgg { entries } => entries.len(),
+            WindowState::Absence {
+                positive_hits,
+                last_negative,
+                obligations,
+                deadman,
+                ..
+            } => {
+                positive_hits.values().map(VecDeque::len).sum::<usize>()
+                    + last_negative.len()
+                    + obligations.len()
+                    + usize::from(deadman.is_some())
+            }
         }
     }
 
@@ -417,7 +689,7 @@ pub fn sliding_cutoff(state: &WindowState, ts: i64, timespan_secs: u64) -> i64 {
 ///
 /// Uses `rem_euclid` so negative timestamps align to the bucket below them
 /// rather than toward zero.
-fn bucket_start(ts: i64, timespan: i64) -> i64 {
+pub(crate) fn bucket_start(ts: i64, timespan: i64) -> i64 {
     ts - ts.rem_euclid(timespan)
 }
 
@@ -466,7 +738,7 @@ pub fn apply_window_open(
     match window {
         WindowMode::Sliding => {
             let cutoff = sliding_cutoff(state, ts, timespan_secs);
-            state.evict(cutoff);
+            state.evict(cutoff, timespan_secs);
             if ts < cutoff {
                 WindowDecision::Discard
             } else {
@@ -479,7 +751,7 @@ pub fn apply_window_open(
             }
             match state.latest_timestamp() {
                 Some(last) if bucket_start(ts, timespan) > bucket_start(last, timespan) => {
-                    state.clear();
+                    state.clear_window();
                     WindowDecision::Reset
                 }
                 Some(last) if bucket_start(ts, timespan) < bucket_start(last, timespan) => {
@@ -496,7 +768,7 @@ pub fn apply_window_open(
             match (state.earliest_timestamp(), state.latest_timestamp()) {
                 (Some(start), Some(last)) if ts >= last => {
                     if (ts - last) > gap || capped(ts - start) {
-                        state.clear();
+                        state.clear_window();
                         WindowDecision::Reset
                     } else {
                         WindowDecision::Extend
@@ -554,6 +826,130 @@ pub(super) fn check_temporal_ordered(
         }
     }
     true
+}
+
+/// Compute the satisfying positive set for an unordered (`temporal`) absence
+/// obligation, and its earliest and latest timestamps and ref count.
+///
+/// Each positive ref contributes its latest retained hit, then refs are dropped
+/// in ascending timestamp order when doing so keeps the positive condition
+/// true. The ref of the hit being applied is never dropped.
+pub(crate) fn satisfying_set_unordered(
+    positive: &ConditionExpr,
+    hits: &HashMap<String, VecDeque<i64>>,
+    applied_ref: &str,
+) -> Option<(i64, i64, u32)> {
+    let mut latest: Vec<(&str, i64)> = hits
+        .iter()
+        .filter_map(|(rule_ref, ts)| ts.back().map(|&t| (rule_ref.as_str(), t)))
+        .collect();
+    if latest.is_empty() || !eval_temporal_expr(positive, hits) {
+        return None;
+    }
+    latest.sort_by_key(|&(_, ts)| ts);
+
+    let mut kept: Vec<(&str, i64)> = latest.clone();
+    for (rule_ref, _) in latest {
+        if rule_ref == applied_ref {
+            continue;
+        }
+        let candidate: Vec<(&str, i64)> = kept
+            .iter()
+            .copied()
+            .filter(|&(r, _)| r != rule_ref)
+            .collect();
+        let map = latest_map(&candidate);
+        if eval_temporal_expr(positive, &map) {
+            kept = candidate;
+        }
+    }
+
+    let s_min = kept.iter().map(|&(_, ts)| ts).min()?;
+    let s_max = kept.iter().map(|&(_, ts)| ts).max()?;
+    Some((s_min, s_max, kept.len() as u32))
+}
+
+/// Build a hit map from a `(rule_ref, timestamp)` set, for evaluating a
+/// condition against it.
+fn latest_map(entries: &[(&str, i64)]) -> HashMap<String, VecDeque<i64>> {
+    entries
+        .iter()
+        .map(|&(rule_ref, ts)| (rule_ref.to_string(), VecDeque::from([ts])))
+        .collect()
+}
+
+/// Compute the satisfying positive sequence for an ordered
+/// (`temporal_ordered`) absence obligation.
+///
+/// Each stage takes its latest hit at or before the next stage's choice,
+/// starting from the last stage's latest hit, so the sequence starts as late as
+/// possible. Returns `None` when any stage has no such hit.
+pub(crate) fn satisfying_set_ordered(
+    positive_refs: &[String],
+    hits: &HashMap<String, VecDeque<i64>>,
+) -> Option<(i64, i64, u32)> {
+    if positive_refs.is_empty() {
+        return None;
+    }
+    let mut chosen: Vec<i64> = vec![0; positive_refs.len()];
+    let mut next = i64::MAX;
+    for (index, rule_ref) in positive_refs.iter().enumerate().rev() {
+        let ts = hits
+            .get(rule_ref.as_str())?
+            .iter()
+            .copied()
+            .filter(|&t| t <= next)
+            .max()?;
+        chosen[index] = ts;
+        next = ts;
+    }
+    let s_min = *chosen.first()?;
+    let s_max = *chosen.last()?;
+    Some((s_min, s_max, positive_refs.len() as u32))
+}
+
+/// Build the obligation for one of the four type and window combinations.
+///
+/// `bucket_start` is the tumbling bucket's start and is ignored for sliding
+/// windows.
+pub(crate) fn obligation_for(
+    ordered: bool,
+    tumbling: bool,
+    timespan_secs: u64,
+    bucket_start: i64,
+    s_min: i64,
+    s_max: i64,
+    positives: u32,
+) -> Obligation {
+    let timespan = timespan_secs as i64;
+    if tumbling {
+        let deadline = bucket_start.saturating_add(timespan).saturating_sub(1);
+        Obligation {
+            key: bucket_start,
+            s_min,
+            s_max,
+            cancel_lo: if ordered {
+                s_min.saturating_add(1)
+            } else {
+                bucket_start
+            },
+            deadline,
+            positives,
+        }
+    } else {
+        Obligation {
+            key: s_min,
+            s_min,
+            s_max,
+            cancel_lo: if ordered {
+                s_min.saturating_add(1)
+            } else {
+                s_max.saturating_sub(timespan)
+            },
+            deadline: s_min.saturating_add(timespan),
+            positives,
+        }
+    }
 }
 
 /// Evaluate a boolean condition expression against the set of rules that have

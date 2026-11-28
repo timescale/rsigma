@@ -1203,3 +1203,111 @@ fn eval_chained_correlation_without_event_mode_has_no_events() {
     assert!(!text.contains("\"events\""), "{text}");
     assert!(!text.contains("\"event_sources\""), "{text}");
 }
+
+// ---------------------------------------------------------------------------
+// eval subcommand - absence correlations
+// ---------------------------------------------------------------------------
+
+const ABSENCE_RULES: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#;
+
+const DEADMAN_RULES: &str = r#"
+title: Heartbeat
+id: heartbeat-rule
+logsource:
+    category: test
+detection:
+    selection:
+        EventType: heartbeat
+    condition: selection
+---
+title: Host stopped sending heartbeats
+correlation:
+    type: temporal
+    group-by: [Host]
+    timespan: 10m
+    condition: not heartbeat-rule
+"#;
+
+fn eval_absence_stdin(rules: &str, events: &str) -> String {
+    let rule = temp_file(".yml", rules);
+    let output = rsigma()
+        .args([
+            "engine",
+            "eval",
+            "--rules",
+            rule.path().to_str().unwrap(),
+            "--output-format",
+            "ndjson",
+        ])
+        .write_stdin(events)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    String::from_utf8(output).unwrap()
+}
+
+#[test]
+fn eval_absence_fires_at_the_end_of_input_with_event_time() {
+    let events = r#"{"EventType": "login", "User": "alice", "@timestamp": 1735689600}
+"#;
+    let first = eval_absence_stdin(ABSENCE_RULES, events);
+    assert!(first.contains("Login without MFA"), "{first}");
+    assert!(first.contains("\"missing\":[\"mfa-rule\"]"), "{first}");
+    assert!(first.contains("\"deadline\":1735689900"), "{first}");
+    let second = eval_absence_stdin(ABSENCE_RULES, events);
+    assert_eq!(first, second, "absence output must be deterministic");
+}
+
+#[test]
+fn eval_deadman_fires_for_a_host_that_went_silent_mid_file() {
+    let events = r#"{"EventType": "heartbeat", "Host": "h1", "@timestamp": 1000}
+{"EventType": "heartbeat", "Host": "h2", "@timestamp": 2000}
+"#;
+    let output = eval_absence_stdin(DEADMAN_RULES, events);
+    assert!(
+        output.contains("Host stopped sending heartbeats"),
+        "{output}"
+    );
+    assert!(output.contains("\"h1\""), "{output}");
+    assert!(!output.contains("\"h2\""), "{output}");
+}
+
+#[test]
+fn eval_deadman_does_not_fire_for_a_host_alive_at_the_end() {
+    let events = r#"{"EventType": "heartbeat", "Host": "h1", "@timestamp": 1000}
+{"EventType": "heartbeat", "Host": "h1", "@timestamp": 1500}
+"#;
+    let output = eval_absence_stdin(DEADMAN_RULES, events);
+    assert!(
+        !output.contains("Host stopped sending heartbeats"),
+        "{output}"
+    );
+}

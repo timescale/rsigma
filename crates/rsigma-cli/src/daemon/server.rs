@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -2307,6 +2307,10 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         });
     }
 
+    // Set at the start of the shutdown branch so the engine task can tell a
+    // natural end of input from an operator shutdown.
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+
     // Overlap detection-only batches so one batch's serial merge can run while
     // another occupies rayon. Correlation engines stay at 1 (ordered windows).
     let concurrent = processor.allows_concurrent_detection();
@@ -2337,6 +2341,42 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // Channel depth matches in-flight detection so a quiet input queue cannot
     // stall completed workers behind a capacity-1 handoff.
     let (eval_tx, mut eval_rx) = mpsc::channel::<EvaluatedBatch>(detect_inflight);
+
+    // Idle absence clock: a 1s tick advances each tenant with absence state by
+    // real elapsed time. The task holds only a weak sender, so it never keeps
+    // the sink channel alive at shutdown.
+    let tick_sink = sink_tx.downgrade();
+    let tick_processor = processor.clone();
+    let tick_metrics = metrics.clone();
+    let _tick_handle = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let Some(sink_tx) = tick_sink.upgrade() else {
+                break;
+            };
+            let processor = tick_processor.clone();
+            let Ok(results) = tokio::task::spawn_blocking(move || {
+                if processor.has_absence_correlations() {
+                    processor.advance_idle()
+                } else {
+                    Vec::new()
+                }
+            })
+            .await
+            else {
+                continue;
+            };
+            if results.is_empty() {
+                continue;
+            }
+            tick_metrics.on_output_queue_depth_change(1);
+            if sink_tx.send((results, Vec::new())).await.is_err() {
+                break;
+            }
+        }
+    });
 
     let dispatch_metrics = metrics.clone();
     let dispatch_ack_tx = ack_tx.clone();
@@ -2409,6 +2449,11 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // Engine task: reads RawEvents, evaluates rules, hands outcomes to dispatch.
     let engine_processor = processor.clone();
     let engine_metrics = metrics.clone();
+    let engine_shutdown_requested = shutdown_requested.clone();
+    let engine_state_db_none = config.state_db.is_none();
+    let engine_stdin_batch = stdin_status
+        .clone()
+        .filter(|_| matches!(config.stdin_mode, StdinMode::Batch));
     let event_filter = config.event_filter.clone();
     let event_filter_enabled = !matches!(event_filter.as_ref(), EventFilter::None);
     let batch_size = config.batch_size;
@@ -2689,6 +2734,42 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                 break;
             }
         }
+
+        // A stdin batch run that read to end of input without a state database
+        // is the whole observation, so fire the absence obligations still
+        // pending before the pipeline ends. Any other end of input, such as a
+        // lost connection or a failed read, leaves them pending.
+        let finished_input = engine_stdin_batch
+            .as_ref()
+            .is_some_and(|status| !status.failed());
+        if finished_input
+            && !shutdown
+            && !engine_shutdown_requested.load(Ordering::Relaxed)
+            && engine_state_db_none
+        {
+            let processor = engine_processor.clone();
+            match tokio::task::spawn_blocking(move || processor.finalize()).await {
+                Ok(results) if !results.is_empty() => {
+                    let seq = next_seq;
+                    let batch = EvaluatedBatch {
+                        outcome: BatchProcessOutcome {
+                            results: vec![results],
+                            parse_error_indices: Vec::new(),
+                        },
+                        payloads: vec![String::new()],
+                        tokens: vec![AckToken::Noop],
+                        tenants: vec![None],
+                        pipeline_start: Instant::now(),
+                    };
+                    if seq_tx.send((seq, batch)).await.is_err() {
+                        tracing::debug!("Dispatch channel closed, finalize results dropped");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "Absence finalize task panicked"),
+            }
+        }
+
         drop(seq_tx);
         let _ = reducer_handle.await;
         tracing::info!("Event source exhausted, engine shutting down");
@@ -3269,6 +3350,7 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
     if shutdown_triggered {
         tracing::info!("Shutdown signal received, draining pipeline...");
+        shutdown_requested.store(true, Ordering::Relaxed);
 
         if let Some(h) = source_handle {
             h.abort();

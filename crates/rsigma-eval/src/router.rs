@@ -839,6 +839,72 @@ impl<L> SchemaRouter<L> {
             .map_or(0, |c| c.take_future_skipped())
     }
 
+    /// Whether the shared correlation store has an absence correlation.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.correlation
+            .as_ref()
+            .is_some_and(|c| c.has_absence_correlations())
+    }
+
+    /// Tenants with a non-empty absence deadline index.
+    pub fn absence_tenants(&self) -> Vec<Option<crate::tenant::TenantId>> {
+        self.correlation
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.absence_tenants())
+    }
+
+    /// The tenant's event-time clock in the shared store.
+    pub fn clock(&self, tenant: Option<&crate::tenant::TenantId>) -> Option<i64> {
+        self.correlation.as_ref().and_then(|c| c.clock(tenant))
+    }
+
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback in the shared store.
+    pub fn follows_wall_clock(&self, tenant: Option<&crate::tenant::TenantId>) -> bool {
+        self.correlation
+            .as_ref()
+            .is_some_and(|c| c.follows_wall_clock(tenant))
+    }
+
+    /// Every tenant event-time clock, merged across the shared store.
+    pub fn clocks(&self) -> Vec<(Option<crate::tenant::TenantId>, i64)> {
+        self.correlation
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.clocks())
+    }
+
+    /// Advance a tenant's event-time clock and fire every deadline that passes.
+    pub fn advance_clock(
+        &mut self,
+        tenant: Option<&crate::tenant::TenantId>,
+        to_secs: i64,
+    ) -> ProcessResult {
+        self.correlation
+            .as_mut()
+            .map_or_else(Vec::new, |c| c.advance_clock(tenant, to_secs))
+    }
+
+    /// Fire every pending absence obligation for every tenant.
+    pub fn finalize(&mut self) -> ProcessResult {
+        self.correlation
+            .as_mut()
+            .map_or_else(Vec::new, |c| c.finalize())
+    }
+
+    /// Number of absence groups with a pending deadline.
+    pub fn absence_pending(&self) -> usize {
+        self.correlation.as_ref().map_or(0, |c| c.absence_pending())
+    }
+
+    /// Drain the absence outcome counters, summing across the shared store.
+    pub fn take_absence_counters(&mut self) -> crate::AbsenceCounters {
+        self.correlation
+            .as_mut()
+            .map_or_else(crate::AbsenceCounters::default, |c| {
+                c.take_absence_counters()
+            })
+    }
+
     /// Import previously exported correlation state into the shared store.
     /// No-op (returns `true`) when there is no correlation store.
     pub fn import_state(&mut self, snapshot: CorrelationSnapshot) -> bool {
@@ -1551,5 +1617,66 @@ detection:
         )
         .unwrap();
         assert_eq!(router.engine_rule_counts(), vec![2, 2]);
+    }
+
+    #[test]
+    fn absence_api_is_forwarded_to_the_shared_store() {
+        let collection = parse_sigma_yaml(
+            r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+"#,
+        )
+        .unwrap();
+        let mut router = SchemaRouter::build(
+            &collection,
+            SchemaClassifier::builtin(),
+            plan(&[]),
+            vec![vec![]],
+            CorrelationConfig::default(),
+            false,
+            MatchDetailLevel::Off,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let event = json!({"@timestamp": 1000, "EventType": "login", "User": "alice"});
+        router.route(&JsonEvent::borrow(&event));
+        assert!(router.has_absence_correlations());
+        assert_eq!(router.absence_pending(), 1);
+        assert_eq!(router.absence_tenants(), vec![None]);
+        assert_eq!(router.clocks(), vec![(None, 1000)]);
+
+        let fired = router.advance_clock(None, 1061);
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].header.rule_title, "Login without MFA");
+        assert_eq!(router.absence_pending(), 0);
+        assert_eq!(router.finalize().len(), 0);
+        assert_eq!(router.take_absence_counters().fired, 1);
     }
 }

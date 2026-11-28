@@ -228,3 +228,146 @@ fn max_future_skew_flag_widens_the_bound() {
     assert!(latest <= chrono::Utc::now().timestamp());
     assert_eq!(future_skipped_total(&daemon), Some(0));
 }
+
+const ABSENCE_RULE: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 1s
+    condition: login-rule and not mfa-rule
+"#;
+
+/// An hour-long window, so the idle tick cannot fire it during a short run.
+fn hour_absence_rule() -> String {
+    ABSENCE_RULE.replace("timespan: 1s", "timespan: 1h")
+}
+
+fn login_line(ts: i64, user: &str) -> String {
+    format!(r#"{{"@timestamp": {ts}, "EventType": "login", "User": "{user}"}}"#)
+}
+
+#[test]
+fn finite_stdin_without_state_db_fires_the_trailing_obligation() {
+    let rule = temp_file(".yml", &hour_absence_rule());
+    common::rsigma()
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--input",
+            "stdin",
+            "--api-addr",
+            "127.0.0.1:0",
+        ])
+        .write_stdin(format!("{}\n", login_line(1000, "alice")))
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Login without MFA"));
+}
+
+#[test]
+fn state_db_carries_a_pending_obligation_between_runs() {
+    let rule = temp_file(".yml", &hour_absence_rule());
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("state.db");
+    let base = [
+        "engine",
+        "daemon",
+        "-r",
+        rule.path().to_str().unwrap(),
+        "--input",
+        "stdin",
+        "--api-addr",
+        "127.0.0.1:0",
+        "--state-db",
+        db.to_str().unwrap(),
+    ];
+
+    let first = common::rsigma()
+        .args(base)
+        .write_stdin(format!("{}\n", login_line(1000, "alice")))
+        .assert()
+        .success();
+    assert!(
+        !String::from_utf8_lossy(&first.get_output().stdout).contains("Login without MFA"),
+        "a finite run with --state-db must not finalize"
+    );
+
+    let second = common::rsigma()
+        .args(base)
+        .write_stdin(format!("{}\n", login_line(5000, "bob")))
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&second.get_output().stdout).contains("Login without MFA"),
+        "the restored obligation must fire when the clock passes its deadline"
+    );
+}
+
+#[test]
+fn idle_daemon_fires_an_absence_deadline_and_reports_metrics() {
+    let rule = temp_file(".yml", ABSENCE_RULE);
+    let daemon = DaemonProcess::spawn_http(rule.path().to_str().unwrap());
+
+    let (status, body) = http_get(&daemon.url("/metrics"));
+    assert_eq!(status, 200);
+    for family in [
+        "rsigma_correlation_absence_pending",
+        "rsigma_correlation_absence_fired_total",
+        "rsigma_correlation_absence_cancelled_total",
+        "rsigma_correlation_absence_refused_total",
+        "rsigma_correlation_absence_late_negatives_total",
+    ] {
+        assert!(
+            body.contains(family),
+            "missing {family} on the first scrape"
+        );
+    }
+
+    let body = serde_json::to_string(&serde_json::json!({
+        "EventType": "login",
+        "User": "alice",
+    }))
+    .unwrap();
+    assert_eq!(http_post(&daemon.url("/api/v1/events"), &body).0, 200);
+
+    let fired = poll_until(Duration::from_secs(10), || {
+        let (status, body) = http_get(&daemon.url("/metrics"));
+        if status != 200 {
+            return None;
+        }
+        let fired = body
+            .lines()
+            .find(|line| line.starts_with("rsigma_correlation_absence_fired_total "))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u64>().ok())?;
+        (fired >= 1).then_some(body)
+    })
+    .expect("absence fired within 10s");
+
+    assert!(
+        fired.contains("rsigma_correlation_absence_pending 0"),
+        "{fired}"
+    );
+}

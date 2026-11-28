@@ -182,6 +182,9 @@ daemon:
     # Hard cap on correlation state entries across all correlations and
     # group keys; stalest entries are evicted at the cap.
     max_state_entries: 100000
+    # Hard cap on absence groups with a pending obligation or an armed
+    # deadman; a hit that would make a group pending at the cap is refused.
+    max_absence_entries: 100000
     # Cap on retained entries within a single group's window state.
     # Unset = 10000, raised for count conditions with a larger threshold.
     # max_group_entries: 10000

@@ -264,3 +264,8 @@ doc = false
 name = "fuzz_enricher_extract"
 path = "fuzz_targets/fuzz_enricher_extract.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_correlation_absence"
+path = "fuzz_targets/fuzz_correlation_absence.rs"
+doc = false

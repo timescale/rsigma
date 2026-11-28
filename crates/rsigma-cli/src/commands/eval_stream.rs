@@ -30,6 +30,10 @@ use crate::EventFilter;
 /// [`EvaluationResult`] is forwarded to `on_result` in evaluation order.
 pub(crate) trait EventProcessor {
     fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult));
+
+    /// Finish a finite input: fire anything the engine holds until the end of
+    /// the observation. Detection-only processors have nothing to finish.
+    fn finish(&mut self, _on_result: &mut dyn FnMut(&EvaluationResult)) {}
 }
 
 /// [`EventProcessor`] backed by a stateful correlation engine.
@@ -40,6 +44,12 @@ pub(crate) struct CorrelationProcessor<'a> {
 impl EventProcessor for CorrelationProcessor<'_> {
     fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult)) {
         for m in &self.engine.process_event(event) {
+            on_result(m);
+        }
+    }
+
+    fn finish(&mut self, on_result: &mut dyn FnMut(&EvaluationResult)) {
+        for m in &self.engine.finalize() {
             on_result(m);
         }
     }
@@ -98,6 +108,12 @@ impl EventProcessor for RoutingProcessor<'_> {
             on_result(m);
         }
     }
+
+    fn finish(&mut self, on_result: &mut dyn FnMut(&EvaluationResult)) {
+        for m in &self.router.finalize() {
+            on_result(m);
+        }
+    }
 }
 
 /// [`EventProcessor`] backed by several named rulesets. Each unit stamps its
@@ -109,6 +125,12 @@ pub(crate) struct RulesetsProcessor<'a> {
 impl EventProcessor for RulesetsProcessor<'_> {
     fn process<E: Event>(&mut self, event: &E, on_result: &mut dyn FnMut(&EvaluationResult)) {
         for m in &self.engines.process_event(event) {
+            on_result(m);
+        }
+    }
+
+    fn finish(&mut self, on_result: &mut dyn FnMut(&EvaluationResult)) {
+        for m in &self.engines.finalize() {
             on_result(m);
         }
     }
@@ -206,6 +228,7 @@ pub(crate) fn stream_events<P: EventProcessor>(
         process_line_json(processor, &line, event_filter, observe, on_result);
     }
 
+    processor.finish(on_result);
     line_num
 }
 
@@ -299,5 +322,6 @@ pub(crate) fn stream_evtx_events<P: EventProcessor>(
         }
     }
 
+    processor.finish(on_result);
     rec_count
 }

@@ -65,6 +65,8 @@ A collection conversion applies [Sigma filters](https://github.com/SigmaHQ/sigma
 
 A backend without correlation support (`lynxdb` and `test`) reports each correlation rule as an `UnsupportedCorrelation` error instead of dropping it, so pass `--skip-unsupported` to convert the rest of a mixed ruleset. {{ added "0.24.0" }}
 
+A `temporal` or `temporal_ordered` string condition that contains negated rule references is an absence correlation, evaluated by the RSigma engine at an event-time deadline. The PostgreSQL and Fibratus backends reject it with a message naming the deadline semantics, because neither can express "no B in the window" as a query. Other extended conditions keep their existing rejection message. {{ added "unreleased" }}
+
 ## Encoding modifiers
 
 Every native backend converts the encoding modifiers (`windash`, `wide`, `utf16le`, `utf16be`, `utf16`, `base64`, `base64offset`) the way pySigma does. Each variant the modifiers produce becomes a plain string match, and the variants are ORed together, so `CommandLine|windash|contains: ' -f '` converts to one `contains` match for each of `-`, `/`, `–`, `—`, and `―`, and `|base64offset|contains` converts to one match for each of the three byte alignments. The OR is grouped under an enclosing AND like any value list. A UTF-16 encoding without a following `base64` or `base64offset` produces NUL characters, which the PostgreSQL and Fibratus backends cannot carry in a query, so those rules fail with `UnsupportedValue`. {{ added "0.24.0" }}

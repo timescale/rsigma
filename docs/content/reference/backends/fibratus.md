@@ -189,6 +189,7 @@ Fibratus 1.10+ uses an inline DSL inside `condition:` for stateful sequences; th
 | `value_count` over a single `field:` with the same threshold cap | `sequence` with N stages plus pairwise inequality constraints using positional pattern bindings (`field != $1.field and field != $2.field and ...`). | Single-field only. |
 | `event_count` or `value_count` with `lt`/`lte`/`eq`/`neq` predicates, ranges, or thresholds above the cap | `UnsupportedCorrelation` | The bounded-sequence emulation only expresses "at least N occurrences". |
 | `value_sum`, `value_avg`, `value_percentile`, `value_median` | `UnsupportedCorrelation` | Fibratus has no running-sum or quantile primitive. |
+| Absence conditions (negated rule references) | `UnsupportedCorrelation` | Fibratus sequences have no way to express "no B in the window"; the RSigma engine evaluates them at an event-time deadline. {{ added "unreleased" }} |
 
 The `group-by` fields are shared by every referenced rule, so the join is emitted once as a sequence-level `by field1, field2, ...` clause (after `maxspan`, before the stages), matching the upstream rules-library style. No inline `$1.<field> = <field>` bindings are needed for multi-field group-by.
 

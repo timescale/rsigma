@@ -542,6 +542,7 @@ pub(crate) const RSIGMA_ORDER: &[&str] = &[
     "rsigma.correlation_event_mode",
     "rsigma.max_correlation_events",
     "rsigma.max_group_entries",
+    "rsigma.absence_grace",
     "rsigma.include_event",
     "rsigma.risk_score",
     "rsigma.exemplars",

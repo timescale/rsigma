@@ -4,7 +4,7 @@ description: "How RSigma is fuzzed: the cargo-fuzz harness inventory, the weekly
 
 # Fuzzing
 
-The workspace ships 48 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 42 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
+The workspace ships 49 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html) harnesses under `fuzz/fuzz_targets/`. The `Fuzz` GitHub Actions workflow runs 43 of them weekly (Monday 03:00 UTC) on `libFuzzer`; specialized differential and subsystem targets remain manual. One job compiles every harness, and a job per scheduled target runs its binary from that build.
 
 ## Harness inventory
 
@@ -58,6 +58,7 @@ The workspace ships 48 [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuz
 | `fuzz_dns_answer` | DNS answer formatting and query-name normalization (`dns-enrich` feature): the first input byte selects a record type, the rest goes to `DnsRecordType::format_answers` as a wire-format response, and valid UTF-8 input also goes to `query_name` for that type and for `PTR`. Seeds in `fuzz/corpus/fuzz_dns_answer/` cover one response per stub-zone case, a truncated response, a compression-pointer loop, a response with 300 answers, and key inputs with long labels, IDNA text, and IPv6 literals. {{ added "0.28.0" }} | 4096 |
 | `fuzz_ruleset_resolve` | Named ruleset resolution: the first input byte selects a spec, overlay list, or selector; `validate_spec` and `resolve_loaded` then run against embedded fixture rules with the inline-only overlay loader. Seeds in `fuzz/seeds/fuzz_ruleset_resolve/` cover each mode, an invalid glob, deeply nested custom attributes, a 240-element tag list, a null patch, and unknown keys at every level. {{ added "0.28.0" }} | 4096 |
 | `fuzz_ocsf_sidecar` | Dedup sidecar OCSF serialization, risk-event mapping, and webhook JSON bodies. Arbitrary JSON goes to `dedup_summary_finding_opts` and, when it is a risk event, to `risk_event_finding_opts`, for schema `1.1.0` or `1.3.0`. The same bytes are rendered with `render_webhook_body`, so `${detection.ocsf}` and `${correlation.ocsf}` are validated, including a reference inside a string. Seeds in `fuzz/corpus/fuzz_ocsf_sidecar/` cover those shapes. The `${source.X}` expander does not see webhook placeholders, so the seeds live on this target. {{ added "0.28.0" }} | 8192 |
+| `fuzz_correlation_absence` | Absence correlation state: hits, clock advances, finalize, and snapshot round trips. The input selects an embedded rule collection or supplies its own, then drives `process_event_at_for_tenant`, `advance_clock`, `finalize`, and `export_state`/`import_state`. Invariants: no panic, the pending-group counter matches introspection, finalize clears every pending obligation, and a snapshot round trip exports identical JSON. Seeds in `fuzz/seeds/fuzz_correlation_absence/` cover ordered login without MFA, a B before A under `temporal`, tumbling, deadman, negated and positive disjunctions, a chained parent, and snapshot round trips. {{ added "unreleased" }} | 8192 |
 
 All targets live under [`fuzz/fuzz_targets/`](https://github.com/timescale/rsigma/tree/main/fuzz/fuzz_targets). The shared `Cargo.toml` is `fuzz/Cargo.toml`; it depends on `rsigma-parser`, `rsigma-eval`, `rsigma-convert`, `rsigma-runtime` (with `logfmt`, `cef`, `otlp`, `mmdb-enrich`, `dns-enrich`, and `stix-source` features), `prost`, and `rstix` (with `serde`, `pattern`, `validate`, and `taxii` features).
 
@@ -127,6 +128,7 @@ Add a harness when you accept untrusted input and the parsing or matching code i
 - A new dynamic-source data format: extend `fuzz_pipeline_sources_yaml` or `fuzz_http_response`.
 - A new binary lookup format: mirror `fuzz_mmdb_record`.
 - A new condition operator: extend `fuzz_condition`.
+- A new stateful correlation shape: extend `fuzz_correlation_absence`.
 
 Differential fuzz harnesses (`fuzz_eval_matcher_diff`) are the canonical guard against matcher-optimizer regressions; when you touch `optimize_any_of` or the Aho-Corasick fast path, run the diff harness before opening a PR.
 

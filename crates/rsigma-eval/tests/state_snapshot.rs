@@ -799,3 +799,131 @@ fn strip_entry_keys(value: &mut serde_json::Value) {
         _ => {}
     }
 }
+
+// =============================================================================
+// Version 3: absence state and tenant clocks
+// =============================================================================
+
+const ABSENCE_YAML: &str = r#"
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: Missing
+id: missing
+correlation:
+    type: temporal
+    rules: [a-rule, b-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: a-rule and not b-rule
+---
+title: Silent
+id: silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a-rule
+"#;
+
+fn action_event(action: &str, user: &str) -> serde_json::Value {
+    json!({"Action": action, "User": user})
+}
+
+#[test]
+fn a_v3_snapshot_round_trips_absence_state_and_clocks() {
+    let mut engine = corr_engine(ABSENCE_YAML);
+    process(&mut engine, action_event("a", "alice"), 1000);
+    process(&mut engine, action_event("a", "bob"), 1010);
+
+    let snapshot = engine.export_state();
+    assert_eq!(snapshot.version, 3);
+    assert!(
+        snapshot
+            .tenants
+            .iter()
+            .any(|tenant| tenant.clock == Some(1010)),
+        "clock is exported"
+    );
+
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let restored: CorrelationSnapshot = serde_json::from_str(&json).unwrap();
+    let mut engine2 = corr_engine(ABSENCE_YAML);
+    assert!(engine2.import_state(restored));
+    assert_eq!(engine2.absence_pending(), 4);
+
+    let fired = engine2.advance_clock(None, 1071);
+    let titles: Vec<&str> = fired.iter().map(|r| r.header.rule_title.as_str()).collect();
+    assert_eq!(titles, ["Missing", "Silent", "Missing", "Silent"]);
+}
+
+#[test]
+fn a_snapshot_without_absence_state_stays_version_two() {
+    let mut engine = corr_engine(EVENT_COUNT_YAML);
+    process(&mut engine, login_event("admin"), 1000);
+    assert_eq!(engine.export_state().version, 2);
+}
+
+#[test]
+fn a_kind_mismatch_drops_the_group_only() {
+    let threshold_yaml = ABSENCE_YAML.replace(
+        "condition: a-rule and not b-rule",
+        "condition:\n        gte: 1",
+    );
+    let mut threshold = corr_engine(&threshold_yaml);
+    process(&mut threshold, action_event("a", "alice"), 1000);
+    process(&mut threshold, action_event("a", "bob"), 1010);
+    let snapshot = threshold.export_state();
+    assert_eq!(snapshot.window_entries(), 4);
+
+    let mut absence = corr_engine(ABSENCE_YAML);
+    let stats = absence.import_state_detailed(snapshot).unwrap();
+    assert_eq!(stats.restored, 2, "the two threshold windows are dropped");
+    assert_eq!(absence.state_count(), 2, "the two deadman windows remain");
+}
+
+#[test]
+fn a_pending_obligation_survives_hot_reload_and_fires() {
+    let mut engine = corr_engine(ABSENCE_YAML);
+    process(&mut engine, action_event("a", "alice"), 1000);
+
+    let snapshot = engine.export_state();
+    let mut reloaded = corr_engine(ABSENCE_YAML);
+    assert!(reloaded.import_state(snapshot));
+    let fired = reloaded.advance_clock(None, 1061);
+    assert_eq!(
+        fired
+            .iter()
+            .filter(|r| r.header.rule_title == "Missing")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_v2_fixture_without_a_clock_imports_unchanged() {
+    let mut engine = corr_engine(ABSENCE_YAML);
+    let snapshot: CorrelationSnapshot = serde_json::from_str(
+        r#"{"version":2,"tenants":[{"tenant":null,"windows":{"missing":[[["alice"],{"Absence":{"positive_hits":{"a-rule":[1000]},"obligations":[{"key":1000,"s_min":1000,"s_max":1000,"cancel_lo":940,"deadline":1060,"positives":1}]}}]]},"last_alert":{},"event_buffers":{},"event_ref_buffers":{}}]}"#,
+    )
+    .unwrap();
+    let stats = engine.import_state_detailed(snapshot).unwrap();
+    assert_eq!(stats.restored, 1);
+    let fired = engine.advance_clock(None, 1061);
+    assert_eq!(fired.len(), 1);
+}

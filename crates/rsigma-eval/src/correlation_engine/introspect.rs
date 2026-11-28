@@ -115,6 +115,25 @@ pub struct GroupStateInfo {
     /// Tenant that owns this window, when tenancy is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant: Option<TenantId>,
+    /// Absence state, present only for an absence group.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absence: Option<AbsenceGroupInfo>,
+}
+
+/// Live absence state of one group.
+#[derive(Debug, Clone, Serialize)]
+pub struct AbsenceGroupInfo {
+    /// Pending obligations in this group.
+    pub pending: usize,
+    /// Earliest pending obligation deadline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_deadline: Option<i64>,
+    /// Armed deadman deadline, when the group has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadman_deadline: Option<i64>,
+    /// The tenant's event-time clock at the time of the projection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock: Option<i64>,
 }
 
 impl<L> CorrelationEngine<L> {
@@ -187,24 +206,51 @@ impl<L> CorrelationEngine<L> {
                 continue;
             }
 
-            let got = ws.current_value(
-                corr.correlation_type,
-                &corr.rule_refs,
-                corr.condition.percentile,
-            );
-            let met = ws
-                .check_condition(
+            let absence_group = match ws {
+                WindowState::Absence {
+                    obligations,
+                    deadman,
+                    ..
+                } => {
+                    let next_deadline = obligations.iter().map(|o| o.deadline).min();
+                    Some(AbsenceGroupInfo {
+                        pending: obligations.len(),
+                        next_deadline,
+                        deadman_deadline: deadman.as_ref().map(|d| d.deadline),
+                        clock: self.clock(key.tenant.as_ref()),
+                    })
+                }
+                _ => None,
+            };
+            let got = if absence_group.is_some() {
+                None
+            } else {
+                ws.current_value(
+                    corr.correlation_type,
+                    &corr.rule_refs,
+                    corr.condition.percentile,
+                )
+            };
+            let met = if absence_group.is_some() {
+                false
+            } else {
+                ws.check_condition(
                     &corr.condition,
                     corr.correlation_type,
                     &corr.rule_refs,
                     corr.extended_expr.as_ref(),
                 )
-                .is_some();
+                .is_some()
+            };
             let earliest = ws.earliest_timestamp();
             let latest = ws.latest_timestamp();
-            let seconds_to_eviction = match (earliest, latest) {
-                (Some(e), Some(l)) => Some((e + corr.timespan_secs as i64 - l).max(0)),
-                _ => None,
+            let seconds_to_eviction = if absence_group.is_some() {
+                None
+            } else {
+                match (earliest, latest) {
+                    (Some(e), Some(l)) => Some((e + corr.timespan_secs as i64 - l).max(0)),
+                    _ => None,
+                }
             };
             let last_alert = self.last_alert.get(key).copied();
             let suppress_secs = corr.suppress_secs.or(self.config.suppress);
@@ -239,6 +285,7 @@ impl<L> CorrelationEngine<L> {
                 window: ws.clone(),
                 ruleset: None,
                 tenant: key.tenant.clone(),
+                absence: absence_group,
             });
         }
 
@@ -289,6 +336,11 @@ fn render_group_key(parts: &[GroupKeyPart]) -> String {
 }
 
 fn render_threshold(corr: &CompiledCorrelation) -> String {
+    if corr.absence.is_some()
+        && let Some(expr) = &corr.extended_expr
+    {
+        return expr.to_string();
+    }
     let preds: Vec<String> = corr
         .condition
         .predicates

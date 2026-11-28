@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use parking_lot::{Mutex, RwLock};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use rayon::prelude::*;
 use rsigma_eval::{
-    Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt, RuleFieldSet, SchemaObserver,
-    TenantId, tenant_at,
+    EvaluationResult, Event, FieldObserver, JsonEvent, ProcessResult, ProcessResultExt,
+    RuleFieldSet, SchemaObserver, TenantId, tenant_at,
 };
 
 use crate::engine::RuntimeEngine;
@@ -50,6 +52,17 @@ pub struct BatchProcessOutcome {
     pub parse_error_indices: Vec<usize>,
 }
 
+/// Reference point for advancing a tenant's absence clock while input is idle.
+struct IdleRef {
+    /// Engine clock when the reference was taken.
+    base_secs: i64,
+    /// When the reference was taken.
+    at: Instant,
+    /// The tenant has no event-time clock, or its latest event took the
+    /// wall-clock timestamp fallback, so it follows the wall clock.
+    wall: bool,
+}
+
 /// Thread-safe handle to the engine, swappable atomically for hot-reload.
 ///
 /// Uses `ArcSwap<RwLock<RuntimeEngine>>` so that:
@@ -85,6 +98,9 @@ pub struct LogProcessor {
     /// Tenants whose match counts get their own metric label. Any other
     /// tenant counts under `other`.
     tenant_allowlist: ArcSwap<Vec<rsigma_eval::TenantId>>,
+    /// Per-tenant reference point for advancing absence clocks while input is
+    /// idle.
+    idle: Mutex<HashMap<Option<rsigma_eval::TenantId>, IdleRef>>,
 }
 
 impl LogProcessor {
@@ -106,6 +122,7 @@ impl LogProcessor {
             schema_observer: ArcSwap::new(Arc::new(None)),
             event_tap: ArcSwap::new(Arc::new(None)),
             tenant_allowlist: ArcSwap::new(Arc::new(Vec::new())),
+            idle: Mutex::new(HashMap::new()),
         }
     }
 
@@ -170,6 +187,9 @@ impl LogProcessor {
     /// snapshot). New batches see the replacement on their next call to
     /// `process_batch_lines`.
     pub fn swap_engine(&self, new_engine: RuntimeEngine) {
+        self.reset_idle(&new_engine);
+        self.metrics
+            .set_correlation_absence_pending(new_engine.absence_pending() as u64);
         self.engine.store(Arc::new(RwLock::new(new_engine)));
     }
 
@@ -188,6 +208,179 @@ impl LogProcessor {
     /// True for detection-only and routed engines with no correlation rules.
     pub fn allows_concurrent_detection(&self) -> bool {
         self.engine.load().read().allows_concurrent_detection()
+    }
+
+    /// Whether the current engine has an absence correlation.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.engine.load().read().has_absence_correlations()
+    }
+
+    /// Record the idle reference for each tenant a batch carried.
+    fn refresh_idle(&self, engine: &RuntimeEngine, tenants: &[Option<TenantId>]) {
+        if !engine.has_absence_correlations() {
+            return;
+        }
+        let wall = Utc::now().timestamp();
+        let now = Instant::now();
+        let mut idle = self.idle.lock();
+        let mut refreshed = std::collections::HashSet::new();
+        for tenant in tenants {
+            if !refreshed.insert(tenant) {
+                continue;
+            }
+            let clock = engine.clock(tenant.as_ref());
+            let follows_wall = clock.is_none() || engine.follows_wall_clock(tenant.as_ref());
+            if follows_wall && idle.get(tenant).is_some_and(|reference| reference.wall) {
+                continue;
+            }
+            idle.insert(
+                tenant.clone(),
+                IdleRef {
+                    base_secs: clock.unwrap_or(wall),
+                    at: now,
+                    wall: follows_wall,
+                },
+            );
+        }
+    }
+
+    /// Reset every idle reference to now, so downtime does not count.
+    fn reset_idle(&self, engine: &RuntimeEngine) {
+        let wall = Utc::now().timestamp();
+        let now = Instant::now();
+        let mut idle = self.idle.lock();
+        let previous = std::mem::take(&mut *idle);
+        for tenant in engine.absence_tenants() {
+            let clock = engine.clock(tenant.as_ref());
+            let follows_wall = clock.is_none()
+                || engine.follows_wall_clock(tenant.as_ref())
+                || previous
+                    .get(&tenant)
+                    .is_some_and(|reference| reference.wall);
+            idle.insert(
+                tenant,
+                IdleRef {
+                    base_secs: clock.unwrap_or(wall),
+                    at: now,
+                    wall: follows_wall,
+                },
+            );
+        }
+    }
+
+    /// The metric label for a tenant: its name when allowlisted, else `other`.
+    fn tenant_label(&self, tenant: &TenantId) -> String {
+        let allowlist = self.tenant_allowlist.load();
+        if allowlist.iter().any(|allowed| allowed == tenant) {
+            tenant.as_str().to_string()
+        } else {
+            "other".to_string()
+        }
+    }
+
+    /// Report absence metrics after a batch, a tick, or finalize. Results
+    /// produced outside a batch also count toward the match counters.
+    fn report_absence_metrics(&self, engine: &mut RuntimeEngine, extra: &[EvaluationResult]) {
+        self.metrics
+            .set_correlation_absence_pending(engine.absence_pending() as u64);
+        let counters = engine.take_absence_counters();
+        if counters.fired > 0 {
+            self.metrics.on_correlation_absence_fired(counters.fired);
+        }
+        if counters.cancelled > 0 {
+            self.metrics
+                .on_correlation_absence_cancelled(counters.cancelled);
+        }
+        if counters.refused_global_cap > 0 {
+            self.metrics
+                .on_correlation_absence_refused("global_cap", counters.refused_global_cap);
+        }
+        if counters.refused_tenant_quota > 0 {
+            self.metrics
+                .on_correlation_absence_refused("tenant_quota", counters.refused_tenant_quota);
+        }
+        if counters.refused_group_cap > 0 {
+            self.metrics
+                .on_correlation_absence_refused("group_cap", counters.refused_group_cap);
+        }
+        if counters.late_negatives > 0 {
+            self.metrics
+                .on_correlation_absence_late_negatives(counters.late_negatives);
+        }
+        if !extra.is_empty() {
+            let correlations = extra
+                .iter()
+                .filter(|result| result.is_correlation())
+                .count();
+            if correlations > 0 {
+                self.metrics.on_correlation_matches(correlations as u64);
+            }
+            for result in extra.iter().filter(|result| result.is_correlation()) {
+                let level = result
+                    .header
+                    .level
+                    .as_ref()
+                    .map_or("unknown", |level| level.as_str());
+                if let Some(body) = result.as_correlation() {
+                    self.metrics.on_correlation_match_detail(
+                        &result.header.rule_title,
+                        level,
+                        body.correlation_type.as_str(),
+                    );
+                }
+                if let Some(tenant) = &result.header.tenant_id {
+                    self.metrics.on_tenant_match(&self.tenant_label(tenant));
+                }
+                if let Some(ruleset) = &result.header.ruleset {
+                    self.metrics.on_ruleset_match(ruleset, "correlation");
+                }
+            }
+        }
+    }
+
+    /// Advance every tenant with absence state by the real time since its last
+    /// batch, firing deadlines that pass.
+    pub fn advance_idle(&self) -> Vec<EvaluationResult> {
+        self.advance_idle_at(Instant::now(), Utc::now().timestamp())
+    }
+
+    /// Like [`advance_idle`](Self::advance_idle) with an injected clock, for
+    /// deterministic tests.
+    pub(crate) fn advance_idle_at(&self, now: Instant, wall_secs: i64) -> Vec<EvaluationResult> {
+        let _order_guard = self.processing_order.lock();
+        let engine_guard = self.engine.load();
+        let mut engine = engine_guard.write();
+        let tenants = engine.absence_tenants();
+        let mut results = Vec::new();
+        let mut idle = self.idle.lock();
+        for tenant in tenants {
+            let clock = engine.clock(tenant.as_ref());
+            let reference = idle.entry(tenant.clone()).or_insert_with(|| IdleRef {
+                base_secs: clock.unwrap_or(wall_secs),
+                at: now,
+                wall: clock.is_none() || engine.follows_wall_clock(tenant.as_ref()),
+            });
+            let target = if reference.wall {
+                wall_secs
+            } else {
+                let elapsed = now.saturating_duration_since(reference.at).as_secs() as i64;
+                reference.base_secs.saturating_add(elapsed)
+            };
+            results.extend(engine.advance_clock(tenant.as_ref(), target));
+        }
+        drop(idle);
+        self.report_absence_metrics(&mut engine, &results);
+        results
+    }
+
+    /// Fire every pending absence obligation in the current engine.
+    pub fn finalize(&self) -> Vec<EvaluationResult> {
+        let _order_guard = self.processing_order.lock();
+        let engine_guard = self.engine.load();
+        let mut engine = engine_guard.write();
+        let results = engine.finalize();
+        self.report_absence_metrics(&mut engine, &results);
+        results
     }
 
     /// Whether the current engine attaches the matched event to detections.
@@ -270,6 +463,8 @@ impl LogProcessor {
         if future_skipped > 0 {
             self.metrics.on_correlation_future_skipped(future_skipped);
         }
+        self.refresh_idle(&engine, &[None]);
+        self.report_absence_metrics(&mut engine, &[]);
 
         // Phase 3: Merge results per input line and update metrics
         let mut line_results = empty_results(batch.len());
@@ -549,6 +744,13 @@ impl LogProcessor {
                 let quota = engine.take_tenant_quota_evictions();
                 let untenanted = engine.take_untenanted_skipped();
                 let future = engine.take_future_skipped();
+                let idle_tenants: &[Option<TenantId>] = if event_tenants.is_empty() {
+                    &[None]
+                } else {
+                    &event_tenants
+                };
+                self.refresh_idle(&engine, idle_tenants);
+                self.report_absence_metrics(&mut engine, &[]);
                 (results, state_entries, skipped, quota, untenanted, future)
             };
         let elapsed = start.elapsed().as_secs_f64();
@@ -578,14 +780,7 @@ impl LogProcessor {
                 r.header.tenant_id = tenant.clone();
             }
             if let Some(tenant) = &tenant {
-                let label = {
-                    let allowlist = self.tenant_allowlist.load();
-                    if allowlist.iter().any(|allowed| allowed == tenant) {
-                        tenant.as_str().to_string()
-                    } else {
-                        "other".to_string()
-                    }
-                };
+                let label = self.tenant_label(tenant);
                 for _ in &result {
                     self.metrics.on_tenant_match(&label);
                 }
@@ -817,7 +1012,11 @@ impl LogProcessor {
         let _order_guard = self.processing_order.lock();
         let guard = self.engine.load();
         let mut engine = guard.write();
-        engine.import_state_detailed(snapshot)
+        let imported = engine.import_state_detailed(snapshot);
+        if imported.is_some() {
+            self.reset_idle(&engine);
+        }
+        imported
     }
 
     /// Return summary statistics about the current engine.
@@ -2302,5 +2501,288 @@ detection:
                 .iter()
                 .all(|r| r.header.tenant_id.as_ref() == Some(&a))
         );
+    }
+
+    const ABSENCE_RULES: &str = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+"#;
+
+    #[derive(Default)]
+    struct CollectingMetrics {
+        pending: std::sync::atomic::AtomicU64,
+        fired: std::sync::atomic::AtomicU64,
+        cancelled: std::sync::atomic::AtomicU64,
+        matches: std::sync::atomic::AtomicU64,
+        tenant_matches: Mutex<Vec<String>>,
+    }
+
+    impl crate::metrics::MetricsHook for CollectingMetrics {
+        fn on_parse_error(&self) {}
+        fn on_events_processed(&self, _count: u64) {}
+        fn on_detection_matches(&self, _count: u64) {}
+        fn on_correlation_matches(&self, count: u64) {
+            self.matches
+                .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn observe_processing_latency(&self, _seconds: f64) {}
+        fn on_input_queue_depth_change(&self, _delta: i64) {}
+        fn on_back_pressure(&self) {}
+        fn observe_batch_size(&self, _size: u64) {}
+        fn on_output_queue_depth_change(&self, _delta: i64) {}
+        fn observe_pipeline_latency(&self, _seconds: f64) {}
+        fn set_correlation_state_entries(&self, _count: u64) {}
+        fn set_correlation_absence_pending(&self, count: u64) {
+            self.pending
+                .store(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_correlation_absence_fired(&self, count: u64) {
+            self.fired
+                .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_correlation_absence_cancelled(&self, count: u64) {
+            self.cancelled
+                .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn on_tenant_match(&self, tenant: &str) {
+            self.tenant_matches.lock().push(tenant.to_string());
+        }
+    }
+
+    fn make_processor_with_metrics(
+        rules_yaml: &str,
+        metrics: Arc<CollectingMetrics>,
+    ) -> LogProcessor {
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("test.yml");
+        std::fs::write(&rule_path, rules_yaml).unwrap();
+        let mut engine = RuntimeEngine::new(rule_path, vec![], CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        std::mem::forget(dir);
+        LogProcessor::new(engine, metrics)
+    }
+
+    fn login_batch(ts: i64) -> Vec<String> {
+        vec![format!(
+            r#"{{"@timestamp": {ts}, "EventType": "login", "User": "alice"}}"#
+        )]
+    }
+
+    #[test]
+    fn idle_advance_fires_an_absence_deadline() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let now = Instant::now();
+
+        let early = proc.advance_idle_at(now + std::time::Duration::from_secs(60), 1_060);
+        assert!(early.is_empty(), "not strictly past fire_at");
+        let fired = proc.advance_idle_at(now + std::time::Duration::from_secs(61), 1_061);
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].header.rule_title, "Login without MFA");
+    }
+
+    #[test]
+    fn a_busy_tenant_is_not_advanced_past_its_event_time() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        proc.process_batch_with_format(&login_batch(1005), &InputFormat::Json, None);
+        let now = Instant::now();
+        let fired = proc.advance_idle_at(now + std::time::Duration::from_secs(1), 2_000);
+        assert!(fired.is_empty());
+        let snapshot = proc.engine_snapshot();
+        let engine = snapshot.read();
+        assert_eq!(engine.clock(None), Some(1006));
+    }
+
+    #[test]
+    fn a_fallback_only_tenant_advances_to_the_wall_clock() {
+        let proc = make_processor(ABSENCE_RULES);
+        let batch = vec![r#"{"EventType": "login", "User": "alice"}"#.to_string()];
+        proc.process_batch_with_format(&batch, &InputFormat::Json, None);
+        let wall = chrono::Utc::now().timestamp() + 61;
+        let fired = proc.advance_idle_at(Instant::now(), wall);
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn ticks_closer_than_a_second_still_advance_the_clock() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let now = Instant::now();
+        let mut fired = Vec::new();
+        for tick in 1..=110 {
+            let at = now + std::time::Duration::from_millis(tick * 600);
+            fired.extend(proc.advance_idle_at(at, 0));
+        }
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn steady_events_without_timestamps_do_not_hold_the_clock_back() {
+        let proc = make_processor(ABSENCE_RULES);
+        let login = vec![r#"{"EventType": "login", "User": "alice"}"#.to_string()];
+        let other = vec![r#"{"EventType": "other", "User": "bob"}"#.to_string()];
+        proc.process_batch_with_format(&login, &InputFormat::Json, None);
+        let wall = chrono::Utc::now().timestamp();
+        assert!(proc.advance_idle_at(Instant::now(), wall).is_empty());
+        proc.process_batch_with_format(&other, &InputFormat::Json, None);
+        let fired = proc.advance_idle_at(Instant::now(), wall + 61);
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn restoring_state_does_not_count_downtime() {
+        let source = make_processor(ABSENCE_RULES);
+        source.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let snapshot = source.export_state().unwrap();
+
+        let restored = make_processor(ABSENCE_RULES);
+        restored.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let aged = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(restored.import_state(&snapshot));
+        let now = Instant::now();
+        let fired = restored.advance_idle_at(now, 10_000);
+        assert!(
+            fired.is_empty(),
+            "the clock must stay at the restored value"
+        );
+        let fired = restored.advance_idle_at(aged + std::time::Duration::from_secs(61), 10_061);
+        assert!(
+            fired.is_empty(),
+            "the reference taken before the restore must be replaced"
+        );
+        let fired = restored.advance_idle_at(now + std::time::Duration::from_secs(61), 10_061);
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn a_reload_restarts_the_idle_reference() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        let aged = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        proc.reload_rules().unwrap();
+        let reloaded = Instant::now();
+        assert!(
+            proc.advance_idle_at(aged + std::time::Duration::from_secs(61), 0)
+                .is_empty()
+        );
+        let fired = proc.advance_idle_at(reloaded + std::time::Duration::from_secs(61), 0);
+        assert_eq!(fired.len(), 1);
+    }
+
+    fn fallback_login() -> Vec<String> {
+        vec![r#"{"EventType": "login", "User": "alice"}"#.to_string()]
+    }
+
+    fn fallback_noise() -> Vec<String> {
+        vec![r#"{"EventType": "other", "User": "bob"}"#.to_string()]
+    }
+
+    /// Busy fallback batches, each followed by a tick less than a second after
+    /// the batch, then report whether the obligation fired at `wall`.
+    fn busy_fallback_ticks_fire(proc: &LogProcessor, wall: i64) -> usize {
+        let mut fired = 0;
+        for _ in 0..3 {
+            proc.process_batch_with_format(&fallback_noise(), &InputFormat::Json, None);
+            fired += proc.advance_idle_at(Instant::now(), wall).len();
+        }
+        fired
+    }
+
+    #[test]
+    fn a_restored_fallback_tenant_keeps_following_the_wall_clock() {
+        let source = make_processor(ABSENCE_RULES);
+        source.process_batch_with_format(&fallback_login(), &InputFormat::Json, None);
+        let wall = chrono::Utc::now().timestamp();
+        assert!(source.advance_idle_at(Instant::now(), wall).is_empty());
+        let snapshot = source.export_state().unwrap();
+
+        let restored = make_processor(ABSENCE_RULES);
+        assert!(restored.import_state(&snapshot));
+        assert_eq!(busy_fallback_ticks_fire(&restored, wall + 61), 1);
+    }
+
+    #[test]
+    fn a_fallback_tenant_keeps_following_the_wall_clock_across_a_reload() {
+        let proc = make_processor(ABSENCE_RULES);
+        proc.process_batch_with_format(&fallback_login(), &InputFormat::Json, None);
+        let wall = chrono::Utc::now().timestamp();
+        assert!(proc.advance_idle_at(Instant::now(), wall).is_empty());
+        proc.reload_rules().unwrap();
+        assert_eq!(busy_fallback_ticks_fire(&proc, wall + 61), 1);
+    }
+
+    #[test]
+    fn swapping_in_an_engine_without_absence_rules_clears_the_pending_gauge() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let proc = make_processor_with_metrics(ABSENCE_RULES, metrics.clone());
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        assert_eq!(metrics.pending.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("plain.yml");
+        std::fs::write(&rule_path, ABSENCE_RULES.split("---").next().unwrap()).unwrap();
+        let mut engine = RuntimeEngine::new(rule_path, vec![], CorrelationConfig::default(), false);
+        engine.load_rules().unwrap();
+        proc.swap_engine(engine);
+        assert_eq!(metrics.pending.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn idle_results_count_toward_tenant_matches() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let proc = make_processor_with_metrics(ABSENCE_RULES, metrics.clone());
+        let acme = TenantId::new("acme").unwrap();
+        proc.set_tenant_allowlist(vec![acme.clone()]);
+        proc.process_batch_with_format_detailed_for_tenants(
+            &login_batch(1000),
+            &[Some(acme.clone())],
+            &InputFormat::Json,
+            None,
+        );
+        metrics.tenant_matches.lock().clear();
+        let now = Instant::now();
+        let fired = proc.advance_idle_at(now + std::time::Duration::from_secs(61), 0);
+        assert_eq!(fired.len(), 1);
+        assert_eq!(*metrics.tenant_matches.lock(), ["acme"]);
+    }
+
+    #[test]
+    fn absence_metrics_land_on_the_hook() {
+        let metrics = Arc::new(CollectingMetrics::default());
+        let proc = make_processor_with_metrics(ABSENCE_RULES, metrics.clone());
+        proc.process_batch_with_format(&login_batch(1000), &InputFormat::Json, None);
+        assert_eq!(metrics.pending.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let now = Instant::now();
+        let _ = proc.advance_idle_at(now + std::time::Duration::from_secs(61), 1_061);
+        assert_eq!(metrics.fired.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(metrics.matches.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(metrics.pending.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

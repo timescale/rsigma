@@ -137,6 +137,23 @@ Window decisions are made per group against the events it retains, not a global 
 
 All three modes have the same per-event cost (the window decision is O(1)), so choosing `session` over `sliding` is free at evaluation time; what differs is how long state is retained per group. See [Performance Tuning](performance-tuning.md#memory-pressure-and-correlation-state) for the memory characteristics and the [Benchmarks](../benchmarks.md#window-mode-memory-stress) page for measured numbers under high-cardinality and long-lived-session stress.
 
+## Absence correlations in the daemon
+
+Absence correlations, including deadman alerts, fire from a per-tenant event-time clock. The daemon keeps one clock per tenant, advanced by the event timestamps it sees. While input is idle, a one-second tick advances each tenant with absence state by the elapsed real time, so a host that stops sending heartbeats alerts after its deadline even when no further events arrive. A tenant whose events all used the wall-clock fallback is advanced to the wall clock.
+
+A streaming daemon never finalizes, including on a shutdown signal: pending obligations wait for their deadline on the clock. A stdin batch run that reads to end of input without `--state-db` finalizes pending obligations the way `engine eval` does, and armed deadmen stay armed. Any other end of input, such as a lost connection or a failed stdin read, leaves them pending. With `--state-db`, pending obligations, armed deadmen, and tenant clocks persist across runs, which covers the documented cron-style `--input stdin --state-db` workflow. Restoring state and hot-reloading reset the idle reference to now, so downtime does not count and a restart does not cause an alert storm.
+
+Five metrics report absence behavior: `rsigma_correlation_absence_pending`, `rsigma_correlation_absence_fired_total`, `rsigma_correlation_absence_cancelled_total`, `rsigma_correlation_absence_refused_total`, and `rsigma_correlation_absence_late_negatives_total`. A rising `late_negatives_total` means negated hits are arriving after their deadline fired, so increase `rsigma.absence_grace` or widen the window:
+
+```yaml
+- alert: RsigmaAbsenceLateNegatives
+  expr: rate(rsigma_correlation_absence_late_negatives_total[10m]) > 0
+  for: 15m
+  labels: {severity: warning}
+```
+
+{{ added "unreleased" }}
+
 ## Output sinks
 
 The `--output` flag is repeatable, so one daemon can fan out to several sinks. Each match is cloned to every configured sink via a bounded mpsc channel:

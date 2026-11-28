@@ -1396,6 +1396,16 @@ rsigma.suppress:
     }
 
     #[test]
+    fn round_trips_derived_rules_for_a_string_condition() {
+        let emitted = assert_correlation_round_trips(
+            "title: Derived rules\ncorrelation:\n    type: temporal\n    group-by:\n        - User\n    timespan: 5m\n    condition: login and not mfa\n",
+        );
+        assert!(emitted.contains("rules:"), "{emitted}");
+        assert!(emitted.contains("- login"), "{emitted}");
+        assert!(emitted.contains("- mfa"), "{emitted}");
+    }
+
+    #[test]
     fn round_trips_tumbling_window() {
         assert_correlation_round_trips(
             "title: Tumbling\ncorrelation:\n    type: event_count\n    rules:\n        - login\n    group-by:\n        - User\n    timespan: 1h\n    window: tumbling\n    condition:\n        gte: 5\n",

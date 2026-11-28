@@ -13,7 +13,7 @@ use super::types::GroupByField;
 /// Composite key for group-by partitioning.
 ///
 /// Each element corresponds to a `GroupByField` value extracted from an event.
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, serde::Deserialize)]
 pub struct GroupKey(pub Vec<Option<String>>);
 
 impl GroupKey {

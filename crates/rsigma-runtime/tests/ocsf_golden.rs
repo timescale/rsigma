@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rsigma_eval::{
-    CorrelationBody, DetectionBody, EvaluationResult, EventRef, EventSource, FieldMatch,
-    ResultBody, RuleHeader,
+    AbsenceDetail, CorrelationBody, DetectionBody, EvaluationResult, EventRef, EventSource,
+    FieldMatch, ResultBody, RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
 use rsigma_runtime::RiskEvent;
@@ -255,6 +255,7 @@ fn correlation_with_group_key() {
             events: None,
             event_refs: None,
             event_sources: None,
+            absence: None,
         }),
     };
 
@@ -303,6 +304,7 @@ fn correlation_with_event_refs_and_sources() {
                     via: Some("brute-burst".to_string()),
                 },
             ]),
+            absence: None,
         }),
     };
 
@@ -694,6 +696,7 @@ fn correlation_detection() -> EvaluationResult {
                 rule: Some("ssh-failed-login".to_string()),
                 via: None,
             }]),
+            absence: None,
         }),
     }
 }
@@ -834,4 +837,48 @@ fn class_2005_rejects_detection_only_attributes() {
         finding["actor"] = json!({"user": {"name": "alice"}});
         schema_rejects(version, 2005, &finding);
     }
+}
+
+/// An absence correlation puts its detail under `unmapped.absence`.
+#[test]
+fn absence_correlation_detail_is_unmapped() {
+    let result = EvaluationResult {
+        header: RuleHeader {
+            rule_title: "Login without MFA".to_string(),
+            rule_id: Some("corr-absence".to_string()),
+            tenant_id: None,
+            level: Some(Level::High),
+            tags: vec!["attack.credential_access".to_string()],
+            custom_attributes: Arc::new(HashMap::new()),
+            enrichments: None,
+            ruleset: None,
+        },
+        body: ResultBody::Correlation(CorrelationBody {
+            correlation_type: CorrelationType::TemporalOrdered,
+            group_key: vec![("user.name".to_string(), "alice".to_string())],
+            aggregated_value: 1.0,
+            timespan_secs: 300,
+            events: None,
+            event_refs: Some(vec![EventRef {
+                timestamp: 1_735_689_600,
+                id: None,
+            }]),
+            event_sources: Some(vec![EventSource {
+                rule: Some("login_success".to_string()),
+                via: None,
+            }]),
+            absence: Some(AbsenceDetail {
+                missing: vec!["mfa_success".to_string()],
+                window_start: 1_735_689_600,
+                deadline: 1_735_689_900,
+            }),
+        }),
+    };
+
+    check_both_versions("correlation_absence", |opts| {
+        let finding = detection_finding_with_opts(&result, &FixedSource::new(), opts);
+        assert_eq!(finding["unmapped"]["absence"]["missing"][0], "mfa_success");
+        assert_eq!(finding["unmapped"]["absence"]["deadline"], 1_735_689_900);
+        finding
+    });
 }

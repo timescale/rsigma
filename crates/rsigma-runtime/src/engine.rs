@@ -5,10 +5,11 @@ use arc_swap::ArcSwap;
 use rsigma_eval::event::Event;
 use rsigma_eval::pipeline::sources::DynamicSource;
 use rsigma_eval::{
-    CorrelationConfig, CorrelationEngine, CorrelationSnapshot, CorrelationStateSnapshot, Engine,
-    LogSourceExtractor, MatchDetailLevel, Pipeline, ProcessResult, RoutingPlan, RuleFieldSet,
-    RuleMetadataLookup, RulesetEngines, RulesetStats, RulesetUnit, SchemaClassifier, SchemaPruning,
-    SchemaRouter, TenantId, UnitEngine, parse_pipeline_file,
+    AbsenceCounters, CorrelationConfig, CorrelationEngine, CorrelationSnapshot,
+    CorrelationStateSnapshot, Engine, LogSourceExtractor, MatchDetailLevel, Pipeline,
+    ProcessResult, RoutingPlan, RuleFieldSet, RuleMetadataLookup, RulesetEngines, RulesetStats,
+    RulesetUnit, SchemaClassifier, SchemaPruning, SchemaRouter, TenantId, UnitEngine,
+    parse_pipeline_file,
 };
 use rsigma_parser::SigmaCollection;
 use rsigma_parser::ruleset::{ResolveOptions, resolve_ruleset};
@@ -383,6 +384,97 @@ impl RuntimeEngine {
             EngineVariant::WithCorrelations(engine) => engine.take_future_skipped(),
             EngineVariant::Routed(router) => router.take_future_skipped(),
             EngineVariant::Rulesets(engines) => engines.take_future_skipped(),
+        }
+    }
+
+    /// Whether any loaded correlation uses deferred absence semantics.
+    pub fn has_absence_correlations(&self) -> bool {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => false,
+            EngineVariant::WithCorrelations(engine) => engine.has_absence_correlations(),
+            EngineVariant::Routed(router) => router.has_absence_correlations(),
+            EngineVariant::Rulesets(engines) => engines.has_absence_correlations(),
+        }
+    }
+
+    /// The tenant's event-time clock, or `None` when it has not advanced.
+    pub fn clock(&self, tenant: Option<&TenantId>) -> Option<i64> {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => None,
+            EngineVariant::WithCorrelations(engine) => engine.clock(tenant),
+            EngineVariant::Routed(router) => router.clock(tenant),
+            EngineVariant::Rulesets(engines) => engines.clock(tenant),
+        }
+    }
+
+    /// Whether the tenant's latest event took the wall-clock timestamp
+    /// fallback, so only real time moves its absence deadlines forward.
+    pub fn follows_wall_clock(&self, tenant: Option<&TenantId>) -> bool {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => false,
+            EngineVariant::WithCorrelations(engine) => engine.follows_wall_clock(tenant),
+            EngineVariant::Routed(router) => router.follows_wall_clock(tenant),
+            EngineVariant::Rulesets(engines) => engines.follows_wall_clock(tenant),
+        }
+    }
+
+    /// Every tenant event-time clock.
+    pub fn clocks(&self) -> Vec<(Option<TenantId>, i64)> {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => Vec::new(),
+            EngineVariant::WithCorrelations(engine) => engine.clocks(),
+            EngineVariant::Routed(router) => router.clocks(),
+            EngineVariant::Rulesets(engines) => engines.clocks(),
+        }
+    }
+
+    /// Tenants with a non-empty absence deadline index.
+    pub fn absence_tenants(&self) -> Vec<Option<TenantId>> {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => Vec::new(),
+            EngineVariant::WithCorrelations(engine) => engine.absence_tenants(),
+            EngineVariant::Routed(router) => router.absence_tenants(),
+            EngineVariant::Rulesets(engines) => engines.absence_tenants(),
+        }
+    }
+
+    /// Advance a tenant's event-time clock and fire every deadline that passes.
+    pub fn advance_clock(&mut self, tenant: Option<&TenantId>, to_secs: i64) -> ProcessResult {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => Vec::new(),
+            EngineVariant::WithCorrelations(engine) => engine.advance_clock(tenant, to_secs),
+            EngineVariant::Routed(router) => router.advance_clock(tenant, to_secs),
+            EngineVariant::Rulesets(engines) => engines.advance_clock(tenant, to_secs),
+        }
+    }
+
+    /// Fire every pending absence obligation for every tenant.
+    pub fn finalize(&mut self) -> ProcessResult {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => Vec::new(),
+            EngineVariant::WithCorrelations(engine) => engine.finalize(),
+            EngineVariant::Routed(router) => router.finalize(),
+            EngineVariant::Rulesets(engines) => engines.finalize(),
+        }
+    }
+
+    /// Number of absence groups with a pending deadline.
+    pub fn absence_pending(&self) -> usize {
+        match &self.engine {
+            EngineVariant::DetectionOnly(_) => 0,
+            EngineVariant::WithCorrelations(engine) => engine.absence_pending(),
+            EngineVariant::Routed(router) => router.absence_pending(),
+            EngineVariant::Rulesets(engines) => engines.absence_pending(),
+        }
+    }
+
+    /// Drain the absence outcome counters.
+    pub fn take_absence_counters(&mut self) -> AbsenceCounters {
+        match &mut self.engine {
+            EngineVariant::DetectionOnly(_) => AbsenceCounters::default(),
+            EngineVariant::WithCorrelations(engine) => engine.take_absence_counters(),
+            EngineVariant::Routed(router) => router.take_absence_counters(),
+            EngineVariant::Rulesets(engines) => engines.take_absence_counters(),
         }
     }
 
