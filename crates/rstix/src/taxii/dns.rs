@@ -112,7 +112,7 @@ pub(crate) async fn resolve_taxii_srv_targets(
     srv_targets_from_answers(response.answers(), options.validate_dnssec)
 }
 
-fn srv_targets_from_answers(
+pub(crate) fn srv_targets_from_answers(
     answers: &[Record],
     require_secure: bool,
 ) -> Result<Vec<SrvTarget>, TaxiiError> {
@@ -223,7 +223,7 @@ pub async fn resolve_tlsa_with_options(
     tlsa_from_answers(response.answers(), options.validate_dnssec)
 }
 
-fn tlsa_from_answers(
+pub(crate) fn tlsa_from_answers(
     answers: &[Record],
     require_secure: bool,
 ) -> Result<Vec<TlsaRecord>, TaxiiError> {
