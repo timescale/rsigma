@@ -56,6 +56,7 @@
 //! println!("{expr}");
 //! ```
 
+pub mod absence;
 pub mod ads;
 pub mod ast;
 pub mod condition;
@@ -80,6 +81,9 @@ pub mod version;
 mod walk;
 
 // Re-export the most commonly used types and functions at crate root
+pub use absence::{
+    AbsenceKind, AbsenceShape, AbsenceShapeError, analyze_absence, analyze_absence_parts,
+};
 pub use ads::{
     AdsCarrier, AdsContent, AdsDocument, AdsScaffoldEntry, AdsSection, AdsSectionInfo,
     AdsSectionStatus, ads_catalogue,

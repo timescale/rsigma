@@ -132,6 +132,10 @@ pub enum LintRule {
     CorrelationOnlyReferences,
     ExtendedConditionUndefinedRule,
     ExtendedConditionUnreferencedRule,
+    AbsenceConditionUnsupported,
+    AbsenceSemantics,
+    InvalidAbsenceGrace,
+    AbsenceGraceWithoutAbsence,
 
     // ── Filter rules ─────────────────────────────────────────────────────
     MissingFilter,
@@ -239,6 +243,10 @@ impl fmt::Display for LintRule {
             LintRule::CorrelationOnlyReferences => "correlation_only_references",
             LintRule::ExtendedConditionUndefinedRule => "extended_condition_undefined_rule",
             LintRule::ExtendedConditionUnreferencedRule => "extended_condition_unreferenced_rule",
+            LintRule::AbsenceConditionUnsupported => "absence_condition_unsupported",
+            LintRule::AbsenceSemantics => "absence_semantics",
+            LintRule::InvalidAbsenceGrace => "invalid_absence_grace",
+            LintRule::AbsenceGraceWithoutAbsence => "absence_grace_without_absence",
             LintRule::MissingFilter => "missing_filter",
             LintRule::MissingFilterRules => "missing_filter_rules",
             LintRule::EmptyFilterRules => "empty_filter_rules",
@@ -383,6 +391,7 @@ impl FileLintResult {
 static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
     [
         "action",
+        "absence_grace",
         "author",
         "category",
         "condition",
@@ -408,6 +417,7 @@ static KEY_CACHE: LazyLock<HashMap<&'static str, Value>> = LazyLock::new(|| {
         "related",
         "rsigma.gap",
         "rsigma.window",
+        "rsigma.absence_grace",
         "rules",
         "scope",
         "selection",
