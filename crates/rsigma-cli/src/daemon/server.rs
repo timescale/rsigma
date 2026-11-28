@@ -1187,7 +1187,15 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         (true, Some(dir), Some(ring)) => {
             match super::capture::CaptureSpool::start(
                 dir,
-                config.capture.max_spool_bytes,
+                super::capture::SpoolBudget {
+                    max_spool_bytes: config.capture.max_spool_bytes,
+                    max_tenant_bytes: config
+                        .tenancy
+                        .enabled
+                        .then_some(config.tenancy.quotas.capture_spool_bytes)
+                        .flatten()
+                        .map(|bytes| bytes as u64),
+                },
                 config.capture.spool_queue_capacity,
                 ring,
                 metrics.clone(),
