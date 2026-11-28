@@ -257,13 +257,18 @@ correlation:
     condition: login-rule and not mfa-rule
 "#;
 
+/// An hour-long window, so the idle tick cannot fire it during a short run.
+fn hour_absence_rule() -> String {
+    ABSENCE_RULE.replace("timespan: 1s", "timespan: 1h")
+}
+
 fn login_line(ts: i64, user: &str) -> String {
     format!(r#"{{"@timestamp": {ts}, "EventType": "login", "User": "{user}"}}"#)
 }
 
 #[test]
 fn finite_stdin_without_state_db_fires_the_trailing_obligation() {
-    let rule = temp_file(".yml", ABSENCE_RULE);
+    let rule = temp_file(".yml", &hour_absence_rule());
     common::rsigma()
         .args([
             "engine",
@@ -283,7 +288,7 @@ fn finite_stdin_without_state_db_fires_the_trailing_obligation() {
 
 #[test]
 fn state_db_carries_a_pending_obligation_between_runs() {
-    let rule = temp_file(".yml", ABSENCE_RULE);
+    let rule = temp_file(".yml", &hour_absence_rule());
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("state.db");
     let base = [
@@ -311,7 +316,7 @@ fn state_db_carries_a_pending_obligation_between_runs() {
 
     let second = common::rsigma()
         .args(base)
-        .write_stdin(format!("{}\n", login_line(2000, "bob")))
+        .write_stdin(format!("{}\n", login_line(5000, "bob")))
         .assert()
         .success();
     assert!(

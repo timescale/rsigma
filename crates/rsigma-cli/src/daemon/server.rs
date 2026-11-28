@@ -2353,14 +2353,18 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            if !tick_processor.has_absence_correlations() {
-                continue;
-            }
             let Some(sink_tx) = tick_sink.upgrade() else {
                 break;
             };
             let processor = tick_processor.clone();
-            let Ok(results) = tokio::task::spawn_blocking(move || processor.advance_idle()).await
+            let Ok(results) = tokio::task::spawn_blocking(move || {
+                if processor.has_absence_correlations() {
+                    processor.advance_idle()
+                } else {
+                    Vec::new()
+                }
+            })
+            .await
             else {
                 continue;
             };
@@ -2447,6 +2451,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     let engine_metrics = metrics.clone();
     let engine_shutdown_requested = shutdown_requested.clone();
     let engine_state_db_none = config.state_db.is_none();
+    let engine_stdin_batch = stdin_status
+        .clone()
+        .filter(|_| matches!(config.stdin_mode, StdinMode::Batch));
     let event_filter = config.event_filter.clone();
     let event_filter_enabled = !matches!(event_filter.as_ref(), EventFilter::None);
     let batch_size = config.batch_size;
@@ -2728,9 +2735,18 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             }
         }
 
-        // A finite input without a state database is the whole observation, so
-        // fire the absence obligations still pending before the pipeline ends.
-        if !engine_shutdown_requested.load(Ordering::Relaxed) && engine_state_db_none {
+        // A stdin batch run that read to end of input without a state database
+        // is the whole observation, so fire the absence obligations still
+        // pending before the pipeline ends. Any other end of input, such as a
+        // lost connection or a failed read, leaves them pending.
+        let finished_input = engine_stdin_batch
+            .as_ref()
+            .is_some_and(|status| !status.failed());
+        if finished_input
+            && !shutdown
+            && !engine_shutdown_requested.load(Ordering::Relaxed)
+            && engine_state_db_none
+        {
             let processor = engine_processor.clone();
             match tokio::task::spawn_blocking(move || processor.finalize()).await {
                 Ok(results) if !results.is_empty() => {
