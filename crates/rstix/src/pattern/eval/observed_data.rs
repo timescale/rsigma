@@ -5,6 +5,7 @@ use crate::model::sdo::ObservedData;
 use crate::pattern::ast::PatternAst;
 use crate::pattern::context::{ObservationContext, build_observations_from_observed_data};
 use crate::pattern::error::PatternMatchError;
+use crate::pattern::security::RegexCache;
 
 use super::evaluate;
 
@@ -16,6 +17,7 @@ use super::evaluate;
 /// missing or not an SCO.
 pub fn evaluate_observed_data(
     ast: &PatternAst,
+    regexes: &RegexCache,
     observed_data: &ObservedData,
     bundle: &Bundle,
 ) -> Result<bool, PatternMatchError> {
@@ -24,5 +26,5 @@ pub fn evaluate_observed_data(
         observations: &observations,
         bundle: Some(bundle),
     };
-    evaluate(ast, &ctx)
+    evaluate(ast, regexes, &ctx)
 }

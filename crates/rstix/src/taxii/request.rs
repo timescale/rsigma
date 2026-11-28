@@ -208,8 +208,17 @@ impl TaxiiHttp {
         })
     }
 
-    pub fn decode_envelope(&self, response: &TaxiiResponse) -> Result<TaxiiEnvelope, TaxiiError> {
-        parse_envelope(&response.body, &self.parse_options)
+    /// Parse an envelope body on the blocking pool, so a large page does not
+    /// stall the async runtime.
+    pub async fn decode_envelope(&self, body: Vec<u8>) -> Result<TaxiiEnvelope, TaxiiError> {
+        let options = self.parse_options.clone();
+        match tokio::task::spawn_blocking(move || parse_envelope(&body, &options)).await {
+            Ok(result) => result,
+            Err(err) if err.is_panic() => std::panic::resume_unwind(err.into_panic()),
+            Err(err) => Err(TaxiiError::MalformedResponse {
+                reason: format!("envelope parse did not finish: {err}"),
+            }),
+        }
     }
 
     async fn prefetch_dane(&self, url: &Url) -> Result<(), TaxiiError> {

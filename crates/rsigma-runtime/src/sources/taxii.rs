@@ -220,16 +220,31 @@ pub(crate) async fn poll(
             }
         }
     };
-    let (value, skips, active) = set.build(&prepared.options, now, Some(&received_ids));
-    (
-        PollState { set, added_after },
-        Ok(StixBuild {
-            value,
-            skips,
-            active,
-            objects: received,
-        }),
-    )
+    let options = prepared.options.clone();
+    let now = now.clone();
+    let built = super::run_blocking(move || {
+        let (value, skips, active) = set.build(&options, &now, Some(&received_ids));
+        Ok((set, value, skips, active))
+    })
+    .await;
+    match built {
+        Ok((set, value, skips, active)) => (
+            PollState { set, added_after },
+            Ok(StixBuild {
+                value,
+                skips,
+                active,
+                objects: received,
+            }),
+        ),
+        Err(err) => (
+            PollState {
+                set: IndicatorSet::default(),
+                added_after: None,
+            },
+            Err(err),
+        ),
+    }
 }
 
 fn fetch_error(message: String) -> SourceError {

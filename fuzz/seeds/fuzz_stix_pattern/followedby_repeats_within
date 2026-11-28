@@ -1,0 +1,1 @@
+([ipv4-addr:value = '198.51.100.3'] FOLLOWEDBY [directory:path LIKE '/d%'] REPEATS 3 TIMES) WITHIN 10 SECONDS

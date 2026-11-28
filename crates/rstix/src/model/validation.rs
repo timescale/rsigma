@@ -26,7 +26,7 @@ use crate::model::sdo::{
 use crate::model::sro::SroObject;
 #[cfg(not(feature = "validate"))]
 use crate::model::validate::{
-    language_content_translation_matches_target, resolve_selector_value,
+    TargetWires, language_content_translation_matches_target, resolve_selector_value,
     validate_capec_external_refs, validate_cve_external_refs, validate_encryption_algorithm,
     validate_relationship_endpoints, validate_sco_deterministic_id,
 };
@@ -155,6 +155,7 @@ impl Bundle {
         let mut report = ValidationReport::default();
         let tlp1_ids: HashSet<&str> =
             HashSet::from([TLP1_WHITE_ID, TLP1_GREEN_ID, TLP1_AMBER_ID, TLP1_RED_ID]);
+        let mut target_wires = TargetWires::default();
 
         for object in self.objects() {
             let object_id = object.id();
@@ -275,7 +276,7 @@ impl Bundle {
                     }
                 }
                 StixObject::Meta(MetaObject::LanguageContent(content)) => {
-                    check_language_content(self, content, &mut report);
+                    check_language_content(self, content, &mut target_wires, &mut report);
                 }
                 StixObject::Meta(MetaObject::MarkingDefinition(marking)) => {
                     check_marking_definition_tlp_v1(marking, object_id, &mut report);
@@ -447,9 +448,10 @@ fn selector_resolves(value: &serde_json::Value, selector: &str) -> bool {
 /// are rejected during bundle parse via [`Bundle::validate_refs()`].
 /// [`Bundle::validate()`] emits matching warnings for bundles built without wire re-parse.
 #[cfg(not(feature = "validate"))]
-fn check_language_content(
-    bundle: &Bundle,
-    content: &LanguageContent,
+fn check_language_content<'b>(
+    bundle: &'b Bundle,
+    content: &'b LanguageContent,
+    target_wires: &mut TargetWires<'b>,
     report: &mut ValidationReport,
 ) {
     let object_id = &content.common.id;
@@ -478,12 +480,14 @@ fn check_language_content(
         }
     }
 
-    let Ok(target_wire) = serde_json::to_value(target) else {
+    let Some(target_wire) =
+        target_wires.get(&content.object_ref, || serde_json::to_value(target).ok())
+    else {
         return;
     };
     for (lang, fields) in &content.contents {
         for (field, translation) in fields {
-            let Some(target_value) = resolve_selector_value(&target_wire, field) else {
+            let Some(target_value) = resolve_selector_value(target_wire, field) else {
                 // §7.1.1: keys for properties that do not exist on the target MUST be ignored.
                 continue;
             };
@@ -507,6 +511,39 @@ fn check_language_content(
 mod tests {
     use super::*;
     use crate::model::Bundle;
+
+    #[test]
+    fn language_content_target_is_serialized_once_per_validation() {
+        use crate::model::validate::TARGET_WIRES_BUILT;
+
+        let target = "identity--00000000-0000-4000-8000-000000000001";
+        let mut objects = vec![format!(
+            r#"{{"type":"identity","spec_version":"2.1","id":"{target}","created":"2024-01-01T00:00:00.000Z","modified":"2024-01-01T00:00:00.000Z","name":"Large","identity_class":"organization","description":"{}"}}"#,
+            "d".repeat(1 << 20)
+        )];
+        for n in 0..100 {
+            let name = if n == 7 { r#"["Gross"]"# } else { r#""Gross""# };
+            objects.push(format!(
+                r#"{{"type":"language-content","spec_version":"2.1","id":"language-content--00000000-0000-4000-8000-{n:012x}","created":"2024-01-01T00:00:00.000Z","modified":"2024-01-01T00:00:00.000Z","object_ref":"{target}","contents":{{"de":{{"name":{name}}}}}}}"#
+            ));
+        }
+        let objects = objects
+            .iter()
+            .map(|raw| crate::parse_object(raw).expect("object"))
+            .collect();
+        let bundle = Bundle::from_objects(
+            crate::core::StixId::parse("bundle--00000000-0000-4000-8000-000000000001").expect("id"),
+            objects,
+        );
+        TARGET_WIRES_BUILT.with(|count| count.set(0));
+        let report = bundle.validate();
+        assert_eq!(TARGET_WIRES_BUILT.with(std::cell::Cell::get), 1);
+        assert!(
+            format!("{report:?}")
+                .contains("language-content--00000000-0000-4000-8000-000000000007"),
+            "{report:?}"
+        );
+    }
 
     #[test]
     fn validate_reports_tlp_v1_marking_definition() {

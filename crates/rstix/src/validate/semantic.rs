@@ -15,7 +15,7 @@ use crate::model::sdo::{
 };
 use crate::model::sro::SroObject;
 use crate::model::validate::{
-    language_content_translation_matches_target, resolve_selector_value,
+    TargetWires, language_content_translation_matches_target, resolve_selector_value,
     validate_capec_external_refs, validate_cve_external_refs, validate_encryption_algorithm,
     validate_granular_selector_syntax, validate_relationship_endpoints,
     validate_sco_deterministic_id,
@@ -29,6 +29,7 @@ use super::legacy_paths::{self, EXTERNAL_REF_CAPEC, EXTERNAL_REF_CVE, language_c
 
 /// Cross-object semantic checks (relationship matrix, granular selectors, language-content).
 pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut ValidationReport) {
+    let mut target_wires = TargetWires::default();
     for object in bundle.objects() {
         let object_id = object.id();
         if let Ok(wire) = serde_json::to_value(object) {
@@ -185,7 +186,7 @@ pub(crate) fn run_cross_object_semantics(bundle: &Bundle, report: &mut Validatio
         }
 
         if let StixObject::Meta(MetaObject::LanguageContent(content)) = object {
-            check_language_content(bundle, content, report);
+            check_language_content(bundle, content, &mut target_wires, report);
         }
     }
 }
@@ -376,9 +377,10 @@ fn selector_resolves(value: &serde_json::Value, selector: &str) -> bool {
     resolve_selector_value(value, selector).is_some()
 }
 
-fn check_language_content(
-    bundle: &Bundle,
-    content: &LanguageContent,
+fn check_language_content<'b>(
+    bundle: &'b Bundle,
+    content: &'b LanguageContent,
+    target_wires: &mut TargetWires<'b>,
     report: &mut ValidationReport,
 ) {
     let object_id = &content.common.id;
@@ -413,12 +415,14 @@ fn check_language_content(
         }
     }
 
-    let Ok(target_wire) = serde_json::to_value(target) else {
+    let Some(target_wire) =
+        target_wires.get(&content.object_ref, || serde_json::to_value(target).ok())
+    else {
         return;
     };
     for (lang, fields) in &content.contents {
         for (field, translation) in fields {
-            let Some(target_value) = resolve_selector_value(&target_wire, field) else {
+            let Some(target_value) = resolve_selector_value(target_wire, field) else {
                 // §7.1.1: keys for properties that do not exist on the target MUST be ignored.
                 continue;
             };

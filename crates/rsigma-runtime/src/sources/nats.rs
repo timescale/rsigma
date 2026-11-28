@@ -55,11 +55,15 @@ pub async fn resolve_nats_initial(
     let data = match tokio::time::timeout(std::time::Duration::from_secs(1), sub.next()).await {
         Ok(Some(msg)) => {
             check_payload_size(&msg.payload, MAX_SOURCE_RESPONSE_BYTES)?;
-            let raw = std::str::from_utf8(&msg.payload).map_err(|e| SourceError {
-                source_id: String::new(),
-                kind: SourceErrorKind::Parse(format!("NATS message is not valid UTF-8: {e}")),
-            })?;
-            let parsed = parse_data(raw, format)?;
+            let payload = msg.payload;
+            let parsed = super::run_blocking(move || {
+                let raw = std::str::from_utf8(&payload).map_err(|e| SourceError {
+                    source_id: String::new(),
+                    kind: SourceErrorKind::Parse(format!("NATS message is not valid UTF-8: {e}")),
+                })?;
+                parse_data(raw, format)
+            })
+            .await?;
             if let Some(expr) = extract_expr {
                 apply_extract(&parsed, expr)?
             } else {

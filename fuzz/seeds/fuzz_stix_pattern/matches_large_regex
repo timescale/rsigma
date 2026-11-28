@@ -1,0 +1,1 @@
+[process:command_line MATCHES 'a{5000}' OR process:command_line MATCHES '^payload\\.exe']

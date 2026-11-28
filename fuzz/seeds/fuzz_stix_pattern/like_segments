@@ -1,0 +1,1 @@
+[file:name LIKE '%a_a_a_a_a%b%' OR process:command_line LIKE 'pay%--%n']

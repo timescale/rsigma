@@ -102,10 +102,10 @@ flowchart LR
 | Lexer | Tokenizer; 64 KiB input cap | Done |
 | Parser | Recursive-descent parser; 64-level depth (parentheses, `NOT`, `IN` lists, and qualifiers), 256 observations, and 256 comparisons per observation, all enforced while parsing {{ added "unreleased" }} | Done |
 | SCO type checker | SCO schema + extension paths | Done |
-| Evaluator | Level 1-3 evaluation | Done |
+| Evaluator | Level 1-3 evaluation; each observation expression is matched against each observation once, within a step limit {{ added "unreleased" }} | Done |
 | Observation context | `ObservationContext`, observed-data builder | Done |
-| Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
-| Path resolver | Object-path resolution, CIDR, `_ref` via bundle | Done |
+| Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES`; regexes compiled once per pattern {{ added "unreleased" }} | Done |
+| Path resolver | Object-path resolution, CIDR, `_ref` via bundle; each dereference step keeps every object once and is capped {{ added "unreleased" }} | Done |
 | Canonical printer | `Pattern::canonical` | Done |
 
 ```rust
@@ -141,6 +141,19 @@ Evaluation notes (STIX §9):
 - **`file:hashes.MD5`**: dictionary dot-key syntax per §9.7.3.
 - **`extensions.'…'`**: predefined SCO extension paths (e.g. `windows-pebinary-ext.sections[*].entropy`).
 - **`ISSUBSET`/`ISSUPERSET` on string**: IP/CIDR subset checks per §9.6.
+
+### Evaluation limits
+
+{{ added "unreleased" }}
+
+| Limit | Value | When exceeded |
+| ----- | ----- | ------------- |
+| `MAX_REF_DEREFERENCES` | 8 `_ref` or `_refs` dereferences in one object path | `Pattern::parse` fails with `PatternError::TypeError`. |
+| `MAX_PATH_TARGETS` | 10,000 distinct objects reached by one dereference step | Evaluation fails with `PatternMatchError::PathTooWide`. |
+| `MAX_EVAL_STEPS` | 10,000,000 steps in one evaluation | Evaluation fails with `PatternMatchError::StepLimitExceeded`. |
+| `MATCHES_REGEX_CACHE_BYTES` | 16 MiB of compiled `MATCHES` regexes kept per pattern | Further regexes are compiled each time they are used. |
+
+Each dereference step keeps every object it reaches once, so a chain of `_refs[*]` over objects that reference each other visits each object once per step instead of once per path. Evaluation records whether each observation expression matches each observation, so nested `AND`, `OR`, `FOLLOWEDBY`, `WITHIN`, `REPEATS`, and `START`/`STOP` do not re-evaluate their operands. A step is one object visited on a path, one observation expression checked against one observation, one `IN` list item, or 64 bytes of a string scanned by `LIKE` or `MATCHES`. Compiling a `MATCHES` regex costs one step per 8 bytes of the size limit it compiles under: 64 KiB, or 1 MiB for larger regexes, whose scans are also charged 16 times. `MATCHES` regexes are compiled on first use and kept on the `Pattern`, shared with its clones. `LIKE` places each `%`-separated segment at its leftmost match in one pass.
 
 Tests: `tests/fixtures/pattern/` (STIX §9.8), `tests/fixtures/pattern/sco-fields/` (SCO field manifest, 276 cases), `tests/pattern_parse.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, `tests/pattern_eval_security.rs`, `tests/pattern_indicator.rs` (requires `pattern` feature).
 
@@ -179,6 +192,7 @@ while let Some(obj) = stream.next().await {
 - `TaxiiClientConfig::clock_skew_correction(b)` (default `true`) shifts only a caller-supplied `added_after` by the server's `Date` offset; cursors from `X-TAXII-Date-Added-Last` are sent unchanged, and an offset over 24 hours is ignored.
 - `TaxiiTimestamp::adjust_seconds` and `adjust_micros` saturate at the RFC 3339 range; `checked_adjust_*` return `None` instead. Digits past the microsecond are dropped at parse.
 - Every paginated call, including the streams and `ingest_collection`, ends with `RepeatedPaginationCursor` when a page does not advance the filter.
+- Envelope pages are parsed on the Tokio blocking pool, and paging reads `X-TAXII-Date-Added-Last` without copying the page. {{ added "unreleased" }}
 
 ```bash
 cargo test -p rstix --features taxii --test taxii_client
@@ -226,7 +240,7 @@ Four optional feature flags (each implies `serde`; `store-fs` also implies `stor
 | ------- | ------- | ---------- |
 | `graph` | `StixGraph`, `RelationshipExpander` | `StixGraph::from_bundle`, sighting + relationship SRO edges, `in_refs`/incoming traversal, `EdgeTraversal` chain, `expand_from`, `unresolved_references` |
 | `marking` | `MarkingResolver`, `TlpV2Level` | Effective TLP (incl. AMBER+STRICT), granular selector resolution, `permits_disclosure`, `EffectiveMarking::language_tags` |
-| `store` | `StixStore`, `MemoryStore` | Type-indexed queries, full-text search, pagination, export/delete, SCO fingerprint conflicts in `ImportReport` |
+| `store` | `StixStore`, `MemoryStore` | Type-indexed queries, full-text search, pagination, export/delete, SCO fingerprint conflicts in `ImportReport`. `StixQuery::text_match` compares `text_search` as a substring (the default), a token bounded by characters other than letters, digits, `_`, `-`, and non-ASCII, or an exact indexed value. A query filters borrowed objects and clones only the returned page. `StixStore::contains` checks for an id without cloning. `import_objects` and `import_bundle` report the fingerprint conflicts of the SCOs they import, so paginated ingest lists each conflict once. {{ added "unreleased" }} |
 | `store-fs` | `FsStore` | Filesystem-backed durable store (implies `store`). Open and `reload_from_disk` skip a file they cannot read or parse and list it in `LoadReport` (`load_report()`); the other files still load. A write whose stored form would not parse back under the store's `ParseOptions` is refused with `StoreError::NotReloadable`. {{ added "unreleased" }} |
 
 ```rust
@@ -290,7 +304,7 @@ Grouped by Cargo feature (phase name). Rust module paths are an implementation d
 | Symbol | Role |
 | ------ | ---- |
 | `parse_bundle(&str)` | Parse a bundle JSON string with default `ParseOptions`. |
-| `Bundle` | Typed container; navigation, serialize, T1 `validate()`. |
+| `Bundle` | Typed container; navigation, serialize, T1 `validate()`. `into_objects()` takes the parsed objects without cloning them. {{ added "unreleased" }} |
 | `StixObject` | Top-level enum: SDO, SCO, SRO, Meta, or Custom. |
 | `ParseOptions`, `TypeRegistry` | Limits, custom type registration. |
 | `ValidationReport`, `ValidationCode`, `ValidationFinding` | T1 advisory validation output. |
@@ -306,6 +320,7 @@ SDO/SRO/SCO families (19 SDOs, 2 SROs, 18 SCOs + 12 extensions), `IndicatorPatte
 | `Pattern::evaluate`, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Level 1-3 evaluation. |
 | `pattern::ObservationContext`, `pattern::TimestampedObservation` | Evaluation context. |
 | `PatternError`, `PatternMatchError` | Lex/parse/type-check/match errors. |
+| `pattern::MAX_REF_DEREFERENCES`, `MAX_PATH_TARGETS`, `MAX_EVAL_STEPS`, `MATCHES_REGEX_CACHE_BYTES` | Evaluation limits (see [Evaluation limits](#rstix-pattern-engine-stix-9-evaluation-limits)). `PatternMatchError::PathTooWide` and `StepLimitExceeded` report the two evaluation-time limits. {{ added "unreleased" }} |
 
 ### `validate`: Validation Pipeline
 

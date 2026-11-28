@@ -82,6 +82,7 @@ p12-keystore = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
+criterion = "0.8"
 linkme = "0.3"
 pastey = "0.2"
 toml = "1.1"
@@ -174,3 +175,18 @@ required-features = ["validate", "marking", "graph"]
 [[test]]
 name = "interop_sentinel"
 path = "tests/interop_sentinel.rs"
+
+[[bench]]
+name = "pattern_eval"
+harness = false
+required-features = ["pattern"]
+
+[[bench]]
+name = "bundle_validation"
+harness = false
+required-features = ["serde"]
+
+[[bench]]
+name = "store_query"
+harness = false
+required-features = ["store"]

@@ -6,6 +6,7 @@ use crate::pattern::ast::{
     PatternScoType,
 };
 use crate::pattern::error::PatternError;
+use crate::pattern::security::MAX_REF_DEREFERENCES;
 
 /// Type-check a parsed STIX pattern AST.
 ///
@@ -447,6 +448,19 @@ fn extension_property(key: &str, name: &str) -> Option<PropSchema> {
 
 fn resolve_path(path: &ObjectPath) -> Result<ResolvedType, PatternError> {
     let path_str = format_object_path(path);
+    let dereferences = path
+        .steps
+        .iter()
+        .filter(|step| matches!(step, PathStep::Reference))
+        .count();
+    if dereferences > MAX_REF_DEREFERENCES {
+        return Err(PatternError::TypeError {
+            path: path_str,
+            msg: format!(
+                "object path dereferences {dereferences} references; maximum is {MAX_REF_DEREFERENCES}"
+            ),
+        });
+    }
     let mut ctx = match path.object_type {
         PatternScoType::Known(kind) => PathContext::Sco(kind),
         PatternScoType::Custom(_) => PathContext::Custom,
@@ -864,6 +878,23 @@ mod tests {
     fn rejects_property_on_wrong_ref_target() {
         let err = check_err("[network-traffic:src_ref.pid = 1234]");
         assert!(err.to_string().contains("unknown property") || err.to_string().contains("pid"));
+    }
+
+    #[test]
+    fn dereference_limit_applies_per_path() {
+        let chain = |depth: usize| {
+            format!(
+                "[directory:{}.path = '/x']",
+                vec!["contains_refs[*]"; depth].join(".")
+            )
+        };
+        check(&chain(MAX_REF_DEREFERENCES)).expect("at the limit");
+        let err = check_err(&chain(MAX_REF_DEREFERENCES + 1));
+        assert!(
+            err.to_string()
+                .contains(&format!("maximum is {MAX_REF_DEREFERENCES}")),
+            "{err}"
+        );
     }
 
     #[test]

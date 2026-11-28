@@ -1,5 +1,6 @@
 //! STIX 2.1 bundle container and parsing.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 
@@ -16,7 +17,7 @@ use crate::model::stix_object::{
     StixObject, deserialize_stix_object_from_value, serde_json_error_to_parse_error,
 };
 use crate::model::validate::{
-    granular_markings_from_wire, language_content_translation_matches_target,
+    TargetWires, granular_markings_from_wire, language_content_translation_matches_target,
     resolve_selector_value, validate_granular_markings_semantics, validate_identity_ref,
     validate_marking_definition_ref, validate_sco_or_sro_ref, validate_sco_ref, validate_sdo_ref,
     validate_stix_object_ref, validate_stix_or_sco_ref,
@@ -101,12 +102,12 @@ impl Bundle {
     }
 
     fn parse_root_value(
-        root: serde_json::Value,
+        mut root: serde_json::Value,
         opts: &ParseOptions,
     ) -> Result<Self, crate::ParseError> {
         validate_value_limits(&root, opts)?;
 
-        let map = root.as_object().ok_or_else(|| {
+        let map = root.as_object_mut().ok_or_else(|| {
             crate::ParseError::Json(serde_json::Error::io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "bundle must be a JSON object",
@@ -146,21 +147,18 @@ impl Bundle {
             return Err(crate::ParseError::Model(ModelError::BundleIdPrefixInvalid));
         }
 
-        let object_values = map
-            .get("objects")
-            .map(|value| {
-                value
-                    .as_array()
-                    .ok_or_else(|| {
-                        crate::ParseError::Json(serde_json::Error::io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "bundle objects must be an array",
-                        )))
-                    })
-                    .cloned()
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let object_values = match map.remove("objects") {
+            Some(serde_json::Value::Array(values)) => values,
+            Some(_) => {
+                return Err(crate::ParseError::Json(serde_json::Error::io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "bundle objects must be an array",
+                    ),
+                )));
+            }
+            None => Vec::new(),
+        };
 
         if object_values.len() > opts.max_object_count {
             return Err(crate::ParseError::ObjectLimitExceeded {
@@ -311,9 +309,9 @@ impl Bundle {
         for embedded in objects.values() {
             match embedded {
                 ObservedDataEmbeddedObject::Sco(sco) => {
-                    let mut refs = Vec::new();
-                    StixObject::Sco(sco.clone()).collect_internal_refs(&mut refs);
-                    for reference in refs {
+                    let mut paths = Vec::new();
+                    crate::model::ref_paths::collect_sco_ref_paths(sco, &mut paths);
+                    for (_, reference) in paths {
                         self.validate_ref_resolves_in_bundle(&reference, &embedded_ids)?;
                     }
                 }
@@ -351,6 +349,11 @@ impl Bundle {
     /// Parsed bundle objects in document order.
     pub fn objects(&self) -> &[StixObject] {
         &self.objects
+    }
+
+    /// Take the parsed objects, in document order, without cloning them.
+    pub fn into_objects(self) -> Vec<StixObject> {
+        self.objects
     }
 
     /// Lookup a typed object by STIX id.
@@ -410,11 +413,15 @@ impl Bundle {
     }
 
     fn validate_semantics(&self) -> Result<(), ModelError> {
+        let mut target_wires = TargetWires::default();
         for object in &self.objects {
-            let Some(wire) = self.object_wire_value(object) else {
-                continue;
-            };
-            validate_granular_markings_semantics(&wire, &granular_markings_for_object(object))?;
+            let granular_markings = granular_markings_for_object(object);
+            if !granular_markings.is_empty() {
+                let Some(wire) = self.object_wire_value(object) else {
+                    continue;
+                };
+                validate_granular_markings_semantics(&wire, &granular_markings)?;
+            }
 
             if let StixObject::Meta(MetaObject::LanguageContent(content)) = object {
                 let target = self.get(&content.object_ref).ok_or_else(|| {
@@ -422,10 +429,12 @@ impl Bundle {
                         ref_id: content.object_ref.as_str().to_owned(),
                     }
                 })?;
-                let Some(target_wire) = self.object_wire_value(target) else {
+                let Some(target_wire) =
+                    target_wires.get(&content.object_ref, || self.object_wire_value(target))
+                else {
                     continue;
                 };
-                validate_language_content_semantics(content, target, &target_wire)?;
+                validate_language_content_semantics(content, target, target_wire)?;
             }
         }
         Ok(())
@@ -598,21 +607,21 @@ impl Bundle {
 }
 
 /// Collect granular markings from any bundle object variant for wire semantic checks.
-fn granular_markings_for_object(object: &StixObject) -> Vec<GranularMarking> {
+fn granular_markings_for_object(object: &StixObject) -> Cow<'_, [GranularMarking]> {
     match object {
-        StixObject::Sdo(sdo) => sdo.common_props().granular_markings.clone(),
-        StixObject::Sro(sro) => sro.common_props().granular_markings.clone(),
-        StixObject::Sco(sco) => sco.common_props().granular_markings.clone(),
+        StixObject::Sdo(sdo) => Cow::Borrowed(&sdo.common_props().granular_markings),
+        StixObject::Sro(sro) => Cow::Borrowed(&sro.common_props().granular_markings),
+        StixObject::Sco(sco) => Cow::Borrowed(&sco.common_props().granular_markings),
         StixObject::Meta(MetaObject::MarkingDefinition(marking)) => {
-            marking.granular_markings.clone()
+            Cow::Borrowed(&marking.granular_markings)
         }
         StixObject::Meta(MetaObject::LanguageContent(content)) => {
-            content.common.granular_markings.clone()
+            Cow::Borrowed(&content.common.granular_markings)
         }
         StixObject::Meta(MetaObject::ExtensionDefinition(ext)) => {
-            ext.common.granular_markings.clone()
+            Cow::Borrowed(&ext.common.granular_markings)
         }
-        StixObject::Custom(custom) => granular_markings_from_wire(&custom.raw),
+        StixObject::Custom(custom) => Cow::Owned(granular_markings_from_wire(&custom.raw)),
     }
 }
 
@@ -775,6 +784,7 @@ impl serde::Serialize for Bundle {
 mod tests {
     use super::*;
     use crate::model::sdo::AttackPattern;
+    use crate::model::validate::TARGET_WIRES_BUILT;
     use std::io::Cursor;
 
     #[test]
@@ -793,6 +803,36 @@ mod tests {
         let from_str = Bundle::parse(raw).expect("string parse");
         let from_reader = Bundle::parse_reader(Cursor::new(raw.as_bytes())).expect("reader parse");
         assert_eq!(from_str, from_reader);
+    }
+
+    #[test]
+    fn language_content_target_is_serialized_once() {
+        let target = "identity--00000000-0000-4000-8000-000000000001";
+        let mut objects = vec![format!(
+            r#"{{"type":"identity","spec_version":"2.1","id":"{target}","created":"2024-01-01T00:00:00.000Z","modified":"2024-01-01T00:00:00.000Z","name":"Large","identity_class":"organization","description":"{large}","contact_information":"{large}"}}"#,
+            large = "d".repeat(1 << 20)
+        )];
+        let contents = 200;
+        for n in 0..contents {
+            objects.push(format!(
+                r#"{{"type":"language-content","spec_version":"2.1","id":"language-content--00000000-0000-4000-8000-{n:012x}","created":"2024-01-01T00:00:00.000Z","modified":"2024-01-01T00:00:00.000Z","object_ref":"{target}","object_modified":"2024-01-01T00:00:00.000Z","contents":{{"de":{{"name":"Gross","description":"Beschreibung"}}}}}}"#
+            ));
+        }
+        let raw = format!(
+            r#"{{"type":"bundle","id":"bundle--00000000-0000-4000-8000-000000000001","objects":[{}]}}"#,
+            objects.join(",")
+        );
+        TARGET_WIRES_BUILT.with(|count| count.set(0));
+        Bundle::parse(&raw).expect("bundle");
+        assert_eq!(TARGET_WIRES_BUILT.with(std::cell::Cell::get), 1);
+
+        let mismatched = raw.replacen(r#""name":"Gross""#, r#""name":["Gross"]"#, 1);
+        assert!(matches!(
+            Bundle::parse(&mismatched),
+            Err(crate::ParseError::Model(
+                ModelError::LanguageContentValueMismatch { .. }
+            ))
+        ));
     }
 
     #[test]

@@ -1,4 +1,9 @@
 //! STIX pattern evaluator (Levels 1–3).
+//!
+//! Observation expressions are flattened into a node table. Whether a node
+//! matches at one observation index is computed at most once per evaluation,
+//! so nested `AND`, `OR`, and `FOLLOWEDBY` cost at most a few passes over the
+//! observations per node instead of re-evaluating their subtrees.
 
 mod observed_data;
 pub use observed_data::evaluate_observed_data;
@@ -15,10 +20,14 @@ use crate::pattern::error::PatternMatchError;
 use crate::pattern::lexer::MAX_OBSERVATIONS;
 use crate::pattern::normalize;
 use crate::pattern::path::{self, FieldValue};
-use crate::pattern::security;
+use crate::pattern::security::{RegexCache, ScanMeter, Steps};
 
 /// Evaluate a parsed pattern against timestamped observations.
-pub fn evaluate(ast: &PatternAst, ctx: &ObservationContext<'_>) -> Result<bool, PatternMatchError> {
+pub fn evaluate(
+    ast: &PatternAst,
+    regexes: &RegexCache,
+    ctx: &ObservationContext<'_>,
+) -> Result<bool, PatternMatchError> {
     if ctx.observations.is_empty() {
         if requires_timestamps(ast) {
             return Err(PatternMatchError::MissingTimestamp);
@@ -27,31 +36,35 @@ pub fn evaluate(ast: &PatternAst, ctx: &ObservationContext<'_>) -> Result<bool, 
     }
     ensure_observation_count(ctx)?;
     ensure_observation_timestamps(ast, ctx)?;
-    eval_node(ast, ctx, None, None)
+    let mut evaluator = Evaluator::new(ast, regexes, ctx, Steps::new());
+    evaluator.eval_node(0)
 }
 
 /// Evaluate a single observation expression against one SCO (Level 1 shortcut).
-pub fn matches_single(ast: &PatternAst, sco: &ScoObject) -> Result<bool, PatternMatchError> {
-    matches_single_with_bundle(ast, sco, None)
+pub fn matches_single(
+    ast: &PatternAst,
+    regexes: &RegexCache,
+    sco: &ScoObject,
+) -> Result<bool, PatternMatchError> {
+    matches_single_with_bundle(ast, regexes, sco, None)
 }
 
 /// Level 1 shortcut with optional bundle for `_ref` dereference.
 pub fn matches_single_with_bundle(
     ast: &PatternAst,
+    regexes: &RegexCache,
     sco: &ScoObject,
     bundle: Option<&Bundle>,
 ) -> Result<bool, PatternMatchError> {
-    if !is_single_observation(ast) {
-        return Err(PatternMatchError::NotSingleObservation);
-    }
     let PatternAst::Observation(obs) = ast else {
         return Err(PatternMatchError::NotSingleObservation);
     };
-    observation_matches(obs, sco, bundle)
-}
-
-fn is_single_observation(ast: &PatternAst) -> bool {
-    matches!(ast, PatternAst::Observation(_))
+    let mut leaf = Leaf {
+        bundle,
+        regexes,
+        steps: Steps::new(),
+    };
+    leaf.observation_matches(obs, sco)
 }
 
 fn requires_timestamps(ast: &PatternAst) -> bool {
@@ -96,378 +109,475 @@ fn observation_time<'a>(
     entry.at.as_ref().ok_or(PatternMatchError::MissingTimestamp)
 }
 
-fn eval_node(
-    ast: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    match ast {
-        PatternAst::Observation(obs) => {
-            for entry in ctx.observations.iter() {
-                if !observation_matches(obs, entry.sco, ctx.bundle)? {
-                    continue;
-                }
-                if !timestamp_in_window(entry.at.as_ref(), window_start, window_stop) {
-                    continue;
-                }
-                return Ok(true);
-            }
-            Ok(false)
+/// One observation-expression node, with children as indexes into the table.
+#[derive(Clone, Copy)]
+enum Kind<'p> {
+    Observation(&'p ObservationExpr),
+    And(usize, usize),
+    Or(usize, usize),
+    FollowedBy(usize, usize),
+    Within(usize, f64),
+    Repeats(usize, usize),
+    StartStop(usize),
+}
+
+/// A node and the `START`/`STOP` window it is evaluated in. The window comes
+/// from the nearest enclosing `START`/`STOP`, so it is fixed per node.
+struct Node<'p> {
+    kind: Kind<'p>,
+    start: Option<&'p StixTimestamp>,
+    stop: Option<&'p StixTimestamp>,
+}
+
+fn flatten<'p>(
+    ast: &'p PatternAst,
+    start: Option<&'p StixTimestamp>,
+    stop: Option<&'p StixTimestamp>,
+    nodes: &mut Vec<Node<'p>>,
+) -> usize {
+    let id = nodes.len();
+    nodes.push(Node {
+        kind: Kind::Or(0, 0),
+        start,
+        stop,
+    });
+    let kind = match ast {
+        PatternAst::Observation(obs) => Kind::Observation(obs),
+        PatternAst::And { left, right, .. } => Kind::And(
+            flatten(left, start, stop, nodes),
+            flatten(right, start, stop, nodes),
+        ),
+        PatternAst::Or { left, right, .. } => Kind::Or(
+            flatten(left, start, stop, nodes),
+            flatten(right, start, stop, nodes),
+        ),
+        PatternAst::FollowedBy { left, right, .. } => Kind::FollowedBy(
+            flatten(left, start, stop, nodes),
+            flatten(right, start, stop, nodes),
+        ),
+        PatternAst::Within {
+            inner, duration, ..
+        } => Kind::Within(
+            flatten(inner, start, stop, nodes),
+            duration_seconds(duration),
+        ),
+        PatternAst::Repeats { inner, count, .. } => {
+            Kind::Repeats(flatten(inner, start, stop, nodes), *count as usize)
         }
-        PatternAst::And { left, right, .. } => {
-            for i in 0..ctx.observations.len() {
-                if !matches_at_index(left, ctx, i, window_start, window_stop)? {
+        PatternAst::StartStop {
+            inner,
+            start: window_start,
+            stop: window_stop,
+            ..
+        } => Kind::StartStop(flatten(inner, Some(window_start), Some(window_stop), nodes)),
+    };
+    nodes[id].kind = kind;
+    id
+}
+
+const UNKNOWN: u8 = 0;
+const NO: u8 = 1;
+const YES: u8 = 2;
+
+struct Evaluator<'p, 'c, 'a> {
+    nodes: Vec<Node<'p>>,
+    ctx: &'c ObservationContext<'a>,
+    leaf: Leaf<'a, 'p>,
+    /// Per node and observation index: whether the node matches there.
+    cells: Vec<Vec<u8>>,
+    /// Per observation node and index: whether the bracketed expression
+    /// matches the SCO, before the window applies.
+    leaves: Vec<Vec<u8>>,
+    /// Per `FOLLOWEDBY` node: the indexes that appear in one of its witnesses.
+    witness_members: Vec<Option<Vec<bool>>>,
+}
+
+impl<'p, 'c, 'a> Evaluator<'p, 'c, 'a> {
+    fn new(
+        ast: &'p PatternAst,
+        regexes: &'p RegexCache,
+        ctx: &'c ObservationContext<'a>,
+        steps: Steps,
+    ) -> Self {
+        let mut nodes = Vec::new();
+        flatten(ast, None, None, &mut nodes);
+        let count = ctx.observations.len();
+        let cells = vec![vec![UNKNOWN; count]; nodes.len()];
+        let leaves = vec![vec![UNKNOWN; count]; nodes.len()];
+        let witness_members = (0..nodes.len()).map(|_| None).collect();
+        Self {
+            nodes,
+            ctx,
+            leaf: Leaf {
+                bundle: ctx.bundle,
+                regexes,
+                steps,
+            },
+            cells,
+            leaves,
+            witness_members,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.ctx.observations.len()
+    }
+
+    fn time(&self, idx: usize) -> Result<&'c StixTimestamp, PatternMatchError> {
+        observation_time(&self.ctx.observations[idx])
+    }
+
+    fn window(&self, id: usize) -> (Option<&'p StixTimestamp>, Option<&'p StixTimestamp>) {
+        (self.nodes[id].start, self.nodes[id].stop)
+    }
+
+    fn eval_node(&mut self, id: usize) -> Result<bool, PatternMatchError> {
+        let (start, stop) = self.window(id);
+        match self.nodes[id].kind {
+            Kind::Observation(obs) => {
+                for idx in 0..self.len() {
+                    if !self.leaf_matches(id, obs, idx)? {
+                        continue;
+                    }
+                    if !timestamp_in_window(self.ctx.observations[idx].at.as_ref(), start, stop) {
+                        continue;
+                    }
+                    return Ok(true);
+                }
+                Ok(false)
+            }
+            Kind::And(left, right) => {
+                for i in 0..self.len() {
+                    if !self.matches_at(left, i)? {
+                        continue;
+                    }
+                    for j in 0..self.len() {
+                        if i != j && self.matches_at(right, j)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            Kind::Or(left, right) => Ok(self.eval_node(left)? || self.eval_node(right)?),
+            Kind::FollowedBy(left, right) => self.eval_followed_by(id, left, right),
+            Kind::Within(inner, max_secs) => self.any_witness_within(inner, max_secs),
+            Kind::Repeats(inner, count) => self.witness_count_at_least(inner, count),
+            Kind::StartStop(inner) => self.eval_node(inner),
+        }
+    }
+
+    fn eval_followed_by(
+        &mut self,
+        id: usize,
+        left: usize,
+        right: usize,
+    ) -> Result<bool, PatternMatchError> {
+        let (start, stop) = self.window(id);
+        if let Kind::Repeats(inner, count) = self.nodes[right].kind {
+            for i in 0..self.len() {
+                if !self.matches_at(left, i)? {
                     continue;
                 }
-                for j in 0..ctx.observations.len() {
+                let t_left = self.time(i)?;
+                let mut hits = 0usize;
+                for j in 0..self.len() {
                     if i == j {
                         continue;
                     }
-                    if matches_at_index(right, ctx, j, window_start, window_stop)? {
-                        return Ok(true);
+                    let t_right = self.time(j)?;
+                    if t_right < t_left {
+                        continue;
+                    }
+                    if !timestamp_in_window(Some(t_right), start, stop) {
+                        continue;
+                    }
+                    if self.matches_at(inner, j)? {
+                        hits += 1;
                     }
                 }
+                if hits >= count {
+                    return Ok(true);
+                }
             }
-            Ok(false)
+            return Ok(false);
         }
-        PatternAst::Or { left, right, .. } => Ok(eval_node(left, ctx, window_start, window_stop)?
-            || eval_node(right, ctx, window_start, window_stop)?),
-        PatternAst::FollowedBy { left, right, .. } => {
-            eval_followed_by(left, right, ctx, window_start, window_stop)
-        }
-        PatternAst::Within {
-            inner, duration, ..
-        } => eval_within(
-            inner,
-            ctx,
-            duration_seconds(duration),
-            window_start,
-            window_stop,
-        ),
-        PatternAst::Repeats { inner, count, .. } => Ok(witness_count_at_least(
-            inner,
-            ctx,
-            *count as usize,
-            window_start,
-            window_stop,
-        )?),
-        PatternAst::StartStop {
-            inner, start, stop, ..
-        } => eval_node(inner, ctx, Some(start), Some(stop)),
-    }
-}
 
-fn eval_followed_by(
-    left: &PatternAst,
-    right: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    if let PatternAst::Repeats { inner, count, .. } = right {
-        for i in 0..ctx.observations.len() {
-            if !matches_at_index(left, ctx, i, window_start, window_stop)? {
+        for i in 0..self.len() {
+            if !self.matches_at(left, i)? {
                 continue;
             }
-            let t_left = observation_time(&ctx.observations[i])?;
-            let mut hits = 0usize;
-            for j in 0..ctx.observations.len() {
+            for j in 0..self.len() {
                 if i == j {
                     continue;
                 }
-                let t_right = observation_time(&ctx.observations[j])?;
-                if t_right < t_left {
+                if !self.matches_at(right, j)? {
                     continue;
                 }
-                if !timestamp_in_window(Some(t_right), window_start, window_stop) {
-                    continue;
-                }
-                if matches_at_index(inner, ctx, j, window_start, window_stop)? {
-                    hits += 1;
-                }
-            }
-            if hits >= *count as usize {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-
-    for i in 0..ctx.observations.len() {
-        if !matches_at_index(left, ctx, i, window_start, window_stop)? {
-            continue;
-        }
-        for j in 0..ctx.observations.len() {
-            if i == j {
-                continue;
-            }
-            if !matches_at_index(right, ctx, j, window_start, window_stop)? {
-                continue;
-            }
-            let t_left = observation_time(&ctx.observations[i])?;
-            let t_right = observation_time(&ctx.observations[j])?;
-            if t_left <= t_right {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
-fn eval_within(
-    inner: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    max_secs: f64,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    any_witness_within(inner, ctx, max_secs, window_start, window_stop)
-}
-
-/// Short-circuit witness search for WITHIN (existence + span check, no cartesian enumeration).
-fn any_witness_within(
-    ast: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    max_secs: f64,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    match ast {
-        PatternAst::Observation(_) => {
-            for i in 0..ctx.observations.len() {
-                if !matches_at_index(ast, ctx, i, window_start, window_stop)? {
-                    continue;
-                }
-                if witness_timestamp_span(&[i], ctx)? <= max_secs {
+                if self.time(i)? <= self.time(j)? {
                     return Ok(true);
                 }
             }
-            Ok(false)
         }
-        PatternAst::And { left, right, .. } => {
-            for i in 0..ctx.observations.len() {
-                if !matches_at_index(left, ctx, i, window_start, window_stop)? {
-                    continue;
-                }
-                for j in 0..ctx.observations.len() {
-                    if i == j {
-                        continue;
-                    }
-                    if !matches_at_index(right, ctx, j, window_start, window_stop)? {
-                        continue;
-                    }
-                    if witness_timestamp_span(&[i, j], ctx)? <= max_secs {
-                        return Ok(true);
-                    }
-                }
-            }
-            Ok(false)
-        }
-        PatternAst::Or { left, right, .. } => {
-            Ok(
-                any_witness_within(left, ctx, max_secs, window_start, window_stop)?
-                    || any_witness_within(right, ctx, max_secs, window_start, window_stop)?,
-            )
-        }
-        PatternAst::FollowedBy { .. } => {
-            for witness in collect_witnesses(ast, ctx, window_start, window_stop)? {
-                if witness_timestamp_span(&witness, ctx)? <= max_secs {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        PatternAst::Within { inner, .. } | PatternAst::Repeats { inner, .. } => {
-            any_witness_within(inner, ctx, max_secs, window_start, window_stop)
-        }
-        PatternAst::StartStop {
-            inner, start, stop, ..
-        } => any_witness_within(inner, ctx, max_secs, Some(start), Some(stop)),
+        Ok(false)
     }
-}
 
-/// Count disjoint witnesses up to `need`, stopping early once the threshold is met.
-fn witness_count_at_least(
-    ast: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    need: usize,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    if need == 0 {
-        return Ok(true);
-    }
-    match ast {
-        PatternAst::Observation(_) => {
-            let mut found = 0usize;
-            for i in 0..ctx.observations.len() {
-                if matches_at_index(ast, ctx, i, window_start, window_stop)? {
-                    found += 1;
-                    if found >= need {
+    /// Short-circuit witness search for WITHIN (existence + span check, no cartesian enumeration).
+    fn any_witness_within(&mut self, id: usize, max_secs: f64) -> Result<bool, PatternMatchError> {
+        match self.nodes[id].kind {
+            Kind::Observation(_) => {
+                for i in 0..self.len() {
+                    if !self.matches_at(id, i)? {
+                        continue;
+                    }
+                    if self.witness_timestamp_span(&[i])? <= max_secs {
                         return Ok(true);
                     }
                 }
+                Ok(false)
             }
-            Ok(false)
-        }
-        PatternAst::And { left, right, .. } => {
-            let mut found = 0usize;
-            for i in 0..ctx.observations.len() {
-                if !matches_at_index(left, ctx, i, window_start, window_stop)? {
-                    continue;
-                }
-                for j in 0..ctx.observations.len() {
-                    if i == j {
+            Kind::And(left, right) => {
+                for i in 0..self.len() {
+                    if !self.matches_at(left, i)? {
                         continue;
                     }
-                    if matches_at_index(right, ctx, j, window_start, window_stop)? {
+                    for j in 0..self.len() {
+                        if i == j {
+                            continue;
+                        }
+                        if !self.matches_at(right, j)? {
+                            continue;
+                        }
+                        if self.witness_timestamp_span(&[i, j])? <= max_secs {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            Kind::Or(left, right) => Ok(self.any_witness_within(left, max_secs)?
+                || self.any_witness_within(right, max_secs)?),
+            Kind::FollowedBy(left, right) => {
+                for witness in self.followed_by_witnesses(left, right)? {
+                    if self.witness_timestamp_span(&witness)? <= max_secs {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            Kind::Within(inner, _) | Kind::Repeats(inner, _) | Kind::StartStop(inner) => {
+                self.any_witness_within(inner, max_secs)
+            }
+        }
+    }
+
+    /// Count disjoint witnesses up to `need`, stopping early once the threshold is met.
+    fn witness_count_at_least(
+        &mut self,
+        id: usize,
+        need: usize,
+    ) -> Result<bool, PatternMatchError> {
+        if need == 0 {
+            return Ok(true);
+        }
+        match self.nodes[id].kind {
+            Kind::Observation(_) => {
+                let mut found = 0usize;
+                for i in 0..self.len() {
+                    if self.matches_at(id, i)? {
                         found += 1;
                         if found >= need {
                             return Ok(true);
                         }
                     }
                 }
+                Ok(false)
             }
-            Ok(false)
-        }
-        PatternAst::Or { left, right, .. } => {
-            Ok(
-                witness_count_at_least(left, ctx, need, window_start, window_stop)?
-                    || witness_count_at_least(right, ctx, need, window_start, window_stop)?,
-            )
-        }
-        PatternAst::Within { inner, .. } | PatternAst::Repeats { inner, .. } => {
-            witness_count_at_least(inner, ctx, need, window_start, window_stop)
-        }
-        PatternAst::StartStop {
-            inner, start, stop, ..
-        } => witness_count_at_least(inner, ctx, need, Some(start), Some(stop)),
-        PatternAst::FollowedBy { .. } => {
-            let witnesses = collect_witnesses(ast, ctx, window_start, window_stop)?;
-            Ok(witnesses.len() >= need)
-        }
-    }
-}
-
-fn collect_witnesses(
-    ast: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<Vec<Vec<usize>>, PatternMatchError> {
-    match ast {
-        PatternAst::Observation(_) => {
-            let mut out = Vec::new();
-            for i in 0..ctx.observations.len() {
-                if matches_at_index(ast, ctx, i, window_start, window_stop)? {
-                    out.push(vec![i]);
-                }
-            }
-            Ok(out)
-        }
-        PatternAst::And { left, right, .. } => {
-            let left_w = collect_witnesses(left, ctx, window_start, window_stop)?;
-            let right_w = collect_witnesses(right, ctx, window_start, window_stop)?;
-            Ok(merge_disjoint_witness_sets(&left_w, &right_w))
-        }
-        PatternAst::Or { left, right, .. } => {
-            let mut out = collect_witnesses(left, ctx, window_start, window_stop)?;
-            out.extend(collect_witnesses(right, ctx, window_start, window_stop)?);
-            Ok(out)
-        }
-        PatternAst::FollowedBy { left, right, .. } => {
-            let mut out = Vec::new();
-            if let PatternAst::Repeats { inner, count, .. } = right.as_ref() {
-                for i in 0..ctx.observations.len() {
-                    if !matches_at_index(left, ctx, i, window_start, window_stop)? {
+            Kind::And(left, right) => {
+                let mut found = 0usize;
+                for i in 0..self.len() {
+                    if !self.matches_at(left, i)? {
                         continue;
                     }
-                    let mut rhs = Vec::new();
-                    for j in 0..ctx.observations.len() {
+                    for j in 0..self.len() {
                         if i == j {
                             continue;
                         }
-                        let t_left = observation_time(&ctx.observations[i])?;
-                        let t_right = observation_time(&ctx.observations[j])?;
-                        if t_right < t_left {
-                            continue;
+                        if self.matches_at(right, j)? {
+                            found += 1;
+                            if found >= need {
+                                return Ok(true);
+                            }
                         }
-                        if matches_at_index(inner, ctx, j, window_start, window_stop)? {
-                            rhs.push(j);
-                        }
-                    }
-                    if rhs.len() >= *count as usize {
-                        let mut witness = vec![i];
-                        witness.extend(rhs.into_iter().take(*count as usize));
-                        out.push(witness);
                     }
                 }
-                return Ok(out);
+                Ok(false)
             }
-            for i in 0..ctx.observations.len() {
-                if !matches_at_index(left, ctx, i, window_start, window_stop)? {
+            Kind::Or(left, right) => Ok(self.witness_count_at_least(left, need)?
+                || self.witness_count_at_least(right, need)?),
+            Kind::Within(inner, _) | Kind::Repeats(inner, _) | Kind::StartStop(inner) => {
+                self.witness_count_at_least(inner, need)
+            }
+            Kind::FollowedBy(left, right) => {
+                Ok(self.followed_by_witnesses(left, right)?.len() >= need)
+            }
+        }
+    }
+
+    /// Observation index sets that satisfy `left FOLLOWEDBY right`.
+    fn followed_by_witnesses(
+        &mut self,
+        left: usize,
+        right: usize,
+    ) -> Result<Vec<Vec<usize>>, PatternMatchError> {
+        let mut out = Vec::new();
+        if let Kind::Repeats(inner, count) = self.nodes[right].kind {
+            for i in 0..self.len() {
+                if !self.matches_at(left, i)? {
                     continue;
                 }
-                for j in 0..ctx.observations.len() {
+                let mut rhs = Vec::new();
+                for j in 0..self.len() {
                     if i == j {
                         continue;
                     }
-                    if !matches_at_index(right, ctx, j, window_start, window_stop)? {
+                    if self.time(j)? < self.time(i)? {
                         continue;
                     }
-                    let t_left = observation_time(&ctx.observations[i])?;
-                    let t_right = observation_time(&ctx.observations[j])?;
-                    if t_left <= t_right {
-                        out.push(vec![i, j]);
+                    if self.matches_at(inner, j)? {
+                        rhs.push(j);
                     }
                 }
+                if rhs.len() >= count {
+                    let mut witness = vec![i];
+                    witness.extend(rhs.into_iter().take(count));
+                    out.push(witness);
+                }
             }
-            Ok(out)
+            return Ok(out);
         }
-        PatternAst::Within { inner, .. } | PatternAst::Repeats { inner, .. } => {
-            collect_witnesses(inner, ctx, window_start, window_stop)
-        }
-        PatternAst::StartStop {
-            inner, start, stop, ..
-        } => collect_witnesses(inner, ctx, Some(start), Some(stop)),
-    }
-}
-
-fn merge_disjoint_witness_sets(left: &[Vec<usize>], right: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    let mut out = Vec::new();
-    for l in left {
-        for r in right {
-            if l.iter().any(|idx| r.contains(idx)) {
+        for i in 0..self.len() {
+            if !self.matches_at(left, i)? {
                 continue;
             }
-            let mut merged = l.clone();
-            merged.extend(r.iter().copied());
-            out.push(merged);
+            for j in 0..self.len() {
+                if i == j {
+                    continue;
+                }
+                if !self.matches_at(right, j)? {
+                    continue;
+                }
+                if self.time(i)? <= self.time(j)? {
+                    out.push(vec![i, j]);
+                }
+            }
         }
+        Ok(out)
     }
-    out
-}
 
-fn witness_timestamp_span(
-    indices: &[usize],
-    ctx: &ObservationContext<'_>,
-) -> Result<f64, PatternMatchError> {
-    if indices.is_empty() {
-        return Ok(f64::INFINITY);
-    }
-    let mut min_ts = observation_time(&ctx.observations[indices[0]])?;
-    let mut max_ts = min_ts;
-    for &idx in indices.iter().skip(1) {
-        let ts = observation_time(&ctx.observations[idx])?;
-        if ts < min_ts {
-            min_ts = ts;
+    fn witness_timestamp_span(&self, indices: &[usize]) -> Result<f64, PatternMatchError> {
+        let Some((&first, rest)) = indices.split_first() else {
+            return Ok(f64::INFINITY);
+        };
+        let mut min_ts = self.time(first)?;
+        let mut max_ts = min_ts;
+        for &idx in rest {
+            let ts = self.time(idx)?;
+            if ts < min_ts {
+                min_ts = ts;
+            }
+            if ts > max_ts {
+                max_ts = ts;
+            }
         }
-        if ts > max_ts {
-            max_ts = ts;
-        }
+        Ok(duration_between(min_ts, max_ts))
     }
-    Ok(duration_between(min_ts, max_ts))
+
+    /// Whether node `id` matches at observation `idx`, computed once per evaluation.
+    fn matches_at(&mut self, id: usize, idx: usize) -> Result<bool, PatternMatchError> {
+        match self.cells[id][idx] {
+            YES => return Ok(true),
+            NO => return Ok(false),
+            _ => {}
+        }
+        self.leaf.steps.spend(1)?;
+        let (start, stop) = self.window(id);
+        let matched = if !timestamp_in_window(self.ctx.observations[idx].at.as_ref(), start, stop) {
+            false
+        } else {
+            match self.nodes[id].kind {
+                Kind::Observation(obs) => self.leaf_matches(id, obs, idx)?,
+                Kind::And(left, right) => self.witness_includes_index_and(left, right, idx)?,
+                Kind::FollowedBy(left, right) => self.witness_members(id, left, right)?[idx],
+                Kind::Or(left, right) => {
+                    self.matches_at(left, idx)? || self.matches_at(right, idx)?
+                }
+                Kind::Within(inner, _) | Kind::Repeats(inner, _) | Kind::StartStop(inner) => {
+                    self.matches_at(inner, idx)?
+                }
+            }
+        };
+        self.cells[id][idx] = if matched { YES } else { NO };
+        Ok(matched)
+    }
+
+    fn witness_includes_index_and(
+        &mut self,
+        left: usize,
+        right: usize,
+        idx: usize,
+    ) -> Result<bool, PatternMatchError> {
+        if self.matches_at(left, idx)? {
+            for j in 0..self.len() {
+                if j != idx && self.matches_at(right, j)? {
+                    return Ok(true);
+                }
+            }
+        }
+        if self.matches_at(right, idx)? {
+            for j in 0..self.len() {
+                if j != idx && self.matches_at(left, j)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn witness_members(
+        &mut self,
+        id: usize,
+        left: usize,
+        right: usize,
+    ) -> Result<&[bool], PatternMatchError> {
+        if self.witness_members[id].is_none() {
+            let mut members = vec![false; self.len()];
+            for witness in self.followed_by_witnesses(left, right)? {
+                for idx in witness {
+                    members[idx] = true;
+                }
+            }
+            self.witness_members[id] = Some(members);
+        }
+        Ok(self.witness_members[id].as_deref().unwrap_or_default())
+    }
+
+    fn leaf_matches(
+        &mut self,
+        id: usize,
+        obs: &ObservationExpr,
+        idx: usize,
+    ) -> Result<bool, PatternMatchError> {
+        match self.leaves[id][idx] {
+            YES => return Ok(true),
+            NO => return Ok(false),
+            _ => {}
+        }
+        let sco = self.ctx.observations[idx].sco;
+        let matched = self.leaf.observation_matches(obs, sco)?;
+        self.leaves[id][idx] = if matched { YES } else { NO };
+        Ok(matched)
+    }
 }
 
 fn timestamp_in_window(
@@ -499,65 +609,6 @@ fn duration_between(start: &StixTimestamp, end: &StixTimestamp) -> f64 {
     (end.as_datetime().unix_timestamp() - start.as_datetime().unix_timestamp()) as f64
 }
 
-fn matches_at_index(
-    ast: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    idx: usize,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    let entry = &ctx.observations[idx];
-    if !timestamp_in_window(entry.at.as_ref(), window_start, window_stop) {
-        return Ok(false);
-    }
-    match ast {
-        PatternAst::Observation(obs) => Ok(observation_matches(obs, entry.sco, ctx.bundle)?),
-        PatternAst::And { left, right, .. } => {
-            witness_includes_index_and(left, right, ctx, idx, window_start, window_stop)
-        }
-        PatternAst::FollowedBy { .. } => {
-            Ok(collect_witnesses(ast, ctx, window_start, window_stop)?
-                .iter()
-                .any(|w| w.contains(&idx)))
-        }
-        PatternAst::Or { left, right, .. } => {
-            Ok(matches_at_index(left, ctx, idx, window_start, window_stop)?
-                || matches_at_index(right, ctx, idx, window_start, window_stop)?)
-        }
-        PatternAst::Within { inner, .. } | PatternAst::Repeats { inner, .. } => {
-            matches_at_index(inner, ctx, idx, window_start, window_stop)
-        }
-        PatternAst::StartStop {
-            inner, start, stop, ..
-        } => matches_at_index(inner, ctx, idx, Some(start), Some(stop)),
-    }
-}
-
-fn witness_includes_index_and(
-    left: &PatternAst,
-    right: &PatternAst,
-    ctx: &ObservationContext<'_>,
-    idx: usize,
-    window_start: Option<&StixTimestamp>,
-    window_stop: Option<&StixTimestamp>,
-) -> Result<bool, PatternMatchError> {
-    if matches_at_index(left, ctx, idx, window_start, window_stop)? {
-        for j in 0..ctx.observations.len() {
-            if j != idx && matches_at_index(right, ctx, j, window_start, window_stop)? {
-                return Ok(true);
-            }
-        }
-    }
-    if matches_at_index(right, ctx, idx, window_start, window_stop)? {
-        for j in 0..ctx.observations.len() {
-            if j != idx && matches_at_index(left, ctx, j, window_start, window_stop)? {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
 fn duration_seconds(duration: &Duration) -> f64 {
     let factor = match duration.unit {
         TimeUnit::Seconds => 1.0,
@@ -570,15 +621,129 @@ fn duration_seconds(duration: &Duration) -> f64 {
     duration.value * factor
 }
 
-fn observation_matches(
-    obs: &ObservationExpr,
-    sco: &ScoObject,
-    bundle: Option<&Bundle>,
-) -> Result<bool, PatternMatchError> {
-    if !sco_type_matches(&obs.object_type, sco) {
-        return Ok(false);
+/// Matches one bracketed observation expression against one SCO.
+struct Leaf<'a, 'p> {
+    bundle: Option<&'a Bundle>,
+    regexes: &'p RegexCache,
+    steps: Steps,
+}
+
+impl Leaf<'_, '_> {
+    fn observation_matches(
+        &mut self,
+        obs: &ObservationExpr,
+        sco: &ScoObject,
+    ) -> Result<bool, PatternMatchError> {
+        self.steps.spend(1)?;
+        if !sco_type_matches(&obs.object_type, sco) {
+            return Ok(false);
+        }
+        self.eval_comparison_tree(&obs.root, sco)
     }
-    eval_comparison_tree(&obs.root, sco, bundle)
+
+    fn eval_comparison_tree(
+        &mut self,
+        tree: &ComparisonTree,
+        sco: &ScoObject,
+    ) -> Result<bool, PatternMatchError> {
+        let result = match tree {
+            ComparisonTree::Cmp(cmp) => self.eval_comparison(cmp, sco)?,
+            ComparisonTree::And { left, right, .. } => {
+                self.eval_comparison_tree(left, sco)? && self.eval_comparison_tree(right, sco)?
+            }
+            ComparisonTree::Or { left, right, .. } => {
+                self.eval_comparison_tree(left, sco)? || self.eval_comparison_tree(right, sco)?
+            }
+            ComparisonTree::Not { inner, .. } => !self.eval_comparison_tree(inner, sco)?,
+        };
+        Ok(result)
+    }
+
+    fn eval_comparison(
+        &mut self,
+        cmp: &Comparison,
+        sco: &ScoObject,
+    ) -> Result<bool, PatternMatchError> {
+        let values = path::resolve_path_values(sco, &cmp.path, self.bundle, &mut self.steps)?;
+        if cmp.op == ComparisonOp::Exists {
+            let result = !values.is_empty();
+            return Ok(if cmp.negated { !result } else { result });
+        }
+        let Some(constant) = cmp.value.as_ref() else {
+            return Ok(false);
+        };
+        let mut matched = false;
+        for value in &values {
+            if self.compare_values(cmp.op, value, constant)? {
+                matched = true;
+                break;
+            }
+        }
+        Ok(if cmp.negated { !matched } else { matched })
+    }
+
+    fn compare_values(
+        &mut self,
+        op: ComparisonOp,
+        left: &FieldValue,
+        right: &PatternConstant,
+    ) -> Result<bool, PatternMatchError> {
+        Ok(match op {
+            ComparisonOp::Eq => equals_value(left, right),
+            ComparisonOp::NotEq => !equals_value(left, right),
+            ComparisonOp::Gt => compare_order(left, right).is_gt(),
+            ComparisonOp::Lt => compare_order(left, right).is_lt(),
+            ComparisonOp::Gte => {
+                let ord = compare_order(left, right);
+                ord.is_gt() || ord.is_eq()
+            }
+            ComparisonOp::Lte => {
+                let ord = compare_order(left, right);
+                ord.is_lt() || ord.is_eq()
+            }
+            ComparisonOp::In => match right {
+                PatternConstant::List(items) => {
+                    self.steps.spend(items.len() as u64)?;
+                    items.iter().any(|item| equals_value(left, item))
+                }
+                _ => false,
+            },
+            ComparisonOp::Like => match (field_value_str(left), right) {
+                (Some(s), PatternConstant::String(pat)) => {
+                    self.steps.spend_scan(s.len() + pat.len())?;
+                    let s = normalize::nfc(s);
+                    let pat = normalize::nfc(pat.as_str());
+                    like_bytes(s.as_bytes(), pat.as_bytes(), &mut self.steps)?
+                }
+                _ => false,
+            },
+            ComparisonOp::Matches => match (left, right) {
+                (FieldValue::Str(s), PatternConstant::String(re)) => {
+                    let cached = self.regexes.get(re, &mut self.steps)?;
+                    self.steps
+                        .spend_scan(s.len().saturating_mul(cached.weight))?;
+                    cached.regex.is_match(&normalize::nfc(s))
+                }
+                (FieldValue::Bytes(b), PatternConstant::String(re)) => {
+                    let cached = self.regexes.get(re, &mut self.steps)?;
+                    self.steps
+                        .spend_scan(b.len().saturating_mul(cached.weight))?;
+                    let haystack: String = b.iter().map(|&b| b as char).collect();
+                    cached.regex.is_match(&haystack)
+                }
+                _ => false,
+            },
+            ComparisonOp::IsSubset => match (field_value_str(left), right) {
+                (Some(s), PatternConstant::String(net)) => path::cidr_subset(s, net.as_str()),
+                _ => false,
+            },
+            ComparisonOp::IsSuperset => match (field_value_str(left), right) {
+                (Some(s), PatternConstant::String(net)) => path::cidr_superset(s, net.as_str()),
+                _ => false,
+            },
+            ComparisonOp::Exists => false,
+        })
+    }
 }
 
 fn sco_type_matches(expected: &PatternScoType, sco: &ScoObject) -> bool {
@@ -588,134 +753,27 @@ fn sco_type_matches(expected: &PatternScoType, sco: &ScoObject) -> bool {
     }
 }
 
-fn eval_comparison_tree(
-    tree: &ComparisonTree,
-    sco: &ScoObject,
-    bundle: Option<&Bundle>,
-) -> Result<bool, PatternMatchError> {
-    let result = match tree {
-        ComparisonTree::Cmp(cmp) => eval_comparison(cmp, sco, bundle)?,
-        ComparisonTree::And { left, right, .. } => {
-            eval_comparison_tree(left, sco, bundle)? && eval_comparison_tree(right, sco, bundle)?
-        }
-        ComparisonTree::Or { left, right, .. } => {
-            eval_comparison_tree(left, sco, bundle)? || eval_comparison_tree(right, sco, bundle)?
-        }
-        ComparisonTree::Not { inner, .. } => !eval_comparison_tree(inner, sco, bundle)?,
-    };
-    Ok(result)
-}
-
-fn eval_comparison(
-    cmp: &Comparison,
-    sco: &ScoObject,
-    bundle: Option<&Bundle>,
-) -> Result<bool, PatternMatchError> {
-    if cmp.op == ComparisonOp::Exists {
-        let values = path::resolve_path_values(sco, &cmp.path, bundle)?;
-        let result = !values.is_empty();
-        return Ok(if cmp.negated { !result } else { result });
-    }
-    let values = path::resolve_path_values(sco, &cmp.path, bundle)?;
-    let Some(constant) = cmp.value.as_ref() else {
-        return Ok(false);
-    };
-    let mut matched = false;
-    for value in values {
-        if compare_values(cmp.op, value, constant)? {
-            matched = true;
-            break;
-        }
-    }
-    Ok(if cmp.negated { !matched } else { matched })
-}
-
-fn compare_values(
-    op: ComparisonOp,
-    left: FieldValue,
-    right: &PatternConstant,
-) -> Result<bool, PatternMatchError> {
-    Ok(match op {
-        ComparisonOp::Eq => equals_value(left, right),
-        ComparisonOp::NotEq => !equals_value(left, right),
-        ComparisonOp::Gt => compare_order(left, right).is_gt(),
-        ComparisonOp::Lt => compare_order(left, right).is_lt(),
-        ComparisonOp::Gte => {
-            let ord = compare_order(left, right);
-            ord.is_gt() || ord.is_eq()
-        }
-        ComparisonOp::Lte => {
-            let ord = compare_order(left, right);
-            ord.is_lt() || ord.is_eq()
-        }
-        ComparisonOp::In => match right {
-            PatternConstant::List(items) => {
-                items.iter().any(|item| equals_value(left.clone(), item))
-            }
-            _ => false,
-        },
-        ComparisonOp::Like => match (field_value_str(&left), right) {
-            (Some(s), PatternConstant::String(pat)) => {
-                let s = normalize::nfc(s);
-                let pat = normalize::nfc(pat.as_str());
-                like_match(s.as_ref(), pat.as_ref())
-            }
-            _ => false,
-        },
-        ComparisonOp::Matches => match (left, right) {
-            (FieldValue::Str(s), PatternConstant::String(re)) => {
-                let s = normalize::nfc(&s);
-                let re = normalize::nfc(re);
-                regex_match(s.as_ref(), re.as_ref())?
-            }
-            (FieldValue::Bytes(b), PatternConstant::String(re)) => {
-                let re = normalize::nfc(re);
-                bytes_regex_match(&b, re.as_ref())?
-            }
-            _ => false,
-        },
-        ComparisonOp::IsSubset => match (field_value_str(&left), right) {
-            (Some(s), PatternConstant::String(net)) => path::cidr_subset(s, net.as_str()),
-            _ => false,
-        },
-        ComparisonOp::IsSuperset => match (field_value_str(&left), right) {
-            (Some(s), PatternConstant::String(net)) => path::cidr_superset(s, net.as_str()),
-            _ => false,
-        },
-        ComparisonOp::Exists => false,
-    })
-}
-
-fn regex_match(value: &str, pattern: &str) -> Result<bool, PatternMatchError> {
-    Ok(security::compile_regex(pattern)?.is_match(value))
-}
-
-fn bytes_regex_match(bytes: &[u8], pattern: &str) -> Result<bool, PatternMatchError> {
-    let haystack: String = bytes.iter().map(|&b| b as char).collect();
-    regex_match(&haystack, pattern)
-}
-
-fn equals_value(left: FieldValue, right: &PatternConstant) -> bool {
-    if let Some(s) = field_value_str(&left) {
+fn equals_value(left: &FieldValue, right: &PatternConstant) -> bool {
+    if let Some(s) = field_value_str(left) {
         return equals_str(s, right);
     }
     match (left, right) {
-        (FieldValue::Int(a), PatternConstant::String(b)) => b.parse::<i64>().is_ok_and(|n| n == a),
+        (FieldValue::Int(a), PatternConstant::String(b)) => b.parse::<i64>().is_ok_and(|n| n == *a),
         (FieldValue::Float(a), PatternConstant::String(b)) => {
             b.parse::<f64>().is_ok_and(|n| (a - n).abs() < f64::EPSILON)
         }
         (FieldValue::Bool(a), PatternConstant::String(b)) => match b.as_str() {
-            "true" => a,
+            "true" => *a,
             "false" => !a,
             _ => false,
         },
-        (FieldValue::Bytes(b), PatternConstant::Hex(h)) => b.as_slice() == h,
-        (FieldValue::Bytes(b), PatternConstant::Binary(bin)) => b.as_slice() == bin.as_slice(),
-        (FieldValue::Int(a), PatternConstant::Int(b)) => a == *b,
-        (FieldValue::Float(a), PatternConstant::Float(b)) => (a - *b).abs() < f64::EPSILON,
-        (FieldValue::Bool(a), PatternConstant::Bool(b)) => a == *b,
-        (FieldValue::Timestamp(a), PatternConstant::Timestamp(b)) => a == *b,
-        (FieldValue::Int(a), PatternConstant::Float(b)) => ((a as f64) - *b).abs() < f64::EPSILON,
+        (FieldValue::Bytes(b), PatternConstant::Hex(h)) => b == h,
+        (FieldValue::Bytes(b), PatternConstant::Binary(bin)) => b == bin,
+        (FieldValue::Int(a), PatternConstant::Int(b)) => a == b,
+        (FieldValue::Float(a), PatternConstant::Float(b)) => (a - b).abs() < f64::EPSILON,
+        (FieldValue::Bool(a), PatternConstant::Bool(b)) => a == b,
+        (FieldValue::Timestamp(a), PatternConstant::Timestamp(b)) => a == b,
+        (FieldValue::Int(a), PatternConstant::Float(b)) => ((*a as f64) - b).abs() < f64::EPSILON,
         (FieldValue::Float(a), PatternConstant::Int(b)) => (a - (*b as f64)).abs() < f64::EPSILON,
         _ => false,
     }
@@ -738,7 +796,7 @@ fn equals_str(s: &str, right: &PatternConstant) -> bool {
     }
 }
 
-fn compare_order(left: FieldValue, right: &PatternConstant) -> std::cmp::Ordering {
+fn compare_order(left: &FieldValue, right: &PatternConstant) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     match (left, right) {
         (FieldValue::Int(a), PatternConstant::Int(b)) => a.cmp(b),
@@ -746,7 +804,7 @@ fn compare_order(left: FieldValue, right: &PatternConstant) -> std::cmp::Orderin
             a.partial_cmp(b).unwrap_or(Ordering::Equal)
         }
         (FieldValue::Int(a), PatternConstant::Float(b)) => {
-            (a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
+            (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
         }
         (FieldValue::Float(a), PatternConstant::Int(b)) => {
             a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
@@ -794,44 +852,61 @@ fn base64_decode(value: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(value).ok()
 }
 
-fn like_match(value: &str, pattern: &str) -> bool {
-    like_bytes(value.as_bytes(), pattern.as_bytes())
+/// `%`/`_` wildcard match over bytes. Every `%`-separated segment has a fixed
+/// length, so placing each middle segment at its leftmost match is optimal and
+/// the match is one forward pass per segment. Bytes compared are charged to
+/// `steps` as the scan goes.
+fn like_bytes(value: &[u8], pattern: &[u8], steps: &mut Steps) -> Result<bool, PatternMatchError> {
+    let mut meter = ScanMeter::new(steps);
+    let segments: Vec<&[u8]> = pattern.split(|&b| b == b'%').collect();
+    let (first, rest) = segments.split_first().unwrap_or((&pattern, &[]));
+    let Some((last, middle)) = rest.split_last() else {
+        return Ok(value.len() == first.len() && segment_at(value, 0, first, &mut meter)?);
+    };
+    if value.len() < first.len() + last.len() {
+        return Ok(false);
+    }
+    let end = value.len() - last.len();
+    if !segment_at(value, 0, first, &mut meter)? || !segment_at(value, end, last, &mut meter)? {
+        return Ok(false);
+    }
+    let mut pos = first.len();
+    for segment in middle.iter().filter(|segment| !segment.is_empty()) {
+        let mut found = None;
+        let mut at = pos;
+        while at + segment.len() <= end {
+            if segment_at(value, at, segment, &mut meter)? {
+                found = Some(at);
+                break;
+            }
+            at += 1;
+        }
+        let Some(at) = found else {
+            return Ok(false);
+        };
+        pos = at + segment.len();
+    }
+    Ok(true)
 }
 
-/// Iterative `%`/`_` wildcard match (O(n·m), constant space). Recursive backtracking on
-/// `%` is exponential and is a DoS vector for untrusted Indicator patterns.
-fn like_bytes(value: &[u8], pattern: &[u8]) -> bool {
-    let mut value_idx = 0usize;
-    let mut pattern_idx = 0usize;
-    let mut star_pattern: Option<usize> = None;
-    let mut star_value: usize = 0;
-
-    while value_idx < value.len() {
-        if pattern_idx < pattern.len()
-            && (pattern[pattern_idx] == b'_' || pattern[pattern_idx] == value[value_idx])
-        {
-            value_idx += 1;
-            pattern_idx += 1;
-            continue;
+/// Whether `segment` (with `_` matching any byte) matches `value` at `at`.
+fn segment_at(
+    value: &[u8],
+    at: usize,
+    segment: &[u8],
+    meter: &mut ScanMeter<'_>,
+) -> Result<bool, PatternMatchError> {
+    let mut compared = 0;
+    let mut matched = true;
+    for (&v, &p) in value[at..at + segment.len()].iter().zip(segment) {
+        compared += 1;
+        if p != b'_' && p != v {
+            matched = false;
+            break;
         }
-        if pattern_idx < pattern.len() && pattern[pattern_idx] == b'%' {
-            star_pattern = Some(pattern_idx);
-            star_value = value_idx;
-            pattern_idx += 1;
-            continue;
-        }
-        let Some(star) = star_pattern else {
-            return false;
-        };
-        pattern_idx = star + 1;
-        star_value += 1;
-        value_idx = star_value;
     }
-
-    while pattern_idx < pattern.len() && pattern[pattern_idx] == b'%' {
-        pattern_idx += 1;
-    }
-    pattern_idx == pattern.len()
+    meter.add(compared + 1)?;
+    Ok(matched)
 }
 
 #[cfg(all(test, feature = "serde"))]
@@ -1239,6 +1314,198 @@ mod level3 {
         assert_eq!(
             pattern.evaluate(&ctx).unwrap_err(),
             PatternMatchError::MissingTimestamp
+        );
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod work {
+    use super::*;
+    use crate::pattern::Pattern;
+
+    fn ipv4(n: usize) -> ScoObject {
+        ScoObject::parse_str(&format!(
+            r#"{{"type":"ipv4-addr","spec_version":"2.1","id":"ipv4-addr--00000000-0000-4000-8000-{n:012x}","value":"198.51.100.3"}}"#
+        ))
+        .expect("ipv4")
+    }
+
+    /// Left-deep `AND` of `terms` observations whose first term never matches.
+    fn and_chain(terms: usize) -> Pattern {
+        let mut source = String::from("[ipv4-addr:value = '203.0.113.1']");
+        for _ in 1..terms {
+            source.push_str(" AND [ipv4-addr:value = '198.51.100.3']");
+        }
+        Pattern::parse(&source).expect("and chain")
+    }
+
+    /// Evaluate and return the result, the steps spent, and how many
+    /// (observation expression, observation) pairs were matched.
+    fn evaluate_counting(pattern: &Pattern, scos: &[ScoObject]) -> (bool, u64, usize) {
+        let at = StixTimestamp::parse("2024-01-01T00:00:00.000Z").expect("ts");
+        let observations: Vec<TimestampedObservation<'_>> = scos
+            .iter()
+            .map(|sco| TimestampedObservation {
+                sco,
+                at: Some(at.clone()),
+            })
+            .collect();
+        let ctx = ObservationContext::from_scos(&observations);
+        let regexes = RegexCache::default();
+        let mut evaluator = Evaluator::new(pattern.ast(), &regexes, &ctx, Steps::new());
+        let matched = evaluator.eval_node(0).expect("eval");
+        let leaves = evaluator
+            .leaves
+            .iter()
+            .flatten()
+            .filter(|cell| **cell != UNKNOWN)
+            .count();
+        (matched, evaluator.leaf.steps.used(), leaves)
+    }
+
+    #[test]
+    fn left_deep_and_chain_matches_each_observation_once_per_term() {
+        let terms = 256;
+        let pattern = and_chain(terms);
+        for count in [2usize, 256] {
+            let scos: Vec<ScoObject> = (0..count).map(ipv4).collect();
+            let (matched, steps, leaves) = evaluate_counting(&pattern, &scos);
+            assert!(!matched, "{count} observations");
+            assert!(leaves <= terms * count, "{leaves} leaf matches");
+            let nodes = (2 * terms - 1) as u64;
+            assert!(
+                steps <= (nodes + terms as u64) * count as u64 * 2,
+                "{steps} steps for {count} observations"
+            );
+        }
+    }
+
+    #[test]
+    fn matches_regex_is_compiled_once_per_pattern() {
+        let pattern = Pattern::parse(
+            "[ipv4-addr:value MATCHES '^198\\\\.51\\\\.'] AND [ipv4-addr:value MATCHES '^198\\\\.51\\\\.']",
+        )
+        .expect("pattern");
+        let scos: Vec<ScoObject> = (0..32).map(ipv4).collect();
+        let at = StixTimestamp::parse("2024-01-01T00:00:00.000Z").expect("ts");
+        let observations: Vec<TimestampedObservation<'_>> = scos
+            .iter()
+            .map(|sco| TimestampedObservation {
+                sco,
+                at: Some(at.clone()),
+            })
+            .collect();
+        let ctx = ObservationContext::from_scos(&observations);
+        for _ in 0..3 {
+            assert!(pattern.evaluate(&ctx).expect("eval"));
+            assert!(pattern.matches_single(&scos[0]).is_err());
+        }
+        assert_eq!(pattern.regexes.compiles(), 1);
+    }
+
+    #[test]
+    fn evaluation_stops_at_the_step_limit() {
+        let pattern = and_chain(4);
+        let scos: Vec<ScoObject> = (0..16).map(ipv4).collect();
+        let at = StixTimestamp::parse("2024-01-01T00:00:00.000Z").expect("ts");
+        let observations: Vec<TimestampedObservation<'_>> = scos
+            .iter()
+            .map(|sco| TimestampedObservation {
+                sco,
+                at: Some(at.clone()),
+            })
+            .collect();
+        let ctx = ObservationContext::from_scos(&observations);
+        let regexes = RegexCache::default();
+        let mut evaluator = Evaluator::new(pattern.ast(), &regexes, &ctx, Steps::with_limit(20));
+        assert_eq!(
+            evaluator.eval_node(0),
+            Err(PatternMatchError::StepLimitExceeded { max: 20 })
+        );
+    }
+
+    /// Single-backtrack `%`/`_` matcher used as the reference.
+    fn like_reference(value: &[u8], pattern: &[u8]) -> bool {
+        let (mut v, mut p) = (0usize, 0usize);
+        let mut star: Option<usize> = None;
+        let mut star_value = 0usize;
+        while v < value.len() {
+            if p < pattern.len() && (pattern[p] == b'_' || pattern[p] == value[v]) {
+                v += 1;
+                p += 1;
+                continue;
+            }
+            if p < pattern.len() && pattern[p] == b'%' {
+                star = Some(p);
+                star_value = v;
+                p += 1;
+                continue;
+            }
+            let Some(s) = star else {
+                return false;
+            };
+            p = s + 1;
+            star_value += 1;
+            v = star_value;
+        }
+        while p < pattern.len() && pattern[p] == b'%' {
+            p += 1;
+        }
+        p == pattern.len()
+    }
+
+    #[test]
+    fn like_matches_the_reference_matcher() {
+        let alphabet = *b"ab%_";
+        let mut patterns: Vec<Vec<u8>> = vec![Vec::new()];
+        let mut frontier = patterns.clone();
+        for _ in 0..5 {
+            frontier = frontier
+                .iter()
+                .flat_map(|pattern| {
+                    alphabet.iter().map(move |&c| {
+                        let mut next = pattern.clone();
+                        next.push(c);
+                        next
+                    })
+                })
+                .collect();
+            patterns.extend(frontier.iter().cloned());
+        }
+        let mut values = vec![Vec::new()];
+        for len in 1..=6 {
+            for bits in 0..(1u32 << len) {
+                values.push(
+                    (0..len)
+                        .map(|i| if bits >> i & 1 == 1 { b'a' } else { b'b' })
+                        .collect(),
+                );
+            }
+        }
+        for pattern in &patterns {
+            for value in &values {
+                let mut steps = Steps::new();
+                assert_eq!(
+                    like_bytes(value, pattern, &mut steps).expect("like"),
+                    like_reference(value, pattern),
+                    "value {:?} pattern {:?}",
+                    String::from_utf8_lossy(value),
+                    String::from_utf8_lossy(pattern),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn like_scan_is_charged_and_stops_at_the_limit() {
+        let value = vec![b'a'; 4096];
+        let mut pattern = b"%".to_vec();
+        pattern.extend(std::iter::repeat_n(b'a', 1024));
+        pattern.extend(b"b%");
+        let mut steps = Steps::with_limit(1_000);
+        assert_eq!(
+            like_bytes(&value, &pattern, &mut steps),
+            Err(PatternMatchError::StepLimitExceeded { max: 1_000 })
         );
     }
 }

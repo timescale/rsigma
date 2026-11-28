@@ -1949,8 +1949,16 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             // detection enrichment in production.
             if let Some(path) = reload_enrichers_path.as_deref() {
                 #[cfg(feature = "stix-enrich")]
-                if let Some(store) = reload_stix_fs_store.as_ref() {
-                    match store.reload_from_disk() {
+                if let Some(store) = reload_stix_fs_store.clone() {
+                    let reloaded =
+                        match tokio::task::spawn_blocking(move || store.reload_from_disk()).await {
+                            Ok(reloaded) => reloaded,
+                            Err(err) if err.is_panic() => {
+                                std::panic::resume_unwind(err.into_panic())
+                            }
+                            Err(_) => continue,
+                        };
+                    match reloaded {
                         Ok(report) => warn_skipped_stix_files(&report),
                         Err(e) => {
                             tracing::error!(

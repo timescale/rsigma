@@ -253,10 +253,32 @@ Query modes (at least one required):
 | Field | Behavior |
 |-------|----------|
 | `stix_id` | Template-expanded STIX id → direct store `get`. |
-| `text_search` | Template-expanded substring → [`StixQuery::text_search`](../library/rstix.md#rstix-graph-marking-store). |
+| `text_search` | Template-expanded term → [`StixQuery::text_search`](../library/rstix.md#rstix-graph-marking-store), compared as `text_match` says. |
 | `attack_technique: true` | Uses the first `attack.t*` technique tag on the firing rule (for example `attack.t1059.001` → search `1059.001`). |
 
 Optional `type_filter` restricts to known STIX 2.1 type names (`indicator`, `attack-pattern`, …). Custom `x_*` MITRE types are matched via `text_search` without a filter. `max_results` defaults to `1`. On a miss (no objects, or an extract that returns `null`), `default` is injected when configured; otherwise `on_miss` applies, or `on_error` when `on_miss` is absent (same contract as `lookup`). {{ added "0.28.0" }}
+
+A `text_search` term that renders shorter than three characters, not counting leading and trailing whitespace, fails the lookup as an error (and `on_error` applies) instead of matching most of the store. {{ added "unreleased" }}
+
+`text_match` sets how the `text_search` or `attack_technique` term is compared with the store's indexed text (each object's type, id, names, labels, descriptions, patterns, SCO values, and external references, lowercased). It applies only with `text_search` or `attack_technique`. {{ added "unreleased" }}
+
+| `text_match` | Matches when the term |
+|--------------|-----------------------|
+| `substring` (default) | appears anywhere, so `10.0.0.1` also matches `10.0.0.10`. |
+| `token` | appears with no letter, digit, `_`, `-`, or non-ASCII character directly before or after it, so `10.0.0.1` matches `[ipv4-addr:value = '10.0.0.1']` but not `10.0.0.10`, and `evil.example` does not match `notevil.example`. Use it for terms taken from events. |
+| `exact` | equals one whole indexed value, such as an indicator name or an SCO `value`. |
+
+```yaml
+- id: ip_intel
+  kind: detection
+  type: stix
+  inject_field: stix_indicators
+  text_search: "${detection.fields.DestinationIp}"
+  text_match: token
+  type_filter: [indicator]
+```
+
+Store queries run on the blocking thread pool under the enricher `timeout`, so a slow query times out without stalling the daemon, and only the returned page of objects is copied out of the store. {{ added "unreleased" }}
 
 Operational loop:
 

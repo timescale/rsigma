@@ -129,6 +129,8 @@ jobs:
             max_len: 65536
           - target: fuzz_rstix_validate_json
             max_len: 65536
+          - target: fuzz_rstix_store_query
+            max_len: 1024
           - target: fuzz_stix_pattern
             max_len: 4096
           - target: fuzz_taxii_envelope

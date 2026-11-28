@@ -132,7 +132,7 @@ pub use marking::{
 #[cfg(feature = "store")]
 pub use store::{
     FingerprintConflict, ImportReport, MemoryStore, QueryCursor, QueryResult, StixQuery, StixStore,
-    StoreError, StoredSco,
+    StoreError, StoredSco, TextMatch,
 };
 #[cfg(feature = "store-fs")]
 pub use store::{FsStore, LoadReport, SkippedFile};

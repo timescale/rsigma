@@ -1,6 +1,6 @@
 //! Object-path value resolution for pattern evaluation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::net::IpAddr;
 
 use crate::core::{QueryValue, QueryableStixObject, StixId, StixTimestamp};
@@ -9,6 +9,7 @@ use crate::model::sco::extensions::WindowsPeBinaryExt;
 use crate::model::sco::{EmailMessage, ScoObject, WindowsRegistryKey, X509V3Extensions};
 use crate::pattern::ast::{ObjectPath, PathStep};
 use crate::pattern::error::PatternMatchError;
+use crate::pattern::security::{MAX_PATH_TARGETS, Steps};
 
 /// Resolved field value for comparison (owned for evaluator consumption).
 #[derive(Clone, Debug, PartialEq)]
@@ -44,379 +45,423 @@ enum WalkTarget<'a> {
     X509Ext(&'a X509V3Extensions),
 }
 
+/// Targets reached by one dereference step, each object kept once.
+struct Fanout<'a> {
+    targets: Vec<WalkTarget<'a>>,
+    ids: HashSet<&'a str>,
+    objects: HashSet<*const ScoObject>,
+}
+
+impl<'a> Fanout<'a> {
+    fn new() -> Self {
+        Self {
+            targets: Vec::new(),
+            ids: HashSet::new(),
+            objects: HashSet::new(),
+        }
+    }
+
+    fn push_ref(&mut self, id: &'a StixId, path: &str) -> Result<(), PatternMatchError> {
+        if self.ids.insert(id.as_str()) {
+            self.targets.push(WalkTarget::PendingRef(id));
+            self.check(path)?;
+        }
+        Ok(())
+    }
+
+    fn push_sco(&mut self, sco: &'a ScoObject, path: &str) -> Result<(), PatternMatchError> {
+        if self.objects.insert(std::ptr::from_ref(sco)) {
+            self.targets.push(WalkTarget::Sco(sco));
+            self.check(path)?;
+        }
+        Ok(())
+    }
+
+    fn check(&self, path: &str) -> Result<(), PatternMatchError> {
+        if self.targets.len() > MAX_PATH_TARGETS {
+            return Err(PatternMatchError::PathTooWide {
+                path: path.to_owned(),
+                max: MAX_PATH_TARGETS,
+            });
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn resolve_path_values(
     sco: &ScoObject,
     path: &ObjectPath,
     bundle: Option<&Bundle>,
+    budget: &mut Steps,
 ) -> Result<Vec<FieldValue>, PatternMatchError> {
     let path_str = format_object_path(path);
-    walk(
-        vec![WalkTarget::Sco(sco)],
-        path.steps.as_slice(),
+    let mut walker = Walker {
         bundle,
-        &path_str,
-    )
+        path: &path_str,
+        budget,
+    };
+    walker.walk(vec![WalkTarget::Sco(sco)], path.steps.as_slice())
 }
 
-fn walk<'a>(
-    targets: Vec<WalkTarget<'a>>,
-    steps: &[PathStep],
+/// One path resolution: the bundle `_ref` steps read from and the step budget
+/// every target visited is charged to.
+struct Walker<'a, 'w> {
     bundle: Option<&'a Bundle>,
-    path_str: &str,
-) -> Result<Vec<FieldValue>, PatternMatchError> {
-    if steps.is_empty() {
-        return Ok(Vec::new());
+    path: &'w str,
+    budget: &'w mut Steps,
+}
+
+impl<'a> Walker<'a, '_> {
+    fn bundle(&self) -> Result<&'a Bundle, PatternMatchError> {
+        self.bundle.ok_or_else(|| PatternMatchError::RefResolution {
+            path: self.path.to_owned(),
+            msg: "bundle required for _ref dereference".into(),
+        })
     }
 
-    let step = &steps[0];
-    let rest = &steps[1..];
+    fn ref_list_ids(
+        &mut self,
+        sco: &'a ScoObject,
+        name: &str,
+    ) -> Result<Vec<&'a StixId>, PatternMatchError> {
+        let ids = ref_list_ids(sco, name);
+        self.budget.spend(ids.len() as u64)?;
+        Ok(ids)
+    }
 
-    if let PathStep::Property(name) = step {
-        if name.ends_with("_refs")
-            && let Some(PathStep::Index(idx)) = rest.first()
-            && matches!(rest.get(1), Some(PathStep::Reference))
-        {
-            let mut next = Vec::new();
-            for target in targets {
-                let WalkTarget::Sco(sco) = target else {
-                    continue;
-                };
-                if let Some(id) = ref_list_ids(sco, name).into_iter().nth(*idx) {
-                    next.push(WalkTarget::PendingRef(id));
-                }
-            }
-            return walk(next, &rest[2..], bundle, path_str);
+    fn resolve_ref_property(
+        &mut self,
+        sco: &'a ScoObject,
+        name: &str,
+    ) -> Result<Vec<&'a ScoObject>, PatternMatchError> {
+        let bundle = self.bundle()?;
+        if name.ends_with("_refs") {
+            return self
+                .ref_list_ids(sco, name)?
+                .into_iter()
+                .map(|id| resolve_id(bundle, id, self.path))
+                .collect::<Result<Vec<_>, _>>();
         }
-        if name.ends_with("_refs")
-            && let Some(PathStep::Index(idx)) = rest.first()
-            && rest.len() == 1
-        {
-            let mut values = Vec::new();
-            for target in targets {
-                let WalkTarget::Sco(sco) = target else {
-                    continue;
-                };
-                if let Some(id) = ref_list_ids(sco, name).into_iter().nth(*idx) {
-                    values.push(FieldValue::Str(id.to_string()));
-                }
-            }
-            return Ok(values);
-        }
+        let id = match ref_id_for_property(sco, name) {
+            Some(id) => id,
+            None => return Ok(Vec::new()),
+        };
+        Ok(vec![resolve_id(bundle, id, self.path)?])
+    }
 
-        if name.ends_with("_refs") && matches!(rest.first(), Some(PathStep::AnyIndex)) {
-            let mut next = Vec::new();
-            for target in targets {
-                let WalkTarget::Sco(sco) = target else {
-                    continue;
-                };
-                for id in ref_list_ids(sco, name) {
-                    next.push(WalkTarget::PendingRef(id));
-                }
-            }
-            return walk(next, &rest[1..], bundle, path_str);
+    fn walk(
+        &mut self,
+        targets: Vec<WalkTarget<'a>>,
+        steps: &[PathStep],
+    ) -> Result<Vec<FieldValue>, PatternMatchError> {
+        if steps.is_empty() {
+            return Ok(Vec::new());
         }
+        self.budget.spend(targets.len() as u64 + 1)?;
 
-        if name.ends_with("_refs") && matches!(rest.first(), Some(PathStep::Reference)) {
-            let mut values = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Sco(sco) => {
-                        for resolved in resolve_ref_property(sco, name, bundle, path_str)? {
-                            values.extend(walk(
-                                vec![WalkTarget::Sco(resolved)],
-                                &rest[1..],
-                                bundle,
-                                path_str,
-                            )?);
-                        }
+        let step = &steps[0];
+        let rest = &steps[1..];
+
+        if let PathStep::Property(name) = step {
+            if name.ends_with("_refs")
+                && let Some(PathStep::Index(idx)) = rest.first()
+                && matches!(rest.get(1), Some(PathStep::Reference))
+            {
+                let mut next = Fanout::new();
+                for target in targets {
+                    let WalkTarget::Sco(sco) = target else {
+                        continue;
+                    };
+                    if let Some(id) = ref_list_id_at(sco, name, *idx) {
+                        next.push_ref(id, self.path)?;
                     }
-                    WalkTarget::PendingRef(id) => {
-                        let Some(bundle) = bundle else {
-                            return Err(PatternMatchError::RefResolution {
-                                path: path_str.to_owned(),
-                                msg: "bundle required for _ref dereference".into(),
-                            });
-                        };
-                        let resolved = resolve_id(bundle, id, path_str)?;
-                        values.extend(walk(
-                            vec![WalkTarget::Sco(resolved)],
-                            &rest[1..],
-                            Some(bundle),
-                            path_str,
-                        )?);
-                    }
-                    _ => {}
                 }
+                return self.walk(next.targets, &rest[2..]);
             }
-            return Ok(values);
-        }
-
-        if is_ref_property(name) {
-            if rest.is_empty() {
+            if name.ends_with("_refs")
+                && let Some(PathStep::Index(idx)) = rest.first()
+                && rest.len() == 1
+            {
                 let mut values = Vec::new();
                 for target in targets {
-                    match target {
-                        WalkTarget::Sco(sco) => {
-                            if let Some(id) = ref_id_for_property(sco, name) {
-                                values.push(FieldValue::Str(id.to_string()));
-                            }
-                        }
-                        WalkTarget::MultipartPart { .. } if name == "body_raw_ref" => {
-                            values.extend(read_terminal_property(target, name, bundle)?);
-                        }
-                        _ => {}
+                    let WalkTarget::Sco(sco) = target else {
+                        continue;
+                    };
+                    if let Some(id) = ref_list_id_at(sco, name, *idx) {
+                        values.push(FieldValue::Str(id.to_string()));
                     }
                 }
                 return Ok(values);
             }
-            let Some(PathStep::Reference) = rest.first() else {
-                return Ok(Vec::new());
-            };
-            let mut values = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Sco(sco) => {
-                        for resolved in resolve_ref_property(sco, name, bundle, path_str)? {
-                            values.extend(walk(
-                                vec![WalkTarget::Sco(resolved)],
-                                &rest[1..],
-                                bundle,
-                                path_str,
-                            )?);
+
+            if name.ends_with("_refs") && matches!(rest.first(), Some(PathStep::AnyIndex)) {
+                let mut next = Fanout::new();
+                for target in targets {
+                    let WalkTarget::Sco(sco) = target else {
+                        continue;
+                    };
+                    for id in self.ref_list_ids(sco, name)? {
+                        next.push_ref(id, self.path)?;
+                    }
+                }
+                return self.walk(next.targets, &rest[1..]);
+            }
+
+            if name.ends_with("_refs") && matches!(rest.first(), Some(PathStep::Reference)) {
+                let mut next = Fanout::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Sco(sco) => {
+                            for resolved in self.resolve_ref_property(sco, name)? {
+                                next.push_sco(resolved, self.path)?;
+                            }
+                        }
+                        WalkTarget::PendingRef(id) => {
+                            let resolved = resolve_id(self.bundle()?, id, self.path)?;
+                            next.push_sco(resolved, self.path)?;
+                        }
+                        _ => {}
+                    }
+                }
+                return self.walk(next.targets, &rest[1..]);
+            }
+
+            if is_ref_property(name) {
+                if rest.is_empty() {
+                    let mut values = Vec::new();
+                    for target in targets {
+                        match target {
+                            WalkTarget::Sco(sco) => {
+                                if let Some(id) = ref_id_for_property(sco, name) {
+                                    values.push(FieldValue::Str(id.to_string()));
+                                }
+                            }
+                            WalkTarget::MultipartPart { .. } if name == "body_raw_ref" => {
+                                values.extend(read_terminal_property(target, name, self.bundle)?);
+                            }
+                            _ => {}
                         }
                     }
-                    WalkTarget::MultipartPart { message, index } if name == "body_raw_ref" => {
-                        let Some(bundle) = bundle else {
-                            return Err(PatternMatchError::RefResolution {
-                                path: path_str.to_owned(),
-                                msg: "bundle required for _ref dereference".into(),
-                            });
-                        };
-                        let Some(id) = message
-                            .body_multipart
-                            .as_ref()
-                            .and_then(|parts| parts.get(index))
-                            .and_then(|part| part.body_raw_ref.as_ref())
-                            .map(|raw| raw.as_stix_id())
-                        else {
+                    return Ok(values);
+                }
+                let Some(PathStep::Reference) = rest.first() else {
+                    return Ok(Vec::new());
+                };
+                let mut next = Fanout::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Sco(sco) => {
+                            for resolved in self.resolve_ref_property(sco, name)? {
+                                next.push_sco(resolved, self.path)?;
+                            }
+                        }
+                        WalkTarget::MultipartPart { message, index } if name == "body_raw_ref" => {
+                            let bundle = self.bundle()?;
+                            let Some(id) = message
+                                .body_multipart
+                                .as_ref()
+                                .and_then(|parts| parts.get(index))
+                                .and_then(|part| part.body_raw_ref.as_ref())
+                                .map(|raw| raw.as_stix_id())
+                            else {
+                                continue;
+                            };
+                            next.push_sco(resolve_id(bundle, id, self.path)?, self.path)?;
+                        }
+                        WalkTarget::PendingRef(id) => {
+                            let resolved = resolve_id(self.bundle()?, id, self.path)?;
+                            next.push_sco(resolved, self.path)?;
+                        }
+                        _ => {}
+                    }
+                }
+                return self.walk(next.targets, &rest[1..]);
+            }
+
+            if name == "body_multipart" {
+                if let Some(PathStep::Index(idx)) = rest.first() {
+                    let mut next = Vec::new();
+                    for target in targets {
+                        let WalkTarget::Sco(ScoObject::EmailMessage(message)) = target else {
                             continue;
                         };
-                        let resolved = resolve_id(bundle, id, path_str)?;
-                        values.extend(walk(
-                            vec![WalkTarget::Sco(resolved)],
-                            &rest[1..],
-                            Some(bundle),
-                            path_str,
-                        )?);
-                    }
-                    WalkTarget::PendingRef(id) => {
-                        let Some(bundle) = bundle else {
-                            return Err(PatternMatchError::RefResolution {
-                                path: path_str.to_owned(),
-                                msg: "bundle required for _ref dereference".into(),
-                            });
-                        };
-                        let resolved = resolve_id(bundle, id, path_str)?;
-                        values.extend(walk(
-                            vec![WalkTarget::Sco(resolved)],
-                            &rest[1..],
-                            Some(bundle),
-                            path_str,
-                        )?);
-                    }
-                    _ => {}
-                }
-            }
-            return Ok(values);
-        }
-
-        if name == "body_multipart" {
-            if let Some(PathStep::Index(idx)) = rest.first() {
-                let mut next = Vec::new();
-                for target in targets {
-                    let WalkTarget::Sco(ScoObject::EmailMessage(message)) = target else {
-                        continue;
-                    };
-                    if message
-                        .body_multipart
-                        .as_ref()
-                        .is_some_and(|parts| parts.len() > *idx)
-                    {
-                        next.push(WalkTarget::MultipartPart {
-                            message,
-                            index: *idx,
-                        });
-                    }
-                }
-                return walk(next, &rest[1..], bundle, path_str);
-            }
-            if matches!(rest.first(), Some(PathStep::AnyIndex)) {
-                let mut next = Vec::new();
-                for target in targets {
-                    let WalkTarget::Sco(ScoObject::EmailMessage(message)) = target else {
-                        continue;
-                    };
-                    if let Some(parts) = &message.body_multipart {
-                        for index in 0..parts.len() {
-                            next.push(WalkTarget::MultipartPart { message, index });
-                        }
-                    }
-                }
-                return walk(next, &rest[1..], bundle, path_str);
-            }
-        }
-
-        if name == "values"
-            && let Some(PathStep::Index(idx)) = rest.first()
-        {
-            let mut next = Vec::new();
-            for target in targets {
-                if let WalkTarget::Sco(ScoObject::WindowsRegistryKey(key)) = target
-                    && key.values.len() > *idx
-                {
-                    next.push(WalkTarget::RegistryValuePart { key, index: *idx });
-                }
-            }
-            return walk(next, &rest[1..], bundle, path_str);
-        }
-
-        if name == "sections"
-            && targets
-                .iter()
-                .all(|target| matches!(target, WalkTarget::Sco(_)))
-        {
-            let mut next = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Sco(sco) => next.extend(pe_section_floats(sco)),
-                    WalkTarget::Json(section) => {
-                        if let Some(entropy) = section.get("entropy").and_then(|v| v.as_f64()) {
-                            next.push(WalkTarget::Float(entropy));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            return walk(next, rest, bundle, path_str);
-        }
-
-        if rest.is_empty() {
-            let mut values = Vec::new();
-            for target in targets {
-                values.extend(read_terminal_property(target, name, bundle)?);
-            }
-            return Ok(values);
-        }
-
-        if name == "extensions" {
-            return walk(targets, rest, bundle, path_str);
-        }
-
-        if let [PathStep::DictKey(key)] = rest {
-            let mut values = Vec::new();
-            for target in targets {
-                values.extend(read_dict_terminal(target, name, key)?);
-            }
-            return Ok(values);
-        }
-
-        let mut next = Vec::new();
-        for target in targets {
-            next.extend(navigate_property(target, name)?);
-        }
-        return walk(next, rest, bundle, path_str);
-    }
-
-    match step {
-        PathStep::DictKey(key) if rest.is_empty() => {
-            let mut values = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Json(obj) => {
-                        if let Some(v) = obj.get(key.as_str()).and_then(json_scalar_to_field) {
-                            values.push(v);
-                        }
-                    }
-                    WalkTarget::ExtProps(props) => {
-                        if let Some(v) = props.get(key).and_then(json_scalar_to_field) {
-                            values.push(v);
-                        }
-                    }
-                    WalkTarget::Sco(sco) => {
-                        if let Some(v) = read_dict_key(sco, key) {
-                            values.push(v);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Ok(values)
-        }
-        PathStep::DictKey(key) => {
-            let mut next = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Sco(sco) => {
-                        if let Some(props) = extension_entry_props(sco, key) {
-                            next.push(WalkTarget::ExtProps(props));
-                        } else if let ScoObject::Custom(custom) = sco
-                            && let Some(v) = custom.common.extra.get(key)
+                        if message
+                            .body_multipart
+                            .as_ref()
+                            .is_some_and(|parts| parts.len() > *idx)
                         {
-                            next.push(WalkTarget::Json(v));
+                            next.push(WalkTarget::MultipartPart {
+                                message,
+                                index: *idx,
+                            });
                         }
                     }
-                    WalkTarget::ExtProps(props) => {
-                        if let Some(v) = props.get(key) {
-                            next.push(WalkTarget::Json(v));
+                    return self.walk(next, &rest[1..]);
+                }
+                if matches!(rest.first(), Some(PathStep::AnyIndex)) {
+                    let mut next = Vec::new();
+                    for target in targets {
+                        let WalkTarget::Sco(ScoObject::EmailMessage(message)) = target else {
+                            continue;
+                        };
+                        if let Some(parts) = &message.body_multipart {
+                            for index in 0..parts.len() {
+                                next.push(WalkTarget::MultipartPart { message, index });
+                            }
                         }
                     }
-                    WalkTarget::Json(obj) => {
-                        if let Some(v) = obj.get(key.as_str()) {
-                            next.push(WalkTarget::Json(v));
-                        }
-                    }
-                    _ => {}
+                    return self.walk(next, &rest[1..]);
                 }
             }
-            walk(next, rest, bundle, path_str)
-        }
-        PathStep::Index(idx) => {
-            let mut next = Vec::new();
-            for target in targets {
-                next.extend(index_target(target, *idx));
-            }
-            walk(next, rest, bundle, path_str)
-        }
-        PathStep::AnyIndex => {
-            let mut next = Vec::new();
-            for target in targets {
-                match target {
-                    WalkTarget::Json(arr) if arr.is_array() => {
-                        if let Some(items) = arr.as_array() {
-                            next.extend(items.iter().map(WalkTarget::Json));
-                        }
+
+            if name == "values"
+                && let Some(PathStep::Index(idx)) = rest.first()
+            {
+                let mut next = Vec::new();
+                for target in targets {
+                    if let WalkTarget::Sco(ScoObject::WindowsRegistryKey(key)) = target
+                        && key.values.len() > *idx
+                    {
+                        next.push(WalkTarget::RegistryValuePart { key, index: *idx });
                     }
-                    other => next.push(other),
                 }
+                return self.walk(next, &rest[1..]);
             }
-            walk(next, rest, bundle, path_str)
-        }
-        PathStep::Reference => {
-            let Some(bundle) = bundle else {
-                return Err(PatternMatchError::RefResolution {
-                    path: path_str.to_owned(),
-                    msg: "bundle required for _ref dereference".into(),
-                });
-            };
+
+            if name == "sections"
+                && targets
+                    .iter()
+                    .all(|target| matches!(target, WalkTarget::Sco(_)))
+            {
+                let mut next = Vec::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Sco(sco) => next.extend(pe_section_floats(sco)),
+                        WalkTarget::Json(section) => {
+                            if let Some(entropy) = section.get("entropy").and_then(|v| v.as_f64()) {
+                                next.push(WalkTarget::Float(entropy));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                return self.walk(next, rest);
+            }
+
+            if rest.is_empty() {
+                let mut values = Vec::new();
+                for target in targets {
+                    values.extend(read_terminal_property(target, name, self.bundle)?);
+                }
+                return Ok(values);
+            }
+
+            if name == "extensions" {
+                return self.walk(targets, rest);
+            }
+
+            if let [PathStep::DictKey(key)] = rest {
+                let mut values = Vec::new();
+                for target in targets {
+                    values.extend(read_dict_terminal(target, name, key)?);
+                }
+                return Ok(values);
+            }
+
             let mut next = Vec::new();
             for target in targets {
-                if let WalkTarget::PendingRef(id) = target {
-                    next.push(WalkTarget::Sco(resolve_id(bundle, id, path_str)?));
-                }
+                next.extend(navigate_property(target, name)?);
             }
-            walk(next, rest, Some(bundle), path_str)
+            return self.walk(next, rest);
         }
-        _ => Ok(Vec::new()),
+
+        match step {
+            PathStep::DictKey(key) if rest.is_empty() => {
+                let mut values = Vec::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Json(obj) => {
+                            if let Some(v) = obj.get(key.as_str()).and_then(json_scalar_to_field) {
+                                values.push(v);
+                            }
+                        }
+                        WalkTarget::ExtProps(props) => {
+                            if let Some(v) = props.get(key).and_then(json_scalar_to_field) {
+                                values.push(v);
+                            }
+                        }
+                        WalkTarget::Sco(sco) => {
+                            if let Some(v) = read_dict_key(sco, key) {
+                                values.push(v);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(values)
+            }
+            PathStep::DictKey(key) => {
+                let mut next = Vec::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Sco(sco) => {
+                            if let Some(props) = extension_entry_props(sco, key) {
+                                next.push(WalkTarget::ExtProps(props));
+                            } else if let ScoObject::Custom(custom) = sco
+                                && let Some(v) = custom.common.extra.get(key)
+                            {
+                                next.push(WalkTarget::Json(v));
+                            }
+                        }
+                        WalkTarget::ExtProps(props) => {
+                            if let Some(v) = props.get(key) {
+                                next.push(WalkTarget::Json(v));
+                            }
+                        }
+                        WalkTarget::Json(obj) => {
+                            if let Some(v) = obj.get(key.as_str()) {
+                                next.push(WalkTarget::Json(v));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                self.walk(next, rest)
+            }
+            PathStep::Index(idx) => {
+                let mut next = Vec::new();
+                for target in targets {
+                    next.extend(index_target(target, *idx));
+                }
+                self.walk(next, rest)
+            }
+            PathStep::AnyIndex => {
+                let mut next = Vec::new();
+                for target in targets {
+                    match target {
+                        WalkTarget::Json(arr) if arr.is_array() => {
+                            if let Some(items) = arr.as_array() {
+                                self.budget.spend(items.len() as u64)?;
+                                next.extend(items.iter().map(WalkTarget::Json));
+                            }
+                        }
+                        other => next.push(other),
+                    }
+                }
+                self.walk(next, rest)
+            }
+            PathStep::Reference => {
+                let bundle = self.bundle()?;
+                let mut next = Fanout::new();
+                for target in targets {
+                    if let WalkTarget::PendingRef(id) = target {
+                        next.push_sco(resolve_id(bundle, id, self.path)?, self.path)?;
+                    }
+                }
+                self.walk(next.targets, rest)
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 }
 
@@ -613,7 +658,7 @@ fn finish_read_sco_terminal(
     if name == "hashes" && hash_map_nonempty(sco) {
         return Ok(vec![FieldValue::Bool(true)]);
     }
-    if name.ends_with("_refs") && !ref_list_ids(sco, name).is_empty() {
+    if name.ends_with("_refs") && ref_list_id_at(sco, name, 0).is_some() {
         return Ok(vec![FieldValue::Bool(true)]);
     }
     if let Some(value) = QueryableStixObject::get_field(sco, &[name]) {
@@ -852,45 +897,17 @@ fn pe_section_floats(sco: &ScoObject) -> Vec<WalkTarget<'_>> {
 
 fn ref_list_ids<'a>(sco: &'a ScoObject, name: &str) -> Vec<&'a StixId> {
     let mut ids = Vec::new();
-    let mut i = 0;
-    loop {
-        let idx = i.to_string();
-        match QueryableStixObject::get_field(sco, &[name, idx.as_str()]) {
-            Some(QueryValue::Id(id)) => {
-                ids.push(id);
-                i += 1;
-            }
-            _ => break,
-        }
+    while let Some(id) = ref_list_id_at(sco, name, ids.len()) {
+        ids.push(id);
     }
     ids
 }
 
-fn resolve_ref_property<'a>(
-    sco: &'a ScoObject,
-    name: &str,
-    bundle: Option<&'a Bundle>,
-    path_str: &str,
-) -> Result<Vec<&'a ScoObject>, PatternMatchError> {
-    let Some(bundle) = bundle else {
-        return Err(PatternMatchError::RefResolution {
-            path: path_str.to_owned(),
-            msg: "bundle required for _ref dereference".into(),
-        });
-    };
-
-    if name.ends_with("_refs") {
-        return ref_list_ids(sco, name)
-            .into_iter()
-            .map(|id| resolve_id(bundle, id, path_str))
-            .collect::<Result<Vec<_>, _>>();
+fn ref_list_id_at<'a>(sco: &'a ScoObject, name: &str, index: usize) -> Option<&'a StixId> {
+    match QueryableStixObject::get_field(sco, &[name, index.to_string().as_str()]) {
+        Some(QueryValue::Id(id)) => Some(id),
+        _ => None,
     }
-
-    let id = match ref_id_for_property(sco, name) {
-        Some(id) => id,
-        None => return Ok(Vec::new()),
-    };
-    Ok(vec![resolve_id(bundle, id, path_str)?])
 }
 
 fn resolve_id<'a>(
@@ -999,7 +1016,111 @@ pub(crate) fn decode_payload_bin(raw: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::core::StixId;
-    use crate::model::Bundle;
+    use crate::model::{Bundle, StixObject};
+
+    fn directory_id(n: usize) -> String {
+        format!("directory--00000000-0000-4000-8000-{n:012x}")
+    }
+
+    /// `count` directories, each listing every directory in `contains_refs`.
+    fn mesh(count: usize) -> Bundle {
+        let refs: Vec<String> = (0..count)
+            .map(|n| format!("\"{}\"", directory_id(n)))
+            .collect();
+        let objects: Vec<String> = (0..count)
+            .map(|n| {
+                format!(
+                    r#"{{"type":"directory","spec_version":"2.1","id":"{}","path":"/d{n}","contains_refs":[{}]}}"#,
+                    directory_id(n),
+                    refs.join(",")
+                )
+            })
+            .collect();
+        Bundle::parse(&format!(
+            r#"{{"type":"bundle","id":"bundle--00000000-0000-4000-8000-000000000001","objects":[{}]}}"#,
+            objects.join(",")
+        ))
+        .expect("mesh bundle")
+    }
+
+    fn chain_path(segment: &str, depth: usize) -> ObjectPath {
+        let source = format!(
+            "[directory:{}.path = '/d0']",
+            vec![segment; depth].join(".")
+        );
+        let ast = crate::pattern::parser::parse_level1(&source).expect("parse");
+        let crate::pattern::PatternAst::Observation(obs) = ast else {
+            panic!("observation");
+        };
+        let crate::pattern::ast::ComparisonTree::Cmp(cmp) = obs.root else {
+            panic!("comparison");
+        };
+        cmp.path
+    }
+
+    fn root(bundle: &Bundle) -> &ScoObject {
+        let id = StixId::parse(&directory_id(0)).expect("id");
+        match bundle.get(&id) {
+            Some(StixObject::Sco(sco)) => sco,
+            _ => panic!("root directory"),
+        }
+    }
+
+    #[test]
+    fn chained_refs_over_a_mesh_visit_each_object_once_per_step() {
+        let count = 40;
+        let depth = 32;
+        let bundle = mesh(count);
+        for segment in ["contains_refs[*]", "contains_refs"] {
+            let path = chain_path(segment, depth);
+            let mut budget = Steps::new();
+            let values = resolve_path_values(root(&bundle), &path, Some(&bundle), &mut budget)
+                .expect("resolve");
+            assert_eq!(values.len(), count, "{segment}");
+            let per_step = (2 * count * count) as u64;
+            assert!(
+                budget.used() <= per_step * (depth as u64 + 1),
+                "{segment}: {} steps for depth {depth}",
+                budget.used()
+            );
+        }
+    }
+
+    #[test]
+    fn dereference_step_past_the_target_limit_is_rejected() {
+        let refs: Vec<String> = (0..=MAX_PATH_TARGETS)
+            .map(|n| format!("\"file--00000000-0000-4000-8000-{n:012x}\""))
+            .collect();
+        let sco = ScoObject::parse_str(&format!(
+            r#"{{"type":"directory","spec_version":"2.1","id":"{}","path":"/wide","contains_refs":[{}]}}"#,
+            directory_id(0),
+            refs.join(",")
+        ))
+        .expect("wide directory");
+        let bundle = Bundle::from_objects(
+            StixId::parse("bundle--00000000-0000-4000-8000-000000000001").expect("id"),
+            Vec::new(),
+        );
+        let path = chain_path("contains_refs[*]", 1);
+        let err = resolve_path_values(&sco, &path, Some(&bundle), &mut Steps::new()).unwrap_err();
+        assert_eq!(
+            err,
+            PatternMatchError::PathTooWide {
+                path: "directory:contains_refs[*]._ref.path".into(),
+                max: MAX_PATH_TARGETS,
+            }
+        );
+    }
+
+    #[test]
+    fn path_walk_stops_at_the_step_limit() {
+        let bundle = mesh(20);
+        let path = chain_path("contains_refs[*]", 8);
+        let mut budget = Steps::with_limit(1_000);
+        let err =
+            resolve_path_values(root(&bundle), &path, Some(&bundle), &mut budget).unwrap_err();
+        assert_eq!(err, PatternMatchError::StepLimitExceeded { max: 1_000 });
+    }
 
     #[test]
     fn resolve_id_rejects_non_sco_object() {

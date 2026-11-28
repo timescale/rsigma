@@ -1,12 +1,18 @@
 //! Full-text search helpers for store queries.
 
-use crate::core::QueryableStixObject;
+use std::borrow::Cow;
+
+use crate::core::{QueryableStixObject, StixTimestamp};
+use crate::model::ScoObject;
 use crate::model::common::ExternalReference;
 use crate::model::meta::MetaObject;
 use crate::model::sdo::SdoObject;
 use crate::model::stix_object::StixObject;
 
-use super::StixQuery;
+use super::{StixQuery, TextMatch};
+
+/// Separates the searchable values inside a search blob.
+const FIELD_SEPARATOR: char = '\u{1f}';
 
 /// Build a lowercase searchable blob for `obj`.
 pub(crate) fn object_search_text(obj: &StixObject) -> String {
@@ -49,7 +55,19 @@ pub(crate) fn object_search_text(obj: &StixObject) -> String {
         StixObject::Custom(custom) => push_json_strings(&custom.raw, &mut parts),
     }
 
-    parts.join("\n")
+    parts.join(&FIELD_SEPARATOR.to_string())
+}
+
+/// Search blob for an SCO from its already serialized wire JSON.
+pub(crate) fn sco_search_text(sco: &ScoObject, wire: Option<&serde_json::Value>) -> String {
+    let mut parts = vec![
+        QueryableStixObject::type_name(sco).to_ascii_lowercase(),
+        sco.id().as_str().to_ascii_lowercase(),
+    ];
+    if let Some(value) = wire {
+        push_json_strings(value, &mut parts);
+    }
+    parts.join(&FIELD_SEPARATOR.to_string())
 }
 
 fn push_external_reference_parts(refs: &[ExternalReference], parts: &mut Vec<String>) {
@@ -130,7 +148,73 @@ fn push_json_strings(value: &serde_json::Value, parts: &mut Vec<String>) {
     }
 }
 
-pub(crate) fn query_matches(q: &StixQuery, obj: &StixObject, search_text: &str) -> bool {
+/// A stored object borrowed for filtering, without cloning it into a
+/// [`StixObject`].
+#[derive(Clone, Copy)]
+pub(crate) enum StoredRef<'a> {
+    Object(&'a StixObject),
+    Sco(&'a ScoObject),
+}
+
+impl<'a> StoredRef<'a> {
+    pub(crate) fn type_name(self) -> &'a str {
+        match self {
+            Self::Object(obj) => obj.type_name(),
+            Self::Sco(sco) => QueryableStixObject::type_name(sco),
+        }
+    }
+
+    fn modified(self) -> Option<&'a StixTimestamp> {
+        match self {
+            Self::Object(obj) => QueryableStixObject::modified(obj),
+            Self::Sco(sco) => QueryableStixObject::modified(sco),
+        }
+    }
+
+    fn has_any_label(self, wanted: &[String]) -> bool {
+        let labels: &[String] = match self {
+            Self::Object(StixObject::Sdo(sdo)) => &sdo.common_props().labels,
+            Self::Object(StixObject::Sro(sro)) => &sro.common_props().labels,
+            Self::Object(StixObject::Meta(MetaObject::LanguageContent(content))) => {
+                &content.common.labels
+            }
+            Self::Object(StixObject::Meta(MetaObject::ExtensionDefinition(ext))) => {
+                &ext.common.labels
+            }
+            Self::Object(StixObject::Custom(custom)) => {
+                return custom
+                    .raw
+                    .get("labels")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .any(|label| wanted.iter().any(|w| w == label))
+                    });
+            }
+            _ => &[],
+        };
+        wanted.iter().any(|label| labels.contains(label))
+    }
+
+    pub(crate) fn to_object(self) -> StixObject {
+        match self {
+            Self::Object(obj) => obj.clone(),
+            Self::Sco(sco) => StixObject::Sco(sco.clone()),
+        }
+    }
+}
+
+/// Whether `obj` passes every filter of `q` except `id_filter`. `needle` is
+/// `q.text_search` already lowercased; `search_text` yields the object's blob
+/// and is only called when there is a needle.
+pub(crate) fn query_matches<'t>(
+    q: &StixQuery,
+    needle: Option<&str>,
+    obj: StoredRef<'_>,
+    search_text: impl FnOnce() -> Cow<'t, str>,
+) -> bool {
     if let Some(types) = &q.type_filter {
         let kind = crate::core::StixObjectKind::from_type_str(obj.type_name());
         if !kind.is_some_and(|k| types.contains(&k)) {
@@ -138,45 +222,93 @@ pub(crate) fn query_matches(q: &StixQuery, obj: &StixObject, search_text: &str) 
         }
     }
     if let Some(since) = &q.modified_after {
-        match QueryableStixObject::modified(obj) {
+        match obj.modified() {
             Some(modified) if modified >= since => {}
             _ => return false,
         }
     }
-    if let Some(labels) = &q.labels_include {
-        let object_labels = object_labels(obj);
-        if !labels.iter().any(|label| object_labels.contains(label)) {
-            return false;
-        }
+    if let Some(labels) = &q.labels_include
+        && !obj.has_any_label(labels)
+    {
+        return false;
     }
-    if let Some(needle) = &q.text_search {
-        let haystack = search_text.to_ascii_lowercase();
-        if !haystack.contains(&needle.to_ascii_lowercase()) {
-            return false;
-        }
+    if let Some(needle) = needle {
+        return text_matches(&search_text(), needle, q.text_match);
     }
     true
 }
 
-fn object_labels(obj: &StixObject) -> Vec<String> {
-    match obj {
-        StixObject::Sdo(sdo) => sdo.common_props().labels.clone(),
-        StixObject::Sro(sro) => sro.common_props().labels.clone(),
-        StixObject::Meta(MetaObject::MarkingDefinition(_)) => Vec::new(),
-        StixObject::Meta(MetaObject::LanguageContent(content)) => content.common.labels.clone(),
-        StixObject::Meta(MetaObject::ExtensionDefinition(ext)) => ext.common.labels.clone(),
-        StixObject::Custom(custom) => custom
-            .raw
-            .get("labels")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
+/// Whether a lowercase search blob matches the lowercase `needle`.
+pub(crate) fn text_matches(blob: &str, needle: &str, mode: TextMatch) -> bool {
+    match mode {
+        TextMatch::Substring => blob.contains(needle),
+        TextMatch::Exact => blob.split(FIELD_SEPARATOR).any(|field| field == needle),
+        TextMatch::Token => {
+            if needle.is_empty() {
+                return true;
+            }
+            let bytes = blob.as_bytes();
+            let mut from = 0;
+            while let Some(found) = blob[from..].find(needle) {
+                let start = from + found;
+                let end = start + needle.len();
+                let open = start == 0 || !is_token_byte(bytes[start - 1]);
+                let close = end == bytes.len() || !is_token_byte(bytes[end]);
+                if open && close {
+                    return true;
+                }
+                from = start + blob[start..].chars().next().map_or(1, char::len_utf8);
+            }
+            false
+        }
+    }
+}
+
+/// Bytes that continue a token: ASCII letters and digits, `_`, `-`, and every
+/// byte of a non-ASCII character.
+fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' || !byte.is_ascii()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blob(fields: &[&str]) -> String {
+        fields.join(&FIELD_SEPARATOR.to_string())
+    }
+
+    #[test]
+    fn token_match_needs_a_boundary_on_both_sides() {
+        let text = blob(&["indicator", "[ipv4-addr:value = '10.0.0.10']"]);
+        assert!(text_matches(&text, "10.0.0.1", TextMatch::Substring));
+        assert!(!text_matches(&text, "10.0.0.1", TextMatch::Token));
+        assert!(text_matches(&text, "10.0.0.10", TextMatch::Token));
+        assert!(text_matches(&text, "ipv4-addr", TextMatch::Token));
+        assert!(!text_matches(&text, "ipv4", TextMatch::Token));
+        assert!(text_matches(&text, "indicator", TextMatch::Token));
+
+        let text = blob(&["evil.example", "notevil.example x-evil.example"]);
+        assert!(text_matches(&text, "evil.example", TextMatch::Token));
+        let text = blob(&["notevil.example", "x-evil.example", "caf\u{e9}evil.example"]);
+        assert!(!text_matches(&text, "evil.example", TextMatch::Token));
+        assert!(text_matches(&text, "x-evil.example", TextMatch::Token));
+    }
+
+    #[test]
+    fn token_match_finds_a_later_overlapping_occurrence() {
+        assert!(text_matches("a.a.a", "a.a", TextMatch::Token));
+        assert!(text_matches("aa.a", "a.a", TextMatch::Substring));
+        assert!(!text_matches("aa.a", "a.a", TextMatch::Token));
+        assert!(text_matches("aa.a a.a", "a.a", TextMatch::Token));
+    }
+
+    #[test]
+    fn exact_match_compares_whole_fields() {
+        let text = blob(&["indicator", "bad.example", "line one\nline two"]);
+        assert!(text_matches(&text, "bad.example", TextMatch::Exact));
+        assert!(!text_matches(&text, "bad", TextMatch::Exact));
+        assert!(text_matches(&text, "line one\nline two", TextMatch::Exact));
+        assert!(!text_matches(&text, "line one", TextMatch::Exact));
     }
 }

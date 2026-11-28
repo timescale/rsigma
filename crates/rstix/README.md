@@ -63,7 +63,7 @@ Rust modules (`core`, `model`, …) are implementation layout. Enable capabiliti
 | `validate` | **Validation Pipeline** | `Validator`, profiles, `ValidationPhase`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry points |
 | `graph` | **Graph + Marking + Store** (graph) | `StixGraph`, `EdgeTraversal`, `RelationshipExpander` |
 | `marking` | **Graph + Marking + Store** (marking) | `MarkingResolver`, `TlpV2Level`, granular selector resolution |
-| `store` | **Graph + Marking + Store** (store) | `StixStore`, `MemoryStore`, `StixQuery`, `ImportReport` |
+| `store` | **Graph + Marking + Store** (store) | `StixStore`, `MemoryStore`, `StixQuery`, `TextMatch`, `ImportReport` |
 | `store-fs` | **Graph + Marking + Store** (durable store) | `FsStore` (implies `store`) |
 | `taxii` | **TAXII Client** | `TaxiiClient`, `TaxiiEnvelope`, auth, pagination, TLS/DANE |
 | `taxii-store` | **TAXII collection ingest** | `ingest_collection` into `StixStore` (implies `taxii` + `store`) |
@@ -75,7 +75,7 @@ Rust modules (`core`, `model`, …) are implementation layout. Enable capabiliti
 - `validate`: profile-based Validation Pipeline (`Validator`, structured `STIX-E/W/I/H` diagnostics, raw JSON entry). Implies `serde` and `pattern`.
 - `graph`: STIX property graph over parsed bundles (`StixGraph::from_bundle`, SRO traversal, inlined refs, `RelationshipExpander`). Implies `serde`.
 - `marking`: TLP and statement marking resolution (`MarkingResolver`, `TlpV2Level`, granular selectors). Implies `serde`.
-- `store`: in-memory STIX object store (`MemoryStore`, `StixQuery`, `ImportReport`). Implies `serde`.
+- `store`: in-memory STIX object store (`MemoryStore`, `StixQuery`, `TextMatch`, `ImportReport`). Implies `serde`.
 - `store-fs`: filesystem-backed durable store (`FsStore`). Implies `store`.
 - `taxii`: TAXII 2.1 HTTP client (`TaxiiClient`, `TaxiiEnvelope`, Bearer/Basic/API-key auth, cursor + header pagination, retry, rustls TLS with PEM and PKCS#12 mTLS). Implies `serde`.
 - `taxii-store`: paginated collection fetch into `MemoryStore` / `FsStore` via `ingest_collection`. Implies `taxii` and `store`.
@@ -153,6 +153,7 @@ Requires the **`serde`** feature (default).
 | Method | Description |
 | ------ | ----------- |
 | `bundle.objects()` | All objects in document order. |
+| `bundle.into_objects()` | Take the objects, in document order, without cloning them. |
 | `bundle.get(&StixId)` | Untyped lookup by id. |
 | `bundle.get_typed::<T>(&StixId)` | Typed lookup (`Malware`, registered custom types, …). |
 | `bundle.objects_of_type::<T>()` | Iterator over all objects of type `T`. |
@@ -230,10 +231,10 @@ flowchart LR
 | Lexer | Tokenizer; 64 KiB input cap | Done |
 | Parser | Recursive-descent parser; dict keys, ref-list `[*]`, custom SCO types; 64-level depth (parentheses, `NOT`, `IN` lists, and qualifiers), 256 observations, and 256 comparisons per observation, all enforced while parsing | Done |
 | SCO type checker | Property paths, `extensions.'…'`, `_ref.type`, ISSUBSET on CIDR strings | Done |
-| Evaluator | Level 1-3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data` | Done |
+| Evaluator | Level 1-3 evaluation, `matches_single`, `matches_single_with_bundle`, `evaluate_observed_data`; each observation expression is matched against each observation once, within a step limit | Done |
 | Observation context | `ObservationContext`, `TimestampedObservation`, observed-data builder | Done |
-| Path resolver | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle | Done |
-| Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES` | Done |
+| Path resolver | Object-path resolution (extensions, ref lists, binary fields), CIDR, `_ref` via bundle; each dereference step keeps every object once and is capped | Done |
+| Regex safety | Regex compile size limit + PCRE DOTALL for `MATCHES`; regexes compiled once per pattern | Done |
 | Canonical printer | `Pattern::canonical`, `Display` | Done |
 | Observable extraction | `Pattern::simple_observables` | Done. Exact `=` and `IN` values only. Qualifiers, `AND`, `FOLLOWEDBY`, and `NOT` return `UnsupportedReason`. |
 
@@ -294,6 +295,17 @@ Evaluation notes (STIX §9):
 - **`file:hashes.MD5`**: dictionary dot-key syntax per §9.7.3.
 - **`extensions.'…'`**: predefined SCO extension paths (e.g. `windows-pebinary-ext.sections[*].entropy`).
 - **`ISSUBSET` / `ISSUPERSET` on string**: IP/CIDR subset checks per §9.6.
+
+### Evaluation limits
+
+| Limit | Value | When exceeded |
+| ----- | ----- | ------------- |
+| `MAX_REF_DEREFERENCES` | 8 `_ref` or `_refs` dereferences in one object path | `Pattern::parse` fails with `PatternError::TypeError`. |
+| `MAX_PATH_TARGETS` | 10,000 distinct objects reached by one dereference step | Evaluation fails with `PatternMatchError::PathTooWide`. |
+| `MAX_EVAL_STEPS` | 10,000,000 steps in one evaluation | Evaluation fails with `PatternMatchError::StepLimitExceeded`. |
+| `MATCHES_REGEX_CACHE_BYTES` | 16 MiB of compiled `MATCHES` regexes kept per pattern | Further regexes are compiled each time they are used. |
+
+Each dereference step keeps every object it reaches once, so a chain of `_refs[*]` over objects that reference each other visits each object once per step instead of once per path. Evaluation records whether each observation expression matches each observation, so nested `AND`, `OR`, `FOLLOWEDBY`, `WITHIN`, `REPEATS`, and `START`/`STOP` do not re-evaluate their operands. A step is one object visited on a path, one observation expression checked against one observation, one `IN` list item, or 64 bytes of a string scanned by `LIKE` or `MATCHES`. Compiling a `MATCHES` regex costs one step per 8 bytes of the size limit it compiles under: 64 KiB, or 1 MiB for larger regexes, whose scans are also charged 16 times. `MATCHES` regexes are compiled on first use and kept on the `Pattern`, shared with its clones. `LIKE` places each `%`-separated segment at its leftmost match in one pass.
 
 Fixtures: `tests/fixtures/pattern/` (§9.8 examples) and `tests/fixtures/pattern/sco-fields/` (manifest-driven SCO field paths, 276 cases). Integration tests: `tests/pattern_parse.rs`, `tests/pattern_spec_eval.rs`, `tests/pattern_eval_operators.rs`, `tests/pattern_eval_sco_fields.rs`, `tests/pattern_eval_errors.rs`, `tests/pattern_eval_security.rs`, `tests/pattern_indicator.rs` (requires `pattern` feature).
 
@@ -398,8 +410,9 @@ Acceptance tests: `tests/marking.rs` (`marking` feature).
 The optional **`store`** feature provides an object-safe [`StixStore`](store::StixStore) trait and [`MemoryStore`](store::MemoryStore):
 
 - **Versioned SDO/SRO storage:** `upsert` appends new versions when content changes; identical re-upserts deduplicate.
-- **SCO asserted-id preservation:** store key is always the source `id`; UUIDv5 fingerprint is computed for dedup **reporting** only (`FingerprintConflict` in [`ImportReport`](store::ImportReport)).
-- **Typed queries:** [`StixQuery`](store::StixQuery) builder with type-indexed scans, id filter, `modified_after`, labels, **`text_search`**, pagination (`QueryCursor` / `next_cursor`), and `StoreError::InvalidQuery` for out-of-range cursors.
+- **SCO asserted-id preservation:** store key is always the source `id`; UUIDv5 fingerprint is computed for dedup **reporting** only (`FingerprintConflict` in [`ImportReport`](store::ImportReport)). An import reports the conflicts of the SCOs it imports, so paginated ingest lists each conflict once.
+- **Typed queries:** [`StixQuery`](store::StixQuery) builder with type-indexed scans, id filter, `modified_after`, labels, **`text_search`**, pagination (`QueryCursor` / `next_cursor`), and `StoreError::InvalidQuery` for out-of-range cursors. [`StixQuery::text_match`](store::StixQuery::text_match) compares `text_search` as a substring (default), a [`TextMatch::Token`](store::TextMatch::Token) with a boundary on both sides, or a [`TextMatch::Exact`](store::TextMatch::Exact) indexed value. `MemoryStore::query` filters borrowed objects against their indexed text, sorts the matching ids, and clones only the returned page.
+- **Existence checks:** [`StixStore::contains`](store::StixStore::contains) checks for an id; `MemoryStore` and `FsStore` answer without cloning the object.
 - **SCO updates:** changed SCO content under the same asserted id updates the stored payload (`ImportReport::objects_updated`).
 - **Export / delete:** [`StixStore::export_bundle`](store::StixStore::export_bundle) and [`StixStore::delete`](store::StixStore::delete) on all store backends.
 - **`FsStore`** (`store-fs` feature): durable JSON-on-disk store with hot in-memory index; reopens persistently across process restarts. [`FsStore::reload_from_disk`](store::FsStore::reload_from_disk) re-reads object envelopes so long-lived handles (for example daemon `--stix-store` enrichment) observe writes from `taxii sync` without reopening the root directory. A file that cannot be read or parsed under the store's `ParseOptions` is skipped and listed in the [`LoadReport`](store::LoadReport) that `reload_from_disk` returns and [`FsStore::load_report`](store::FsStore::load_report) keeps; the other files still load. A write whose stored form would not load back is refused with `StoreError::NotReloadable` before anything changes.
@@ -430,7 +443,7 @@ Acceptance tests: `tests/store.rs` (`store` feature), `tests/store_fs.rs` (`stor
 | Store object-safety | `StixStore::get` returns owned clones; `MemoryStore::get_sco` returns owned `StoredSco`. | Required for `dyn StixStore` vtable safety. |
 | Store SCO keys | Asserted source id is always the store key; UUIDv5 fingerprint is reporting-only. | Never silently rewrite SCO ids. |
 | Store import refs | `ImportReport::unresolved_references` lists targets missing from **both** the imported bundle and the store. | Supports incremental TAXII ingest (`taxii-store`). |
-| Store search | Full-text index updated on upsert; `StixQuery::text_search` is case-insensitive substring match. | Typed filters compose with text search. |
+| Store search | Full-text index updated on upsert; `StixQuery::text_search` is a case-insensitive substring, token, or exact match per `StixQuery::text_match`. | Typed filters compose with text search; only the returned page is cloned. |
 | FsStore durability | One JSON file per object id under `objects/`; atomic write via temp file + rename. An id that does not map to a plain file name fails with `StoreError::InvalidObjectId` before anything is written. | `store-fs` feature implies `store`. |
 | FsStore load | Each `objects/*.json` file loads on its own. An unreadable or unparseable file, or one that holds an id other than its file name, is skipped and reported in `LoadReport::skipped`; leftover `*.json.tmp` files are ignored. Loading never applies RFC 2047 decoding, since stored values are already decoded. | Open the store with the `ParseOptions` it is written with, for example the same `allow_custom`. |
 | FsStore writes | Every object is serialized and parsed back under the store's `ParseOptions` before the in-memory index or disk changes; an object that fails is `StoreError::NotReloadable` and the whole call writes nothing. | Keeps every saved object loadable. |
@@ -735,6 +748,7 @@ Request invariants (all calls): `Accept: application/taxii+json;version=2.1`, `U
 | Status detail version | Optional on wire (spec example omits it) | `StatusDetail.version: Option<String>` |
 | `added_after` precision | Six fractional digits via `TaxiiTimestamp`; digits past the microsecond are dropped at parse so a timestamp equals its wire form | Filter encode + header fallback consume |
 | Pagination cursor | `next` is opaque; never constructed client-side | Header fallback when `next` absent |
+| Envelope parsing | Envelope bodies are parsed on the Tokio blocking pool; paging reads `X-TAXII-Date-Added-Last` from the response without copying the page | Async runtime threads stay free during large pages |
 | Auth secrets | `SecretString`; redacted `Debug` | Credentials never in `TaxiiError` messages |
 | Pagination headers | `TaxiiPaged<T>` exposes `X-TAXII-Date-Added-First` / `Last` | One-shot GETs and streams |
 | HTTPS | Required by default; `allow_insecure_http(true)` for tests | Spec section 3.3 |

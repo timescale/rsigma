@@ -134,7 +134,7 @@ pub async fn resolve_command_with_limit(
         kind: SourceErrorKind::Parse(format!("command output is not valid UTF-8: {e}")),
     })?;
 
-    let parsed = parse_data(&stdout, format)?;
+    let parsed = super::run_blocking(move || parse_data(&stdout, format)).await?;
 
     let data = if let Some(expr) = extract_expr {
         apply_extract(&parsed, expr)?

@@ -791,6 +791,39 @@ pub fn resolve_selector_value<'a>(
     Some(current)
 }
 
+/// Wire JSON of language-content targets, built once per target id however
+/// many language-content objects translate it.
+#[cfg(feature = "serde")]
+#[derive(Default)]
+pub(crate) struct TargetWires<'b> {
+    wires: HashMap<&'b str, Option<serde_json::Value>>,
+}
+
+#[cfg(feature = "serde")]
+impl<'b> TargetWires<'b> {
+    /// Wire JSON for the target `id`, from `build` the first time `id` is seen.
+    pub(crate) fn get(
+        &mut self,
+        id: &'b StixId,
+        build: impl FnOnce() -> Option<serde_json::Value>,
+    ) -> Option<&serde_json::Value> {
+        self.wires
+            .entry(id.as_str())
+            .or_insert_with(|| {
+                #[cfg(test)]
+                TARGET_WIRES_BUILT.with(|count| count.set(count.get() + 1));
+                build()
+            })
+            .as_ref()
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+thread_local! {
+    /// Target wire values [`TargetWires`] built on this thread.
+    pub(crate) static TARGET_WIRES_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Returns true when a language-content translation mirrors the target property (STIX §7.1.1).
 pub fn language_content_translation_matches_target(
     target: &serde_json::Value,

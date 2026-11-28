@@ -22,7 +22,7 @@ tree-sitter-yaml = "0.7"
 yaml_serde = "0.10"
 regex = "1"
 arbitrary = { version = "1", features = ["derive"] }
-rstix = { path = "../crates/rstix", features = ["serde", "pattern", "validate", "taxii"] }
+rstix = { path = "../crates/rstix", features = ["serde", "pattern", "validate", "taxii", "store"] }
 tokio = { version = "1", features = ["rt"] }
 
 [[bin]]
@@ -208,6 +208,11 @@ doc = false
 [[bin]]
 name = "fuzz_rstix_validate_json"
 path = "fuzz_targets/fuzz_rstix_validate_json.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rstix_store_query"
+path = "fuzz_targets/fuzz_rstix_store_query.rs"
 doc = false
 
 [[bin]]
