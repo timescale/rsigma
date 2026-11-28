@@ -22,7 +22,7 @@ use super::dns;
 use super::envelope::ManifestResponse;
 use super::envelope::{ManifestRecord, TaxiiEnvelope, TaxiiStatus};
 use super::filter::{DeleteObjectFilter, ObjectByIdFilter, TaxiiFilter, VersionsQueryFilter};
-use super::headers::TaxiiPaged;
+use super::headers::{TaxiiPageHeaders, TaxiiPaged};
 use super::media::{MANIFEST_ACCEPT, TAXII_ACCEPT};
 use super::pagination::{
     ManifestPaginationState, ObjectByIdPaginationState, ObjectPaginationState,
@@ -487,8 +487,12 @@ impl TaxiiClient {
             self.inner.https_policy,
         )?;
         let query = with_clock_skew_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
-        let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
-        let envelope = self.inner.http.decode_envelope(&response)?;
+        let mut response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
+        let envelope = self
+            .inner
+            .http
+            .decode_envelope(std::mem::take(&mut response.body))
+            .await?;
         Ok(TaxiiPaged::new(envelope, &response))
     }
 
@@ -508,8 +512,12 @@ impl TaxiiClient {
         )?;
         let query =
             with_clock_skew_object_filter(&filter, self.clock_skew(false)).to_query_pairs()?;
-        let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
-        let envelope = self.inner.http.decode_envelope(&response)?;
+        let mut response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
+        let envelope = self
+            .inner
+            .http
+            .decode_envelope(std::mem::take(&mut response.body))
+            .await?;
         Ok(TaxiiPaged::new(envelope, &response))
     }
 
@@ -598,12 +606,10 @@ impl TaxiiClient {
             {
                 Ok((envelope, response)) => {
                     let date_added_last =
-                        TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
-                            .headers
-                            .date_added_last;
+                        TaxiiPageHeaders::from_response(&response).date_added_last;
                     pagination.apply_page(
                         envelope.more,
-                        envelope.next.clone(),
+                        envelope.next,
                         date_added_last.clone(),
                         envelope.objects,
                     )?;
@@ -671,10 +677,8 @@ impl TaxiiClient {
                             Ok((envelope, response)) => {
                                 if let Err(err) = pagination.apply_page(
                                     envelope.more,
-                                    envelope.next.clone(),
-                                    TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
-                                        .headers
-                                        .date_added_last,
+                                    envelope.next,
+                                    TaxiiPageHeaders::from_response(&response).date_added_last,
                                     envelope.objects,
                                 ) {
                                     return Some((Err(err), None));
@@ -742,10 +746,8 @@ impl TaxiiClient {
                             Ok((envelope, response)) => {
                                 if let Err(err) = pagination.apply_page(
                                     envelope.more,
-                                    envelope.next.clone(),
-                                    TaxiiPaged::<TaxiiEnvelope>::new(envelope.clone(), &response)
-                                        .headers
-                                        .date_added_last,
+                                    envelope.next,
+                                    TaxiiPageHeaders::from_response(&response).date_added_last,
                                     envelope.objects,
                                 ) {
                                     return Some((Err(err), None));
@@ -899,10 +901,8 @@ impl TaxiiClient {
                             Ok((page, response)) => {
                                 if let Err(err) = pagination.apply_page(
                                     page.more,
-                                    page.next.clone(),
-                                    TaxiiPaged::new(page.clone(), &response)
-                                        .headers
-                                        .date_added_last,
+                                    page.next,
+                                    TaxiiPageHeaders::from_response(&response).date_added_last,
                                     page.versions,
                                 ) {
                                     return Some((Err(err), None));
@@ -1024,10 +1024,8 @@ impl TaxiiClient {
                             Ok((page, response)) => {
                                 if let Err(err) = pagination.apply_page(
                                     page.more,
-                                    page.next.clone(),
-                                    TaxiiPaged::new(page.clone(), &response)
-                                        .headers
-                                        .date_added_last,
+                                    page.next,
+                                    TaxiiPageHeaders::from_response(&response).date_added_last,
                                     page.objects,
                                 ) {
                                     return Some((Err(err), None));
@@ -1074,8 +1072,12 @@ impl TaxiiClient {
         )?;
         let query =
             with_clock_skew_filter(filter, self.clock_skew(server_cursor)).to_query_pairs()?;
-        let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
-        let envelope = self.inner.http.decode_envelope(&response)?;
+        let mut response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
+        let envelope = self
+            .inner
+            .http
+            .decode_envelope(std::mem::take(&mut response.body))
+            .await?;
         Ok((envelope, response))
     }
 
@@ -1100,8 +1102,12 @@ impl TaxiiClient {
         )?;
         let query = with_clock_skew_object_filter(filter, self.clock_skew(server_cursor))
             .to_query_pairs()?;
-        let response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
-        let envelope = self.inner.http.decode_envelope(&response)?;
+        let mut response = self.inner.http.get(url, &query, TAXII_ACCEPT).await?;
+        let envelope = self
+            .inner
+            .http
+            .decode_envelope(std::mem::take(&mut response.body))
+            .await?;
         Ok((envelope, response))
     }
 
