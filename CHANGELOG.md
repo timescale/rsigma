@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Daemon control-plane requests are bounded, and watchlist changes are never lost
+### Daemon control-plane requests are bounded, and watchlist changes are never lost (#818)
 
 `POST /api/v1/silences` took any number of matchers of any length and compiled each regex at the default size limit on the async runtime. Silence bodies are now capped at 64 KiB (`413`), and before anything compiles a silence may carry at most 32 matchers, 256-byte selectors, ids, and `created_by`, 1024-byte values, and a 4096-byte comment (`400`). Each regex compiles off the async runtime with a 64 KiB size limit and a 64 KiB search cache, and the regexes of all API silences share a 64 MiB budget (`429` past it). A regex value must parse on its own, which closes a hole where a value such as `x)|(.*` escaped the full-match anchors and matched anything. Silences restored from the state database go through the same checks and through `max_silences` and the tenant silence quota, which restore did not apply before.
 
