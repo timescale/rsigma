@@ -533,7 +533,7 @@ The daemon's hot-reload mechanism extends to dynamic sources. The triggers:
 | `POST /api/v1/sources/resolve` | Re-resolves every dynamic source. The body is ignored. Rules reload only when a referenced value changes. |
 | `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. |
 | `DELETE /api/v1/sources/cache/{source_id}` | Invalidates one source's cache so the next read fetches fresh. |
-| NATS message on `rsigma.control.resolve` | Same as `POST /api/v1/sources/resolve`. |
+| NATS message on `rsigma.control.resolve` | Same as `POST /api/v1/sources/resolve`. The daemon subscribes on the server of a `nats://` input, with its `--nats-*` settings. {{ added "unreleased" }} |
 
 ### Security model
 

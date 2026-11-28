@@ -34,7 +34,7 @@ Every variable in the table has a corresponding `--flag` that takes precedence. 
 | `RSIGMA_TAXII_API_KEY` | string | unset | `taxii sync` (`taxii-sync` feature) | API key header value for TAXII ingest. Equivalent to `--api-key`. Mutually exclusive with bearer and basic auth. Secret: flag/env only. {{ added "0.23.0" }} |
 | `RSIGMA_TAXII_CLIENT_P12_PASSWORD` | string | unset | `taxii sync` (`taxii-sync` feature) | Decryption password for `--client-p12` mTLS client identity. Equivalent to `--client-p12-password`. Secret: flag/env only. {{ added "0.23.0" }} |
 | `RSIGMA_API_TOKEN` | string | unset | `engine incidents export` | Default bearer token env var for daemon-client auth. Override the variable name with `--auth-token-env`. |
-| `NATS_CREDS` | path to `.creds` file | unset | `engine daemon` with NATS source or sink | NATS credentials file (JWT + NKey). Equivalent to `--nats-creds`. |
+| `NATS_CREDS` | path to `.creds` file | unset | `engine daemon` with a NATS input, sink, or `type: nats` dynamic source; `pipeline resolve` and `rule validate --resolve-sources` with a `type: nats` source {{ added "unreleased" }} | NATS credentials file (JWT + NKey). Equivalent to `--nats-creds`. |
 | `NATS_TOKEN` | string | unset | same | NATS authentication token. Equivalent to `--nats-token`. |
 | `NATS_USER` | string | unset | same | NATS username (requires `NATS_PASSWORD`). Equivalent to `--nats-user`. |
 | `NATS_PASSWORD` | string | unset | same | NATS password (requires `NATS_USER`). Equivalent to `--nats-password`. |

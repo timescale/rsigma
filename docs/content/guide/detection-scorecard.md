@@ -58,6 +58,8 @@ rsigma rule scorecard --backtest backtest.json --coverage coverage.json \
 
 `--fail-on retire` fails only on retire-grade rules; `--fail-on tune` is stricter and fails on tune as well. See [CI/CD](ci-cd.md) for the full pipeline.
 
+A `scorecard.metrics` URL is honored from the user or system config, `--config`, or the flag, but not from a project file (`./rsigma.yaml`, `.rsigmarc`), which may name only a local snapshot. Fetches follow the [`default` egress policy](../reference/security.md#cli-downloads), so loopback and private Prometheus addresses work and link-local or cloud-metadata addresses are refused. {{ added "unreleased" }}
+
 ## See also
 
 - [`rule scorecard`](../cli/rule/scorecard.md) for the full flag, input, and report reference.

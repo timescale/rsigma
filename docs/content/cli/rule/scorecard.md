@@ -42,7 +42,7 @@ The Prometheus join inherits the caveat documented in [Metrics](../../reference/
 |------|---------|-------------|
 | `--backtest <FILE>` | required | The backtest JSON report (from `rule backtest --report`). May also be supplied via `scorecard.backtest`. |
 | `--coverage <FILE>` | required | The coverage JSON report (from `rule coverage --output-format json`). May also be supplied via `scorecard.coverage`. |
-| `--metrics <FILE\|URL>` | unset | A Prometheus exposition snapshot file or a `/metrics` URL. May also be supplied via `scorecard.metrics`. |
+| `--metrics <FILE\|URL>` | unset | A Prometheus exposition snapshot file or a `/metrics` URL. May also be supplied via `scorecard.metrics`. A URL from a project config file (`./rsigma.yaml`, `.rsigmarc`) is ignored with a warning; set it in the user or system config, `--config`, or the flag. Downloads follow the [`default` egress policy](../../reference/security.md#cli-downloads), so a URL or redirect that leads to a link-local or cloud-metadata address fails. {{ added "unreleased" }} |
 | `--metrics-window <DURATION>` | unset | Range-query window (e.g. `7d`, `24h`) when `--metrics` is a query-API base. May also be supplied via `scorecard.metrics_window`. |
 | `--triage <FILE>` | unset | The triage disposition feed. May also be supplied via `scorecard.triage`. |
 | `--fail-on <POLICY>` | `none` | Exit `1` when any rule's verdict is at or worse than the policy: `retire` fails on retire; `tune` fails on tune and retire; `none` reports only. May also be supplied via `scorecard.fail_on`. |

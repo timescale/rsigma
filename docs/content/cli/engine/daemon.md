@@ -335,6 +335,8 @@ On that machine and these lanes:
 
 The auth methods are mutually exclusive. See [NATS Streaming](../../guide/nats-streaming.md) for the full operational guide.
 
+These settings apply to every NATS connection the daemon opens: the input, NATS sinks, `type: nats` dynamic sources (including a disposition pull source) and their push subscriptions, and the `rsigma.control.resolve` control subject, which listens on the server of a `nats://` input and is not started for other inputs. With `--nats-require-tls`, a server that does not offer TLS fails each of those connections before any credential or subscription is sent. {{ added "unreleased" }}
+
 ### Performance (advanced)
 
 | Flag | Default | Description |

@@ -80,6 +80,8 @@ rsigma engine daemon -r rules/ \
 
 A client certificate also requires TLS, so `--nats-tls-cert` alone refuses a server that does not negotiate TLS. TLS then applies to every server the client connects to, including servers the cluster announces and reconnects, and servers the cluster announces are verified against a host name the client trusts. {{ added "unreleased" }}
 
+The same authentication and TLS settings apply to `type: nats` [dynamic sources](../reference/dynamic-sources.md#nats), their push subscriptions, and the `rsigma.control.resolve` control subject, which listens on the server of the `nats://` input. A source on a server without TLS fails under `--nats-require-tls` instead of falling back to cleartext. [`pipeline resolve`](../cli/pipeline/resolve.md) and [`rule validate --resolve-sources`](../cli/rule/validate.md) take the same `--nats-*` flags and environment variables. {{ added "unreleased" }}
+
 ## At-least-once delivery
 
 When `--input nats://...` is used, the daemon switches from at-most-once to at-least-once semantics. Each message is wrapped in an `AckToken` that is held until every output sink has committed the corresponding result: delivered it, or handed the failure to the DLQ writer. A dedicated ack task resolves tokens after that confirmation.

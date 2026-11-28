@@ -1,10 +1,14 @@
 //! Layered YAML configuration for rsigma.
 //!
 //! Configuration is resolved with the precedence (low to high):
-//! compiled defaults < `/etc/rsigma` < `~/.config/rsigma` < nearest
-//! `.rsigmarc` (walked up from CWD) < `./rsigma.yaml` < environment variables
-//! < CLI flags. An explicit `--config <path>` replaces the file-discovery set
-//! entirely (only that file is loaded), mirroring `rsigma rule lint --config`.
+//! compiled defaults < `/etc/rsigma` (`%ProgramData%\rsigma` on Windows) <
+//! `~/.config/rsigma` < nearest `.rsigmarc` (walked up from CWD, no further
+//! than `$HOME` or the filesystem the walk started on) < `./rsigma.yaml` <
+//! environment variables < CLI flags. A discovered file is read only when
+//! it and its directory belong to the invoking user or an administrator
+//! (see [`trust`]). An explicit `--config <path>` replaces the file-discovery
+//! set entirely (only that file is loaded), mirroring
+//! `rsigma rule lint --config`.
 //!
 //! This module owns the file layer: discovery, layered loading, and
 //! unknown-key / inactive-section diagnostics. The env and flag layers, plus
@@ -15,6 +19,7 @@ pub(crate) mod commands;
 pub(crate) mod defaults;
 mod resolve;
 mod schema;
+mod trust;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -45,6 +50,9 @@ pub(crate) fn load_and_merge(explicit: Option<&Path>) -> RsigmaConfigPartial {
                     eprintln!("error: unknown config key '{key}' in {}", path.display());
                 }
                 std::process::exit(crate::exit_code::CONFIG_ERROR);
+            }
+            for (path, reason) in &loaded.skipped_files {
+                warn_once(skipped_file_warning(path, reason));
             }
             for (path, key) in &loaded.ignored_keys {
                 warn_once(ignored_key_warning(path, key));
@@ -202,6 +210,9 @@ pub(crate) struct LoadedConfig {
     /// Whether a project layer (`./rsigma.yaml`, `./rsigma.yml`, `.rsigmarc`)
     /// was loaded. Tenancy refuses to start when one was.
     pub project_layer_loaded: bool,
+    /// Discovered files that were not read because another account could
+    /// have written them, each with the reason.
+    pub skipped_files: Vec<(PathBuf, String)>,
 }
 
 /// Return the user config directory (`$XDG_CONFIG_HOME/rsigma` or
@@ -228,15 +239,21 @@ fn first_existing(dir: &Path, stem: &str) -> Option<PathBuf> {
     None
 }
 
-/// Walk up from the current directory looking for a project `.rsigmarc`.
-fn find_rsigmarc() -> Option<PathBuf> {
-    let mut current = std::env::current_dir().ok()?;
+/// Walk up from `start` looking for a project `.rsigmarc`. The walk ends
+/// after `home`, and before it would leave the filesystem `start` is on.
+fn find_rsigmarc(start: &Path, home: Option<&Path>, probe: &dyn trust::Probe) -> Option<PathBuf> {
+    let home = home.and_then(|home| std::fs::canonicalize(home).ok());
+    let device = probe.device(start);
+    let mut current = start.to_path_buf();
     loop {
         let candidate = current.join(".rsigmarc");
         if candidate.is_file() {
             return Some(candidate);
         }
-        if !current.pop() {
+        if home.is_some() && std::fs::canonicalize(&current).ok() == home {
+            return None;
+        }
+        if !current.pop() || probe.device(&current) != device {
             return None;
         }
     }
@@ -245,7 +262,8 @@ fn find_rsigmarc() -> Option<PathBuf> {
 /// The discovery layer a config file was loaded from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layer {
-    /// `/etc/rsigma/config.yaml`.
+    /// `/etc/rsigma/config.yaml`, or `%ProgramData%\rsigma\config.yaml` on
+    /// Windows.
     System,
     /// `~/.config/rsigma/config.yaml` (or under `$XDG_CONFIG_HOME`).
     User,
@@ -264,41 +282,127 @@ impl Layer {
     fn is_project(self) -> bool {
         matches!(self, Layer::ProjectRc | Layer::ProjectYaml)
     }
+
+    /// The layer's name in `config path` output.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Layer::System => "system",
+            Layer::User => "user",
+            Layer::ProjectRc => "project_rc",
+            Layer::ProjectYaml => "project_yaml",
+            Layer::Explicit => "explicit",
+        }
+    }
+}
+
+/// A location config discovery searched, lowest precedence first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Location {
+    pub layer: Layer,
+    /// The file found, or where it was looked for. For a `.rsigmarc` that
+    /// was not found, the directory the upward walk started in.
+    pub path: PathBuf,
+    pub status: LocationStatus,
+}
+
+/// Whether discovery read the file at a [`Location`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LocationStatus {
+    Loaded,
+    Missing,
+    /// Present, but not read because another account could have written it.
+    Skipped(String),
+}
+
+/// The directories config discovery looks in.
+struct SearchRoots {
+    system: Option<PathBuf>,
+    user: Option<PathBuf>,
+    /// The absolute current directory, where the `.rsigmarc` walk starts.
+    cwd: Option<PathBuf>,
+    /// The walk stops after this directory.
+    home: Option<PathBuf>,
+    /// The directory holding `rsigma.yaml`.
+    project: PathBuf,
+}
+
+impl SearchRoots {
+    fn current() -> Self {
+        Self {
+            system: trust::system_config_dir(),
+            user: user_config_dir(),
+            cwd: std::env::current_dir().ok(),
+            home: dirs::home_dir(),
+            project: PathBuf::from("."),
+        }
+    }
+}
+
+/// Every location config discovery searches, lowest precedence first. With
+/// `explicit`, only that file, which is read as given so a bad `--config`
+/// surfaces a clear error.
+pub(crate) fn search(explicit: Option<&Path>) -> Vec<Location> {
+    match explicit {
+        Some(path) => vec![Location {
+            layer: Layer::Explicit,
+            path: path.to_path_buf(),
+            status: LocationStatus::Loaded,
+        }],
+        None => search_in(&SearchRoots::current(), &trust::SystemProbe),
+    }
+}
+
+fn search_in(roots: &SearchRoots, probe: &dyn trust::Probe) -> Vec<Location> {
+    let located = |layer: Layer, found: Option<PathBuf>, missing: PathBuf| match found {
+        None => Location {
+            layer,
+            path: missing,
+            status: LocationStatus::Missing,
+        },
+        Some(path) => {
+            let status = match trust::untrusted_reason(&path, !layer.is_project(), probe) {
+                Some(reason) => LocationStatus::Skipped(reason),
+                None => LocationStatus::Loaded,
+            };
+            Location {
+                layer,
+                path,
+                status,
+            }
+        }
+    };
+    let mut locations = Vec::new();
+    for (layer, dir) in [(Layer::System, &roots.system), (Layer::User, &roots.user)] {
+        if let Some(dir) = dir {
+            locations.push(located(
+                layer,
+                first_existing(dir, "config"),
+                dir.join("config.yaml"),
+            ));
+        }
+    }
+    if let Some(cwd) = &roots.cwd {
+        locations.push(located(
+            Layer::ProjectRc,
+            find_rsigmarc(cwd, roots.home.as_deref(), probe),
+            cwd.clone(),
+        ));
+    }
+    locations.push(located(
+        Layer::ProjectYaml,
+        first_existing(&roots.project, "rsigma"),
+        roots.project.join("rsigma.yaml"),
+    ));
+    locations
 }
 
 /// Resolve the ordered list of config files to load, lowest precedence first.
-///
-/// When `explicit` is set, only that path is returned (it is loaded
-/// unconditionally so a bad `--config` surfaces a clear error).
 pub(crate) fn discover(explicit: Option<&Path>) -> Vec<PathBuf> {
-    discover_layers(explicit)
+    search(explicit)
         .into_iter()
-        .map(|(path, _)| path)
+        .filter(|location| location.status == LocationStatus::Loaded)
+        .map(|location| location.path)
         .collect()
-}
-
-/// Like [`discover`], but pairs each path with the layer it came from.
-fn discover_layers(explicit: Option<&Path>) -> Vec<(PathBuf, Layer)> {
-    if let Some(path) = explicit {
-        return vec![(path.to_path_buf(), Layer::Explicit)];
-    }
-
-    let mut paths = Vec::new();
-    if let Some(p) = first_existing(Path::new("/etc/rsigma"), "config") {
-        paths.push((p, Layer::System));
-    }
-    if let Some(dir) = user_config_dir()
-        && let Some(p) = first_existing(&dir, "config")
-    {
-        paths.push((p, Layer::User));
-    }
-    if let Some(p) = find_rsigmarc() {
-        paths.push((p, Layer::ProjectRc));
-    }
-    if let Some(p) = first_existing(Path::new("."), "rsigma") {
-        paths.push((p, Layer::ProjectYaml));
-    }
-    paths
 }
 
 /// A security-sensitive config key that project files (`.rsigmarc`,
@@ -625,7 +729,38 @@ pub(crate) const PROTECTED_KEYS: &[ProtectedKey] = &[
                 .is_some_and(|defaults| take_convert_output(defaults, project_dir))
         },
     },
+    // Inputs the CLI downloads when they are URLs. A project may still name
+    // local files.
+    ProtectedKey {
+        key: "coverage.atomics",
+        strip: |c, _| take_url(c.coverage.as_mut().map(|s| &mut s.atomics)),
+    },
+    ProtectedKey {
+        key: "coverage.baseline",
+        strip: |c, _| take_url(c.coverage.as_mut().map(|s| &mut s.baseline)),
+    },
+    ProtectedKey {
+        key: "visibility.mapping",
+        strip: |c, _| take_url(c.visibility.as_mut().map(|s| &mut s.mapping)),
+    },
+    ProtectedKey {
+        key: "scorecard.metrics",
+        strip: |c, _| take_url(c.scorecard.as_mut().map(|s| &mut s.metrics)),
+    },
+    ProtectedKey {
+        key: "hygiene.metrics",
+        strip: |c, _| take_url(c.hygiene.as_mut().map(|s| &mut s.metrics)),
+    },
 ];
+
+/// Clear `slot` when it holds a URL rather than a local path.
+fn take_url(slot: Option<&mut Option<String>>) -> bool {
+    slot.is_some_and(|value| {
+        value
+            .take_if(|spec| crate::fetch::is_remote(spec))
+            .is_some()
+    })
+}
 
 /// A security-sensitive key inside every entry of a named map, such as
 /// `rulesets.<name>.output`. Project files may not set it, as for
@@ -823,7 +958,24 @@ fn load_file(path: &Path) -> Result<(RsigmaConfigPartial, Vec<String>), ConfigEr
 /// [`PROTECTED_KEYS`] set by a project file are dropped and recorded in
 /// [`LoadedConfig::ignored_keys`].
 pub(crate) fn load_layered(explicit: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
-    load_files(discover_layers(explicit))
+    load_locations(search(explicit))
+}
+
+/// Load the [`LocationStatus::Loaded`] files of `locations` and record the
+/// skipped ones.
+fn load_locations(locations: Vec<Location>) -> Result<LoadedConfig, ConfigError> {
+    let mut files = Vec::new();
+    let mut skipped = Vec::new();
+    for location in locations {
+        match location.status {
+            LocationStatus::Loaded => files.push((location.path, location.layer)),
+            LocationStatus::Skipped(reason) => skipped.push((location.path, reason)),
+            LocationStatus::Missing => {}
+        }
+    }
+    let mut loaded = load_files(files)?;
+    loaded.skipped_files = skipped;
+    Ok(loaded)
 }
 
 /// Load and merge `files` in order, lowest precedence first.
@@ -855,6 +1007,14 @@ fn load_files(files: Vec<(PathBuf, Layer)>) -> Result<LoadedConfig, ConfigError>
 pub(crate) fn ignored_key_warning(path: &Path, key: &str) -> String {
     format!(
         "warning: ignoring '{key}' from project config {}; security-sensitive keys are read only from --config, the user or system config, environment variables, or flags",
+        path.display()
+    )
+}
+
+/// The warning printed for a discovered file that was not read.
+pub(crate) fn skipped_file_warning(path: &Path, reason: &str) -> String {
+    format!(
+        "warning: skipping config {}: {reason}; pass it with --config to read it anyway",
         path.display()
     )
 }
@@ -1452,6 +1612,244 @@ daemon:
         assert_eq!(daemon.enrichers, Some(PathBuf::from("enrich.yml")));
         assert_eq!(daemon.api.unwrap().allow_unauthenticated, Some(true));
         assert!(loaded.ignored_keys.is_empty());
+    }
+
+    fn remote_inputs(value: &str) -> String {
+        format!(
+            "coverage:\n  atomics: '{value}'\n  baseline: '{value}'\nvisibility:\n  mapping: '{value}'\nscorecard:\n  metrics: '{value}'\nhygiene:\n  metrics: '{value}'\n"
+        )
+    }
+
+    const REMOTE_INPUT_KEYS: [&str; 5] = [
+        "coverage.atomics",
+        "coverage.baseline",
+        "visibility.mapping",
+        "scorecard.metrics",
+        "hygiene.metrics",
+    ];
+
+    fn remote_input_values(config: &RsigmaConfigPartial) -> [Option<String>; 5] {
+        let coverage = config.coverage.clone().unwrap_or_default();
+        [
+            coverage.atomics,
+            coverage.baseline,
+            config.visibility.clone().unwrap_or_default().mapping,
+            config.scorecard.clone().unwrap_or_default().metrics,
+            config.hygiene.clone().unwrap_or_default().metrics,
+        ]
+    }
+
+    #[test]
+    fn project_layers_drop_remote_inputs_and_keep_local_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        for url in [
+            "http://127.0.0.1:9/metrics",
+            "HTTPS://example.com/index.yaml",
+        ] {
+            let path = write_config(dir.path(), "rsigma.yaml", &remote_inputs(url));
+            let loaded = load_files(vec![(path, Layer::ProjectYaml)]).unwrap();
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                [None, None, None, None, None]
+            );
+            let keys: Vec<&str> = loaded
+                .ignored_keys
+                .iter()
+                .map(|(_, k)| k.as_str())
+                .collect();
+            assert_eq!(keys, REMOTE_INPUT_KEYS, "{url}");
+        }
+        for local in ["./metrics.txt", "/srv/atomics/index.yaml"] {
+            let path = write_config(dir.path(), ".rsigmarc", &remote_inputs(local));
+            let loaded = load_files(vec![(path, Layer::ProjectRc)]).unwrap();
+            assert!(loaded.ignored_keys.is_empty(), "{local}");
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                std::array::from_fn(|_| Some(local.to_string()))
+            );
+        }
+    }
+
+    #[test]
+    fn operator_layers_keep_remote_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "http://127.0.0.1:9/metrics";
+        let path = write_config(dir.path(), "config.yaml", &remote_inputs(url));
+        for layer in [Layer::System, Layer::User, Layer::Explicit] {
+            let loaded = load_files(vec![(path.clone(), layer)]).unwrap();
+            assert!(loaded.ignored_keys.is_empty(), "{layer:?}");
+            assert_eq!(
+                remote_input_values(&loaded.config),
+                std::array::from_fn(|_| Some(url.to_string()))
+            );
+        }
+    }
+
+    fn other_owner() -> trust::Facts {
+        trust::Facts {
+            owner: trust::Owner::Other("uid 1001".into()),
+            writable_by: None,
+        }
+    }
+
+    fn roots(dir: &Path) -> SearchRoots {
+        SearchRoots {
+            system: Some(dir.join("system")),
+            user: Some(dir.join("user")),
+            cwd: Some(dir.join("project")),
+            home: None,
+            project: dir.join("project"),
+        }
+    }
+
+    #[test]
+    fn files_owned_by_another_user_are_skipped_with_the_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        for sub in ["system", "user", "project"] {
+            std::fs::create_dir(dir.path().join(sub)).unwrap();
+        }
+        let system = write_config(&dir.path().join("system"), "config.yaml", MCP_GATES);
+        let user = write_config(&dir.path().join("user"), "config.yml", "version: 1\n");
+        let rc = write_config(&dir.path().join("project"), ".rsigmarc", "version: 1\n");
+        let project = write_config(&dir.path().join("project"), "rsigma.yaml", "version: 1\n");
+        let mut probe = trust::FakeProbe::default();
+        for path in [&system, &project] {
+            probe
+                .facts
+                .insert(std::fs::canonicalize(path).unwrap(), other_owner());
+        }
+
+        let locations = search_in(&roots(dir.path()), &probe);
+        let summary: Vec<(Layer, &Path, bool)> = locations
+            .iter()
+            .map(|l| {
+                (
+                    l.layer,
+                    l.path.as_path(),
+                    l.status == LocationStatus::Loaded,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (Layer::System, system.as_path(), false),
+                (Layer::User, user.as_path(), true),
+                (Layer::ProjectRc, rc.as_path(), true),
+                (Layer::ProjectYaml, project.as_path(), false),
+            ]
+        );
+        let LocationStatus::Skipped(reason) = locations[0].status.clone() else {
+            panic!("{locations:?}");
+        };
+        assert!(
+            reason.starts_with("the file is owned by uid 1001"),
+            "{reason}"
+        );
+
+        let loaded = load_locations(locations).unwrap();
+        assert_eq!(loaded.sources, [user, rc]);
+        assert!(loaded.config.mcp.is_none(), "the skipped file was read");
+        let skipped: Vec<&Path> = loaded
+            .skipped_files
+            .iter()
+            .map(|(p, _)| p.as_path())
+            .collect();
+        assert_eq!(skipped, [system.as_path(), project.as_path()]);
+        let warning = skipped_file_warning(&system, &reason);
+        assert!(warning.contains("pass it with --config"), "{warning}");
+    }
+
+    #[test]
+    fn missing_locations_name_where_discovery_looked() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("project")).unwrap();
+        let locations = search_in(&roots(dir.path()), &trust::FakeProbe::default());
+        let paths: Vec<(Layer, PathBuf)> = locations
+            .into_iter()
+            .inspect(|l| assert_eq!(l.status, LocationStatus::Missing))
+            .map(|l| (l.layer, l.path))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                (Layer::System, dir.path().join("system/config.yaml")),
+                (Layer::User, dir.path().join("user/config.yaml")),
+                (Layer::ProjectRc, dir.path().join("project")),
+                (Layer::ProjectYaml, dir.path().join("project/rsigma.yaml")),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_rsigmarc_walk_stops_at_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = home.join("repo/rules");
+        std::fs::create_dir_all(&cwd).unwrap();
+        write_config(dir.path(), ".rsigmarc", "version: 1\n");
+        let probe = trust::FakeProbe::default();
+
+        assert_eq!(find_rsigmarc(&cwd, Some(&home), &probe), None);
+        assert_eq!(
+            find_rsigmarc(&cwd, None, &probe),
+            Some(dir.path().join(".rsigmarc"))
+        );
+        let in_home = write_config(&home, ".rsigmarc", "version: 1\n");
+        assert_eq!(find_rsigmarc(&cwd, Some(&home), &probe), Some(in_home));
+    }
+
+    #[test]
+    fn the_rsigmarc_walk_stops_at_a_filesystem_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let mount = dir.path().join("mnt");
+        let cwd = mount.join("repo");
+        std::fs::create_dir_all(&cwd).unwrap();
+        write_config(dir.path(), ".rsigmarc", "version: 1\n");
+        let mut probe = trust::FakeProbe::default();
+        for path in [&mount, &cwd] {
+            probe
+                .devices
+                .insert(std::fs::canonicalize(path).unwrap(), 2);
+        }
+        assert_eq!(find_rsigmarc(&cwd, None, &probe), None);
+        let on_mount = write_config(&mount, ".rsigmarc", "version: 1\n");
+        assert_eq!(find_rsigmarc(&cwd, None, &probe), Some(on_mount));
+    }
+
+    #[test]
+    fn an_rsigmarc_owned_by_another_user_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("project/sub");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let rc = write_config(&dir.path().join("project"), ".rsigmarc", MCP_GATES);
+        let mut probe = trust::FakeProbe::default();
+        probe
+            .facts
+            .insert(std::fs::canonicalize(&rc).unwrap(), other_owner());
+        let mut roots = roots(dir.path());
+        roots.cwd = Some(cwd);
+        let locations = search_in(&roots, &probe);
+        let rc_location = locations
+            .iter()
+            .find(|l| l.layer == Layer::ProjectRc)
+            .unwrap();
+        assert_eq!(rc_location.path, rc);
+        assert!(matches!(rc_location.status, LocationStatus::Skipped(_)));
+    }
+
+    #[test]
+    fn explicit_config_is_read_without_an_ownership_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(dir.path(), "custom.yaml", "version: 1\n");
+        assert_eq!(
+            search(Some(&path)),
+            [Location {
+                layer: Layer::Explicit,
+                path,
+                status: LocationStatus::Loaded,
+            }]
+        );
     }
 
     #[test]

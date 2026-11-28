@@ -161,7 +161,7 @@ pub(crate) fn resolve(spec: Option<&str>) -> Result<MappingTable, String> {
             let raw = fetch_cached(DEFAULT_MAPPING_URL)?;
             MappingTable::parse(&raw)
         }
-        Some(spec) if spec.starts_with("http://") || spec.starts_with("https://") => {
+        Some(spec) if crate::fetch::is_remote(spec) => {
             let raw = fetch_cached(spec)?;
             MappingTable::parse(&raw)
         }
@@ -208,12 +208,8 @@ fn fetch_cached(url: &str) -> Result<String, String> {
         return Ok(body);
     }
 
-    match ureq::get(url).call() {
-        Ok(response) => {
-            let body = response
-                .into_body()
-                .read_to_string()
-                .map_err(|e| format!("reading response from {url}: {e}"))?;
+    match crate::fetch::get_text(url) {
+        Ok(body) => {
             if let Some(path) = &cache {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);

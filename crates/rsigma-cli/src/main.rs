@@ -11,6 +11,7 @@ mod config;
 mod daemon;
 pub(crate) mod exit_code;
 mod features;
+pub(crate) mod fetch;
 mod fix;
 pub(crate) mod fsutil;
 pub(crate) mod logsource_opts;

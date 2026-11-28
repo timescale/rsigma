@@ -37,6 +37,7 @@ For narrative coverage see [Linting Rules](../../guide/linting-rules.md) and [CI
 | `-p, --pipeline <PIPELINES>` | Processing pipeline(s) to apply. Builtin names (`ecs_windows`, `ecs_linux`, `fibratus_windows`, `sysmon`) or YAML file paths. Repeatable. |
 | `--source <FILE_OR_DIR>` | External source file(s) or directory of source files. Repeatable. Same standalone `sources:` YAML shape as the daemon's `--source`. Required for meaningful `--resolve-sources` runs after the v0.19.0 removal of pipeline-embedded `sources:`. |
 | `--resolve-sources` | Resolve and fetch every loaded dynamic source during validation. Sources must be reachable for validation to pass. |
+| `--nats-creds`, `--nats-token`, `--nats-user`, `--nats-password`, `--nats-nkey`, `--nats-tls-cert`, `--nats-tls-key`, `--nats-require-tls` | NATS authentication and TLS for `type: nats` sources resolved by `--resolve-sources`, with the same meaning and environment variables (`NATS_CREDS`, `NATS_TOKEN`, `NATS_USER`, `NATS_PASSWORD`, `NATS_NKEY`) as on [`engine daemon`](../engine/daemon.md). With `--nats-require-tls`, a server that does not offer TLS fails validation before any credential or subscription is sent. Requires the `daemon-nats` feature. {{ added "unreleased" }} |
 | `--fail-level <FAIL_LEVEL>` | Lowest parse diagnostic severity that exits `2`: `error` (default) fails on parse errors and compile errors, and `warning` also fails on parse warnings. Same flag name and default as [`rule lint --fail-level`](lint.md). {{ added "0.25.0" }} |
 
 ## Examples

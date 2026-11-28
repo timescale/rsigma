@@ -38,7 +38,7 @@ Scores ride DeTT&CT's 0-to-4 scale (none, minimal, medium, good, excellent), der
 | `--ruleset <NAME>` | none | Named ruleset from the configuration to analyze instead of `--rules`. There is no config-file ruleset key for this command. {{ added "0.28.0" }} |
 | `--observed <FILE>` | unset | Observed field report: the `engine eval --observe-fields` JSON, a saved `GET /api/v1/fields` snapshot, or `-` for stdin. Omit for the rule-expected baseline. Conflicts with `--addr`. |
 | `--addr <DAEMON_ADDR>` | unset | Fetch the observed snapshot from a live daemon (`GET /api/v1/fields`) as `host:port` or a full URL. |
-| `--mapping [<PATH_OR_URL>]` | bundled | Override the logsource/field to ATT&CK data-source mapping table. A path or URL reads that table; a bare `--mapping` fetches the curated default URL. May also be supplied via `visibility.mapping`. |
+| `--mapping [<PATH_OR_URL>]` | bundled | Override the logsource/field to ATT&CK data-source mapping table. A path or URL reads that table; a bare `--mapping` fetches the curated default URL. May also be supplied via `visibility.mapping`. A URL from a project config file (`./rsigma.yaml`, `.rsigmarc`) is ignored with a warning; set it in the user or system config, `--config`, or the flag. {{ added "unreleased" }} |
 | `--dettect-data-sources <FILE>` | unset | Write the DeTT&CT data-source administration YAML to this file. |
 | `--dettect-techniques <FILE>` | unset | Write the DeTT&CT technique-administration YAML to this file. |
 | `--navigator <FILE>` | unset | Write the visibility ATT&CK Navigator layer (format 4.5) to this file. |
@@ -46,7 +46,7 @@ Scores ride DeTT&CT's 0-to-4 scale (none, minimal, medium, good, excellent), der
 | `--config <PATH>` | unset | Load a specific YAML config file instead of running the discovery chain. |
 | `--dry-run` | off | Print the effective `visibility` section and exit `0` without running. |
 
-A bare `--mapping` and any `--mapping <URL>` fetch over HTTP and cache for 7 days under the user cache directory (`~/.cache/rsigma/visibility` on Linux), with a stale-cache fallback when offline. The bundled default table needs no network.
+A bare `--mapping` and any `--mapping <URL>` fetch over HTTP and cache for 7 days under the user cache directory (`~/.cache/rsigma/visibility` on Linux), with a stale-cache fallback when offline. The bundled default table needs no network. Downloads follow the [`default` egress policy](../../reference/security.md#cli-downloads), so a URL or redirect that leads to a link-local or cloud-metadata address fails. {{ added "unreleased" }}
 
 The global `--output-format` applies: `table` (the TTY default) renders the human report with the data-source breakdown plus blind-spot and untapped sections, `json` emits the single report document, and `ndjson`/`csv`/`tsv` emit one row per data source.
 

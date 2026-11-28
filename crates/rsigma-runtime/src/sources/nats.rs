@@ -25,12 +25,14 @@ fn check_payload_size(payload: &[u8], max_bytes: usize) -> Result<(), SourceErro
 
 /// Resolve a NATS source by connecting and fetching the latest message.
 ///
-/// For the initial resolution, this connects to the NATS server and subscribes
-/// briefly to the subject. For push sources, the initial value may be Null if
-/// no message is immediately available; the refresh scheduler will handle
-/// ongoing updates via subscription.
+/// For the initial resolution, this connects to the NATS server at `url` with
+/// the authentication and TLS settings of `connect` and subscribes briefly to
+/// the subject. For push sources, the initial value may be Null if no message
+/// is immediately available; the refresh scheduler will handle ongoing
+/// updates via subscription.
 #[cfg(feature = "nats")]
 pub async fn resolve_nats_initial(
+    connect: &crate::NatsConnectConfig,
     url: &str,
     subject: &str,
     format: DataFormat,
@@ -38,8 +40,7 @@ pub async fn resolve_nats_initial(
 ) -> Result<ResolvedValue, SourceError> {
     use futures::StreamExt;
 
-    crate::io::nats_config::ensure_crypto_provider();
-    let client = async_nats::connect(url).await.map_err(|e| SourceError {
+    let client = connect.connect_to(url).await.map_err(|e| SourceError {
         source_id: String::new(),
         kind: SourceErrorKind::Fetch(format!("failed to connect to NATS at {url}: {e}")),
     })?;

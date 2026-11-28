@@ -14,6 +14,7 @@ mod common;
 use std::time::Duration;
 
 use rsigma_eval::pipeline::sources::DataFormat;
+use rsigma_runtime::NatsConnectConfig;
 use rsigma_runtime::sources::nats::resolve_nats_initial;
 
 #[tokio::test]
@@ -21,7 +22,13 @@ async fn nats_source_on_a_tls_required_server_errors_without_panicking() {
     let url = common::nats_tls::tls_required_server().await;
     let result = tokio::time::timeout(
         Duration::from_secs(10),
-        resolve_nats_initial(&url, "rsigma.iocs", DataFormat::Json, None),
+        resolve_nats_initial(
+            &NatsConnectConfig::default(),
+            &url,
+            "rsigma.iocs",
+            DataFormat::Json,
+            None,
+        ),
     )
     .await
     .expect("resolve did not return");

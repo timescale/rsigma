@@ -20,7 +20,7 @@ use rsigma_runtime::{PipelineRef, RulesetBinding};
 #[derive(Args, Debug)]
 pub(crate) struct DaemonArgs {
     /// Path to a YAML config file. Overrides config-file discovery
-    /// (./rsigma.yaml, ~/.config/rsigma/config.yaml, /etc/rsigma/config.yaml).
+    /// (./rsigma.yaml, ~/.config/rsigma/config.yaml, the system config).
     /// CLI flags still take precedence over config-file values.
     #[arg(long = "config", value_name = "PATH")]
     pub config: Option<PathBuf>,
@@ -308,46 +308,9 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "syslog-strip-bom", default_value_t = true, action = clap::ArgAction::Set)]
     pub syslog_strip_bom: bool,
 
-    /// NATS credentials file (.creds) for JWT + NKey authentication.
-    /// Also reads from NATS_CREDS environment variable.
     #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-creds", env = "NATS_CREDS")]
-    pub nats_creds: Option<PathBuf>,
-
-    /// NATS authentication token. Also reads from NATS_TOKEN.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-token", env = "NATS_TOKEN", conflicts_with = "nats_creds")]
-    pub nats_token: Option<String>,
-
-    /// NATS username (requires --nats-password). Also reads from NATS_USER.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-user", env = "NATS_USER", requires = "nats_password", conflicts_with_all = ["nats_creds", "nats_token"])]
-    pub nats_user: Option<String>,
-
-    /// NATS password (requires --nats-user). Also reads from NATS_PASSWORD.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-password", env = "NATS_PASSWORD", requires = "nats_user")]
-    pub nats_password: Option<String>,
-
-    /// NATS NKey seed for authentication. Also reads from NATS_NKEY.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-nkey", env = "NATS_NKEY", conflicts_with_all = ["nats_creds", "nats_token", "nats_user"])]
-    pub nats_nkey: Option<String>,
-
-    /// TLS client certificate for mutual TLS with NATS. Also requires TLS.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-tls-cert", requires = "nats_tls_key")]
-    pub nats_tls_cert: Option<PathBuf>,
-
-    /// TLS client private key for mutual TLS with NATS.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-tls-key", requires = "nats_tls_cert")]
-    pub nats_tls_key: Option<PathBuf>,
-
-    /// Require TLS for NATS connections.
-    #[cfg(feature = "daemon-nats")]
-    #[arg(long = "nats-require-tls")]
-    pub nats_require_tls: bool,
+    #[command(flatten)]
+    pub nats: NatsConnectArgs,
 
     /// Replay from a specific JetStream sequence number.
     #[cfg(feature = "daemon-nats")]
@@ -783,18 +746,63 @@ pub(crate) struct DaemonArgs {
     pub allow_unauthenticated: bool,
 }
 
-/// Helper struct grouping NATS connection / auth flags so `cmd_daemon` does
-/// not balloon back to 30+ positional parameters once we destructure the args.
+/// NATS authentication and TLS flags, shared by every command that opens a
+/// NATS connection: the daemon's input, sinks, dynamic sources, and control
+/// subject, and the dynamic sources `pipeline resolve` and
+/// `rule validate --resolve-sources` resolve.
 #[cfg(feature = "daemon-nats")]
-pub(crate) struct NatsAuthArgs {
+#[derive(clap::Args, Debug, Clone, Default)]
+pub(crate) struct NatsConnectArgs {
+    /// NATS credentials file (.creds) for JWT + NKey authentication.
+    /// Also reads from NATS_CREDS environment variable.
+    #[arg(long = "nats-creds", env = "NATS_CREDS")]
     pub nats_creds: Option<PathBuf>,
+
+    /// NATS authentication token. Also reads from NATS_TOKEN.
+    #[arg(long = "nats-token", env = "NATS_TOKEN", conflicts_with = "nats_creds")]
     pub nats_token: Option<String>,
+
+    /// NATS username (requires --nats-password). Also reads from NATS_USER.
+    #[arg(long = "nats-user", env = "NATS_USER", requires = "nats_password", conflicts_with_all = ["nats_creds", "nats_token"])]
     pub nats_user: Option<String>,
+
+    /// NATS password (requires --nats-user). Also reads from NATS_PASSWORD.
+    #[arg(long = "nats-password", env = "NATS_PASSWORD", requires = "nats_user")]
     pub nats_password: Option<String>,
+
+    /// NATS NKey seed for authentication. Also reads from NATS_NKEY.
+    #[arg(long = "nats-nkey", env = "NATS_NKEY", conflicts_with_all = ["nats_creds", "nats_token", "nats_user"])]
     pub nats_nkey: Option<String>,
+
+    /// TLS client certificate for mutual TLS with NATS. Also requires TLS.
+    #[arg(long = "nats-tls-cert", requires = "nats_tls_key")]
     pub nats_tls_cert: Option<PathBuf>,
+
+    /// TLS client private key for mutual TLS with NATS.
+    #[arg(long = "nats-tls-key", requires = "nats_tls_cert")]
     pub nats_tls_key: Option<PathBuf>,
+
+    /// Require TLS for NATS connections.
+    #[arg(long = "nats-require-tls")]
     pub nats_require_tls: bool,
+}
+
+#[cfg(feature = "daemon-nats")]
+impl NatsConnectArgs {
+    /// The connection settings these flags describe, without a URL.
+    pub(crate) fn connect_config(self) -> rsigma_runtime::NatsConnectConfig {
+        rsigma_runtime::NatsConnectConfig {
+            credentials_file: self.nats_creds,
+            token: self.nats_token,
+            username: self.nats_user,
+            password: self.nats_password,
+            nkey: self.nats_nkey,
+            tls_client_cert: self.nats_tls_cert,
+            tls_client_key: self.nats_tls_key,
+            require_tls: self.nats_require_tls,
+            ..Default::default()
+        }
+    }
 }
 
 /// Entry point for `rsigma engine daemon` (and the deprecated `rsigma daemon`).
@@ -920,21 +928,7 @@ pub(crate) fn cmd_daemon(
         syslog_tz,
         syslog_strip_bom,
         #[cfg(feature = "daemon-nats")]
-        nats_creds,
-        #[cfg(feature = "daemon-nats")]
-        nats_token,
-        #[cfg(feature = "daemon-nats")]
-        nats_user,
-        #[cfg(feature = "daemon-nats")]
-        nats_password,
-        #[cfg(feature = "daemon-nats")]
-        nats_nkey,
-        #[cfg(feature = "daemon-nats")]
-        nats_tls_cert,
-        #[cfg(feature = "daemon-nats")]
-        nats_tls_key,
-        #[cfg(feature = "daemon-nats")]
-        nats_require_tls,
+            nats: nats_auth,
         #[cfg(feature = "daemon-nats")]
         replay_from_sequence,
         #[cfg(feature = "daemon-nats")]
@@ -1013,18 +1007,6 @@ pub(crate) fn cmd_daemon(
         })
     } else {
         rules_opt.unwrap_or_default()
-    };
-
-    #[cfg(feature = "daemon-nats")]
-    let nats_auth = NatsAuthArgs {
-        nats_creds,
-        nats_token,
-        nats_user,
-        nats_password,
-        nats_nkey,
-        nats_tls_cert,
-        nats_tls_key,
-        nats_require_tls,
     };
 
     #[cfg(feature = "daemon-nats")]
@@ -2239,7 +2221,7 @@ fn run_daemon(
     syslog_tz: String,
     syslog_strip_bom: bool,
     state_restore_mode: daemon::server::StateRestoreMode,
-    #[cfg(feature = "daemon-nats")] nats_auth: NatsAuthArgs,
+    #[cfg(feature = "daemon-nats")] nats_auth: NatsConnectArgs,
     #[cfg(feature = "daemon-nats")] replay_policy: rsigma_runtime::ReplayPolicy,
     #[cfg(feature = "daemon-nats")] consumer_group: Option<String>,
     allow_remote_include: bool,
@@ -2390,17 +2372,7 @@ fn run_daemon(
     });
 
     #[cfg(feature = "daemon-nats")]
-    let nats_config = rsigma_runtime::NatsConnectConfig {
-        credentials_file: nats_auth.nats_creds,
-        token: nats_auth.nats_token,
-        username: nats_auth.nats_user,
-        password: nats_auth.nats_password,
-        nkey: nats_auth.nats_nkey,
-        tls_client_cert: nats_auth.nats_tls_cert,
-        tls_client_key: nats_auth.nats_tls_key,
-        require_tls: nats_auth.nats_require_tls,
-        ..Default::default()
-    };
+    let nats_config = nats_auth.connect_config();
 
     let file_pipeline_paths: Vec<PathBuf> = pipeline_paths
         .into_iter()

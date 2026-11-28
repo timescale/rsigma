@@ -207,12 +207,14 @@ Subscribes to a NATS subject and updates the source value with each message. Req
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `url` | string | yes | `nats://host:port`. Auth comes from the daemon-level `--nats-*` flags. |
+| `url` | string | yes | `nats://host:port`. The connection uses the `--nats-*` authentication and TLS flags of `engine daemon`, `pipeline resolve`, or `rule validate`. {{ added "unreleased" }} |
 | `subject` | string | yes | NATS subject (no wildcards for dynamic-source use). |
 | `format` | enum | yes | `json`, `yaml`, `lines`, or `csv`. |
 | `extract` | string or object | no | Filter applied after parsing. |
 
 `refresh: push` is only valid for NATS sources. Each subject message replaces the source value and is stored in the source cache, so a later cache-first rebuild and a lookup enricher see it.
+
+The initial fetch and the push subscription both present the configured credentials (`--nats-creds`, `--nats-token`, `--nats-user` and `--nats-password`, or `--nats-nkey`) and client certificate. With `--nats-require-tls`, a server that does not offer TLS fails the source before any credential or subscription is sent; there is no cleartext fallback. {{ added "unreleased" }}
 
 ### `watchlist`
 
@@ -475,7 +477,7 @@ The source is declared once in a standalone `--source` file. It does not need to
 | `POST /api/v1/sources/resolve` | Re-resolves every dynamic source. The request body is ignored. Rules reload only if a referenced value changes. |
 | `POST /api/v1/sources/resolve/{source_id}` | Re-resolves that source. No request body. An unknown id returns `404`. {{ added "unreleased" }} |
 | `DELETE /api/v1/sources/cache/{source_id}` | Invalidates the cache. The next read fetches fresh. Always returns `200 OK`, even for nonexistent IDs. |
-| NATS message on `rsigma.control.resolve` | Re-resolves every dynamic source. |
+| NATS message on `rsigma.control.resolve` | Re-resolves every dynamic source, or the one whose id is the message payload. The daemon subscribes on the server of a `nats://` input, with its `--nats-*` settings. {{ added "unreleased" }} |
 | Interval timer | Re-resolves the one source whose `refresh:` interval elapsed. |
 
 A full reload and a pending rebuild collapse into the full reload. The rebuild itself does not fetch sources that already have a cached value, and it does not schedule another rebuild. It does not fetch an optional source with no cached value either: that source failed its last refresh, its references expand to null, and the scheduler retries it on its `refresh:` policy. {{ added "unreleased" }}

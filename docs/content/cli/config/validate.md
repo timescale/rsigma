@@ -66,6 +66,7 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
   "ignored_keys": [
     { "file": "./rsigma.yaml", "key": "mcp.daemon_url" }
   ],
+  "skipped_files": [],
   "inactive_sections": [],
   "semantic_errors": [
     { "path": "rulesets.linux_edge", "message": "ruleset 'linux_edge': unknown key 'exlude' (did you mean 'exclude'?)" },
@@ -74,7 +75,7 @@ A single envelope is written to stdout (data goes to stdout; warnings stay on st
 }
 ```
 
-`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `semantic_errors` {{ added "0.28.0" }} reports each problem found in a ruleset spec, a ruleset list, or a `convert` group, as `{path, message}`, where `path` is the dotted config path such as `rulesets.linux_edge`, `eval.rulesets`, or `convert.groups.linux_edge_lynxdb`.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files. Table, CSV, TSV, and NDJSON output report each one as an `ignored_key` row. `skipped_files` {{ added "unreleased" }} lists discovered files that were not read because they failed the [ownership check](../../reference/configuration.md#file-ownership), as `{file, reason}`; tabular output reports each one as a `skipped_file` row, and text mode prints a warning. A skipped file does not fail validation. `semantic_errors` {{ added "0.28.0" }} reports each problem found in a ruleset spec, a ruleset list, or a `convert` group, as `{path, message}`, where `path` is the dotted config path such as `rulesets.linux_edge`, `eval.rulesets`, or `convert.groups.linux_edge_lynxdb`.
 
 A failure surfaces `"ok": false` and (for parse failures) an `"error"` field.
 

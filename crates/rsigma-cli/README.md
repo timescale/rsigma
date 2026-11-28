@@ -127,7 +127,7 @@ A running daemon can also poll a collection itself. `type: taxii`, and `format: 
 
 ### `config`: YAML configuration
 
-Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config). Project files cannot set security-sensitive keys such as `mcp.daemon_url` or `mcp.allow_operate_writes`; those are ignored with a warning and read only from `--config`, the user or system config, the environment, or flags. See [Project config trust](https://rsigma.io/reference/configuration/#project-config-trust).
+Both `engine daemon` and `engine eval` accept their settings via a YAML config file in addition to CLI flags and environment variables. Precedence is **CLI flag > env > project file > user file > system file > compiled default**, applied per leaf (a project `.rsigmarc` that only sets `eval.rules` does not erase the rest of the user config). Project files cannot set security-sensitive keys such as `mcp.daemon_url`, `mcp.allow_operate_writes`, or a URL for `coverage.atomics` or `scorecard.metrics`; those are ignored with a warning and read only from `--config`, the user or system config, the environment, or flags. See [Project config trust](https://rsigma.io/reference/configuration/#project-config-trust).
 
 ```bash
 # Scaffold a commented template at ./rsigma.yaml.
@@ -151,7 +151,7 @@ rsigma config reload
 
 `engine daemon`, `engine eval`, `rule backtest`, `rule coverage`, `rule scorecard`, `rule visibility`, `rule doc`, and `rule hygiene` also support `--config <PATH>` (load only that file) and `--dry-run` (print the effective section and exit `0`).
 
-Discovery walks: `/etc/rsigma/config.yaml` → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD) → `./rsigma.yaml`. Override with `--config`. The project files (`.rsigmarc` and `./rsigma.yaml`) cannot set security-sensitive keys such as `daemon.enrichers`, `daemon.output.sinks`, `daemon.api.auth`, or `mcp.daemon_url`; rsigma ignores them with a warning, and they resolve from `--config`, the user or system file, environment variables, or flags. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://rsigma.io/reference/configuration/).
+Discovery walks: `/etc/rsigma/config.yaml` (`%ProgramData%\rsigma\config.yaml` on Windows) → `~/.config/rsigma/config.yaml` → nearest `.rsigmarc` (walked up from CWD, no further than `$HOME` or the current filesystem) → `./rsigma.yaml`. A discovered file is read only when it and its directory belong to you or an administrator and other accounts cannot write it; otherwise it is skipped with a warning. Override with `--config`, which is read as given. `rsigma config path` lists every location searched. The project files (`.rsigmarc` and `./rsigma.yaml`) cannot set security-sensitive keys such as `daemon.enrichers`, `daemon.output.sinks`, `daemon.api.auth`, or `mcp.daemon_url`; rsigma ignores them with a warning, and they resolve from `--config`, the user or system file, environment variables, or flags. The full schema, environment-variable scheme (`RSIGMA_<SECTION>__<KEY>`), and secrets policy live in the [Configuration Reference](https://rsigma.io/reference/configuration/).
 
 ### `rule parse`: Parse a single rule
 

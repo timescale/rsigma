@@ -21,7 +21,10 @@ use crate::output::{
 
 use super::defaults::defaults_partial;
 use super::resolve::{Source, env_partial, resolve_layers, to_value, value_at};
-use super::{discover, ignored_key_warning, inactive_sections, load_layered};
+use super::{
+    Layer, Location, LocationStatus, ignored_key_warning, inactive_sections, load_layered, search,
+    skipped_file_warning,
+};
 use rsigma_parser::ruleset::validate_spec;
 
 /// Validate the `daemon.rulesets` selection.
@@ -243,6 +246,14 @@ fn ignored_keys_json(ignored: &[(PathBuf, String)]) -> Value {
         .collect()
 }
 
+/// Render discovered files that were not read as `[{file, reason}]`.
+fn skipped_files_json(skipped: &[(PathBuf, String)]) -> Value {
+    skipped
+        .iter()
+        .map(|(path, reason)| json!({ "file": path, "reason": reason }))
+        .collect()
+}
+
 /// The committed, commented template emitted by `rsigma config init`.
 const TEMPLATE: &str = include_str!("template.yaml");
 
@@ -260,7 +271,7 @@ pub(crate) enum ConfigCommands {
     /// Print the JSON Schema for the config file
     Schema,
 
-    /// Print the config file path(s) that would be loaded
+    /// Print the config file path(s) that would be loaded, and where discovery looked
     Path(PathArgs),
 
     /// Ask a running daemon to hot-reload (POST /api/v1/reload)
@@ -452,6 +463,7 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     }))
                     .collect::<Vec<_>>(),
                 "ignored_keys": ignored_keys_json(&loaded.ignored_keys),
+                "skipped_files": skipped_files_json(&loaded.skipped_files),
                 "inactive_sections": inactive,
                 "semantic_errors": semantic_errors
                     .iter()
@@ -475,6 +487,13 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     kind: "ignored_key".into(),
                     file: path.display().to_string(),
                     detail: key.to_string(),
+                });
+            }
+            for (path, reason) in &loaded.skipped_files {
+                rows.push(ValidateIssueRow {
+                    kind: "skipped_file".into(),
+                    file: path.display().to_string(),
+                    detail: reason.clone(),
                 });
             }
             for section in &inactive {
@@ -524,6 +543,9 @@ fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
                     }
                     for (path, key) in &loaded.unknown_keys {
                         eprintln!("error: unknown key '{key}' in {}", path.display());
+                    }
+                    for (path, reason) in &loaded.skipped_files {
+                        eprintln!("{}", skipped_file_warning(path, reason));
                     }
                     for (path, key) in &loaded.ignored_keys {
                         eprintln!("{}", ignored_key_warning(path, key));
@@ -625,6 +647,9 @@ fn cmd_show(args: ShowArgs, ctx: OutputCtx) {
         .collect();
 
     if mode != "json" {
+        for (path, reason) in &loaded.skipped_files {
+            eprintln!("{}", skipped_file_warning(path, reason));
+        }
         for (path, key) in &loaded.ignored_keys {
             eprintln!("{}", ignored_key_warning(path, key));
         }
@@ -642,6 +667,7 @@ fn cmd_show(args: ShowArgs, ctx: OutputCtx) {
                 "config": merged,
                 "sources": sources,
                 "ignored_keys": ignored_keys_json(&loaded.ignored_keys),
+                "skipped_files": skipped_files_json(&loaded.skipped_files),
             });
             render_json(&envelope, true);
         }
@@ -699,13 +725,24 @@ fn cmd_schema(ctx: OutputCtx) {
 }
 
 fn cmd_path(args: PathArgs, ctx: OutputCtx) {
-    let paths = discover(args.config.as_deref());
+    let locations = search(args.config.as_deref());
+    let paths: Vec<&PathBuf> = locations
+        .iter()
+        .filter(|location| location.status == LocationStatus::Loaded)
+        .map(|location| &location.path)
+        .collect();
     if !ctx.explicit_format {
         if paths.is_empty() {
             println!("none");
         } else {
-            for path in paths {
+            for path in &paths {
                 println!("{}", path.display());
+            }
+        }
+        if args.config.is_none() {
+            eprintln!("Searched (low to high precedence):");
+            for location in &locations {
+                eprintln!("  {}", describe_location(location));
             }
         }
         return;
@@ -726,8 +763,41 @@ fn cmd_path(args: PathArgs, ctx: OutputCtx) {
             })
             .collect()
     };
-    let envelope = json!({ "paths": rows });
+    let searched: Vec<Value> = locations
+        .iter()
+        .map(|location| {
+            let (status, reason) = match &location.status {
+                LocationStatus::Loaded => ("loaded", None),
+                LocationStatus::Missing => ("missing", None),
+                LocationStatus::Skipped(reason) => ("skipped", Some(reason)),
+            };
+            json!({
+                "layer": location.layer.name(),
+                "path": location.path,
+                "status": status,
+                "reason": reason,
+            })
+        })
+        .collect();
+    let envelope = json!({ "paths": rows, "searched": searched });
     render_report(&ctx, &envelope, &rows);
+}
+
+/// One line of the `config path` search listing.
+fn describe_location(location: &Location) -> String {
+    let path = location.path.display();
+    let what = match location.layer {
+        Layer::ProjectRc if location.status == LocationStatus::Missing => {
+            format!(".rsigmarc in {path} or above")
+        }
+        _ => path.to_string(),
+    };
+    let status = match &location.status {
+        LocationStatus::Loaded => "loaded".to_string(),
+        LocationStatus::Missing => "not found".to_string(),
+        LocationStatus::Skipped(reason) => format!("skipped: {reason}"),
+    };
+    format!("{:<12} {what} ({status})", location.layer.name())
 }
 
 fn cmd_reload(args: ReloadArgs, ctx: OutputCtx) {

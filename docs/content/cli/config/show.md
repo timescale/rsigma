@@ -56,11 +56,12 @@ An envelope that pairs the resolved tree with the per-leaf source map.
   "sources": {
     "daemon.api.addr": "file"
   },
-  "ignored_keys": []
+  "ignored_keys": [],
+  "skipped_files": []
 }
 ```
 
-`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files as `{ "file", "key" }` objects. JSON mode prints no stderr warning for them.
+`ignored_keys` {{ added "0.27.0" }} lists the protected keys dropped from project files as `{ "file", "key" }` objects. `skipped_files` {{ added "unreleased" }} lists discovered files that failed the [ownership check](../../reference/configuration.md#file-ownership) as `{ "file", "reason" }` objects. JSON mode prints no stderr warning for either.
 
 ### YAML mode
 

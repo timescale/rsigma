@@ -13,6 +13,7 @@ mod common;
 
 use std::time::Duration;
 
+use rsigma_runtime::NatsConnectConfig;
 use rsigma_runtime::sources::refresh::nats_control_loop;
 
 #[tokio::test]
@@ -21,7 +22,11 @@ async fn control_subject_on_a_tls_required_server_errors_without_panicking() {
     let (trigger_tx, _trigger_rx) = tokio::sync::mpsc::channel(1);
     let result = tokio::time::timeout(
         Duration::from_secs(10),
-        nats_control_loop(&url, "rsigma.control.resolve", trigger_tx),
+        nats_control_loop(
+            &NatsConnectConfig::new(url),
+            "rsigma.control.resolve",
+            trigger_tx,
+        ),
     )
     .await
     .expect("the control loop did not return");
