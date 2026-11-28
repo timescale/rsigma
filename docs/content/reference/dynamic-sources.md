@@ -373,7 +373,7 @@ The optional `extract:` filter slices the parsed data after `format` parsing. Th
 | Language | Library | Best for |
 |----------|---------|----------|
 | `jq` | [`jaq`](https://github.com/01mf02/jaq) | Complex transformations, array iteration, filtering. Familiar to operators. |
-| `jsonpath` | [`serde_json_path`](https://docs.rs/serde_json_path) (RFC 9535) | Simple path queries. Fastest of the three. |
+| `jsonpath` | [`jsonpath-rust`](https://docs.rs/jsonpath-rust) (RFC 9535) | Simple path queries. Fastest of the three. |
 | `cel` | [`cel`](https://docs.rs/cel) | Typed expressions with filtering and aggregation. Slower; use for small datasets. |
 
 Plain-string `extract:` defaults to jq. Use the object form for explicit selection:
@@ -397,6 +397,8 @@ extract:
   type: cel
   expr: "data.indicators.filter(i, i.severity > 7).map(i, i.ip)"
 ```
+
+jq's `env`, `$ENV`, `halt`, `halt_error`, and `stderr` are not available in an extract, and a jq definition that calls itself is rejected. An extract fails, and the source's `on_error` applies, when it produces more than 10,000,000 results or more than 256 MiB of result, takes more than 10,000,000 jq generator steps (`range`, `repeat`, `recurse`, `while`, `until`, and the filters built on them), or runs for more than 60 seconds. {{ added "unreleased" }}
 
 ## Refresh policies
 
@@ -436,7 +438,7 @@ A pipeline reads a source through `${source.<id>}` in `vars:` or an `include:` d
 
 ### Lookup enrichers
 
-A `type: lookup` enricher names a cached source with `source: <id>`, then optionally applies a per-result jq, JSONPath, or CEL expression before injecting the value:
+A `type: lookup` enricher names a cached source with `source: <id>`, then optionally applies a per-result jq, JSONPath, or CEL expression before injecting the value. `${detection.*}` and `${correlation.*}` values reach that expression as string data rather than as expression text (see [Event values in extract expressions](../guide/enrichers.md#event-values-in-extract-expressions)):
 
 ```yaml
 enrichers:
