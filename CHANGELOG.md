@@ -4,6 +4,12 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
+### Write paths from project config files stay inside the project
+
+`rsigma backend build` wrote each group's `output` and `<output>.manifest.json` wherever a project file (`./rsigma.yaml`, `./rsigma.yml`, or `.rsigmarc`) pointed, so building in a cloned repository could create or replace files outside it. `convert.defaults.output`, `convert.groups.*.output`, `rulesets.*.output` (the `ruleset build` directory), and `backtest.findings` are now protected keys: from a project file they are ignored with a warning, and listed by `config validate` and `config show`, when the path or the manifest written next to it resolves outside the directory holding that file. The warning names the group or ruleset, such as `convert.groups.linux_edge.output`. `backend build` checks a project-sourced output again when it writes, creates missing directories only inside the project, and replaces a symlink at the output or manifest path instead of following it. Outputs from `--config`, the user or system config, and environment variables are unchanged.
+
+The project-path check behind these keys and the existing `mcp.rules_dir`, `daemon.state.db`, `eval.output`, and `scorecard.report` checks now resolves symlinks in every existing component, so `missing/../link/out` can no longer reach a symlinked directory after a component that does not exist yet, and on Windows it normalizes paths the way Win32 opens them (drive-relative forms, `\\?\` and `\\.\` prefixes, device names). `daemon.state.db` is also ignored when its SQLite `-wal`, `-shm`, or `-journal` file resolves outside the project.
+
 ### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL (#813)
 
 The PostgreSQL backend passed any `fields` entry containing `(` and `)` into the SELECT list as written, so a rule could add a sub-select, a call such as `pg_sleep(10)`, or a comment to the query. An entry must now be `*`, a field name, or a `count`, `sum`, `avg`, `min`, or `max` call over a field or `*`, each with an optional `AS alias`. Anything else fails conversion with `InvalidSelectField`, which names the entry. An aggregate call now groups the query by the other listed fields. In JSONB mode a selected field is named after its Sigma field, and an alias is a column name instead of a JSONB path.

@@ -236,7 +236,7 @@ fn ruleset_list_errors(
 }
 
 /// Render protected keys dropped from project files as `[{file, key}]`.
-fn ignored_keys_json(ignored: &[(PathBuf, &'static str)]) -> Value {
+fn ignored_keys_json(ignored: &[(PathBuf, String)]) -> Value {
     ignored
         .iter()
         .map(|(path, key)| json!({ "file": path, "key": key }))

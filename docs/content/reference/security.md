@@ -342,6 +342,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.tap.enabled`, `daemon.tail.enabled`, `daemon.capture.enabled`, and `daemon.capture.spool_dir`, which expose or retain raw events and detections.
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.
+- `backtest.findings`, `convert.defaults.output`, `convert.groups.*.output`, and `rulesets.*.output` outside the project, for the same reason. A conversion output also counts as outside when its `<output>.manifest.json` resolves outside, and `daemon.state.db` when its SQLite `-wal`, `-shm`, or `-journal` file does. "Inside" follows `..`, symlinks, and Windows junctions in every existing component and uses Win32 path normalization on Windows. `backend build` checks a project-sourced output again when it writes and replaces a symlink at the output path instead of following it. {{ added "unreleased" }}
 
 jq event filters run without the `env` builtin, so a filter from a project file (`daemon.input.jq`) cannot copy the environment into detections, and without `halt` and `halt_error`, so an event that reaches one cannot stop the daemon. {{ added "unreleased" }} Binding a `unix://` socket replaces an existing path only when it is a stale socket, never a regular file.
 
@@ -376,6 +377,7 @@ The daemon never writes outside the paths it is explicitly given:
 - `daemon.capture.spool_dir`: versioned TP/FP corpus bundles. Sensitive; classify and protect the path.
 
 Rules and pipeline files are read-only. The `notify` file-watcher does not write. The docmd documentation build is local and never touches `~/`.
+
 
 `rule lint --fix` does write rule files in place. Always commit changes first, then run `--fix`, then diff.
 
