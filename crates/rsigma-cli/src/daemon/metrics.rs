@@ -83,6 +83,8 @@ pub struct Metrics {
     pub tls_certificate_expiry_seconds: Gauge,
     #[cfg(feature = "daemon-tls")]
     pub tls_active_connections: std::sync::Arc<IntGauge>,
+    #[cfg(feature = "daemon-tls")]
+    pub tls_handshake_failures_total: IntCounterVec,
     pub fields_observed_total: IntCounter,
     pub fields_observer_unique_keys: IntGauge,
     pub fields_observer_overflow_dropped_total: IntCounter,
@@ -876,12 +878,29 @@ impl Metrics {
             .unwrap(),
         );
         #[cfg(feature = "daemon-tls")]
+        let tls_handshake_failures_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_tls_handshake_failures_total",
+                "TLS handshakes on the API listener that failed or timed out",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        #[cfg(feature = "daemon-tls")]
         {
             registry
                 .register(Box::new(tls_certificate_expiry_seconds.clone()))
                 .unwrap();
             registry
                 .register(Box::new(tls_active_connections.as_ref().clone()))
+                .unwrap();
+            for reason in ["timeout", "error"] {
+                tls_handshake_failures_total
+                    .with_label_values(&[reason])
+                    .inc_by(0);
+            }
+            registry
+                .register(Box::new(tls_handshake_failures_total.clone()))
                 .unwrap();
         }
 
@@ -1638,6 +1657,8 @@ impl Metrics {
             tls_certificate_expiry_seconds,
             #[cfg(feature = "daemon-tls")]
             tls_active_connections,
+            #[cfg(feature = "daemon-tls")]
+            tls_handshake_failures_total,
             fields_observed_total,
             fields_observer_unique_keys,
             fields_observer_overflow_dropped_total,

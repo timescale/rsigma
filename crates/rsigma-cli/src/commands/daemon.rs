@@ -85,6 +85,36 @@ pub(crate) struct DaemonArgs {
     #[arg(long = "api-token-env", value_name = "ENV_VAR")]
     pub api_token_env: Option<String>,
 
+    /// Accept this `Host` header value (a host name or `host:port`) on a TCP
+    /// API listener, in addition to `localhost`, `127.0.0.1`, `::1`, and a
+    /// specific bind IP. Repeatable. `*` accepts every host and needs
+    /// authentication. Without it, an authenticated non-loopback listener
+    /// accepts every host. Requests whose `Origin` names another site are
+    /// refused either way. Config key: `daemon.api.allowed_hosts`.
+    #[arg(long = "api-allowed-host", value_name = "HOST")]
+    pub api_allowed_hosts: Vec<String>,
+
+    /// Open connections the API serves at once. Further clients wait until a
+    /// connection closes. Config key: `daemon.api.max_connections`.
+    #[arg(
+        long = "api-max-connections",
+        value_name = "N",
+        default_value_t = config::defaults::API_MAX_CONNECTIONS,
+        value_parser = at_least_one()
+    )]
+    pub api_max_connections: usize,
+
+    /// How long the API waits for a client's first bytes, each request head
+    /// (including the next request on an idle keep-alive connection), and
+    /// each chunk of a request body before closing the connection (e.g.
+    /// `30s`). Config key: `daemon.api.read_timeout`.
+    #[arg(
+        long = "api-read-timeout",
+        value_name = "DURATION",
+        default_value = config::defaults::API_READ_TIMEOUT
+    )]
+    pub api_read_timeout: String,
+
     /// Suppression window for correlation alerts (e.g. 5m, 1h, 30s)
     #[arg(long = "suppress")]
     pub suppress: Option<String>,
@@ -713,6 +743,18 @@ pub(crate) struct DaemonArgs {
     )]
     pub tls_min_version: String,
 
+    /// How long a client may take to complete the TLS handshake before the
+    /// connection is closed (e.g. `10s`). Handshakes run off the accept path,
+    /// so a stalled client never delays others. Config key:
+    /// `daemon.api.tls.handshake_timeout`.
+    #[cfg(feature = "daemon-tls")]
+    #[arg(
+        long = "tls-handshake-timeout",
+        value_name = "DURATION",
+        default_value = config::defaults::TLS_HANDSHAKE_TIMEOUT
+    )]
+    pub tls_handshake_timeout: String,
+
     /// Allow the daemon to bind a non-loopback `--api-addr` without TLS.
     ///
     /// By default the daemon refuses to start on a public address
@@ -833,6 +875,9 @@ pub(crate) fn cmd_daemon(
         pretty,
         api_addr,
         api_token_env: _,
+        api_allowed_hosts,
+        api_max_connections,
+        api_read_timeout,
         suppress,
         action,
         emit_detections,
@@ -937,6 +982,8 @@ pub(crate) fn cmd_daemon(
         tls_client_ca,
         #[cfg(feature = "daemon-tls")]
         tls_min_version,
+        #[cfg(feature = "daemon-tls")]
+        tls_handshake_timeout,
         allow_plaintext,
         allow_unauthenticated,
     } = args;
@@ -1013,6 +1060,7 @@ pub(crate) fn cmd_daemon(
         key_password: tls_key_password,
         client_ca: tls_client_ca,
         min_version: tls_min_version,
+        handshake_timeout: tls_handshake_timeout,
     };
 
     if let Err(e) = check_queue_sizes(buffer_size, batch_size, batch_max) {
@@ -1056,6 +1104,11 @@ pub(crate) fn cmd_daemon(
         include_event,
         pretty,
         api_addr,
+        ApiListenerArgs {
+            allowed_hosts: api_allowed_hosts,
+            max_connections: api_max_connections,
+            read_timeout: api_read_timeout,
+        },
         suppress,
         action,
         emit_detections,
@@ -1553,6 +1606,21 @@ fn apply_daemon_config(
         {
             args.allow_unauthenticated = v;
         }
+        if !explicit("api_allowed_hosts")
+            && let Some(v) = api.allowed_hosts
+        {
+            args.api_allowed_hosts = v;
+        }
+        if !explicit("api_max_connections")
+            && let Some(v) = api.max_connections
+        {
+            args.api_max_connections = v;
+        }
+        if !explicit("api_read_timeout")
+            && let Some(v) = api.read_timeout
+        {
+            args.api_read_timeout = v;
+        }
         #[cfg(feature = "daemon-tls")]
         if let Some(tls) = api.tls {
             if !explicit("tls_cert")
@@ -1574,6 +1642,11 @@ fn apply_daemon_config(
                 && let Some(v) = tls.min_version
             {
                 args.tls_min_version = v;
+            }
+            if !explicit("tls_handshake_timeout")
+                && let Some(v) = tls.handshake_timeout
+            {
+                args.tls_handshake_timeout = v;
             }
         }
     }
@@ -1948,6 +2021,15 @@ pub(crate) struct TlsCliArgs {
     pub key_password: Option<String>,
     pub client_ca: Option<PathBuf>,
     pub min_version: String,
+    pub handshake_timeout: String,
+}
+
+/// API listener flags after the config overlay: extra allowed hosts, the
+/// connection cap, and the read timeout.
+pub(crate) struct ApiListenerArgs {
+    pub allowed_hosts: Vec<String>,
+    pub max_connections: usize,
+    pub read_timeout: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2104,6 +2186,7 @@ fn run_daemon(
     include_event: bool,
     pretty: bool,
     api_addr: String,
+    api_listener: ApiListenerArgs,
     suppress: Option<String>,
     action: Option<String>,
     emit_detections: bool,
@@ -2261,15 +2344,27 @@ fn run_daemon(
     );
     #[cfg(not(feature = "daemon-tls"))]
     let (tls_enabled, client_certs_required) = (false, false);
+    let authenticated = api_auth.is_some() || client_certs_required;
     enforce_listener_policy(
         &addr,
         ListenerSecurity {
             tls: tls_enabled,
-            authenticated: api_auth.is_some() || client_certs_required,
+            authenticated,
         },
         allow_plaintext,
         allow_unauthenticated,
     );
+    let api_listener = resolve_api_listener(
+        &addr,
+        api_listener,
+        authenticated,
+        #[cfg(feature = "daemon-tls")]
+        &tls_args.handshake_timeout,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        process::exit(exit_code::CONFIG_ERROR);
+    });
 
     #[cfg(feature = "daemon-nats")]
     let nats_config = rsigma_runtime::NatsConnectConfig {
@@ -2330,6 +2425,7 @@ fn run_daemon(
         match_detail,
         pretty,
         api_addr: addr,
+        api_listener,
         event_filter,
         state_db,
         state_save_interval,
@@ -2500,6 +2596,67 @@ fn enforce_listener_policy(
              that can reach it can reload rules, change silences and dispositions, \
              and read detection state"
         );
+    }
+}
+
+/// Resolve the API listener protections: the `Host` guard for a TCP
+/// listener, the connection limits, and the TLS handshake timeout.
+fn resolve_api_listener(
+    addr: &daemon::listen::ListenAddr,
+    args: ApiListenerArgs,
+    authenticated: bool,
+    #[cfg(feature = "daemon-tls")] tls_handshake_timeout: &str,
+) -> Result<daemon::server::ApiListenerSettings, String> {
+    let read_timeout = parse_positive_duration("daemon.api.read_timeout", &args.read_timeout)?;
+    if args.max_connections == 0 {
+        return Err("Invalid daemon.api.max_connections 0: must be at least 1".to_string());
+    }
+    let host_guard = match addr {
+        daemon::listen::ListenAddr::Tcp(bind) => {
+            let guard = rsigma_runtime::http_guard::guard_for_listener(
+                *bind,
+                &args.allowed_hosts,
+                authenticated,
+            )
+            .map_err(|e| format!("Invalid daemon.api.allowed_hosts: {e}"))?;
+            if let Some(hosts) = guard.hosts().filter(|_| !bind.ip().is_loopback())
+                && args.allowed_hosts.is_empty()
+            {
+                tracing::warn!(
+                    hosts = %hosts.join(","),
+                    "Only these Host headers are accepted on a non-loopback API address; \
+                     pass --api-allowed-host for the names clients use to reach it"
+                );
+            }
+            Some(guard)
+        }
+        #[cfg(unix)]
+        daemon::listen::ListenAddr::Unix(_) => {
+            if !args.allowed_hosts.is_empty() {
+                tracing::warn!("daemon.api.allowed_hosts has no effect on a unix:// API address");
+            }
+            None
+        }
+    };
+    Ok(daemon::server::ApiListenerSettings {
+        host_guard,
+        limits: rsigma_runtime::http_server::ServeLimits::new(args.max_connections, read_timeout),
+        #[cfg(feature = "daemon-tls")]
+        tls_handshake_timeout: parse_positive_duration(
+            "daemon.api.tls.handshake_timeout",
+            tls_handshake_timeout,
+        )?,
+    })
+}
+
+/// Parse a non-zero duration such as `30s` for the config key `key`.
+fn parse_positive_duration(key: &str, value: &str) -> Result<std::time::Duration, String> {
+    match humantime::parse_duration(value) {
+        Ok(d) if !d.is_zero() => Ok(d),
+        Ok(_) => Err(format!(
+            "Invalid {key} '{value}': must be greater than zero"
+        )),
+        Err(e) => Err(format!("Invalid {key} '{value}': {e}")),
     }
 }
 

@@ -30,6 +30,16 @@ mmdb-mmap = ["mmdb-enrich", "maxminddb/mmap"]
 dns-enrich = ["dep:hickory-resolver"]
 # TAXII collections and `format: stix` file or HTTP sources.
 stix-source = ["dep:rstix", "rstix/taxii", "rstix/pattern"]
+# Hardened serve loop for axum routers (connection cap and read timeouts).
+http-server = [
+    "dep:axum",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tower",
+    "dep:tower-http",
+    "tokio/net",
+    "tokio/time",
+]
 
 [dependencies]
 rsigma-parser = { path = "../rsigma-parser", version = "0.28.0" }
@@ -81,6 +91,11 @@ prost = { version = "0.14", optional = true }
 tonic = { version = "0.14", features = ["gzip", "tls-aws-lc", "tls-webpki-roots"], optional = true }
 flate2 = { version = "1", optional = true }
 rustls = { version = "0.23", optional = true }
+axum = { version = "0.8", optional = true }
+hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "tokio", "service"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+tower-http = { version = "0.7", features = ["timeout"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

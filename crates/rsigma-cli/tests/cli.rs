@@ -28,6 +28,7 @@ mod cli_daemon_enrichment_logs;
 mod cli_daemon_fields_observer;
 mod cli_daemon_http;
 mod cli_daemon_incident_bundle;
+mod cli_daemon_listener_guard;
 mod cli_daemon_listener_policy;
 mod cli_daemon_logsource_routing;
 mod cli_daemon_nats;

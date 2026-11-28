@@ -16,7 +16,8 @@
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use rustls::pki_types::pem::PemObject;
@@ -24,6 +25,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use tokio::net::TcpListener;
+use tokio::sync::{Semaphore, mpsc};
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use x509_parser::prelude::FromDer;
@@ -263,32 +265,180 @@ pub fn read_cert_expiry(path: &Path) -> Result<i64, TlsError> {
     Ok(parsed.validity().not_after.timestamp())
 }
 
-/// An `axum::serve::Listener` adapter that performs a TLS handshake on
-/// every accepted TCP connection.
+/// Handshakes in progress at once. Past this the listener stops accepting
+/// TCP connections until a handshake finishes or times out.
+pub const MAX_PENDING_HANDSHAKES: usize = 256;
+
+/// Counters the TLS listener reports into.
+#[derive(Clone)]
+pub struct TlsListenerMetrics {
+    /// Open TLS connections.
+    pub active_connections: Arc<prometheus::IntGauge>,
+    /// Failed handshakes, by `reason` (`timeout` or `error`).
+    pub handshake_failures: prometheus::IntCounterVec,
+}
+
+impl TlsListenerMetrics {
+    /// Metrics that are not registered anywhere, for listeners outside the
+    /// daemon.
+    #[cfg(feature = "mcp")]
+    pub fn unregistered(prefix: &str) -> Self {
+        Self {
+            active_connections: Arc::new(
+                prometheus::IntGauge::new(
+                    format!("{prefix}_tls_active_connections"),
+                    "Active TLS connections",
+                )
+                .expect("valid gauge"),
+            ),
+            handshake_failures: prometheus::IntCounterVec::new(
+                prometheus::Opts::new(
+                    format!("{prefix}_tls_handshake_failures_total"),
+                    "Failed TLS handshakes",
+                ),
+                &["reason"],
+            )
+            .expect("valid counter"),
+        }
+    }
+}
+
+/// An `axum::serve::Listener` that terminates TLS.
 ///
-/// Handshake failures are logged and ignored; the listener keeps polling
-/// the underlying `TcpListener` so a single bad client cannot stall the
-/// server. The active `ServerConfig` is loaded from the shared
-/// `ArcSwap` on every new connection so SIGHUP-triggered cert rotation
-/// takes effect on the next handshake without dropping inflight TLS
-/// connections.
+/// A background task accepts TCP connections and runs each handshake in its
+/// own task, bounded by [`MAX_PENDING_HANDSHAKES`] and a per-handshake
+/// timeout, so a client that connects and never sends a `ClientHello` holds
+/// one slot for at most the timeout instead of blocking every other client.
+/// `accept` hands out connections whose handshake completed.
+///
+/// The active `ServerConfig` is loaded from the shared `ArcSwap` for every
+/// new connection, so a certificate reload takes effect on the next handshake
+/// without dropping in-flight TLS connections.
 pub struct RustlsListener {
-    tcp: TcpListener,
-    config: Arc<ArcSwap<ServerConfig>>,
-    active_connections: Arc<prometheus::IntGauge>,
+    local_addr: SocketAddr,
+    ready: mpsc::Receiver<(TrackedTlsStream, SocketAddr)>,
+    acceptor: tokio::task::JoinHandle<()>,
 }
 
 impl RustlsListener {
     pub fn new(
         tcp: TcpListener,
         config: Arc<ArcSwap<ServerConfig>>,
-        active_connections: Arc<prometheus::IntGauge>,
-    ) -> Self {
-        Self {
-            tcp,
-            config,
-            active_connections,
+        metrics: TlsListenerMetrics,
+        handshake_timeout: Duration,
+    ) -> io::Result<Self> {
+        let local_addr = tcp.local_addr()?;
+        let (tx, ready) = mpsc::channel(MAX_PENDING_HANDSHAKES);
+        let acceptor = tokio::spawn(accept_loop(tcp, config, metrics, handshake_timeout, tx));
+        Ok(Self {
+            local_addr,
+            ready,
+            acceptor,
+        })
+    }
+}
+
+impl Drop for RustlsListener {
+    fn drop(&mut self) {
+        self.acceptor.abort();
+    }
+}
+
+async fn accept_loop(
+    tcp: TcpListener,
+    config: Arc<ArcSwap<ServerConfig>>,
+    metrics: TlsListenerMetrics,
+    handshake_timeout: Duration,
+    ready: mpsc::Sender<(TrackedTlsStream, SocketAddr)>,
+) {
+    let pending = Arc::new(Semaphore::new(MAX_PENDING_HANDSHAKES));
+    let failures = Arc::new(Mutex::new(FailureLog::default()));
+    loop {
+        let Ok(permit) = pending.clone().acquire_owned().await else {
+            return;
+        };
+        let (stream, peer) = tokio::select! {
+            accepted = tcp.accept() => match accepted {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::warn!(error = %e, "TCP accept failed, retrying after backoff");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            },
+            () = ready.closed() => return,
+        };
+        let acceptor = TlsAcceptor::from(config.load_full());
+        let metrics = metrics.clone();
+        let ready = ready.clone();
+        let failures = failures.clone();
+        tokio::spawn(async move {
+            let reason = match tokio::time::timeout(handshake_timeout, acceptor.accept(stream))
+                .await
+            {
+                Ok(Ok(tls)) => {
+                    metrics.active_connections.inc();
+                    let stream = TrackedTlsStream {
+                        inner: tls,
+                        counter: metrics.active_connections.clone(),
+                    };
+                    let _ = ready.send((stream, peer)).await;
+                    drop(permit);
+                    return;
+                }
+                Ok(Err(e)) => {
+                    let suppressed = failures.lock().unwrap_or_else(|e| e.into_inner()).record();
+                    if let Some(suppressed) = suppressed {
+                        tracing::warn!(peer = %peer, error = %e, suppressed, "TLS handshake failed");
+                    }
+                    "error"
+                }
+                Err(_) => {
+                    let suppressed = failures.lock().unwrap_or_else(|e| e.into_inner()).record();
+                    if let Some(suppressed) = suppressed {
+                        tracing::warn!(
+                            peer = %peer,
+                            timeout = ?handshake_timeout,
+                            suppressed,
+                            "TLS handshake timed out"
+                        );
+                    }
+                    "timeout"
+                }
+            };
+            metrics
+                .handshake_failures
+                .with_label_values(&[reason])
+                .inc();
+            drop(permit);
+        });
+    }
+}
+
+/// Folds handshake failure warnings into at most one per interval, so a
+/// flood of bad clients cannot flood the log.
+#[derive(Default)]
+struct FailureLog {
+    last_warn: Option<std::time::Instant>,
+    suppressed: u64,
+}
+
+impl FailureLog {
+    const INTERVAL: Duration = Duration::from_secs(10);
+
+    /// Returns the failures suppressed since the last warning when this one
+    /// should be logged, or `None` to suppress it.
+    fn record(&mut self) -> Option<u64> {
+        let now = std::time::Instant::now();
+        if self
+            .last_warn
+            .is_some_and(|last| now.duration_since(last) < Self::INTERVAL)
+        {
+            self.suppressed += 1;
+            return None;
         }
+        self.last_warn = Some(now);
+        Some(std::mem::take(&mut self.suppressed))
     }
 }
 
@@ -297,37 +447,15 @@ impl axum::serve::Listener for RustlsListener {
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        loop {
-            let (tcp, peer) = match self.tcp.accept().await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    tracing::warn!(error = %e, "TCP accept failed, retrying after backoff");
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    continue;
-                }
-            };
-            let cfg = self.config.load_full();
-            let acceptor = TlsAcceptor::from(cfg);
-            match acceptor.accept(tcp).await {
-                Ok(tls) => {
-                    self.active_connections.inc();
-                    return (
-                        TrackedTlsStream {
-                            inner: tls,
-                            counter: self.active_connections.clone(),
-                        },
-                        peer,
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(peer = %peer, error = %e, "TLS handshake failed");
-                }
-            }
+        match self.ready.recv().await {
+            Some(conn) => conn,
+            // The accept task only ends when this listener is dropped.
+            None => std::future::pending().await,
         }
     }
 
     fn local_addr(&self) -> io::Result<Self::Addr> {
-        self.tcp.local_addr()
+        Ok(self.local_addr)
     }
 }
 

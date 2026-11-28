@@ -90,6 +90,58 @@ fn api_listener_serves_healthz_over_unix_socket() {
     }
 }
 
+/// Host and Origin validation guards TCP listeners only: the socket file's
+/// permissions are the trust boundary here, so a foreign `Host` or `Origin`
+/// is still served.
+#[test]
+fn unix_socket_listener_skips_host_and_origin_checks() {
+    let rule = temp_file(".yml", SIMPLE_RULE);
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("api.sock");
+    let child = Command::new(rsigma_bin())
+        .args([
+            "engine",
+            "daemon",
+            "-r",
+            rule.path().to_str().unwrap(),
+            "--input",
+            "http",
+            "--api-addr",
+            &format!("unix://{}", sock.display()),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn daemon");
+    let _daemon = Daemon(child);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !matches!(uds_get(&sock, "/healthz"), Ok((200, _))) {
+        assert!(
+            Instant::now() < deadline,
+            "daemon never answered over the unix socket"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let body = r#"{"CommandLine":"malware.exe"}"#;
+    let mut stream = UnixStream::connect(&sock).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "POST /api/v1/events HTTP/1.1\r\nHost: evil.example\r\nOrigin: https://evil.example\r\n\
+         Content-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+}
+
 #[cfg(feature = "daemon-tls")]
 #[test]
 fn tls_cert_with_unix_api_addr_is_rejected() {

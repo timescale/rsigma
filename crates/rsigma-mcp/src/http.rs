@@ -3,7 +3,8 @@
 //! Mounts the rmcp [`StreamableHttpService`] on an axum router at `/mcp`, with
 //! optional static bearer-token authentication enforced as a middleware layer,
 //! and `Host` and `Origin` header validation against DNS rebinding and
-//! cross-origin browser requests. TLS termination is the
+//! cross-origin browser requests (the rules of [`rsigma_runtime::http_guard`],
+//! shared with the daemon API). TLS termination is the
 //! caller's responsibility (the CLI reuses the daemon's rustls listener); this
 //! module produces the router and a plaintext serve helper.
 
@@ -11,16 +12,18 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header::AUTHORIZATION};
+use axum::http::StatusCode;
+use axum::http::header::{AUTHORIZATION, HOST, ORIGIN};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
-use crate::RsigmaMcp;
+use rsigma_runtime::HostGuard;
+pub use rsigma_runtime::http_guard::LOOPBACK_HOSTS;
+pub use rsigma_runtime::http_server::ServeLimits;
 
-/// The host names [`AllowedHosts::Loopback`] accepts, on any port.
-pub const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+use crate::RsigmaMcp;
 
 /// Which `Host` header values the MCP endpoint accepts. Any other host gets
 /// `403 Forbidden`, which stops a DNS-rebinding page from reaching a server
@@ -36,8 +39,9 @@ pub enum AllowedHosts {
     /// Exactly these host names or `host:port` authorities. A host without a
     /// port matches any port. An empty list means [`Loopback`](Self::Loopback).
     List(Vec<String>),
-    /// Every host and origin. Only appropriate when bearer auth guards the
-    /// endpoint.
+    /// Every host. A request with an `Origin` header must still come from the
+    /// site it addresses (the origin names the request's own `Host`). Only
+    /// appropriate when bearer auth guards the endpoint.
     Any,
 }
 
@@ -51,6 +55,8 @@ pub struct HttpOptions {
     pub auth_token: Option<String>,
     /// Accepted `Host` header values.
     pub allowed_hosts: AllowedHosts,
+    /// Connection cap and read timeouts applied by [`serve_http_with`].
+    pub limits: ServeLimits,
 }
 
 /// Build the axum router exposing the MCP service at `/mcp`.
@@ -71,21 +77,9 @@ pub fn http_router(handler: RsigmaMcp, auth_token: Option<String>) -> Router {
 
 /// Build the axum router exposing the MCP service at `/mcp` with `options`.
 pub fn http_router_with(handler: RsigmaMcp, options: HttpOptions) -> Router {
-    let config = StreamableHttpServerConfig::default();
-    let hosts = match options.allowed_hosts {
-        AllowedHosts::Loopback => Some(LOOPBACK_HOSTS.map(String::from).to_vec()),
-        AllowedHosts::List(hosts) if hosts.is_empty() => {
-            Some(LOOPBACK_HOSTS.map(String::from).to_vec())
-        }
-        AllowedHosts::List(hosts) => Some(hosts),
-        AllowedHosts::Any => None,
-    };
-    let config = match hosts {
-        Some(hosts) => config
-            .with_allowed_origins(allowed_origins(&hosts))
-            .with_allowed_hosts(hosts),
-        None => config.disable_allowed_hosts().disable_allowed_origins(),
-    };
+    let config = StreamableHttpServerConfig::default()
+        .disable_allowed_hosts()
+        .disable_allowed_origins();
     let service = StreamableHttpService::new(
         move || Ok(handler.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -96,27 +90,49 @@ pub fn http_router_with(handler: RsigmaMcp, options: HttpOptions) -> Router {
     if let Some(token) = options.auth_token {
         router = router.layer(middleware::from_fn_with_state(Arc::new(token), bearer_auth));
     }
-    router
+    let guard = host_guard(options.allowed_hosts);
+    router.layer(middleware::from_fn_with_state(Arc::new(guard), check_host))
 }
 
-/// The `Origin` values matching `hosts`: each host over `http` and `https`, on
-/// its listed port or, without one, on any port.
-fn allowed_origins(hosts: &[String]) -> Vec<String> {
-    hosts
-        .iter()
-        .flat_map(|host| {
-            let authority = if host.parse::<std::net::Ipv6Addr>().is_ok() {
-                format!("[{host}]:*")
-            } else if axum::http::uri::Authority::try_from(host.as_str())
-                .is_ok_and(|a| a.port_u16().is_some())
-            {
-                host.clone()
-            } else {
-                format!("{host}:*")
-            };
-            ["http", "https"].map(|scheme| format!("{scheme}://{authority}"))
-        })
-        .collect()
+/// The [`HostGuard`] for `hosts`. Entries that do not parse as a host name,
+/// IP address, or `host:port` are skipped with a warning.
+fn host_guard(hosts: AllowedHosts) -> HostGuard {
+    match hosts {
+        AllowedHosts::Loopback => HostGuard::loopback(),
+        AllowedHosts::Any => HostGuard::any(),
+        AllowedHosts::List(hosts) => {
+            let valid: Vec<String> = hosts
+                .into_iter()
+                .filter(|host| {
+                    let ok = HostGuard::new([host]).is_ok();
+                    if !ok {
+                        tracing::warn!(host = %host, "ignoring an allowed host that does not parse");
+                    }
+                    ok
+                })
+                .collect();
+            HostGuard::new(valid).unwrap_or_default()
+        }
+    }
+}
+
+/// Refuse requests whose `Host` or `Origin` the guard does not accept, before
+/// authentication and before the MCP service reads the body.
+async fn check_host(State(guard): State<Arc<HostGuard>>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let verdict = guard.check(
+        headers.get(HOST).map(|v| v.as_bytes()),
+        request.uri().authority().map(|a| a.as_str()),
+        headers.get(ORIGIN).map(|v| v.as_bytes()),
+    );
+    match verdict {
+        Ok(()) => next.run(request).await,
+        Err(rejection) => {
+            tracing::warn!(reason = %rejection, "rejected an MCP HTTP request");
+            let status = StatusCode::from_u16(rejection.status()).unwrap_or(StatusCode::FORBIDDEN);
+            (status, rejection.message()).into_response()
+        }
+    }
 }
 
 /// Serve the MCP HTTP router on `listener` (plaintext). The caller owns the
@@ -139,13 +155,21 @@ pub async fn serve_http(
 }
 
 /// Serve the MCP HTTP router built by [`http_router_with`] on `listener`
-/// (plaintext).
+/// (plaintext), with the connection cap and read timeouts of
+/// [`HttpOptions::limits`]. Runs until the task is dropped.
 pub async fn serve_http_with(
     handler: RsigmaMcp,
     listener: tokio::net::TcpListener,
     options: HttpOptions,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, http_router_with(handler, options)).await?;
+    let limits = options.limits;
+    rsigma_runtime::http_server::serve(
+        listener,
+        http_router_with(handler, options),
+        limits,
+        std::future::pending(),
+    )
+    .await;
     Ok(())
 }
 
@@ -186,25 +210,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_origins, constant_time_eq};
-
-    #[test]
-    fn allowed_origins_cover_both_schemes_and_bracket_ipv6() {
-        let hosts = ["localhost", "::1", "[::1]:3000", "mcp.example.com:8443"].map(String::from);
-        assert_eq!(
-            allowed_origins(&hosts),
-            [
-                "http://localhost:*",
-                "https://localhost:*",
-                "http://[::1]:*",
-                "https://[::1]:*",
-                "http://[::1]:3000",
-                "https://[::1]:3000",
-                "http://mcp.example.com:8443",
-                "https://mcp.example.com:8443",
-            ]
-        );
-    }
+    use super::constant_time_eq;
 
     #[test]
     fn constant_time_eq_matches() {

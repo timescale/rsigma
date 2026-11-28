@@ -107,6 +107,13 @@ pub(crate) const MATCH_DETAIL: &str = "off";
 /// feature to avoid a dead-code warning in builds without it.
 #[cfg(feature = "daemon-tls")]
 pub(crate) const TLS_MIN_VERSION: &str = "1.3";
+/// Default TLS handshake deadline for the daemon API listener.
+#[cfg(feature = "daemon-tls")]
+pub(crate) const TLS_HANDSHAKE_TIMEOUT: &str = "10s";
+/// API listener connection cap and read timeout (`daemon.api.max_connections`,
+/// `daemon.api.read_timeout`).
+pub(crate) const API_MAX_CONNECTIONS: usize = 1024;
+pub(crate) const API_READ_TIMEOUT: &str = "30s";
 /// `rule scorecard` verdict thresholds, the SOC quality-metrics defaults from
 /// the hackforlab detection-quality writeup. A drift-guard test pins the clap
 /// flag defaults to these constants.
@@ -156,6 +163,9 @@ pub(crate) fn defaults_partial() -> RsigmaConfigPartial {
                 auth: None,
                 allow_unauthenticated: Some(false),
                 audit: None,
+                allowed_hosts: None,
+                max_connections: Some(API_MAX_CONNECTIONS),
+                read_timeout: Some(API_READ_TIMEOUT.to_string()),
             }),
             input: Some(InputPartial {
                 source: Some(INPUT_SOURCE.to_string()),

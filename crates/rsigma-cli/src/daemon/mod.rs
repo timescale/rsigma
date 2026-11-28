@@ -6,6 +6,7 @@ pub(crate) mod capture;
 pub(crate) mod dispositions;
 pub(crate) mod enrichment;
 mod health;
+mod host_guard;
 mod instrumented_resolver;
 pub(crate) mod listen;
 mod metrics;

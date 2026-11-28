@@ -55,6 +55,17 @@ daemon:
     # Serve an unauthenticated API on a non-loopback address. Use only behind
     # an authenticating proxy or network policy.
     # allow_unauthenticated: false
+    # Extra Host header values a TCP listener accepts, on top of localhost,
+    # 127.0.0.1, ::1, and a specific bind IP. Requests for other hosts, or
+    # with an Origin from another site, get 403. "*" accepts every host and
+    # needs authentication; an authenticated non-loopback listener accepts
+    # every host by default. A project file may not set this.
+    # allowed_hosts: [rsigma.internal]
+    # Open connections served at once; more clients wait in the backlog.
+    # max_connections: 1024
+    # Time allowed for a client's first bytes, each request head, and each
+    # request body chunk.
+    # read_timeout: 30s
     # TLS settings (ignored unless built with the daemon-tls feature, except
     # allow_plaintext, which applies to every build).
     # tls:
@@ -63,6 +74,7 @@ daemon:
     #   client_ca: /etc/rsigma/tls/ca.pem
     #   min_version: "1.3"
     #   allow_plaintext: false
+    #   handshake_timeout: 10s
     # Bearer-token authentication with resource:action permissions. Absent =
     # no authentication (all routes open; refused on a non-loopback address
     # unless allow_unauthenticated is set). Token secrets never live in YAML:

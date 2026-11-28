@@ -20,8 +20,8 @@ mod tools;
 pub use daemon::{DaemonClient, DaemonConnect, DaemonError};
 #[cfg(feature = "http")]
 pub use http::{
-    AllowedHosts, HttpOptions, LOOPBACK_HOSTS, http_router, http_router_with, serve_http,
-    serve_http_with,
+    AllowedHosts, HttpOptions, LOOPBACK_HOSTS, ServeLimits, http_router, http_router_with,
+    serve_http, serve_http_with,
 };
 pub use tools::RsigmaMcp;
 
