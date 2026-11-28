@@ -770,6 +770,8 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
         let mut instrumented =
             super::instrumented_resolver::InstrumentedResolver::new(metrics.clone());
         instrumented.set_watchlists(watchlist_registry.clone());
+        #[cfg(feature = "daemon-nats")]
+        instrumented.set_nats_config(config.nats_config.clone());
         if let Err(err) = instrumented.prepare_taxii(&declared_sources) {
             tracing::error!(error = %err, "Failed to prepare TAXII sources");
             eprintln!("Error preparing TAXII sources: {err}");
@@ -849,22 +851,26 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
 
             // Spawn NATS control subject listener for remote re-resolution triggers
             #[cfg(feature = "daemon-nats")]
-            {
-                let nats_url = config.nats_config.url.clone();
-                let trigger_tx = scheduler.trigger_sender();
-                tokio::spawn(async move {
-                    let subject = rsigma_runtime::sources::refresh::NATS_CONTROL_SUBJECT;
-                    if let Err(e) = rsigma_runtime::sources::refresh::nats_control_loop(
-                        &nats_url, subject, trigger_tx,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            "NATS control subject listener failed"
-                        );
-                    }
-                });
+            match control_connect_config(&config.input, &config.nats_config) {
+                Some(control) => {
+                    let trigger_tx = scheduler.trigger_sender();
+                    tokio::spawn(async move {
+                        let subject = rsigma_runtime::sources::refresh::NATS_CONTROL_SUBJECT;
+                        if let Err(e) = rsigma_runtime::sources::refresh::nats_control_loop(
+                            &control, subject, trigger_tx,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                "NATS control subject listener failed"
+                            );
+                        }
+                    });
+                }
+                None => tracing::debug!(
+                    "NATS control subject not started: the event input is not a nats:// URL"
+                ),
             }
 
             // Collect optional source IDs for background retry
@@ -1498,7 +1504,11 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                             count = sources.len(),
                             "Disposition pull source loaded"
                         );
-                        state.spawn_source(sources);
+                        #[cfg_attr(not(feature = "daemon-nats"), allow(unused_mut))]
+                        let mut resolver = rsigma_runtime::DefaultSourceResolver::new();
+                        #[cfg(feature = "daemon-nats")]
+                        resolver.set_nats_config(config.nats_config.clone());
+                        state.spawn_source(sources, resolver);
                     }
                 }
                 Err(e) => {
@@ -4179,6 +4189,22 @@ async fn build_sink(
     std::process::exit(crate::exit_code::CONFIG_ERROR);
 }
 
+/// The connection the source control subject listens on: the server of a
+/// `nats://` event input, with the daemon's NATS authentication and TLS
+/// settings. `None` when the input is not NATS.
+#[cfg(feature = "daemon-nats")]
+fn control_connect_config(
+    input: &str,
+    base: &rsigma_runtime::NatsConnectConfig,
+) -> Option<rsigma_runtime::NatsConnectConfig> {
+    input
+        .starts_with("nats://")
+        .then(|| rsigma_runtime::NatsConnectConfig {
+            url: parse_nats_url(input).0,
+            ..base.clone()
+        })
+}
+
 /// Parse a nats:// URL into (server_url, subject).
 ///
 /// Input: "nats://host:port/subject.path.>"
@@ -6335,6 +6361,23 @@ fn otlp_gunzip_bounded(body: &[u8], max: usize) -> Result<Vec<u8>, OtlpDecompres
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "daemon-nats")]
+    #[test]
+    fn the_control_subject_uses_the_nats_input_server_and_settings() {
+        let base = rsigma_runtime::NatsConnectConfig {
+            token: Some("t".into()),
+            require_tls: true,
+            ..Default::default()
+        };
+        let control = control_connect_config("nats://10.0.0.5:4222/events.>", &base).unwrap();
+        assert_eq!(control.url, "nats://10.0.0.5:4222");
+        assert_eq!(control.token.as_deref(), Some("t"));
+        assert!(control.require_tls);
+        for input in ["stdin", "http", "unix:///run/rsigma.sock"] {
+            assert!(control_connect_config(input, &base).is_none(), "{input}");
+        }
+    }
 
     #[test]
     fn a_configured_inflight_depth_beats_the_environment() {

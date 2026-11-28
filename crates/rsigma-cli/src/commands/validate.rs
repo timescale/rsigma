@@ -44,6 +44,10 @@ pub(crate) struct ValidateArgs {
     #[arg(long = "source", value_name = "FILE_OR_DIR")]
     pub source_files: Vec<PathBuf>,
 
+    #[cfg(feature = "daemon-nats")]
+    #[command(flatten)]
+    pub nats: super::daemon::NatsConnectArgs,
+
     /// Minimum parse diagnostic severity that causes exit code 2.
     /// 'error' (default): exit 2 on parse errors and compile errors.
     /// 'warning': also exit 2 on parse warnings, such as an invalid status or level.
@@ -92,6 +96,8 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
         resolve_sources,
         source_files,
         fail_level,
+        #[cfg(feature = "daemon-nats")]
+        nats,
     } = args;
     let rules: Vec<PathBuf> = path.iter().cloned().collect();
     let input = crate::ruleset::RuleInput {
@@ -109,6 +115,8 @@ pub(crate) fn cmd_validate(args: ValidateArgs, ctx: OutputCtx) {
         resolve_sources,
         &source_files,
         !ctx.explicit_format,
+        #[cfg(feature = "daemon-nats")]
+        nats.connect_config(),
     );
     #[cfg(not(feature = "daemon"))]
     let pipelines = {
@@ -404,6 +412,7 @@ fn resolve_validate_sources(
     resolve_sources: bool,
     source_files: &[PathBuf],
     print_human_ok: bool,
+    #[cfg(feature = "daemon-nats")] nats: rsigma_runtime::NatsConnectConfig,
 ) -> Vec<rsigma_eval::Pipeline> {
     // Load external sources alongside pipeline-embedded ones (validating that
     // the source files parse, regardless of whether we resolve them).
@@ -434,6 +443,8 @@ fn resolve_validate_sources(
                 });
 
             let mut resolver = rsigma_runtime::DefaultSourceResolver::new();
+            #[cfg(feature = "daemon-nats")]
+            resolver.set_nats_config(nats);
             if let Err(err) = resolver.prepare_taxii(&external_sources) {
                 eprintln!("Error preparing TAXII sources: {err}");
                 process::exit(crate::exit_code::CONFIG_ERROR);

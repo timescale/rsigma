@@ -353,9 +353,14 @@ impl DispositionState {
     /// fetch and refresh machinery) and ingest each refreshed payload as
     /// dispositions, labeling ingest metrics by transport. Idempotency makes a
     /// re-read or redelivery safe (the same records never double count).
-    pub fn spawn_source(&self, sources: Vec<rsigma_eval::pipeline::sources::DynamicSource>) {
+    /// `resolver` carries the daemon's NATS connection settings.
+    pub fn spawn_source(
+        &self,
+        sources: Vec<rsigma_eval::pipeline::sources::DynamicSource>,
+        mut resolver: rsigma_runtime::DefaultSourceResolver,
+    ) {
         use rsigma_eval::pipeline::sources::SourceType;
-        use rsigma_runtime::{DefaultSourceResolver, RefreshScheduler, RefreshTrigger};
+        use rsigma_runtime::{RefreshScheduler, RefreshTrigger};
 
         if sources.is_empty() {
             return;
@@ -376,7 +381,6 @@ impl DispositionState {
             .collect();
 
         let scheduler = RefreshScheduler::new();
-        let mut resolver = DefaultSourceResolver::new();
         if let Err(err) = resolver.prepare_taxii(&sources) {
             tracing::error!(error = %err, "Failed to prepare TAXII sources");
             return;
@@ -929,7 +933,7 @@ mod tests {
         };
 
         let state = state(1);
-        state.spawn_source(vec![source]);
+        state.spawn_source(vec![source], rsigma_runtime::DefaultSourceResolver::new());
 
         for _ in 0..100 {
             let view = state.view();

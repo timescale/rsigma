@@ -74,6 +74,7 @@ mod cli_mcp_http_exposure;
 mod cli_mcp_operate;
 mod cli_mcp_serve;
 mod cli_migrate_sources;
+mod cli_nats_sources;
 mod cli_output_format;
 mod cli_parse;
 mod cli_pipeline_diff;

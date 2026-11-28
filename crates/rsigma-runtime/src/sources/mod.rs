@@ -121,6 +121,17 @@ pub trait SourceResolver: Send + Sync {
     fn store_cached(&self, source_id: &str, value: serde_json::Value) {
         let _ = (source_id, value);
     }
+
+    /// The authentication and TLS settings every `type: nats` source
+    /// connection uses, including the push subscriptions the
+    /// [`RefreshScheduler`](refresh::RefreshScheduler) opens. Its `url` is
+    /// ignored; each source names its own server. A resolver that wraps
+    /// another must forward this. The default connects without credentials
+    /// or required TLS.
+    #[cfg(feature = "nats")]
+    fn nats_connect_config(&self) -> crate::NatsConnectConfig {
+        crate::NatsConnectConfig::default()
+    }
 }
 
 /// Default source resolver that dispatches to file, command, and HTTP resolvers.
@@ -133,33 +144,19 @@ pub struct DefaultSourceResolver {
     stix_now: Option<rstix::core::StixTimestamp>,
     #[cfg(feature = "stix-source")]
     taxii: std::sync::Mutex<taxii::TaxiiSources>,
+    #[cfg(feature = "nats")]
+    nats: crate::NatsConnectConfig,
 }
 
 impl DefaultSourceResolver {
     /// Create a new resolver with an in-memory cache.
     pub fn new() -> Self {
-        Self {
-            cache: std::sync::Arc::new(SourceCache::new()),
-            watchlists: None,
-            metrics: None,
-            #[cfg(feature = "stix-source")]
-            stix_now: None,
-            #[cfg(feature = "stix-source")]
-            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
-        }
+        Self::with_cache(SourceCache::new())
     }
 
     /// Create a new resolver with the given cache.
     pub fn with_cache(cache: SourceCache) -> Self {
-        Self {
-            cache: std::sync::Arc::new(cache),
-            watchlists: None,
-            metrics: None,
-            #[cfg(feature = "stix-source")]
-            stix_now: None,
-            #[cfg(feature = "stix-source")]
-            taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
-        }
+        Self::with_arc_cache(std::sync::Arc::new(cache))
     }
 
     /// Create a new resolver that shares an existing `Arc<SourceCache>`
@@ -174,7 +171,23 @@ impl DefaultSourceResolver {
             stix_now: None,
             #[cfg(feature = "stix-source")]
             taxii: std::sync::Mutex::new(taxii::TaxiiSources::default()),
+            #[cfg(feature = "nats")]
+            nats: crate::NatsConnectConfig::default(),
         }
+    }
+
+    /// Connect `type: nats` sources, and their push subscriptions, with the
+    /// authentication and TLS settings of `config`. Its `url` is ignored.
+    #[cfg(feature = "nats")]
+    pub fn with_nats_config(mut self, config: crate::NatsConnectConfig) -> Self {
+        self.set_nats_config(config);
+        self
+    }
+
+    /// Set the NATS settings after the resolver already exists.
+    #[cfg(feature = "nats")]
+    pub fn set_nats_config(&mut self, config: crate::NatsConnectConfig) {
+        self.nats = config;
     }
 
     /// Read TAXII credentials and build clients for `sources`.
@@ -452,7 +465,10 @@ impl DefaultSourceResolver {
                 subject,
                 format,
                 extract,
-            } => nats::resolve_nats_initial(url, subject, *format, extract.as_ref()).await,
+            } => {
+                nats::resolve_nats_initial(&self.nats, url, subject, *format, extract.as_ref())
+                    .await
+            }
             #[cfg(not(feature = "nats"))]
             SourceType::Nats { .. } => Err(SourceError {
                 source_id: source.id.clone(),
@@ -488,6 +504,11 @@ impl SourceResolver for DefaultSourceResolver {
 
     fn store_cached(&self, source_id: &str, value: serde_json::Value) {
         self.cache.store(source_id, &value);
+    }
+
+    #[cfg(feature = "nats")]
+    fn nats_connect_config(&self) -> crate::NatsConnectConfig {
+        self.nats.clone()
     }
 
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {

@@ -33,6 +33,10 @@ pub struct ResolveArgs {
     /// External source file(s) or directory of source files
     #[arg(long = "source-file", value_name = "FILE_OR_DIR")]
     pub source_files: Vec<PathBuf>,
+
+    #[cfg(feature = "daemon-nats")]
+    #[command(flatten)]
+    pub nats: super::daemon::NatsConnectArgs,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,7 +76,13 @@ pub fn cmd_resolve(args: ResolveArgs, ctx: OutputCtx) {
         pretty,
         dry_run,
         source_files,
+        #[cfg(feature = "daemon-nats")]
+        nats,
     } = args;
+    #[cfg_attr(not(feature = "daemon-nats"), allow(unused_mut))]
+    let mut resolver = DefaultSourceResolver::new();
+    #[cfg(feature = "daemon-nats")]
+    resolver.set_nats_config(nats.connect_config());
 
     if pretty
         && ctx.explicit_format
@@ -97,6 +107,7 @@ pub fn cmd_resolve(args: ResolveArgs, ctx: OutputCtx) {
             pretty,
             dry_run,
             source_files,
+            resolver,
             ctx,
         )
         .await
@@ -109,6 +120,7 @@ async fn resolve_async(
     pretty: bool,
     dry_run: bool,
     source_files: Vec<PathBuf>,
+    mut resolver: DefaultSourceResolver,
     ctx: OutputCtx,
 ) {
     use rsigma_runtime::sources::registry::load_external_sources_with;
@@ -201,7 +213,6 @@ async fn resolve_async(
         return;
     }
 
-    let mut resolver = DefaultSourceResolver::new();
     let declared: Vec<_> = all_sources
         .iter()
         .map(|(_, source)| (*source).clone())

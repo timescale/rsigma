@@ -424,3 +424,58 @@ async fn over_long_messages_are_terminated_and_do_not_stall_the_consumer() {
     wait_for_settled_consumer(&url, "rsigma-test-large", "rsigma-daemon-test-large").await;
     assert_eq!(*metrics.0.lock().unwrap(), [("nats", "too_long")]);
 }
+
+#[tokio::test]
+async fn dynamic_source_authenticates_with_the_connect_config() {
+    use rsigma_eval::pipeline::sources::{
+        DataFormat, DynamicSource, ErrorPolicy, RefreshPolicy, SourceType,
+    };
+    use rsigma_runtime::DefaultSourceResolver;
+    use rsigma_runtime::sources::SourceResolver;
+
+    skip_without_docker!();
+    let cmd = NatsServerCmd::default()
+        .with_user("testuser")
+        .with_password("testpass");
+    let container = Nats::default()
+        .with_cmd(&cmd)
+        .start()
+        .await
+        .expect("Failed to start NATS container with auth");
+    let port = container
+        .get_host_port_ipv4(4222)
+        .await
+        .expect("Failed to get NATS port");
+    let url = format!("nats://127.0.0.1:{port}");
+    let source = DynamicSource {
+        id: "iocs".into(),
+        source_type: SourceType::Nats {
+            url: url.clone(),
+            subject: "test.iocs".into(),
+            format: DataFormat::Json,
+            extract: None,
+        },
+        refresh: RefreshPolicy::OnDemand,
+        timeout: None,
+        on_error: ErrorPolicy::Fail,
+        required: true,
+        default: None,
+    };
+
+    let anonymous = DefaultSourceResolver::new();
+    assert!(
+        anonymous.resolve(&source).await.is_err(),
+        "a server that requires a password must refuse an anonymous source"
+    );
+
+    let authenticated = DefaultSourceResolver::new().with_nats_config(NatsConnectConfig {
+        username: Some("testuser".into()),
+        password: Some("testpass".into()),
+        ..Default::default()
+    });
+    let value = authenticated
+        .resolve(&source)
+        .await
+        .expect("the configured credentials authenticate the source");
+    assert_eq!(value.data, serde_json::Value::Null);
+}

@@ -30,6 +30,12 @@ impl InstrumentedResolver {
         self.inner.set_watchlists(registry);
     }
 
+    /// Connect `type: nats` sources with the daemon's NATS settings.
+    #[cfg(feature = "daemon-nats")]
+    pub fn set_nats_config(&mut self, config: rsigma_runtime::NatsConnectConfig) {
+        self.inner.set_nats_config(config);
+    }
+
     /// Read TAXII credentials for `sources` before the first poll.
     pub fn prepare_taxii(
         &mut self,
@@ -59,6 +65,11 @@ impl SourceResolver for InstrumentedResolver {
 
     fn store_cached(&self, source_id: &str, value: serde_json::Value) {
         self.inner.store_cached(source_id, value);
+    }
+
+    #[cfg(feature = "daemon-nats")]
+    fn nats_connect_config(&self) -> rsigma_runtime::NatsConnectConfig {
+        self.inner.nats_connect_config()
     }
 
     async fn resolve(&self, source: &DynamicSource) -> Result<ResolvedValue, SourceError> {

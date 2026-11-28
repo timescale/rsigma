@@ -30,6 +30,15 @@ impl NatsConnectConfig {
     /// Auth methods are mutually exclusive; the first one found wins
     /// (credentials file > token > user/password > nkey).
     pub async fn connect(&self) -> Result<async_nats::Client, async_nats::Error> {
+        self.connect_to(&self.url).await
+    }
+
+    /// Connect to `url` instead of [`Self::url`] with this configuration's
+    /// authentication and TLS settings. Dynamic sources use it to reach the
+    /// server their declaration names. With [`Self::require_tls`], a server
+    /// that does not offer TLS fails the connection before any credential
+    /// or subscription is sent.
+    pub async fn connect_to(&self, url: &str) -> Result<async_nats::Client, async_nats::Error> {
         let options = if let Some(ref path) = self.credentials_file {
             async_nats::ConnectOptions::with_credentials_file(path).await?
         } else if let Some(ref token) = self.token {
@@ -54,16 +63,15 @@ impl NatsConnectConfig {
 
         ensure_crypto_provider();
 
-        options.connect(&self.url).await.map_err(|e| e.into())
+        options.connect(url).await.map_err(|e| e.into())
     }
 }
 
 /// Pin the process-default rustls `CryptoProvider` before async-nats builds its
 /// TLS client config, which it does from the process default whenever the
 /// connection is upgraded: `require_tls`, a `tls://` URL, or a server whose
-/// INFO requires TLS. Called before every NATS connection in this crate:
-/// [`NatsConnectConfig::connect`] and the dynamic sources' own clients
-/// (`sources::nats`, `sources::refresh`).
+/// INFO requires TLS. Called before every NATS connection in this crate,
+/// all of which go through [`NatsConnectConfig::connect_to`].
 ///
 /// With the `otlp` feature, tonic pulls aws-lc-rs and async-nats pulls ring, so
 /// rustls cannot auto-select a default and the upgrade would panic; pin

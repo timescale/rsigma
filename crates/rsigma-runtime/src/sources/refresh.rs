@@ -261,14 +261,22 @@ impl RefreshScheduler {
             {
                 let tx = trigger_tx.clone();
                 let id = source.id.clone();
+                let connect = resolver.nats_connect_config();
                 let url = url.clone();
                 let subject = subject.clone();
                 let format = *format;
                 let extract_expr = extract_expr.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        nats_push_loop(&url, &subject, format, extract_expr.as_ref(), &id, &tx)
-                            .await
+                    if let Err(e) = nats_push_loop(
+                        &connect,
+                        &url,
+                        &subject,
+                        format,
+                        extract_expr.as_ref(),
+                        &id,
+                        &tx,
+                    )
+                    .await
                     {
                         tracing::error!(
                             source_id = %id,
@@ -467,9 +475,11 @@ pub struct SourceSubscription {
     pub trigger: mpsc::Sender<RefreshTrigger>,
 }
 
-/// Subscribe to a NATS subject and forward parsed messages as triggers.
+/// Subscribe to a NATS subject at `url` with the authentication and TLS
+/// settings of `connect`, and forward parsed messages as triggers.
 #[cfg(feature = "nats")]
 async fn nats_push_loop(
+    connect: &crate::NatsConnectConfig,
     url: &str,
     subject: &str,
     format: rsigma_eval::pipeline::sources::DataFormat,
@@ -479,8 +489,8 @@ async fn nats_push_loop(
 ) -> Result<(), String> {
     use futures::StreamExt;
 
-    crate::io::nats_config::ensure_crypto_provider();
-    let client = async_nats::connect(url)
+    let client = connect
+        .connect_to(url)
         .await
         .map_err(|e| format!("NATS connect failed: {e}"))?;
 
@@ -527,20 +537,21 @@ async fn nats_push_loop(
 /// The default NATS control subject for triggering source re-resolution.
 pub const NATS_CONTROL_SUBJECT: &str = "rsigma.control.resolve";
 
-/// Subscribe to the NATS control subject and forward re-resolution triggers.
+/// Subscribe to the NATS control subject on the server `connect` names and
+/// forward re-resolution triggers.
 ///
 /// Messages with an empty payload trigger re-resolution of all sources.
 /// Messages with a non-empty payload are treated as a source ID to re-resolve.
 #[cfg(feature = "nats")]
 pub async fn nats_control_loop(
-    url: &str,
+    connect: &crate::NatsConnectConfig,
     subject: &str,
     trigger_tx: mpsc::Sender<RefreshTrigger>,
 ) -> Result<(), String> {
     use futures::StreamExt;
 
-    crate::io::nats_config::ensure_crypto_provider();
-    let client = async_nats::connect(url)
+    let client = connect
+        .connect()
         .await
         .map_err(|e| format!("NATS control connect failed: {e}"))?;
 
