@@ -1,5 +1,6 @@
 //! Paths that project config files (`./rsigma.yaml`, `.rsigmarc`) name for
-//! rsigma to write must stay inside the project.
+//! rsigma to write must stay inside the project, and commands that rewrite a
+//! tree only touch entries physically inside it.
 //!
 //! Each test lays out `<root>/project` and `<root>/outside` so a `../`
 //! escape lands in a directory the test owns.
@@ -423,4 +424,56 @@ fn project_backtest_findings_outside_the_project_are_ignored() {
 
     let validate = run(&layout, &["config", "validate", "--format", "json"]);
     assert_eq!(ignored_keys(&json_stdout(&validate)), ["backtest.findings"]);
+}
+
+#[test]
+fn ruleset_build_refuses_a_linked_subdirectory() {
+    let layout = layout();
+    let out = layout.project.join("build");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("ruleset.lock.json"), "{}\n").unwrap();
+    link_dir(&layout.outside, &out.join("rules"));
+    fs::write(
+        layout.project.join("rsigma.yaml"),
+        "rulesets:\n  local:\n    sources: [rules]\n    output: build\n",
+    )
+    .unwrap();
+
+    let output = run(&layout, &["ruleset", "build", "local"]);
+    assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("refusing to write through"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(entries(&layout.outside).is_empty());
+}
+
+#[test]
+fn ruleset_build_replaces_linked_files_instead_of_following_them() {
+    let layout = layout();
+    let out = layout.project.join("build");
+    fs::create_dir_all(out.join("rules")).unwrap();
+    let victim = layout.outside.join("victim.yml");
+    let lock_victim = layout.outside.join("lock.json");
+    fs::write(&victim, VICTIM).unwrap();
+    fs::write(&lock_victim, VICTIM).unwrap();
+    let generated = out.join("rules/aaaaaaaa-0000-4000-8000-000000000001.yml");
+    if !link_file(&victim, &generated) || !link_file(&lock_victim, &out.join("ruleset.lock.json")) {
+        return;
+    }
+    fs::write(
+        layout.project.join("rsigma.yaml"),
+        "rulesets:\n  local:\n    sources: [rules]\n    output: build\n",
+    )
+    .unwrap();
+
+    let output = run(&layout, &["ruleset", "build", "local", "--force"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+    assert_eq!(fs::read_to_string(&lock_victim).unwrap(), VICTIM);
+    for path in [&generated, &out.join("ruleset.lock.json")] {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        assert!(metadata.is_file(), "{} is still a link", path.display());
+    }
 }

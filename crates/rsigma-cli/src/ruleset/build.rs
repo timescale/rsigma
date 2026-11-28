@@ -12,7 +12,7 @@ use super::lock::{
     LOCK_VERSION, LockedDocument, LockedOverlayFile, LockedSource, Lockfile, content_sha256,
     lock_path, sha256_hex, source_digest, spec_digest,
 };
-use crate::fsutil::atomic_write;
+use crate::fsutil::write_no_follow;
 
 /// One file a build would write, relative to the output directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,14 +269,22 @@ fn lockfile_contents(lock: &Lockfile) -> String {
 
 fn stale_outputs(dir: &Path, desired: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
     let mut stale = Vec::new();
-    for name in ["rules", "correlations", "filters"] {
+    for name in GENERATED_DIRS {
         let sub = dir.join(name);
+        if is_symlink(&sub) {
+            continue;
+        }
         let Ok(entries) = fs::read_dir(&sub) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("yml") {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !(file_type.is_file() || file_type.is_symlink())
+                || path.extension().and_then(|e| e.to_str()) != Some("yml")
+            {
                 continue;
             }
             let rel = Path::new(name).join(entry.file_name());
@@ -289,23 +297,39 @@ fn stale_outputs(dir: &Path, desired: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
     stale
 }
 
+/// The subdirectories a build generates documents into.
+const GENERATED_DIRS: [&str; 3] = ["rules", "correlations", "filters"];
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
+/// Whether `path` is a regular file (not a symlink to one) holding `contents`.
+fn holds(path: &Path, contents: &str) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
+        && fs::read(path).is_ok_and(|existing| existing == contents.as_bytes())
+}
+
 /// Write the planned files and lockfile into `dir`.
 ///
 /// Refuses a non-empty directory without a lockfile unless `force` is set, and
 /// only deletes stale `.yml` files inside the three generated subdirectories.
+/// Every entry it touches is physically inside `dir`: a generated
+/// subdirectory that is a symlink is refused, and a symlink where a file
+/// goes is replaced rather than followed.
 pub(crate) fn write_output(
     dir: &Path,
     plan: &[PlannedFile],
     lock: &Lockfile,
     force: bool,
 ) -> Result<WriteSummary, String> {
-    let lock_file = lock_path(dir);
     if dir.exists() {
         let non_empty = fs::read_dir(dir)
             .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
             .next()
             .is_some();
-        if non_empty && !lock_file.is_file() && !force {
+        let has_lock = fs::symlink_metadata(lock_path(dir)).is_ok_and(|m| m.is_file());
+        if non_empty && !has_lock && !force {
             return Err(format!(
                 "{} is not empty and has no ruleset.lock.json; pass --force to write into it",
                 dir.display()
@@ -313,14 +337,20 @@ pub(crate) fn write_output(
         }
     }
 
-    for name in ["", "rules", "correlations", "filters"] {
-        let path = if name.is_empty() {
-            dir.to_path_buf()
-        } else {
-            dir.join(name)
-        };
+    fs::create_dir_all(dir).map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+    let real_dir = dir
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve {}: {error}", dir.display()))?;
+    for name in GENERATED_DIRS {
+        let path = real_dir.join(name);
+        if is_symlink(&path) {
+            return Err(format!(
+                "refusing to write through {}: it is a symlink",
+                dir.join(name).display()
+            ));
+        }
         fs::create_dir_all(&path)
-            .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+            .map_err(|error| format!("cannot create {}: {error}", dir.join(name).display()))?;
     }
 
     let mut summary = WriteSummary {
@@ -331,30 +361,31 @@ pub(crate) fn write_output(
     };
 
     for file in plan {
-        let path = dir.join(&file.rel);
-        if fs::read(&path).is_ok_and(|existing| existing == file.contents.as_bytes()) {
+        let path = real_dir.join(&file.rel);
+        if holds(&path, &file.contents) {
             summary.unchanged += 1;
             continue;
         }
-        atomic_write(&path, &file.contents)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        write_no_follow(&path, &file.contents)
+            .map_err(|error| format!("cannot write {}: {error}", dir.join(&file.rel).display()))?;
         summary.written += 1;
     }
 
     let desired: BTreeSet<PathBuf> = plan.iter().map(|file| file.rel.clone()).collect();
-    for rel in stale_outputs(dir, &desired) {
-        let path = dir.join(&rel);
+    for rel in stale_outputs(&real_dir, &desired) {
+        let path = real_dir.join(&rel);
         fs::remove_file(&path)
-            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+            .map_err(|error| format!("cannot remove {}: {error}", dir.join(&rel).display()))?;
         summary.removed += 1;
     }
 
+    let lock_file = lock_path(&real_dir);
     let contents = lockfile_contents(lock);
-    if fs::read(&lock_file).is_ok_and(|existing| existing == contents.as_bytes()) {
+    if holds(&lock_file, &contents) {
         summary.unchanged += 1;
     } else {
-        atomic_write(&lock_file, &contents)
-            .map_err(|error| format!("cannot write {}: {error}", lock_file.display()))?;
+        write_no_follow(&lock_file, &contents)
+            .map_err(|error| format!("cannot write {}: {error}", lock_path(dir).display()))?;
         summary.written += 1;
     }
 
@@ -362,12 +393,15 @@ pub(crate) fn write_output(
 }
 
 /// Paths whose contents differ from what a build would write, including stale
-/// generated files and the lockfile.
+/// generated files, generated directories that are symlinks, and the lockfile.
 pub(crate) fn check_output(dir: &Path, plan: &[PlannedFile], lock: &Lockfile) -> Vec<PathBuf> {
-    let mut drifted = Vec::new();
+    let mut drifted: Vec<PathBuf> = GENERATED_DIRS
+        .into_iter()
+        .filter(|name| is_symlink(&dir.join(name)))
+        .map(PathBuf::from)
+        .collect();
     for file in plan {
-        let path = dir.join(&file.rel);
-        if !fs::read(&path).is_ok_and(|existing| existing == file.contents.as_bytes()) {
+        if !holds(&dir.join(&file.rel), &file.contents) {
             drifted.push(file.rel.clone());
         }
     }
@@ -377,7 +411,7 @@ pub(crate) fn check_output(dir: &Path, plan: &[PlannedFile], lock: &Lockfile) ->
 
     let lock_file = lock_path(dir);
     let contents = lockfile_contents(lock);
-    if !fs::read(&lock_file).is_ok_and(|existing| existing == contents.as_bytes()) {
+    if !holds(&lock_file, &contents) {
         drifted.push(PathBuf::from("ruleset.lock.json"));
     }
 

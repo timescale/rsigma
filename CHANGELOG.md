@@ -10,6 +10,8 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 The project-path check behind these keys and the existing `mcp.rules_dir`, `daemon.state.db`, `eval.output`, and `scorecard.report` checks now resolves symlinks in every existing component, so `missing/../link/out` can no longer reach a symlinked directory after a component that does not exist yet, and on Windows it normalizes paths the way Win32 opens them (drive-relative forms, `\\?\` and `\\.\` prefixes, device names). `daemon.state.db` is also ignored when its SQLite `-wal`, `-shm`, or `-journal` file resolves outside the project.
 
+`ruleset build` now refuses a generated `rules/`, `correlations/`, or `filters/` directory that is a symlink, and replaces a symlinked rule file or `ruleset.lock.json` instead of writing through it.
+
 ### PostgreSQL `fields` entries and reserved-word names can no longer change the generated SQL (#813)
 
 The PostgreSQL backend passed any `fields` entry containing `(` and `)` into the SELECT list as written, so a rule could add a sub-select, a call such as `pg_sleep(10)`, or a comment to the query. An entry must now be `*`, a field name, or a `count`, `sum`, `avg`, `min`, or `max` call over a field or `*`, each with an optional `AS alias`. Anything else fails conversion with `InvalidSelectField`, which names the entry. An aggregate call now groups the query by the other listed fields. In JSONB mode a selected field is named after its Sigma field, and an alias is a column name instead of a JSONB path.
