@@ -15,7 +15,9 @@ The daemon can record the field keys of every event it evaluates and join that a
 
 Field observation is **off by default**. Start the daemon with `--observe-fields` (and optionally `--observe-fields-max-keys <N>`, default `10000`) to enable the surface. When disabled, all four endpoints below return `503 Service Unavailable` with `{"error":"field observation disabled","hint":"..."}`.
 
-Three Prometheus surfaces refresh on every `/metrics` scrape (and after every successful `/api/v1/fields/*` call): `rsigma_fields_observed_total`, `rsigma_fields_observer_unique_keys`, and `rsigma_fields_observer_overflow_dropped_total`. See [Prometheus metrics](metrics.md) for the catalog entries.
+Three Prometheus surfaces refresh on every `/metrics` scrape (and after every successful `/api/v1/fields/*` call): `rsigma_fields_observed_total`, `rsigma_fields_observer_unique_keys`, and `rsigma_fields_observer_overflow_dropped_total`. See [Prometheus metrics](metrics.md) for the catalog entries. `rsigma_fields_observer_oversized_keys_total` and `rsigma_fields_observer_truncated_events_total` refresh the same way. {{ added "unreleased" }}
+
+Field names come from untrusted events, so each event's keys are read within a fixed budget: a path longer than 512 bytes is skipped (and with it everything under a nested object whose own path is too long), and one event contributes at most 4,096 paths and 256 KiB of them. Skipped paths count in `oversized_keys` and events cut short in `truncated_events`. With `--observe-fields-max-keys`, this bounds the observer's memory and every response below, however large the events are. The redacted key shapes `GET /api/v1/schemas` and `/api/v1/schemas/suggestions` serve are read within the same budget. {{ added "unreleased" }}
 
 ### `GET /api/v1/fields`
 
@@ -32,6 +34,8 @@ curl -sS 'http://127.0.0.1:9090/api/v1/fields?limit=10'
     "unique_keys_observed": 18,
     "rule_fields_loaded": 22,
     "overflow_dropped": 0,
+    "oversized_keys": 0,
+    "truncated_events": 0,
     "max_keys": 10000,
     "uptime_seconds": 312.4,
     "intersection_count": 12,

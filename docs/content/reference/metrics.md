@@ -4,11 +4,11 @@ description: "Every Prometheus metric the RSigma daemon exposes on /metrics: eva
 
 # Prometheus Metrics
 
-The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is {{ rsigma.metrics.names }} metric names: {{ rsigma.metrics.always }} are always registered, and the OTLP ({{ rsigma.metrics.otlp }}), TLS ({{ rsigma.metrics.tls }}), and STIX source ({{ rsigma.metrics.stix }}) families are feature-gated on `daemon-otlp`, `daemon-tls`, and `stix-source` respectively. The runtime exposes the ones that have ever fired in a given process. The three field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
+The `engine daemon` exposes Prometheus metrics on `GET /metrics` on the same `--api-addr` as the REST API. The full definition catalogue under `--all-features` (which is how the prebuilt release archives and the GHCR Docker image are built) is {{ rsigma.metrics.names }} metric names: {{ rsigma.metrics.always }} are always registered, and the OTLP ({{ rsigma.metrics.otlp }}), TLS ({{ rsigma.metrics.tls }}), and STIX source ({{ rsigma.metrics.stix }}) families are feature-gated on `daemon-otlp`, `daemon-tls`, and `stix-source` respectively. The runtime exposes the ones that have ever fired in a given process. The five field-observer surfaces always render their `# HELP`/`# TYPE` lines (and stay at zero unless `--observe-fields` was passed); the others follow the lazy-registration pattern documented per section below.
 
 The exact source of truth is the [`daemon/metrics`](https://github.com/timescale/rsigma/blob/main/crates/rsigma-cli/src/daemon/metrics.rs) module.
 
-## Engine core (37 metrics)
+## Engine core (40 metrics)
 
 These always show up. They cover ingest, matches, queue depth, back-pressure, reloads, and resource usage.
 
@@ -39,6 +39,9 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_input_queue_depth` | gauge | none | Events currently buffered in the source→engine channel. Tracked for every input, including the HTTP and OTLP push receivers. |
 | `rsigma_output_queue_depth` | gauge | none | Results currently buffered in the engine→sink channel. |
 | `rsigma_back_pressure_events_total` | counter | none | Times a source was blocked on a full event channel, for every input including OTLP. {{ added "0.28.0" }} The matching `Input channel full, backpressure applied` warning is logged at most once every 10 seconds with a `suppressed` count. {{ added "0.28.0" }} |
+| `rsigma_input_dropped_total` | counter | `source` (`stdin`, `unix`, `nats`), `reason` (`too_long`, `blank`) | Input records a source dropped: a line or NATS message over 1 MiB (`too_long`), or an empty NATS message, which is acked (`blank`). See [Line input](../cli/engine/daemon.md#line-input). Registered unconditionally. {{ added "unreleased" }} |
+| `rsigma_input_invalid_utf8_total` | counter | `source` (`stdin`, `unix`, `nats`, `http`) | Input records that were not valid UTF-8 and were evaluated with the invalid bytes replaced by `U+FFFD`. `http` is `POST /api/v1/events`. Registered unconditionally. {{ added "unreleased" }} |
+| `rsigma_input_source_failed_total` | counter | `source` (`stdin`) | Times an input source stopped on a read error instead of at the end of its input. The daemon then reports not ready and exits `4`. Registered unconditionally. {{ added "unreleased" }} |
 | `rsigma_event_processing_seconds` | histogram | none | Per-event processing latency. |
 | `rsigma_batch_phase_duration_seconds` | histogram | `phase` (`parse`, `decode_merge`, `observe`, `evaluate`, `result_merge`, `dispatch`) | Wall-clock duration of each batch-processing phase. `parse` is the parallel format parse; `decode_merge` is the ordered post-parse merge and optional event filter; `observe` covers field/schema observers and decoded taps; `evaluate` is engine detection/correlation; `result_merge` is per-line result assembly and counters; `dispatch` is the daemon's post-batch ack/sink enqueue loop. Compare `_sum` deltas over the same interval to rank serial share without inferring it from throughput. |
 | `rsigma_pipeline_latency_seconds` | histogram | none | Latency from event dequeue to dispatch, before enrichment and sink delivery. {{ added "0.28.0" }} |
@@ -149,15 +152,16 @@ Exposed when the daemon is built with `daemon`. The fixed label set on `rsigma_r
 | `rsigma_risk_incident_results_total` | counter | none | Total risk incident records emitted. |
 | `rsigma_risk_layer_duration_seconds` | histogram | none | Risk-layer stage duration in seconds. |
 
-## OTLP (3 metrics)
+## OTLP (4 metrics)
 
 Exposed when the daemon is built with `daemon-otlp` and an OTLP receiver is active. The labelled counters surface after the first request of that kind.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `rsigma_otlp_requests_total` | counter | `transport` (`http`, `grpc`), `encoding` (`json`, `protobuf`) | OTLP export requests received. Gzip is decompressed before the encoding label is recorded. |
-| `rsigma_otlp_log_records_total` | counter | none | Log records ingested via OTLP. |
-| `rsigma_otlp_errors_total` | counter | `transport`, `reason` (`unsupported_content_type`, `decompression`, `body_too_large`, `decode`, `channel_closed`) | OTLP request errors. |
+| `rsigma_otlp_log_records_total` | counter | none | Log records ingested via OTLP and forwarded to the engine. |
+| `rsigma_otlp_rejected_log_records_total` | counter | `transport` (`http`, `grpc`), `reason` (`too_large`, `over_budget`) | Log records rejected by the [OTLP request limits](../guide/otlp-integration.md#request-limits) and reported to the agent as a partial success: a record whose flattened event passes 1 MiB (`too_large`), or a record past the 64 MiB of events one request may produce (`over_budget`). Registered with the receiver. {{ added "unreleased" }} |
+| `rsigma_otlp_errors_total` | counter | `transport`, `reason` (`unsupported_content_type`, `decompression`, `body_too_large`, `too_many_records`, `decode`, `channel_closed`) | OTLP request errors. `too_many_records` is a request with more log records than `--otlp-max-records`, refused before it is decoded. {{ added "unreleased" }} |
 
 ## TLS (2 metrics)
 
@@ -168,15 +172,17 @@ Exposed when the daemon is built with `daemon-tls`. Both metrics render with the
 | `rsigma_tls_certificate_expiry_seconds` | gauge | none | Seconds until the active TLS server certificate's `not_after`. Signed: negative once expired. Updated at startup and after every successful SIGHUP-triggered reload. |
 | `rsigma_tls_active_connections` | gauge | none | Currently active TLS-terminated connections on the API listener. Decrements on connection close (including handshake failure). |
 
-## Field observability (3 metrics)
+## Field observability (5 metrics)
 
-Exposed unconditionally; values stay at zero unless the daemon was started with `--observe-fields`. All three refresh on every `/metrics` scrape and after every successful `/api/v1/fields/*` call. See [HTTP API: Field observability](http-api-observability.md#field-observability) for the matching endpoints.
+Exposed unconditionally; values stay at zero unless the daemon was started with `--observe-fields`. All five refresh on every `/metrics` scrape and after every successful `/api/v1/fields/*` call. See [HTTP API: Field observability](http-api-observability.md#field-observability) for the matching endpoints.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `rsigma_fields_observed_total` | counter | none | Total events scanned by the opt-in field observer. Advances regardless of whether the event had structured fields. |
 | `rsigma_fields_observer_unique_keys` | gauge | none | Distinct field names currently tracked. Saturates at `--observe-fields-max-keys` (default `10000`). |
 | `rsigma_fields_observer_overflow_dropped_total` | counter | none | New-key insert attempts dropped because the observer was at capacity. A persistent positive rate signals that `--observe-fields-max-keys` is too low for the deployment. |
+| `rsigma_fields_observer_oversized_keys_total` | counter | none | Field paths the observer skipped for being longer than 512 bytes. A nested object whose own path is too long counts once for everything under it. {{ added "unreleased" }} |
+| `rsigma_fields_observer_truncated_events_total` | counter | none | Events whose field walk stopped at the per-event cap of 4,096 paths or 256 KiB of paths before it had seen every field. {{ added "unreleased" }} |
 
 ## Schema observability (4 metrics)
 

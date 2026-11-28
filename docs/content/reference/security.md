@@ -12,7 +12,12 @@ For the SECURITY policy and disclosure process, see [`SECURITY.md`](../security-
 
 | Limit | Constant | Value | Scope | Behaviour on overrun |
 |-------|----------|-------|-------|----------------------|
-| Single event size | `MAX_LINE_BYTES` | 1 MiB | `engine daemon` HTTP/stdin event ingest | Line rejected with a `413`-equivalent error in HTTP mode; counted in `rsigma_events_parse_errors_total`. |
+| Single event size | `MAX_LINE_BYTES` | 1 MiB | `engine daemon` stdin, `unix://`, NATS, and `POST /api/v1/events` ingest; `engine eval` stdin | Stdin and `unix://` drop the line as it arrives, without holding it, and count it in `rsigma_input_dropped_total`; a NATS message is terminated and counted; `POST /api/v1/events` refuses the whole request with `413` before forwarding any line; `engine eval` skips the line. Bytes that are not valid UTF-8 are replaced, never fatal. {{ added "unreleased" }} |
+| OTLP log records per request | `OtlpLimits::max_records` | 10,000 (`--otlp-max-records`) | `POST /v1/logs` and gRPC `LogsService/Export` (`daemon-otlp`) | Counted from the encoded request before decoding; refused with `413` or `RESOURCE_EXHAUSTED` and counted as `rsigma_otlp_errors_total{reason="too_many_records"}`. {{ added "unreleased" }} |
+| Flattened OTLP event | `OtlpLimits::max_record_bytes` | 1 MiB | Same | Record rejected, mostly before its event is built, and reported as a partial success. {{ added "unreleased" }} |
+| Flattened OTLP events per request | `OtlpLimits::max_request_bytes` | 64 MiB | Same | That record and the rest of the request are rejected and reported as a partial success. {{ added "unreleased" }} |
+| Concurrent OTLP requests | `MAX_CONCURRENT_REQUESTS` | 16 | Both OTLP transports together | Further requests wait for a slot before their bodies are read. {{ added "unreleased" }} |
+| Field-key walk | `FieldKeyBudget` | 4,096 paths, 512 bytes per path, 256 KiB per event | Field observer, schema observer shapes, `Event::field_keys` | Longer paths are skipped and the walk stops at the caps; counted in `rsigma_fields_observer_oversized_keys_total` and `rsigma_fields_observer_truncated_events_total`. {{ added "unreleased" }} |
 | Decompressed OTLP/HTTP body | `OTLP_HTTP_MAX_DECOMPRESSED_BYTES` | 4 MiB | `POST /v1/logs` with `Content-Encoding: gzip` (`daemon-otlp`) | Request rejected with `413` before decoding; counted as `rsigma_otlp_errors_total{reason="body_too_large"}`. The gRPC transport applies the same 4 MiB decoded-message limit. {{ added "0.25.0" }} |
 | Condition expression length | `MAX_CONDITION_LEN` | 64 KiB | Rule parser | Rule rejected at parse time with an `InvalidCondition` error. |
 | Condition expression depth | `MAX_CONDITION_DEPTH` | 64 | Rule parser | Same. Parentheses and each `not` in a run of `not` operators count toward the same limit. {{ added "unreleased" }} |
@@ -126,7 +131,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts,, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-three harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-six harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -208,7 +213,7 @@ Observability: `/metrics` exposes `rsigma_tls_certificate_expiry_seconds` (signe
 
 Out of scope for this feature today: ACME/Let's Encrypt automation. Operators point `--tls-cert` and `--tls-key` at renewed files (cert-manager, certbot, Vault PKI, ...) and send SIGHUP. Encrypted private keys are not supported; `--tls-key-password`/`RSIGMA_TLS_KEY_PASSWORD` is rejected at startup with a clear `openssl rsa` hint. Decrypt the key before loading it.
 
-OTLP receiver authentication has two options: mTLS (`--tls-client-ca`) so every OpenTelemetry agent pins to a known CA, or a bearer token with the `events:ingest` permission (see [Daemon API authentication](#daemon-api-authentication)); the OTLP/gRPC service reads the same `authorization` metadata OpenTelemetry Collector exporters send via the `headers` setting.
+OTLP receiver authentication has two options: mTLS (`--tls-client-ca`) so every OpenTelemetry agent pins to a known CA, or a bearer token with the `events:ingest` permission (see [Daemon API authentication](#daemon-api-authentication)); the OTLP/gRPC service reads the same `authorization` metadata OpenTelemetry Collector exporters send via the `headers` setting. Both OTLP transports check the token, and with tenancy its tenant binding, before they read the request body, so an unauthenticated request is never decompressed or decoded. {{ added "unreleased" }}
 
 ## Daemon API authentication
 
