@@ -2122,6 +2122,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
                 .await
                 {
                     Ok(source) => {
+                        let source = source.with_metrics(Some(
+                            metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>
+                        ));
                         let h = spawn_source(
                             rsigma_runtime::WithTenant::new(source, binding.tenant.clone()),
                             event_tx.clone(),
@@ -2167,6 +2170,9 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
             .await
             {
                 Ok(source) => {
+                    let source = source.with_metrics(Some(
+                        metrics.clone() as Arc<dyn rsigma_runtime::MetricsHook>
+                    ));
                     let h = match config.input_tenant.clone() {
                         Some(tenant) => spawn_source(
                             rsigma_runtime::WithTenant::new(source, tenant),

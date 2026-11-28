@@ -290,3 +290,137 @@ async fn dlq_write_and_read() {
     assert_eq!(v["error"].as_str().unwrap(), "parse error");
     raw.ack_token.ack().await;
 }
+
+/// Records the input records the source drops, by reason.
+#[derive(Default)]
+struct DropCounter(std::sync::Mutex<Vec<(&'static str, &'static str)>>);
+
+impl rsigma_runtime::MetricsHook for DropCounter {
+    fn on_parse_error(&self) {}
+    fn on_events_processed(&self, _count: u64) {}
+    fn on_detection_matches(&self, _count: u64) {}
+    fn on_correlation_matches(&self, _count: u64) {}
+    fn observe_processing_latency(&self, _seconds: f64) {}
+    fn on_input_queue_depth_change(&self, _delta: i64) {}
+    fn on_back_pressure(&self) {}
+    fn observe_batch_size(&self, _size: u64) {}
+    fn on_output_queue_depth_change(&self, _delta: i64) {}
+    fn observe_pipeline_latency(&self, _seconds: f64) {}
+    fn set_correlation_state_entries(&self, _count: u64) {}
+    fn on_input_dropped(&self, source: &'static str, reason: &'static str) {
+        self.0.lock().unwrap().push((source, reason));
+    }
+}
+
+/// Wait until the consumer has nothing pending and nothing awaiting an ack.
+async fn wait_for_settled_consumer(url: &str, stream: &str, consumer: &str) {
+    let client = async_nats::connect(url).await.expect("connect");
+    let js = async_nats::jetstream::new(client);
+    let mut consumer: async_nats::jetstream::consumer::PullConsumer = js
+        .get_stream(stream)
+        .await
+        .expect("stream")
+        .get_consumer(consumer)
+        .await
+        .expect("consumer");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let info = consumer.info().await.expect("consumer info");
+        if info.num_ack_pending == 0 && info.num_pending == 0 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "consumer never settled: {} awaiting ack, {} pending",
+            info.num_ack_pending,
+            info.num_pending
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn blank_messages_are_acked_and_do_not_stall_the_consumer() {
+    skip_without_docker!();
+    let (_container, url) = start_nats_jetstream().await;
+    let cfg = config(&url);
+    let subject = "test.blank";
+
+    let metrics = std::sync::Arc::new(DropCounter::default());
+    let mut source = NatsSource::connect(&cfg, subject, &ReplayPolicy::Resume, None)
+        .await
+        .expect("source connect")
+        .with_metrics(Some(
+            metrics.clone() as std::sync::Arc<dyn rsigma_runtime::MetricsHook>
+        ));
+
+    let client = async_nats::connect(&url).await.expect("connect");
+    let js = async_nats::jetstream::new(client);
+    for payload in ["", "   ", "\n\t", r#"{"id":1}"#] {
+        js.publish(subject, payload.into())
+            .await
+            .expect("publish")
+            .await
+            .expect("publish ack");
+    }
+
+    let raw = timeout(Duration::from_secs(10), source.recv())
+        .await
+        .expect("timed out")
+        .expect("the valid event is delivered");
+    assert_eq!(raw.payload, r#"{"id":1}"#);
+    raw.ack_token.ack().await;
+
+    wait_for_settled_consumer(&url, "rsigma-test-blank", "rsigma-daemon-test-blank").await;
+    assert_eq!(
+        *metrics.0.lock().unwrap(),
+        [("nats", "blank"), ("nats", "blank"), ("nats", "blank")]
+    );
+}
+
+#[tokio::test]
+async fn over_long_messages_are_terminated_and_do_not_stall_the_consumer() {
+    skip_without_docker!();
+    let container = Nats::default()
+        .with_copy_to("/etc/nats/large.conf", b"max_payload: 4MB\n".to_vec())
+        .with_cmd(["-c", "/etc/nats/large.conf", "-js"])
+        .start()
+        .await
+        .expect("Failed to start NATS container");
+    let port = container
+        .get_host_port_ipv4(4222)
+        .await
+        .expect("Failed to get NATS port");
+    let url = format!("nats://127.0.0.1:{port}");
+    let cfg = config(&url);
+    let subject = "test.large";
+
+    let metrics = std::sync::Arc::new(DropCounter::default());
+    let mut source = NatsSource::connect(&cfg, subject, &ReplayPolicy::Resume, None)
+        .await
+        .expect("source connect")
+        .with_metrics(Some(
+            metrics.clone() as std::sync::Arc<dyn rsigma_runtime::MetricsHook>
+        ));
+
+    let client = async_nats::connect(&url).await.expect("connect");
+    let js = async_nats::jetstream::new(client);
+    let huge = vec![b'x'; rsigma_runtime::MAX_LINE_BYTES + 1];
+    for payload in [huge, br#"{"id":2}"#.to_vec()] {
+        js.publish(subject, payload.into())
+            .await
+            .expect("publish")
+            .await
+            .expect("publish ack");
+    }
+
+    let raw = timeout(Duration::from_secs(10), source.recv())
+        .await
+        .expect("timed out")
+        .expect("the valid event is delivered");
+    assert_eq!(raw.payload, r#"{"id":2}"#);
+    raw.ack_token.ack().await;
+
+    wait_for_settled_consumer(&url, "rsigma-test-large", "rsigma-daemon-test-large").await;
+    assert_eq!(*metrics.0.lock().unwrap(), [("nats", "too_long")]);
+}

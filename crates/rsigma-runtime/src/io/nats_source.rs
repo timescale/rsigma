@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use async_nats::jetstream;
+use async_nats::jetstream::AckKind;
 use async_nats::jetstream::consumer::DeliverPolicy;
 use tokio_stream::StreamExt;
 
+use super::line_framer::MAX_LINE_BYTES;
 use super::nats_config::NatsConnectConfig;
 use super::{AckToken, EventSource, RawEvent};
+use crate::metrics::MetricsHook;
 
 /// Derive a NATS-safe name by combining a prefix with the subject.
 /// Replaces characters not allowed in NATS stream/consumer names (`.`, `>`, `*`)
@@ -39,8 +44,15 @@ pub enum ReplayPolicy {
 /// pipeline (engine + sink) confirms successful processing, then acked
 /// via the `AckToken`. If the daemon crashes before ack, NATS redelivers
 /// the message after `ack_wait` expires.
+///
+/// A message that carries no event is settled here, so it never holds the
+/// consumer's ack window: an empty or whitespace-only payload is acked, and
+/// one larger than [`MAX_LINE_BYTES`](super::MAX_LINE_BYTES) is terminated so
+/// the server stops redelivering it. A payload that is not valid UTF-8 is
+/// passed on with each invalid sequence replaced by U+FFFD.
 pub struct NatsSource {
     messages: jetstream::consumer::pull::Stream,
+    metrics: Option<Arc<dyn MetricsHook>>,
 }
 
 impl NatsSource {
@@ -97,7 +109,33 @@ impl NatsSource {
 
         let messages = consumer.messages().await?;
 
-        Ok(NatsSource { messages })
+        Ok(NatsSource {
+            messages,
+            metrics: None,
+        })
+    }
+
+    /// Report skipped messages and payloads that are not valid UTF-8 through
+    /// `metrics`.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Option<Arc<dyn MetricsHook>>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    fn dropped(&self, reason: &'static str) {
+        if let Some(m) = &self.metrics {
+            m.on_input_dropped("nats", reason);
+        }
+    }
+}
+
+/// Decode a message payload, replacing invalid UTF-8. The flag is set when
+/// the payload was not valid UTF-8.
+fn decode_payload(payload: &[u8]) -> (String, bool) {
+    match std::str::from_utf8(payload) {
+        Ok(text) => (text.to_owned(), false),
+        Err(_) => (String::from_utf8_lossy(payload).into_owned(), true),
     }
 }
 
@@ -106,14 +144,35 @@ impl EventSource for NatsSource {
         loop {
             match self.messages.next().await {
                 Some(Ok(msg)) => {
-                    let payload = String::from_utf8_lossy(&msg.payload).to_string();
-                    if !payload.trim().is_empty() {
-                        return Some(RawEvent {
-                            payload,
-                            ack_token: AckToken::Nats(Box::new(msg)),
-                            tenant: None,
-                        });
+                    if msg.payload.len() > MAX_LINE_BYTES {
+                        tracing::warn!(
+                            bytes = msg.payload.len(),
+                            max_bytes = MAX_LINE_BYTES,
+                            subject = %msg.subject,
+                            "Terminating an over-long NATS message"
+                        );
+                        if let Err(e) = msg.ack_with(AckKind::Term).await {
+                            tracing::warn!(error = %e, "Failed to terminate NATS message");
+                        }
+                        self.dropped("too_long");
+                        continue;
                     }
+                    let (payload, invalid_utf8) = decode_payload(&msg.payload);
+                    if payload.trim().is_empty() {
+                        if let Err(e) = msg.ack().await {
+                            tracing::warn!(error = %e, "Failed to ack blank NATS message");
+                        }
+                        self.dropped("blank");
+                        continue;
+                    }
+                    if invalid_utf8 && let Some(m) = &self.metrics {
+                        m.on_input_invalid_utf8("nats");
+                    }
+                    return Some(RawEvent {
+                        payload,
+                        ack_token: AckToken::Nats(Box::new(msg)),
+                        tenant: None,
+                    });
                 }
                 Some(Err(e)) => {
                     tracing::warn!(error = %e, "NATS message error");
@@ -125,5 +184,22 @@ impl EventSource for NatsSource {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payloads_decode_lossily_and_flag_invalid_utf8() {
+        assert_eq!(
+            decode_payload(b"{\"a\":1}"),
+            ("{\"a\":1}".to_string(), false)
+        );
+        assert_eq!(
+            decode_payload(b"{\"a\":\"\xff\"}"),
+            ("{\"a\":\"\u{fffd}\"}".to_string(), true)
+        );
     }
 }
