@@ -162,8 +162,8 @@ pub use pipeline::{
     validate_source_refs,
 };
 pub use result::{
-    CorrelationBody, DetectionBody, EvaluationResult, EventSource, FieldMatch, MatchDetailLevel,
-    MatcherKind, ProcessResultExt, ResultBody, RuleHeader,
+    AbsenceDetail, CorrelationBody, DetectionBody, EvaluationResult, EventSource, FieldMatch,
+    MatchDetailLevel, MatcherKind, ProcessResultExt, ResultBody, RuleHeader,
 };
 pub use router::{RouteOutcome, RouteResult, SchemaPruning, SchemaRouter};
 pub use rule_draft::{

@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rsigma_eval::{
-    CorrelationBody, DetectionBody, EvaluationResult, EventSource, FieldMatch, MatcherKind,
-    ResultBody, RuleHeader,
+    AbsenceDetail, CorrelationBody, DetectionBody, EvaluationResult, EventRef, EventSource,
+    FieldMatch, MatcherKind, ResultBody, RuleHeader,
 };
 use rsigma_parser::{CorrelationType, Level};
 
@@ -187,6 +187,7 @@ fn correlation_golden_ndjson_line() {
             events: None,
             event_refs: None,
             event_sources: None,
+            absence: None,
         }),
     };
 
@@ -227,6 +228,7 @@ fn correlation_with_events_golden_ndjson_line() {
                 },
                 EventSource::default(),
             ]),
+            absence: None,
         }),
     };
 
@@ -360,5 +362,41 @@ fn detection_with_custom_attributes_emits_after_tags_before_body() {
     assert_eq!(
         actual, expected,
         "Custom-attributes detection ordering drift. If intentional, update this test."
+    );
+}
+
+/// An absence correlation result carries `absence` after the event fields,
+/// with the missing rules, the interval start, and the deadline.
+#[test]
+fn absence_golden_ndjson_line() {
+    let result = EvaluationResult {
+        header: header("Login without MFA"),
+        body: ResultBody::Correlation(CorrelationBody {
+            correlation_type: CorrelationType::TemporalOrdered,
+            group_key: vec![("user.name".to_string(), "alice".to_string())],
+            aggregated_value: 1.0,
+            timespan_secs: 300,
+            events: None,
+            event_refs: Some(vec![EventRef {
+                timestamp: 1_735_689_600,
+                id: None,
+            }]),
+            event_sources: Some(vec![EventSource {
+                rule: Some("login_success".to_string()),
+                via: None,
+            }]),
+            absence: Some(AbsenceDetail {
+                missing: vec!["mfa_success".to_string()],
+                window_start: 1_735_689_600,
+                deadline: 1_735_689_900,
+            }),
+        }),
+    };
+
+    let actual = serde_json::to_string(&result).unwrap();
+    let expected = r#"{"rule_title":"Login without MFA","rule_id":"Login without MFA-id","level":"high","tags":["attack.execution","attack.t1059.001"],"correlation_type":"temporal_ordered","group_key":[["user.name","alice"]],"aggregated_value":1.0,"timespan_secs":300,"event_refs":[{"timestamp":1735689600}],"event_sources":[{"rule":"login_success"}],"absence":{"missing":["mfa_success"],"window_start":1735689600,"deadline":1735689900}}"#;
+    assert_eq!(
+        actual, expected,
+        "Absence wire shape drift. If this change is intentional, update this golden and the CHANGELOG."
     );
 }

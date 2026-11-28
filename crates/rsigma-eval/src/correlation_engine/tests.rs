@@ -6064,7 +6064,7 @@ correlation:
 
 #[test]
 fn absence_obligation_cancellation_boundaries() {
-    for (b_ts, cancelled) in [(40, true), (39, false), (160, true), (161, false)] {
+    for (b_ts, cancelled) in [(40, true), (39, false), (160, true)] {
         let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
         hit(&mut engine, "a", "alice", 100);
         let pending = obligations(&engine, "Missing", "alice");
@@ -6078,6 +6078,15 @@ fn absence_obligation_cancellation_boundaries() {
             "b at {b_ts}"
         );
     }
+
+    // One second past the deadline, the obligation fires before B is applied.
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "b", "User": "alice"})),
+        161,
+    );
+    assert!(results.iter().any(|r| r.header.rule_title == "Missing"));
 }
 
 #[test]
@@ -6177,10 +6186,11 @@ fn tumbling_obligation_cancels_until_the_bucket_end() {
 
 #[test]
 fn late_negated_hit_cancels_an_earlier_bucket() {
-    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling");
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 60s\n    window: tumbling")
+        + "rsigma.absence_grace: 10s\n";
     let mut engine = absence_engine(&yaml, CorrelationConfig::default());
     hit(&mut engine, "a", "alice", 100);
-    hit(&mut engine, "a", "alice", 130);
+    hit(&mut engine, "a", "alice", 125);
     assert_eq!(obligations(&engine, "Missing", "alice").len(), 2);
     hit(&mut engine, "b", "alice", 110);
     let pending = obligations(&engine, "Missing", "alice");
@@ -6261,7 +6271,8 @@ fn group_cap_refuses_another_obligation() {
 
 #[test]
 fn absence_group_cap_defaults_to_one_thousand() {
-    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let yaml = TEMPORAL.replace("timespan: 60s", "timespan: 1h");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
     for i in 0..=DEFAULT_ABSENCE_GROUP_ENTRIES as i64 {
         hit(&mut engine, "a", "alice", i);
     }
@@ -6285,4 +6296,217 @@ fn stalest_eviction_skips_pending_absence_groups() {
     hit(&mut engine, "a", "bob", 101);
     assert!(absence_state(&engine, "Missing", "alice").is_some());
     assert_eq!(engine.absence_pending(), 2);
+}
+
+// =========================================================================
+// Absence firing
+// =========================================================================
+
+fn absence_results(
+    engine: &mut CorrelationEngine,
+    title: &str,
+    clock: i64,
+) -> Vec<EvaluationResult> {
+    engine
+        .advance_clock(None, clock)
+        .into_iter()
+        .filter(|r| r.header.rule_title == title)
+        .collect()
+}
+
+#[test]
+fn absence_fires_strictly_after_the_deadline() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert!(absence_results(&mut engine, "Missing", 160).is_empty());
+    let fired = absence_results(&mut engine, "Missing", 161);
+    assert_eq!(fired.len(), 1);
+    let body = fired[0].as_correlation().unwrap();
+    assert_eq!(body.absence.as_ref().unwrap().missing, ["b"]);
+    assert_eq!(body.absence.as_ref().unwrap().deadline, 160);
+    assert_eq!(body.absence.as_ref().unwrap().window_start, 40);
+    assert_eq!(body.aggregated_value, 1.0);
+}
+
+#[test]
+fn absence_grace_delays_firing() {
+    let yaml = format!("{TEMPORAL}rsigma.absence_grace: 10s\n");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert!(absence_results(&mut engine, "Missing", 169).is_empty());
+    assert_eq!(absence_results(&mut engine, "Missing", 171).len(), 1);
+}
+
+#[test]
+fn absence_suppression_uses_the_deadline() {
+    let yaml = format!("{TEMPORAL}rsigma.suppress: 30s\n");
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    // The first obligation fires at 161 and records its deadline as the alert.
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    // The second deadline (170) is inside the suppression window opened at 160.
+    assert!(absence_results(&mut engine, "Missing", 171).is_empty());
+}
+
+#[test]
+fn absence_alert_keeps_other_obligations_and_reset_clears_them() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    assert_eq!(obligations(&engine, "Missing", "alice").len(), 1);
+
+    let reset = format!("{TEMPORAL}rsigma.action: reset\n");
+    let mut engine = absence_engine(&reset, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    hit(&mut engine, "a", "alice", 110);
+    assert_eq!(absence_results(&mut engine, "Missing", 161).len(), 1);
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn deadman_fires_drops_and_rearms() {
+    let yaml = r#"---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let fired = absence_results(&mut engine, "Silent", 161);
+    assert_eq!(fired.len(), 1);
+    let body = fired[0].as_correlation().unwrap();
+    let absence = body.absence.as_ref().unwrap();
+    assert_eq!(absence.window_start, 100);
+    assert_eq!(absence.deadline, 160);
+    assert_eq!(body.aggregated_value, 0.0);
+    assert!(deadman(&engine, "Silent", "alice").is_none());
+
+    hit(&mut engine, "a", "alice", 200);
+    let armed = deadman(&engine, "Silent", "alice").expect("re-armed");
+    assert_eq!(armed.deadline, 260);
+}
+
+#[test]
+fn fallback_timestamps_do_not_advance_the_clock() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event(&JsonEvent::borrow(&event));
+    assert_eq!(engine.clock(None), None);
+}
+
+#[test]
+fn absence_tenant_isolation() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let tenant_a = TenantId::new("a").unwrap();
+    let tenant_b = TenantId::new("b").unwrap();
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event), 100, Some(&tenant_a));
+    assert_eq!(engine.advance_clock(Some(&tenant_b), 161).len(), 0);
+    assert_eq!(engine.advance_clock(Some(&tenant_a), 161).len(), 1);
+}
+
+#[test]
+fn deadlines_fire_before_the_events_own_correlations() {
+    let yaml = format!(
+        "{TEMPORAL}---
+title: Many B
+correlation:
+    type: event_count
+    rules: [b]
+    group-by: [User]
+    timespan: 60s
+    condition:
+        gte: 1
+"
+    );
+    let mut engine = absence_engine(&yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "b", "User": "alice"})),
+        200,
+    );
+    let titles: Vec<&str> = results
+        .iter()
+        .map(|r| r.header.rule_title.as_str())
+        .collect();
+    assert_eq!(titles, ["Missing", "Many B"]);
+}
+
+#[test]
+fn an_overdue_obligation_fires_after_the_hit_is_applied() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    // Advance the tenant clock through another group.
+    hit(&mut engine, "b", "bob", 300);
+    // A late positive hit opens an obligation whose deadline already passed.
+    let results = engine.process_event_at(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "alice"})),
+        100,
+    );
+    let titles: Vec<&str> = results
+        .iter()
+        .map(|r| r.header.rule_title.as_str())
+        .collect();
+    assert_eq!(titles, ["Missing"]);
+}
+
+#[test]
+fn finalize_fires_obligations_and_leaves_deadmen_armed() {
+    let yaml = r#"---
+title: Missing
+correlation:
+    type: temporal
+    rules: [a, b]
+    group-by: [User]
+    timespan: 60s
+    condition: a and not b
+---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a
+"#;
+    let mut engine = absence_engine(yaml, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    let fired = engine.finalize();
+    let titles: Vec<&str> = fired.iter().map(|r| r.header.rule_title.as_str()).collect();
+    assert_eq!(titles, ["Missing"]);
+    assert!(deadman(&engine, "Silent", "alice").is_some());
+    assert!(obligations(&engine, "Missing", "alice").is_empty());
+}
+
+#[test]
+fn absence_index_stays_consistent() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "a", "alice", 100);
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "b", "alice", 120);
+    engine.assert_absence_index_consistent();
+    hit(&mut engine, "a", "bob", 130);
+    engine.assert_absence_index_consistent();
+    let _ = absence_results(&mut engine, "Missing", 161);
+    engine.assert_absence_index_consistent();
+    engine.evict_expired(500);
+    engine.assert_absence_index_consistent();
+    let snapshot = engine.export_state();
+    assert!(engine.import_state(snapshot));
+    engine.assert_absence_index_consistent();
+}
+
+#[test]
+fn absence_clocks_are_listed_per_tenant() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    let tenant = TenantId::new("t1").unwrap();
+    let event = json!({"Action": "a", "User": "alice"});
+    engine.process_event_at_for_tenant(&JsonEvent::borrow(&event), 100, Some(&tenant));
+    assert_eq!(engine.clock(Some(&tenant)), Some(100));
+    assert_eq!(engine.clocks(), vec![(Some(tenant.clone()), 100)]);
+    assert_eq!(engine.absence_tenants(), vec![Some(tenant)]);
 }

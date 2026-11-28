@@ -2264,11 +2264,14 @@ impl EvalRow {
                     .map(|(k, v)| format!("{k}={v}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let detail = if group.is_empty() {
+                let mut detail = if group.is_empty() {
                     format!("agg={}", c.aggregated_value)
                 } else {
                     format!("{group} | agg={}", c.aggregated_value)
                 };
+                if let Some(absence) = &c.absence {
+                    detail.push_str(&format!(" | missing={}", absence.missing.join(",")));
+                }
                 (c.correlation_type.as_str().to_string(), truncate(detail))
             }
         };

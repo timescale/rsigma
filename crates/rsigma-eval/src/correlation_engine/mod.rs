@@ -17,11 +17,13 @@ mod introspect;
 mod tests;
 mod types;
 
-pub use introspect::{CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo};
+pub use introspect::{
+    AbsenceGroupInfo, CorrelationInfo, CorrelationStateSnapshot, GroupKeyPart, GroupStateInfo,
+};
 pub use types::*;
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -31,8 +33,8 @@ use rsigma_parser::{
 };
 
 use crate::correlation::{
-    CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, RefEntry, Retained,
-    WindowDecision, WindowState, apply_window_open, bucket_start, compile_correlation,
+    CompiledCorrelation, EventBuffer, EventRef, EventRefBuffer, GroupKey, Obligation, RefEntry,
+    Retained, WindowDecision, WindowState, apply_window_open, bucket_start, compile_correlation,
     obligation_for, satisfying_set_ordered, satisfying_set_unordered, sliding_cutoff,
 };
 use crate::engine::{Engine, IdentifiedEvaluation};
@@ -40,7 +42,9 @@ use crate::error::{EvalError, Result};
 use crate::event::{Event, EventValue};
 use crate::logsource::{ExtractLogSource, LogSourceExtractor};
 use crate::pipeline::{Pipeline, apply_pipelines, apply_pipelines_to_correlation};
-use crate::result::{CorrelationBody, EvaluationResult, EventSource, ResultBody, RuleHeader};
+use crate::result::{
+    AbsenceDetail, CorrelationBody, EvaluationResult, EventSource, ResultBody, RuleHeader,
+};
 use crate::rule_metadata::{RuleBundleMetadata, RuleMetadataLookup};
 use crate::tenant::TenantId;
 use crate::timestamp::{epoch_seconds_from_float, epoch_seconds_from_int, parse_timestamp_str};
@@ -97,7 +101,6 @@ enum ReportRange {
     /// The group's whole window, as the event and chain paths report.
     Window,
     /// Only entries whose timestamps fall in `[lo, hi]`.
-    #[allow(dead_code)]
     Between(i64, i64),
 }
 
@@ -106,6 +109,7 @@ struct Emission {
     agg_value: f64,
     alert_ts: i64,
     report: ReportRange,
+    absence: Option<AbsenceDetail>,
 }
 
 /// A result built by [`CorrelationEngine::emit_fired`].
@@ -185,6 +189,13 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     absence_groups: usize,
     /// Absence outcome counters, drained by `take_absence_counters`.
     absence_counters: AbsenceCounters,
+    /// Per-tenant event-time clock: the maximum event time seen. Only tracked
+    /// while an absence correlation is compiled.
+    clocks: HashMap<Option<TenantId>, i64>,
+    /// Per-tenant earliest absence deadline per group, keyed by
+    /// `(fire_at, group, correlation index)`. An entry exists exactly when its
+    /// group has a pending obligation or an armed deadman.
+    deadlines: HashMap<Option<TenantId>, BTreeSet<(i64, GroupKey, usize)>>,
 }
 
 impl CorrelationEngine {
@@ -227,6 +238,8 @@ impl<L> CorrelationEngine<L> {
             retention_dirty: true,
             absence_groups: 0,
             absence_counters: AbsenceCounters::default(),
+            clocks: HashMap::new(),
+            deadlines: HashMap::new(),
         }
     }
 
@@ -629,17 +642,24 @@ impl<L> CorrelationEngine<L> {
         identities: Vec<RuleIdentity>,
         tenant: Option<&TenantId>,
     ) -> ProcessResult {
-        let ts = match self.extract_event_timestamp(event) {
-            Some(ts) => ts,
+        let (ts, advances_clock) = match self.extract_event_timestamp(event) {
+            Some(ts) => (ts, true),
             None => match self.config.timestamp_fallback {
-                TimestampFallback::WallClock => Utc::now().timestamp(),
+                TimestampFallback::WallClock => (Utc::now().timestamp(), false),
                 TimestampFallback::Skip => {
                     // Still surface detections, but skip correlation state.
                     return self.filter_detections(all_detections, identities);
                 }
             },
         };
-        self.process_with_detection_identities(event, all_detections, identities, ts, tenant)
+        self.process_with_detection_identities(
+            event,
+            all_detections,
+            identities,
+            ts,
+            tenant,
+            advances_clock,
+        )
     }
 
     /// Process an event with an explicit Unix epoch timestamp (seconds).
@@ -672,6 +692,7 @@ impl<L> CorrelationEngine<L> {
             identities,
             timestamp_secs,
             tenant,
+            true,
         )
     }
 
@@ -714,9 +735,11 @@ impl<L> CorrelationEngine<L> {
             identities,
             timestamp_secs,
             tenant,
+            true,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_with_detection_identities(
         &mut self,
         event: &impl Event,
@@ -724,6 +747,7 @@ impl<L> CorrelationEngine<L> {
         identities: Vec<RuleIdentity>,
         timestamp_secs: i64,
         tenant: Option<&TenantId>,
+        advances_clock: bool,
     ) -> ProcessResult {
         let timestamp_secs = timestamp_secs.clamp(0, i64::MAX / 2);
 
@@ -746,6 +770,23 @@ impl<L> CorrelationEngine<L> {
 
         if self.retention_dirty {
             self.refresh_retention();
+        }
+
+        let absence = self.has_absence_correlations();
+
+        // Step 1: advance the tenant's event-time clock and fire deadlines that
+        // passed before this event.
+        let mut pre = Vec::new();
+        if absence && advances_clock {
+            let tenant_key = tenant.cloned();
+            if self
+                .clocks
+                .get(&tenant_key)
+                .is_none_or(|&clock| timestamp_secs > clock)
+            {
+                self.clocks.insert(tenant_key, timestamp_secs);
+                pre = self.fire_due(tenant, timestamp_secs);
+            }
         }
 
         let event_seq = self.next_event_seq;
@@ -781,12 +822,24 @@ impl<L> CorrelationEngine<L> {
         correlations.extend(chained);
         fired_indices.extend(chained_indices);
 
+        // Step 3: fire deadlines that became due while applying this event,
+        // such as an obligation opened by a late positive hit that is already
+        // overdue. Due is relative to the tenant clock, which a late event does
+        // not move.
+        let mut post = Vec::new();
+        if absence {
+            let clock = self.clock(tenant).unwrap_or(timestamp_secs);
+            post = self.fire_due(tenant, clock);
+        }
+
         // Filter detections and correlations by the generate flag of the
         // correlations that reference them.
         let mut out = self.filter_detections(all_detections, identities);
+        out.extend(self.visible_correlations(pre));
         out.extend(
             self.visible_correlations(correlations.into_iter().zip(fired_indices).collect()),
         );
+        out.extend(self.visible_correlations(post));
         out
     }
 
@@ -965,10 +1018,10 @@ impl<L> CorrelationEngine<L> {
         {
             let tenant = crate::tenant::tenant_at(tenants, index);
             let (detections, identities) = split_identified(identified);
-            let ts = match ts_opt {
-                Some(ts) => ts,
+            let (ts, advances_clock) = match ts_opt {
+                Some(ts) => (ts, true),
                 None => match self.config.timestamp_fallback {
-                    TimestampFallback::WallClock => Utc::now().timestamp(),
+                    TimestampFallback::WallClock => (Utc::now().timestamp(), false),
                     TimestampFallback::Skip => {
                         // Still return detection results, but skip correlation
                         results.push(self.filter_detections(detections, identities));
@@ -976,9 +1029,14 @@ impl<L> CorrelationEngine<L> {
                     }
                 },
             };
-            results.push(
-                self.process_with_detection_identities(event, detections, identities, ts, tenant),
-            );
+            results.push(self.process_with_detection_identities(
+                event,
+                detections,
+                identities,
+                ts,
+                tenant,
+                advances_clock,
+            ));
         }
         results
     }
@@ -1321,6 +1379,7 @@ impl<L> CorrelationEngine<L> {
                 agg_value,
                 alert_ts: reference,
                 report: ReportRange::Window,
+                absence: None,
             };
             if let Some(fired) = self.emit_fired(&state_key, emission) {
                 out.push(fired.result);
@@ -1388,6 +1447,7 @@ impl<L> CorrelationEngine<L> {
                 events: reported.events,
                 event_refs: reported.event_refs,
                 event_sources: reported.event_sources,
+                absence: emission.absence,
             }),
         };
 
@@ -1405,6 +1465,7 @@ impl<L> CorrelationEngine<L> {
             if was_pending {
                 self.absence_groups = self.absence_groups.saturating_sub(1);
             }
+            self.index_clear(key);
             if let Some(buf) = self.event_buffers.get_mut(key) {
                 buf.clear();
             }
@@ -1494,7 +1555,7 @@ impl<L> CorrelationEngine<L> {
                 let late = ts
                     .saturating_add(timespan as i64)
                     .saturating_add(absence.grace_secs as i64)
-                    < ts;
+                    < self.clocks.get(&tenant.cloned()).copied().unwrap_or(ts);
                 if late {
                     self.absence_counters.late_negatives += 1;
                 } else if !was_pending && self.absence_groups >= self.config.max_absence_entries {
@@ -1530,6 +1591,7 @@ impl<L> CorrelationEngine<L> {
                         retention_mode,
                         retention_cap,
                     );
+                    self.refresh_absence_index(&state_key);
                 }
             } else {
                 let cancelled = match self.state.get_mut(&state_key) {
@@ -1550,6 +1612,7 @@ impl<L> CorrelationEngine<L> {
                     self.absence_counters.late_negatives += 1;
                 }
             }
+            self.refresh_absence_index(&state_key);
             let now_pending = self
                 .state
                 .get(&state_key)
@@ -1653,6 +1716,7 @@ impl<L> CorrelationEngine<L> {
         if inserted && !was_pending {
             self.absence_groups += 1;
         }
+        self.refresh_absence_index(&state_key);
         None
     }
 
@@ -1718,6 +1782,304 @@ impl<L> CorrelationEngine<L> {
                 buf.evict(cutoff);
             } else if let Some(buf) = self.event_ref_buffers.get_mut(key) {
                 buf.evict(cutoff);
+            }
+        }
+    }
+
+    /// The grace a correlation adds to its deadlines.
+    fn absence_grace(&self, corr_idx: usize) -> u64 {
+        self.correlations
+            .get(corr_idx)
+            .and_then(|correlation| correlation.absence.as_ref())
+            .map_or(0, |absence| absence.grace_secs)
+    }
+
+    /// The earliest `fire_at` of a group's pending obligation or armed
+    /// deadman, or `None` when it has neither.
+    fn earliest_absence_fire(&self, key: &StateKey) -> Option<i64> {
+        let grace = self.absence_grace(key.corr_idx);
+        match self.state.get(key) {
+            Some(WindowState::Absence {
+                obligations,
+                deadman,
+                ..
+            }) => {
+                let mut earliest: Option<i64> = None;
+                for obligation in obligations {
+                    let fire = obligation.deadline.saturating_add(grace as i64);
+                    earliest = Some(earliest.map_or(fire, |value: i64| value.min(fire)));
+                }
+                if let Some(deadman) = deadman {
+                    let fire = deadman.deadline.saturating_add(grace as i64);
+                    earliest = Some(earliest.map_or(fire, |value: i64| value.min(fire)));
+                }
+                earliest
+            }
+            _ => None,
+        }
+    }
+
+    /// Point the tenant deadline index at `fire_at` for this group, replacing
+    /// any earlier entry.
+    fn index_set(&mut self, key: &StateKey, fire_at: i64) {
+        let set = self.deadlines.entry(key.tenant.clone()).or_default();
+        set.retain(|(_, group, corr)| !(*corr == key.corr_idx && group == &key.group_key));
+        set.insert((fire_at, key.group_key.clone(), key.corr_idx));
+    }
+
+    /// Drop this group's deadline-index entry.
+    fn index_clear(&mut self, key: &StateKey) {
+        if let Some(set) = self.deadlines.get_mut(&key.tenant) {
+            set.retain(|(_, group, corr)| !(*corr == key.corr_idx && group == &key.group_key));
+            if set.is_empty() {
+                self.deadlines.remove(&key.tenant);
+            }
+        }
+    }
+
+    /// Rebuild this group's deadline-index entry from its current state.
+    fn refresh_absence_index(&mut self, key: &StateKey) {
+        match self.earliest_absence_fire(key) {
+            Some(fire_at) => self.index_set(key, fire_at),
+            None => self.index_clear(key),
+        }
+    }
+
+    /// Drop an absence group after its deadman fired. Its `last_alert` entry
+    /// stays so suppression survives until the next heartbeat re-arms it.
+    fn drop_absence_group(&mut self, key: &StateKey) {
+        if self
+            .state
+            .get(key)
+            .is_some_and(WindowState::absence_pending)
+        {
+            self.absence_groups = self.absence_groups.saturating_sub(1);
+        }
+        self.state.remove(key);
+        self.note_tenant_removal(key);
+        self.event_buffers.remove(key);
+        self.event_ref_buffers.remove(key);
+        self.index_clear(key);
+    }
+
+    /// Fire one due obligation and chain its result into parent correlations.
+    fn fire_obligation(
+        &mut self,
+        key: &StateKey,
+        obligation: &Obligation,
+        out: &mut Vec<(EvaluationResult, usize)>,
+    ) {
+        self.absence_counters.fired += 1;
+
+        let absence = self
+            .correlations
+            .get(key.corr_idx)
+            .and_then(|correlation| correlation.absence.as_ref());
+        let missing = absence
+            .map(|absence| absence.negated.clone())
+            .unwrap_or_default();
+        let ordered = self
+            .correlations
+            .get(key.corr_idx)
+            .is_some_and(|c| c.correlation_type == CorrelationType::TemporalOrdered);
+        let tumbling = self
+            .correlations
+            .get(key.corr_idx)
+            .is_some_and(|c| c.window_mode == WindowMode::Tumbling);
+        let window_start = if tumbling {
+            obligation.key
+        } else if ordered {
+            obligation.s_min
+        } else {
+            obligation.cancel_lo
+        };
+        let detail = AbsenceDetail {
+            missing,
+            window_start,
+            deadline: obligation.deadline,
+        };
+        let emission = Emission {
+            agg_value: obligation.positives as f64,
+            alert_ts: obligation.deadline,
+            report: ReportRange::Between(obligation.s_min, obligation.s_max),
+            absence: Some(detail),
+        };
+
+        let fired = self.emit_fired(key, emission);
+        if let Some(state) = self.state.get_mut(key)
+            && let WindowState::Absence {
+                obligations,
+                last_fired,
+                ..
+            } = state
+        {
+            obligations.retain(|pending| pending.key != obligation.key);
+            *last_fired = Some((obligation.cancel_lo, obligation.deadline));
+        }
+        if let Some(fired) = fired {
+            let mut chained = Vec::new();
+            let mut chained_indices = Vec::new();
+            self.chain_correlations(
+                std::slice::from_ref(&fired.result),
+                &[fired.corr_idx],
+                vec![fired.retained],
+                obligation.deadline,
+                &mut chained,
+                &mut chained_indices,
+            );
+            out.push((fired.result, fired.corr_idx));
+            out.extend(chained.into_iter().zip(chained_indices));
+        }
+    }
+
+    /// Fire every due obligation and deadman of `tenant` whose `fire_at` is
+    /// strictly before `before`, in deadline order.
+    fn fire_due(
+        &mut self,
+        tenant: Option<&TenantId>,
+        before: i64,
+    ) -> Vec<(EvaluationResult, usize)> {
+        let tenant_key = tenant.cloned();
+        let mut out = Vec::new();
+        loop {
+            let Some((fire_at, group, corr_idx)) = self
+                .deadlines
+                .get(&tenant_key)
+                .and_then(|set| set.iter().next().cloned())
+            else {
+                break;
+            };
+            if fire_at >= before {
+                break;
+            }
+            if let Some(set) = self.deadlines.get_mut(&tenant_key) {
+                set.remove(&(fire_at, group.clone(), corr_idx));
+            }
+            let key = StateKey {
+                tenant: tenant_key.clone(),
+                corr_idx,
+                group_key: group,
+            };
+
+            let grace = self.absence_grace(corr_idx);
+            let mut due_obligations: Vec<Obligation> = match self.state.get(&key) {
+                Some(WindowState::Absence { obligations, .. }) => obligations
+                    .iter()
+                    .filter(|obligation| obligation.deadline.saturating_add(grace as i64) < before)
+                    .cloned()
+                    .collect(),
+                _ => Vec::new(),
+            };
+            due_obligations.sort_by_key(|obligation| obligation.deadline);
+
+            let deadman_due = match self.state.get(&key) {
+                Some(WindowState::Absence {
+                    deadman: Some(deadman),
+                    ..
+                }) => deadman.deadline.saturating_add(grace as i64) < before,
+                _ => false,
+            };
+
+            if due_obligations.is_empty() && !deadman_due {
+                self.refresh_absence_index(&key);
+                continue;
+            }
+
+            for obligation in due_obligations {
+                let still_pending = match self.state.get(&key) {
+                    Some(WindowState::Absence { obligations, .. }) => obligations
+                        .iter()
+                        .any(|pending| pending.key == obligation.key),
+                    _ => false,
+                };
+                if still_pending {
+                    self.fire_obligation(&key, &obligation, &mut out);
+                }
+            }
+
+            if deadman_due {
+                let deadman = match self.state.get(&key) {
+                    Some(WindowState::Absence {
+                        deadman: Some(deadman),
+                        ..
+                    }) => Some(deadman.clone()),
+                    _ => None,
+                };
+                if let Some(deadman) = deadman {
+                    self.absence_counters.fired += 1;
+                    let missing = self
+                        .correlations
+                        .get(corr_idx)
+                        .and_then(|correlation| correlation.absence.as_ref())
+                        .map(|absence| absence.negated.clone())
+                        .unwrap_or_default();
+                    let emission = Emission {
+                        agg_value: 0.0,
+                        alert_ts: deadman.deadline,
+                        report: ReportRange::Between(
+                            deadman.last_heartbeat,
+                            deadman.last_heartbeat,
+                        ),
+                        absence: Some(AbsenceDetail {
+                            missing,
+                            window_start: deadman.last_heartbeat,
+                            deadline: deadman.deadline,
+                        }),
+                    };
+                    let fired = self.emit_fired(&key, emission);
+                    if let Some(fired) = fired {
+                        let mut chained = Vec::new();
+                        let mut chained_indices = Vec::new();
+                        self.chain_correlations(
+                            std::slice::from_ref(&fired.result),
+                            &[fired.corr_idx],
+                            vec![fired.retained],
+                            deadman.deadline,
+                            &mut chained,
+                            &mut chained_indices,
+                        );
+                        out.push((fired.result, fired.corr_idx));
+                        out.extend(chained.into_iter().zip(chained_indices));
+                    }
+                    self.drop_absence_group(&key);
+                }
+            } else {
+                self.refresh_absence_index(&key);
+            }
+        }
+        out
+    }
+
+    /// Verify that the tenant deadline index matches the live absence state.
+    #[cfg(test)]
+    fn assert_absence_index_consistent(&self) {
+        for (tenant, set) in &self.deadlines {
+            for (fire_at, group, corr_idx) in set {
+                let key = StateKey {
+                    tenant: tenant.clone(),
+                    corr_idx: *corr_idx,
+                    group_key: group.clone(),
+                };
+                let state = self.state.get(&key).expect("index entry has state");
+                assert!(state.absence_pending());
+                assert_eq!(
+                    self.earliest_absence_fire(&key),
+                    Some(*fire_at),
+                    "index fire_at must be the group's earliest"
+                );
+            }
+        }
+        for (key, state) in &self.state {
+            if state.absence_pending() {
+                let set = self
+                    .deadlines
+                    .get(&key.tenant)
+                    .expect("pending group has a tenant index");
+                assert!(
+                    set.iter()
+                        .any(|(_, group, corr)| group == &key.group_key && *corr == key.corr_idx),
+                    "pending group must have an index entry"
+                );
             }
         }
     }
@@ -2166,6 +2528,7 @@ impl<L> CorrelationEngine<L> {
                         agg_value,
                         alert_ts: reference,
                         report: ReportRange::Window,
+                        absence: None,
                     };
                     let fired_group_key = group_key.to_pairs(&self.correlations[corr_idx].group_by);
                     let Some(fired) = self.emit_fired(&state_key, emission) else {
@@ -2264,6 +2627,7 @@ impl<L> CorrelationEngine<L> {
         {
             self.absence_groups = self.absence_groups.saturating_sub(1);
         }
+        self.index_clear(key);
         let existed = self.state.remove(key).is_some();
         if existed {
             self.note_tenant_removal(key);
@@ -2324,6 +2688,7 @@ impl<L> CorrelationEngine<L> {
                 self.note_tenant_removal(key);
                 self.event_buffers.remove(key);
                 self.event_ref_buffers.remove(key);
+                self.index_clear(key);
                 evicted += 1;
             }
         }
@@ -2420,6 +2785,7 @@ impl<L> CorrelationEngine<L> {
         });
         for key in removed_keys {
             self.note_tenant_removal(&key);
+            self.index_clear(&key);
         }
 
         // Evict event buffers in sync with window state: sliding buffers trim by
@@ -2535,6 +2901,100 @@ impl<L> CorrelationEngine<L> {
     /// Number of absence groups with a pending obligation or an armed deadman.
     pub fn absence_pending(&self) -> usize {
         self.absence_groups
+    }
+
+    /// The tenant's event-time clock, or `None` when it has not advanced.
+    pub fn clock(&self, tenant: Option<&TenantId>) -> Option<i64> {
+        self.clocks.get(&tenant.cloned()).copied()
+    }
+
+    /// Every tenant clock, untenanted last.
+    pub fn clocks(&self) -> Vec<(Option<TenantId>, i64)> {
+        let mut clocks: Vec<(Option<TenantId>, i64)> = self
+            .clocks
+            .iter()
+            .map(|(tenant, clock)| (tenant.clone(), *clock))
+            .collect();
+        clocks.sort_by(|a, b| a.0.cmp(&b.0));
+        clocks
+    }
+
+    /// Tenants with a non-empty absence deadline index.
+    pub fn absence_tenants(&self) -> Vec<Option<TenantId>> {
+        let mut tenants: Vec<Option<TenantId>> = self
+            .deadlines
+            .iter()
+            .filter(|(_, set)| !set.is_empty())
+            .map(|(tenant, _)| tenant.clone())
+            .collect();
+        tenants.sort();
+        tenants
+    }
+
+    /// Advance a tenant's event-time clock to `to_secs` and fire every deadline
+    /// that passes. Monotonic: a value that does not move the clock forward is
+    /// a no-op returning nothing.
+    pub fn advance_clock(
+        &mut self,
+        tenant: Option<&TenantId>,
+        to_secs: i64,
+    ) -> Vec<EvaluationResult> {
+        let tenant_key = tenant.cloned();
+        if self
+            .clocks
+            .get(&tenant_key)
+            .is_some_and(|&clock| to_secs <= clock)
+        {
+            return Vec::new();
+        }
+        self.clocks.insert(tenant_key, to_secs);
+        let fired = self.fire_due(tenant, to_secs);
+        self.visible_correlations(fired)
+    }
+
+    /// Fire every pending obligation for every tenant, regardless of the clock.
+    /// Armed deadmen are left in place: they fire only when the clock passes
+    /// their deadline during the input.
+    pub fn finalize(&mut self) -> Vec<EvaluationResult> {
+        let mut due: Vec<(i64, StateKey, Obligation)> = Vec::new();
+        for (key, state) in &self.state {
+            if let WindowState::Absence { obligations, .. } = state {
+                let grace = self.absence_grace(key.corr_idx);
+                for obligation in obligations {
+                    due.push((
+                        obligation.deadline.saturating_add(grace as i64),
+                        key.clone(),
+                        obligation.clone(),
+                    ));
+                }
+            }
+        }
+        due.sort_by_key(|(fire_at, _, _)| *fire_at);
+
+        let mut fired = Vec::new();
+        for (_, key, obligation) in due {
+            let still_pending = match self.state.get(&key) {
+                Some(WindowState::Absence { obligations, .. }) => obligations
+                    .iter()
+                    .any(|pending| pending.key == obligation.key),
+                _ => false,
+            };
+            if still_pending {
+                self.fire_obligation(&key, &obligation, &mut fired);
+            }
+        }
+
+        let pending: Vec<StateKey> = self
+            .state
+            .iter()
+            .filter(|(_, state)| state.absence_pending())
+            .map(|(key, _)| key.clone())
+            .collect();
+        self.deadlines.clear();
+        for key in pending {
+            self.refresh_absence_index(&key);
+        }
+        self.visible_correlations(fired)
     }
 
     /// Drain the absence outcome counters.
@@ -2808,6 +3268,16 @@ impl<L> CorrelationEngine<L> {
             .values()
             .filter(|state| state.absence_pending())
             .count();
+        let pending: Vec<StateKey> = self
+            .state
+            .iter()
+            .filter(|(_, state)| state.absence_pending())
+            .map(|(key, _)| key.clone())
+            .collect();
+        self.deadlines.clear();
+        for key in pending {
+            self.refresh_absence_index(&key);
+        }
 
         Some(stats)
     }

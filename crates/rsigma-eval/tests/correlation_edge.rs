@@ -642,3 +642,52 @@ fn correlation_cycle_message_lists_the_cycle() {
         rsigma_eval::EvalError::CorrelationCycle("chain-0 -> chain-0".into()).to_string()
     );
 }
+
+const NEGATED_TEMPORAL_YAML: &str = r#"
+title: A
+id: rule-a
+logsource:
+    category: test
+detection:
+    selection:
+        type: a
+    condition: selection
+---
+title: B
+id: rule-b
+logsource:
+    category: test
+detection:
+    selection:
+        type: b
+    condition: selection
+---
+title: A without B
+correlation:
+    type: temporal
+    rules: [rule-a, rule-b]
+    group-by: [User]
+    timespan: 60s
+    condition: rule-a and not rule-b
+"#;
+
+#[test]
+fn negated_temporal_condition_fires_at_the_deadline_not_on_a() {
+    let mut engine = corr_engine(NEGATED_TEMPORAL_YAML);
+    let r = process(&mut engine, json!({"type": "a", "User": "admin"}), 1000);
+    assert_eq!(r.correlation_count(), 0, "no immediate fire on A");
+    let fired = engine.advance_clock(None, 1061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired[0].header.rule_title, "A without B");
+}
+
+#[test]
+fn negated_ordered_condition_does_not_fire_on_a() {
+    let yaml = NEGATED_TEMPORAL_YAML.replace("type: temporal", "type: temporal_ordered");
+    let mut engine = corr_engine(&yaml);
+    let r = process(&mut engine, json!({"type": "a", "User": "admin"}), 1000);
+    assert_eq!(r.correlation_count(), 0);
+    let fired = engine.advance_clock(None, 1061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(fired[0].header.rule_title, "A without B");
+}

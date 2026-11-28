@@ -317,13 +317,12 @@ impl WindowState {
                 last_negative,
                 obligations,
                 deadman,
-                last_fired,
+                ..
             } => {
                 positive_hits.clear();
                 last_negative.clear();
                 obligations.clear();
                 *deadman = None;
-                *last_fired = None;
             }
         }
     }

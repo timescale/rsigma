@@ -1,0 +1,86 @@
+{
+  "action": "Unknown",
+  "action_id": 0,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "category_name": "Findings",
+  "category_uid": 2,
+  "class_name": "Detection Finding",
+  "class_uid": 2004,
+  "evidences": [
+    {
+      "data": {
+        "event_refs": [
+          {
+            "timestamp": 1735689600
+          }
+        ],
+        "event_sources": [
+          {
+            "rule": "login_success"
+          }
+        ]
+      }
+    }
+  ],
+  "finding_info": {
+    "analytic": {
+      "name": "Login without MFA",
+      "type": "Rule",
+      "type_id": 1,
+      "uid": "corr-absence"
+    },
+    "attacks": [
+      {
+        "tactic": {
+          "name": "Credential Access",
+          "uid": "TA0006"
+        }
+      }
+    ],
+    "title": "Login without MFA",
+    "uid": "00000000-0000-4000-8000-000000000001"
+  },
+  "message": "Login without MFA",
+  "metadata": {
+    "product": {
+      "name": "rsigma",
+      "vendor_name": "rsigma",
+      "version": "0.28.0"
+    },
+    "profiles": [
+      "security_control"
+    ],
+    "uid": "00000000-0000-4000-8000-000000000002",
+    "version": "1.3.0"
+  },
+  "severity": "High",
+  "severity_id": 4,
+  "status": "New",
+  "status_id": 1,
+  "time": 1767225600000,
+  "timezone_offset": 0,
+  "type_name": "Detection Finding: Create",
+  "type_uid": 200401,
+  "unmapped": {
+    "absence": {
+      "deadline": 1735689900,
+      "missing": [
+        "mfa_success"
+      ],
+      "window_start": 1735689600
+    },
+    "aggregated_value": 1.0,
+    "correlation_type": "temporal_ordered",
+    "group_key": [
+      [
+        "user.name",
+        "alice"
+      ]
+    ],
+    "tags": [
+      "attack.credential_access"
+    ],
+    "timespan_secs": 300
+  }
+}

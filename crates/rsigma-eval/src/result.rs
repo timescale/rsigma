@@ -154,6 +154,34 @@ pub struct DetectionBody {
     pub event: Option<serde_json::Value>,
 }
 
+/// Details of an absence correlation result: which rules never matched, the
+/// start of the interval in which they could have matched, and the deadline
+/// the engine waited for.
+///
+/// ```
+/// use rsigma_eval::AbsenceDetail;
+///
+/// let detail = AbsenceDetail {
+///     missing: vec!["mfa_success".into()],
+///     window_start: 1_735_689_600,
+///     deadline: 1_735_689_900,
+/// };
+/// assert_eq!(
+///     serde_json::to_string(&detail).unwrap(),
+///     r#"{"missing":["mfa_success"],"window_start":1735689600,"deadline":1735689900}"#
+/// );
+/// ```
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AbsenceDetail {
+    /// Negated rule references that never matched in the window.
+    pub missing: Vec<String>,
+    /// First timestamp of the interval in which the missing rules could have
+    /// matched.
+    pub window_start: i64,
+    /// Last second in which a missing rule could still have arrived.
+    pub deadline: i64,
+}
+
 /// Correlation-specific result fields.
 #[derive(Debug, Clone, Serialize)]
 pub struct CorrelationBody {
@@ -175,6 +203,9 @@ pub struct CorrelationBody {
     /// index. Present exactly when one of them is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_sources: Option<Vec<EventSource>>,
+    /// Absence details, present only for an absence correlation result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absence: Option<AbsenceDetail>,
 }
 
 /// Where one event retained by a correlation came from.
@@ -426,6 +457,7 @@ mod tests {
                 events: None,
                 event_refs: None,
                 event_sources: None,
+                absence: None,
             }),
         };
 
@@ -465,6 +497,7 @@ mod tests {
                 events: None,
                 event_refs: None,
                 event_sources: None,
+                absence: None,
             }),
         };
         assert!(corr.is_correlation());

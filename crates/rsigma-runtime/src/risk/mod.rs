@@ -587,6 +587,7 @@ mod tests {
                 events: Some(vec![serde_json::json!({"raw": "event"})]),
                 event_refs: None,
                 event_sources: Some(vec![rsigma_eval::EventSource::default()]),
+                absence: None,
             }),
         };
         strip_event_payloads(&mut result);

@@ -242,6 +242,7 @@ mod tests {
                 events: None,
                 event_refs: None,
                 event_sources: None,
+                absence: None,
             }),
         }
     }
