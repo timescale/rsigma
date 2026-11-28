@@ -171,6 +171,16 @@ path = "fuzz_targets/fuzz_apply_modifiers.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_windash_budget"
+path = "fuzz_targets/fuzz_windash_budget.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_walk"
+path = "fuzz_targets/fuzz_walk.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_eval_matcher_diff"
 path = "fuzz_targets/fuzz_eval_matcher_diff.rs"
 doc = false

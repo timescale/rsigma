@@ -1,0 +1,5 @@
+file 0 a.yml
+dir 0 sub
+file 1 b.yml
+link 0 loop root
+link 1 again node:2

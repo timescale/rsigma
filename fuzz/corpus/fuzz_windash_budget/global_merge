@@ -1,0 +1,11 @@
+action: global
+detection:
+  sel:
+    CommandLine|windash|contains:
+      - 'cmd -a /b –c —d ―e'
+      - 'cmd -a /b –c —d ―e'
+  condition: sel
+---
+title: Merged
+logsource:
+  product: windows

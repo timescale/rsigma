@@ -1,0 +1,4 @@
+dir 0 ..2026_11_28
+file 1 rule.yml
+link 0 ..data node:1
+link 0 rule.yml node:2

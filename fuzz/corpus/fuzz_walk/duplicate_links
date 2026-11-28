@@ -1,0 +1,3 @@
+file 0 a.yml
+link 0 b.yml node:1
+link 0 c.yaml node:1
