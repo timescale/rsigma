@@ -6510,3 +6510,171 @@ fn absence_clocks_are_listed_per_tenant() {
     assert_eq!(engine.clocks(), vec![(Some(tenant.clone()), 100)]);
     assert_eq!(engine.absence_tenants(), vec![Some(tenant)]);
 }
+
+#[test]
+fn absence_pending_counter_matches_introspection_after_firing() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 1_000_000);
+    assert_eq!(engine.absence_pending(), 1);
+    assert_eq!(
+        engine
+            .introspect()
+            .groups
+            .iter()
+            .filter(|g| g.absence.as_ref().is_some_and(|a| a.pending > 0))
+            .count(),
+        1
+    );
+    let fired = engine.advance_clock(None, 1_000_061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+
+    let mut engine = absence_engine(
+        TEMPORAL,
+        CorrelationConfig {
+            require_tenant: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    assert_eq!(engine.absence_pending(), 1);
+    let fired = engine.advance_clock(Some(&tenant), 1_000_061);
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+}
+
+#[test]
+fn fuzz_seed_negated_disjunction_pending_counter() {
+    let yaml = r#"---
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: B
+id: b-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: b
+    condition: selection
+---
+title: D
+id: d-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: d
+    condition: selection
+---
+title: A without B or D
+correlation:
+    type: temporal
+    rules: [a-rule, b-rule, d-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: a-rule and not (b-rule or d-rule)
+"#;
+    let mut engine = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"@timestamp": 1_000_000, "Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    assert_eq!(engine.absence_pending(), 1);
+    engine.advance_clock(Some(&tenant), 1_000_005);
+    assert_eq!(engine.absence_pending(), 1);
+    engine.advance_clock(Some(&tenant), 1_000_061);
+    assert_eq!(
+        engine.absence_pending(),
+        0,
+        "{:?}",
+        engine.introspect().groups
+    );
+}
+
+#[test]
+fn cancelling_an_obligation_decrements_the_pending_count() {
+    let mut engine = absence_engine(TEMPORAL, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 100);
+    assert_eq!(engine.absence_pending(), 1);
+    hit(&mut engine, "b", "alice", 110);
+    assert_eq!(engine.absence_pending(), 0);
+    engine.assert_absence_index_consistent();
+}
+
+#[test]
+fn deadman_snapshot_round_trip_preserves_the_group() {
+    let yaml = r#"---
+title: A
+id: a-rule
+logsource:
+    category: test
+detection:
+    selection:
+        Action: a
+    condition: selection
+---
+title: Silent
+correlation:
+    type: temporal
+    group-by: [User]
+    timespan: 60s
+    condition: not a-rule
+"#;
+    let mut engine = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    let tenant = TenantId::new("t0").unwrap();
+    engine.process_event_at_for_tenant(
+        &JsonEvent::borrow(&json!({"Action": "a", "User": "g0"})),
+        1_000_000,
+        Some(&tenant),
+    );
+    let snapshot = engine.export_state();
+    assert_eq!(snapshot.window_entries(), 1);
+    let mut restored = absence_engine(
+        yaml,
+        CorrelationConfig {
+            require_tenant: true,
+            emit_detections: true,
+            ..CorrelationConfig::default()
+        },
+    );
+    assert!(restored.import_state(snapshot));
+    assert_eq!(restored.state_count(), 1);
+}

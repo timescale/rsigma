@@ -1612,6 +1612,8 @@ impl<L> CorrelationEngine<L> {
                 .is_some_and(WindowState::absence_pending);
             if !was_pending && now_pending {
                 self.absence_groups += 1;
+            } else if was_pending && !now_pending {
+                self.absence_groups = self.absence_groups.saturating_sub(1);
             }
             return None;
         }
