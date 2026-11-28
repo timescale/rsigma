@@ -467,6 +467,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_title_outside_a_body_string_cannot_add_keys() {
+        let server = MockServer::start().await;
+        let title = r#"1, "admin": true"#;
+        Mock::given(method("POST"))
+            .and(path("/hook"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "title": title,
+                "finding": {"rsigma": true},
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut sink = WebhookSink::new(
+            "siem".to_string(),
+            WebhookKind::Detection,
+            reqwest::Method::POST,
+            format!("{}/hook", server.uri()),
+            vec![("Content-Type".to_string(), "application/json".to_string())],
+            Some(r#"{"title": ${detection.rule.title}, "finding": {"rsigma": true}}"#.to_string()),
+            Duration::from_secs(5),
+            crate::enrichment::Scope::default(),
+            None,
+            crate::enrichment::build_default_http_client().unwrap(),
+            Arc::new(NoopMetrics),
+            None,
+        );
+        sink.send(&vec![detection(title)], &ctx()).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn ocsf_body_reference_posts_a_conformant_finding() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

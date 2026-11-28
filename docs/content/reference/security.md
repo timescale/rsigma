@@ -114,6 +114,15 @@ Mitigations: narrow which results trigger the lookup with `scope`, point `namese
 
 {{ added "0.28.0" }} By default the `mmdb` enricher reads each database into memory, so rewriting the file in place cannot crash the daemon: the next check reloads the file once it parses, and keeps the previous reader until then. An entry with `mmap: true` (`mmdb-mmap` feature) memory-maps the file instead, and the mapping is only sound while nothing writes to or truncates the file. Writing to a mapped database in place can crash the daemon with `SIGBUS`. Replace mapped databases by writing a new file next to the old one and renaming it over the old path, as `geoipupdate` does; the daemon keeps reading the old file until it maps the new one. Anyone who can write the database file can crash a daemon that maps it, so keep it writable only by the updater. See [Enrichers](../guide/enrichers.md#mmdb-local-mmdb-lookup).
 
+### Event values in enricher programs and requests
+
+{{ added "unreleased" }} Event and correlation values are attacker-influenced, so every enricher treats them as data where they land:
+
+- `lookup` and `stix` `extract` expressions read a value as a string variable (jq, CEL) or as an escaped string literal (JSONPath), never as expression text. See [Event values in extract expressions](../guide/enrichers.md#event-values-in-extract-expressions).
+- Every extract, in enrichers and in dynamic sources, runs without jq's `env`, `$ENV`, `halt`, `halt_error`, and `stderr`, rejects recursive jq definitions, and is bounded by result count, result size, jq generator steps, and time. Enricher extracts run on the blocking pool, at most twice as many at once as the host has CPUs, so a slow program cannot hold an async worker, and the enricher timeout stops a jq program at its next step.
+- `http` and webhook bodies give a placeholder outside a JSON string literal one JSON value, and URLs percent-encode each value as one component.
+- `command` arguments are never parsed by a shell. The loader rejects a reference in the program, in a shell or interpreter's code argument, and in the program a wrapper runs, and an argument that would start with `-` from an event value is refused unless `--` precedes it. See [`command`](../guide/enrichers.md#command-per-result-local-process-execution).
+
 ## Parser robustness
 
 Every external parser rsigma ships uses panic-free libraries:
@@ -131,7 +140,7 @@ Every external parser rsigma ships uses panic-free libraries:
 | EVTX records | `evtx` crate | Streaming parse; bounded record-by-record memory usage regardless of file size. |
 | CEF | `cef-parser` | Bounded line size via the input format machinery. |
 
-Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-seven harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
+Fuzz testing under `cargo-fuzz` covers parser, condition, pipeline YAML, JSON event, EVTX, syslog, logfmt, CEF, MMDB decoding, DNS answer formatting, named ruleset resolution, enrichers configs, watchlist indicator bodies, TAXII envelopes, STIX indicator bundles, STIX rule drafts, OTLP protobuf and JSON record counting, stream line framing, field-key walks, `Host` and `Origin` header validation, event values in enricher extract programs, the `apply_modifiers` pipeline rewrite, and the conversion backends. Thirty-eight harnesses run on a scheduled CI workflow; crashes land in the `fuzz/artifacts/` tree and ship as regression fixtures.
 
 ## SQL injection prevention
 
@@ -319,7 +328,7 @@ rsigma discovers `./rsigma.yaml` and the nearest `.rsigmarc` above the current d
 - `daemon.engine.egress_policy` and `daemon.engine.allow_remote_include`, which guard HTTP clients and pipeline includes.
 - `daemon.api.addr` unless it is a loopback `host:port` or a `unix://` path inside the project, because client commands send the API token there. A `unix://` `daemon.input.source`, `daemon.state.db`, `eval.output`, and `scorecard.report` outside the project are ignored too, because rsigma creates, truncates, or replaces those paths.
 
-jq event filters run without the `env` builtin, so a filter from a project file (`daemon.input.jq`) cannot copy the environment into detections. Binding a `unix://` socket replaces an existing path only when it is a stale socket, never a regular file.
+jq event filters run without the `env` builtin, so a filter from a project file (`daemon.input.jq`) cannot copy the environment into detections, and without `halt` and `halt_error`, so an event that reaches one cannot stop the daemon. {{ added "unreleased" }} Binding a `unix://` socket replaces an existing path only when it is a stale socket, never a regular file.
 
 A project file may still turn a boolean opt-in off. See [Project config trust](configuration.md#project-config-trust) for the full table and the warning format.
 

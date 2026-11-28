@@ -3,7 +3,7 @@
 //! Builds a [`reqwest::Request`] from a template-expanded URL, optional
 //! template-expanded headers, and an optional template-expanded body.
 //! The response is parsed as JSON; if an `extract` expression is set,
-//! it is applied via [`crate::sources::extract::apply_extract`] using
+//! it is compiled once and applied on the blocking pool using
 //! the existing dynamic-pipelines extractor stack (jq / jsonpath / cel)
 //! so operators learn one mental model, not two.
 //!
@@ -29,6 +29,7 @@ use rsigma_eval::EvaluationResult;
 use rsigma_eval::pipeline::sources::ExtractExpr;
 use serde_json::Value;
 
+use super::extract::EnricherExtract;
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope,
     http_cache::{CacheKey, CacheOutcome, HttpResponseCache},
@@ -64,7 +65,7 @@ pub struct HttpEnricher {
     on_error: OnError,
     on_miss: OnError,
     scope: Scope,
-    extract: Option<ExtractExpr>,
+    extract: Option<EnricherExtract>,
     default: Option<Value>,
     miss_status: Vec<u16>,
     client: HttpEnricherClient,
@@ -181,7 +182,7 @@ impl HttpEnricher {
             on_error,
             on_miss: on_error,
             scope,
-            extract,
+            extract: extract.map(|expr| EnricherExtract::new(&expr, false)),
             default: None,
             miss_status: Vec::new(),
             client,
@@ -338,7 +339,7 @@ impl Enricher for HttpEnricher {
             }
         }
         if let Some(cached_value) = cached {
-            let extracted = self.maybe_extract(&cached_value)?;
+            let extracted = self.maybe_extract(cached_value, result).await?;
             self.inject_result(result, extracted);
             return Ok(());
         }
@@ -422,7 +423,7 @@ impl Enricher for HttpEnricher {
         // the cached upstream JSON.
         self.cache.insert(cache_key, parsed.clone());
 
-        let extracted = self.maybe_extract(&parsed)?;
+        let extracted = self.maybe_extract(parsed, result).await?;
         self.inject_result(result, extracted);
         Ok(())
     }
@@ -484,15 +485,14 @@ impl HttpEnricher {
 
     /// Apply the configured `extract` expression to `value`. Returns the
     /// raw value untouched when no extract is configured.
-    fn maybe_extract(&self, value: &Value) -> Result<Value, EnrichError> {
+    async fn maybe_extract(
+        &self,
+        value: Value,
+        result: &EvaluationResult,
+    ) -> Result<Value, EnrichError> {
         match &self.extract {
-            None => Ok(value.clone()),
-            Some(expr) => {
-                crate::sources::extract::apply_extract(value, expr).map_err(|e| EnrichError {
-                    enricher_id: self.id.clone(),
-                    kind: EnrichErrorKind::Extract(format!("{}", e.kind)),
-                })
-            }
+            None => Ok(value),
+            Some(extract) => extract.apply(&self.id, value, result, self.timeout).await,
         }
     }
 }

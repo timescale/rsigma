@@ -80,7 +80,7 @@ Rules that fail to parse are logged, left out of the loaded rule set, and counte
 | `--input-format <FORMAT>` | `auto` | Input log format: `auto`, `json`, `syslog`, `plain`. With features: `logfmt`, `cef`. |
 | `--syslog-tz <OFFSET>` | `+00:00` | Timezone offset for RFC 3164 syslog (`+HH:MM` or `-HH:MM`). |
 | `--syslog-strip-bom <BOOL>` | `true` | Strip a leading UTF-8 BOM (`U+FEFF`) from RFC 5424 syslog messages. RFC 5424 treats the BOM as an encoding marker, not content. Pass `--syslog-strip-bom false` to keep it byte-for-byte. |
-| `--jq <JQ>` | unset | `jq` filter to extract the event payload from each JSON object. Mutually exclusive with `--jsonpath`. The `env` builtin is not available. {{ added "0.27.0" }} |
+| `--jq <JQ>` | unset | `jq` filter to extract the event payload from each JSON object. Mutually exclusive with `--jsonpath`. The `env` builtin is not available. {{ added "0.27.0" }} Neither are `halt` and `halt_error`, which would stop the daemon. {{ added "unreleased" }} |
 | `--jsonpath <JSONPATH>` | unset | JSONPath ([RFC 9535](https://www.rfc-editor.org/rfc/rfc9535)) query to extract the event payload. |
 | `--otlp-max-records <N>` | `10000` | Most log records one OTLP request (`POST /v1/logs` or gRPC) may carry, also `daemon.input.otlp_max_records`. A request with more is refused before it is decoded, with HTTP `413` or gRPC `RESOURCE_EXHAUSTED`. Must be at least 1. Requires a `daemon-otlp` build. See [OTLP Integration: Request limits](../../guide/otlp-integration.md#request-limits). {{ added "unreleased" }} |
 

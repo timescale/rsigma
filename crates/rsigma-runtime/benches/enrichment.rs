@@ -5,16 +5,24 @@
 //! the floor cost of running the pipeline at all): template interpolation,
 //! kind/scope filtering, semaphore acquisition, and the enrichments-map
 //! injection, over a 1,000-result batch with one and four enrichers.
+//!
+//! `enrichment_lookup_extract` measures a `lookup` enricher whose extract
+//! reads an event field, in jq, JSONPath, and CEL, over a 100-result batch.
 
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
+use rsigma_eval::pipeline::sources::ExtractExpr;
 use rsigma_eval::{DetectionBody, EvaluationResult, FieldMatch, ResultBody, RuleHeader};
 use rsigma_parser::Level;
-use rsigma_runtime::{EnrichersFile, build_enrichers};
+use rsigma_runtime::{
+    EnricherKind, EnrichersFile, EnrichmentPipeline, LookupEnricher, OnError, Scope, SourceCache,
+    build_enrichers,
+};
 
 const BATCH: usize = 1_000;
 
@@ -82,5 +90,75 @@ fn bench_enrichment(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_enrichment);
+fn asset_cache() -> Arc<SourceCache> {
+    let assets: Vec<serde_json::Value> = (0..256)
+        .map(|i| {
+            serde_json::json!({
+                "ip": format!("10.0.0.{i}"),
+                "host": format!("host-{i}"),
+                "owner": "IT-Ops",
+            })
+        })
+        .collect();
+    let cache = Arc::new(SourceCache::new());
+    cache.store("assets", &serde_json::Value::Array(assets));
+    cache
+}
+
+/// A `lookup` enricher whose extract reads the detection's `SourceIp`, in
+/// each extract language, over a 256-record source.
+fn bench_lookup_extract(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let cases = [
+        (
+            "jq",
+            ExtractExpr::Jq(r#".[] | select(.ip == "${detection.fields.SourceIp}")"#.to_string()),
+        ),
+        (
+            "jsonpath",
+            ExtractExpr::JsonPath("$[?@.ip == '${detection.fields.SourceIp}']".to_string()),
+        ),
+        (
+            "cel",
+            ExtractExpr::Cel("data.filter(x, x.ip == '${detection.fields.SourceIp}')".to_string()),
+        ),
+    ];
+
+    let mut group = c.benchmark_group("enrichment_lookup_extract");
+    group.sample_size(20);
+    for (name, extract) in cases {
+        let enricher = LookupEnricher::new(
+            format!("lookup_{name}"),
+            EnricherKind::Detection,
+            "asset".to_string(),
+            "assets".to_string(),
+            Some(extract),
+            None,
+            Duration::from_secs(5),
+            OnError::Skip,
+            Scope::default(),
+            asset_cache(),
+        );
+        let pipeline = EnrichmentPipeline::new(vec![Box::new(enricher)], 16);
+        let batch: Vec<EvaluationResult> = (0..BATCH / 10).map(detection).collect();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(name),
+            &pipeline,
+            |b, pipeline| {
+                b.iter(|| {
+                    let mut results = batch.clone();
+                    rt.block_on(pipeline.run(&mut results));
+                    black_box(&results);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_enrichment, bench_lookup_extract);
 criterion_main!(benches);

@@ -14,11 +14,11 @@ use rstix::core::{StixId, StixObjectKind};
 use rstix::store::{QueryResult, StixQuery, StixStore};
 use serde_json::Value;
 
+use super::extract::EnricherExtract;
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
     render_enricher_template,
 };
-use crate::sources::extract::apply_extract;
 
 /// Query parameters for a [`StixEnricher`].
 #[derive(Clone, Debug)]
@@ -42,7 +42,7 @@ pub struct StixEnricher {
     kind: EnricherKind,
     inject_field: String,
     query: StixEnricherQuery,
-    extract: Option<ExtractExpr>,
+    extract: Option<EnricherExtract>,
     default: Option<Value>,
     timeout: Duration,
     on_error: OnError,
@@ -70,7 +70,7 @@ impl StixEnricher {
             kind,
             inject_field,
             query,
-            extract,
+            extract: extract.map(|expr| EnricherExtract::new(&expr, true)),
             default,
             timeout,
             on_error,
@@ -85,22 +85,6 @@ impl StixEnricher {
     pub fn with_on_miss(mut self, on_miss: OnError) -> Self {
         self.on_miss = on_miss;
         self
-    }
-
-    fn render_extract(&self, result: &EvaluationResult) -> Option<ExtractExpr> {
-        let original = self.extract.as_ref()?;
-        let (lang, raw) = match original {
-            ExtractExpr::Jq(s) => ("jq", s),
-            ExtractExpr::JsonPath(s) => ("jsonpath", s),
-            ExtractExpr::Cel(s) => ("cel", s),
-        };
-        let rendered = render_enricher_template(raw, result);
-        Some(match lang {
-            "jq" => ExtractExpr::Jq(rendered),
-            "jsonpath" => ExtractExpr::JsonPath(rendered),
-            "cel" => ExtractExpr::Cel(rendered),
-            _ => return None,
-        })
     }
 
     fn attack_technique_search_term(tags: &[String]) -> Option<String> {
@@ -219,12 +203,13 @@ impl Enricher for StixEnricher {
         }
 
         let payload = Self::objects_to_value(&page.objects);
-        let extracted = match self.render_extract(result) {
+        let extracted = match &self.extract {
             None => payload,
-            Some(expr) => apply_extract(&payload, &expr).map_err(|e| EnrichError {
-                enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Extract(format!("{}", e.kind)),
-            })?,
+            Some(extract) => {
+                extract
+                    .apply(&self.id, payload, result, self.timeout)
+                    .await?
+            }
         };
 
         if extracted.is_null() {

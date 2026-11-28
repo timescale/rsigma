@@ -330,6 +330,55 @@ async fn http_templates_read_unmatched_fields_from_the_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn http_body_values_outside_strings_cannot_add_keys() {
+    let server = MockServer::start().await;
+    let hostile = r#"1, "admin": true"#;
+    Mock::given(method("POST"))
+        .and(path("/score"))
+        .and(body_json(
+            json!({"user": hostile, "count": hostile, "port": 443}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+
+    let mut det = detection("rule-x", "ps -ef");
+    det.as_detection_mut().unwrap().event =
+        Some(json!({"User": hostile, "Count": hostile, "Port": "443"}));
+    let enricher = Box::new(HttpEnricher::new(
+        "score".to_string(),
+        EnricherKind::Detection,
+        "score".to_string(),
+        "POST".to_string(),
+        format!("{}/score", server.uri()),
+        vec![],
+        Some(
+            r#"{"user": "${detection.fields.User}", "count": ${detection.fields.Count}, "port": ${detection.fields.Port}}"#
+                .to_string(),
+        ),
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        None,
+        http_client_for_test(),
+        HttpResponseCache::new(Duration::from_secs(0)),
+    )) as Box<dyn rsigma_runtime::Enricher>;
+
+    let pipeline = EnrichmentPipeline::new(vec![enricher], 4);
+    let mut results = vec![det];
+    pipeline.run(&mut results).await;
+    assert_eq!(
+        results[0]
+            .header
+            .enrichments
+            .as_ref()
+            .and_then(|m| m.get("score")),
+        Some(&json!({"ok": true})),
+        "the body should carry each value as one JSON value"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn http_500_triggers_on_error_policy() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1079,19 +1128,38 @@ async fn command_nonzero_exit_triggers_on_error_policy() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn command_templates_read_unmatched_fields_from_the_event() {
+    // Event values reach the shell as data: a positional parameter on Unix,
+    // and an environment variable expanded after parsing on Windows.
     #[cfg(unix)]
-    let body = "echo ${detection.fields.HostName} $EVENT_USER";
+    let argv = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        "echo \"$1\" \"$EVENT_USER\"".to_string(),
+        "sh".to_string(),
+        "${detection.fields.HostName}".to_string(),
+    ];
     #[cfg(windows)]
-    let body = "echo ${detection.fields.HostName} %EVENT_USER%";
+    let argv = vec![
+        "cmd.exe".to_string(),
+        "/V:ON".to_string(),
+        "/C".to_string(),
+        "echo !EVENT_HOST! !EVENT_USER!".to_string(),
+    ];
     let enricher = Box::new(CommandEnricher::new(
         "event_cmd".to_string(),
         EnricherKind::Detection,
         "out".to_string(),
-        shell_argv(body),
-        HashMap::from([(
-            "EVENT_USER".to_string(),
-            "${detection.fields.User}".to_string(),
-        )]),
+        argv,
+        HashMap::from([
+            (
+                "EVENT_USER".to_string(),
+                "${detection.fields.User}".to_string(),
+            ),
+            (
+                "EVENT_HOST".to_string(),
+                "${detection.fields.HostName}".to_string(),
+            ),
+        ]),
         Duration::from_secs(5),
         OnError::Skip,
         Scope::default(),
@@ -1116,16 +1184,37 @@ async fn command_templates_read_unmatched_fields_from_the_event() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn command_template_expansion_for_correlation_kind() {
-    // The template engine renders `${correlation.*}` in the argv before
-    // it ever reaches the OS, so by the time `cmd.exe` / `sh` sees the
-    // body it is just `echo agg=73 ip=203.0.113.4`. That `echo` form
-    // works identically under both shells.
+    #[cfg(unix)]
+    let argv = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        "echo agg=$1 ip=$2".to_string(),
+        "sh".to_string(),
+        "${correlation.aggregated_value}".to_string(),
+        "${correlation.group_key.SourceIP}".to_string(),
+    ];
+    #[cfg(windows)]
+    let argv = vec![
+        "cmd.exe".to_string(),
+        "/V:ON".to_string(),
+        "/C".to_string(),
+        "echo agg=!AGG! ip=!IP!".to_string(),
+    ];
     let enricher = Box::new(CommandEnricher::new(
         "summary".to_string(),
         EnricherKind::Correlation,
         "summary".to_string(),
-        shell_argv("echo agg=${correlation.aggregated_value} ip=${correlation.group_key.SourceIP}"),
-        HashMap::new(),
+        argv,
+        HashMap::from([
+            (
+                "AGG".to_string(),
+                "${correlation.aggregated_value}".to_string(),
+            ),
+            (
+                "IP".to_string(),
+                "${correlation.group_key.SourceIP}".to_string(),
+            ),
+        ]),
         Duration::from_secs(5),
         OnError::Skip,
         Scope::default(),
@@ -1145,6 +1234,68 @@ async fn command_template_expansion_for_correlation_kind() {
             .unwrap(),
         &json!("agg=73 ip=203.0.113.4")
     );
+}
+
+fn command_enricher(argv: &[&str]) -> CommandEnricher {
+    CommandEnricher::new(
+        "cmd".to_string(),
+        EnricherKind::Detection,
+        "out".to_string(),
+        argv.iter().map(|s| s.to_string()).collect(),
+        HashMap::new(),
+        Duration::from_secs(5),
+        OnError::Skip,
+        Scope::default(),
+        OutputFormat::Raw,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_scripts_cannot_take_event_values_as_code() {
+    let enricher = command_enricher(&["/bin/sh", "-c", "echo ${detection.fields.CommandLine}"]);
+    let mut result = detection("rule-x", "x; touch /tmp/rsigma-pwned");
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(err.to_string().contains("command[2] is code"), "{err}");
+    assert!(result.header.enrichments.is_none());
+
+    let yaml = "enrichers:\n  - id: e\n    kind: detection\n    type: command\n    inject_field: out\n    command: [\"/bin/sh\", \"-c\", \"echo ${detection.fields.CommandLine}\"]\n";
+    let err = rsigma_runtime::parse_enrichers_config(yaml)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("invalid 'command'"), "{err}");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn command_positional_parameters_carry_hostile_values_verbatim() {
+    let enricher = command_enricher(&[
+        "/bin/sh",
+        "-c",
+        "printf %s \"$1\"",
+        "sh",
+        "${detection.fields.CommandLine}",
+    ]);
+    let hostile = "$(echo pwned); `id` && echo \"a'b\" | cat";
+    let mut result = detection("rule-x", hostile);
+    enricher.enrich(&mut result).await.unwrap();
+    assert_eq!(result.header.enrichments.unwrap()["out"], json!(hostile));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn command_values_cannot_pose_as_options() {
+    let enricher = command_enricher(&["/bin/echo", "${detection.fields.CommandLine}"]);
+    let mut result = detection("rule-x", "--output=/etc/passwd");
+    let err = enricher.enrich(&mut result).await.unwrap_err();
+    assert!(err.to_string().contains("starts with '-'"), "{err}");
+
+    let enricher = command_enricher(&["/bin/echo", "--", "${detection.fields.CommandLine}"]);
+    let mut result = detection("rule-x", "--output=/etc/passwd");
+    assert!(enricher.enrich(&mut result).await.is_ok());
+
+    let enricher = command_enricher(&["/bin/echo", "x=${detection.fields.CommandLine}"]);
+    let mut result = detection("rule-x", "-n");
+    assert!(enricher.enrich(&mut result).await.is_ok());
 }
 
 // ---------------------------------------------------------------------------

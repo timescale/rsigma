@@ -156,6 +156,22 @@ Correlation variables (`${correlation.*}`):
 
 For enrichers that conceptually apply to both kinds (identity lookups, runbook URLs, any tag-based enricher), declare two YAML entries with the same `type` and `inject_field` but different `kind` and template namespaces.
 
+## Event values in extract expressions
+
+{{ added "unreleased" }}
+
+A `lookup` or `stix` `extract` can reference `${detection.*}` and `${correlation.*}` values. A value is never pasted into the expression text. It reaches the program as a string, so a value with quotes, backslashes, operators, newlines, or another language's syntax matches only itself and cannot change what the expression does.
+
+- jq: a reference inside a string literal stands for the value, so `"${detection.fields.Host}"` is the value and `"host-${detection.fields.Host}"` joins it in. Outside a string literal a reference is a string expression: `.assets[${detection.fields.Host}]`, `select(.name == ${detection.fields.User})`.
+- CEL: the same. `'${...}'`, `"${...}"`, and the raw and triple-quoted forms stand for the value, and outside a literal a reference is a string expression, as in `data[${detection.fields.Host}]`. A reference right after `.` (`data.${...}`) and one inside a bytes literal (`b"..."`) fail at load.
+- JSONPath has no variables, so each value is written into the query as an escaped string literal. Inside `'...'` or `"..."` the value is escaped for that quote. Outside a literal it becomes a single-quoted literal, so it is valid only where a JSONPath literal is: `$[?@.ip == ${detection.fields.Ip}]` and `$[${detection.fields.Host}]` work, and `$.${detection.fields.Host}` fails at load.
+
+Every value is a string, numbers and `true` included. A reference right after a backslash inside a string literal fails at load. A program that passes a value to `test`, `match`, or a JSONPath `match` or `search` still reads it as a regular expression. `${ENV_VAR}` references are configuration rather than event data: they are written into the expression text when the enricher is built, at load and on every reload.
+
+An expression that quoted its references, like every example on this page, behaves as before. One that relied on a value being pasted in as code now sees a string. An array index or a numeric comparison needs a conversion, for example `.[${detection.fields.Index} | tonumber]` or `select(.port == (${detection.fields.Port} | tonumber))` in jq and `int(${detection.fields.Port})` in CEL. A value that should select a field by name uses brackets: `.[${detection.fields.Name}]` in jq, `data[${detection.fields.Name}]` in CEL, and `$['${detection.fields.Name}']` in JSONPath.
+
+The expression is compiled once, when the enricher is built, and one that does not compile fails at load instead of on every detection. Each evaluation runs off the async runtime and stops at the enricher `timeout`, after 10,000 results, after 1 MiB of result, or after 1,000,000 jq generator steps (`range`, `repeat`, `recurse`, `while`, `until`, and the filters built on them). Each of these is an extract error and applies `on_error`. jq's `env`, `$ENV`, `halt`, `halt_error`, and `stderr` are not available, and a jq definition that calls itself fails at load. The same evaluation rules apply to the `http` and `dns` `extract`, which do not read references.
+
 ## Scope filtering
 
 `scope` limits when an enricher fires within its declared `kind`:
@@ -187,7 +203,7 @@ The cheapest primitive: it does no I/O and cannot fail past config-load-time tem
 
 ### `lookup`: read from the dynamic source cache
 
-Reads a value from the shared dynamic [source cache](../reference/dynamic-sources.md) by source ID and applies an `extract` expression (jq/JSONPath/CEL) with template-expanded variables to slice it. The source can be shared with pipelines and other lookup enrichers without another fetch.
+Reads a value from the shared dynamic [source cache](../reference/dynamic-sources.md) by source ID and applies an `extract` expression (jq/JSONPath/CEL) that can read `${detection.*}` or `${correlation.*}` values to slice it (see [Event values in extract expressions](#event-values-in-extract-expressions)). The source can be shared with pipelines and other lookup enrichers without another fetch.
 
 ```yaml
 - id: asset_context_corr
@@ -206,7 +222,7 @@ The decision matrix:
 - **Cache hit + extract matches** → inject the extracted value
 - **Cache hit + no extract match** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "0.28.0" }}
 - **Cache miss** → if `default` is configured, inject it; otherwise apply `on_miss`, or `on_error` when `on_miss` is absent {{ added "0.28.0" }}
-- **Extract evaluation error** (invalid jq, type mismatch) → always applies `on_error`, even with `default` set
+- **Extract evaluation error** (a type mismatch, or an evaluation limit; see [Event values in extract expressions](#event-values-in-extract-expressions)) → always applies `on_error`, even with `default` set. An expression that does not compile fails at load. {{ added "unreleased" }}
 
 Writing `default: null` injects `null` on a miss; omitting `default` leaves the miss to `on_miss` or `on_error`. See [Misses and errors](#misses-and-errors). {{ added "0.28.0" }}
 
@@ -448,7 +464,9 @@ Miss and error handling: {{ added "0.28.0" }}
 
 Both 2xx bodies and `miss_status` responses are cached for `cache_ttl`, and `extract` and `default` are applied again on each cache hit. {{ added "0.28.0" }}
 
-Event and correlation values are escaped for where they land. In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so a field value cannot add path segments, start a query, or reach another path on the host; a value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. In `body`, values are JSON-string-escaped, so a value inside a JSON string literal cannot add keys; a placeholder outside a string literal is inserted as raw text. `${ENV_VAR}` values in `url` are inserted verbatim, and header values are not escaped (CR and LF are rejected). {{ added "0.25.0" }}
+Event and correlation values are escaped for where they land. In `url`, each `${detection.*}` or `${correlation.*}` value is percent-encoded as one URL component (everything except letters, digits, `-`, `_`, `.`, and `~`), so a field value cannot add path segments, start a query, or reach another path on the host; a value that is exactly `.` or `..` has its dots encoded twice so it cannot act as a dot segment. In `body`, values are JSON-string-escaped, so a value inside a JSON string literal cannot add keys. `${ENV_VAR}` values in `url` are inserted verbatim, and header values are not escaped (CR and LF are rejected). {{ added "0.25.0" }}
+
+When the `body` is a JSON object or array, a placeholder outside a string literal receives one JSON value: the value itself when it is a JSON number, `true`, `false`, or `null`, and a quoted JSON string otherwise, so it cannot add keys or elements either. A placeholder right after a backslash inside a string literal keeps that backslash as a literal character. {{ added "unreleased" }}
 
 Each enricher instance owns its own response cache: two enrichers hitting the same URL with different `Authorization` headers do not share entries. Response bodies are capped at 10 MiB (same default as HTTP dynamic sources). Outbound URLs follow the daemon [`--egress-policy`](../reference/security.md#http-egress-policy-ssrf-defense) (SSRF / cloud-metadata defense at DNS resolution time, on IP-literal URLs, and on every redirect hop). {{ added "0.27.0" }}
 
@@ -470,6 +488,14 @@ Per-result `tokio::process::Command` invocation with template-expanded argv and 
   timeout: 3s
   on_error: skip
 ```
+
+The argv runs without a shell, so each rendered element reaches the program as exactly one argument. Three rules keep an event value from becoming more than data: {{ added "unreleased" }}
+
+- The program, `command[0]`, cannot use a `${detection.*}` or `${correlation.*}` reference, and neither can the program that a wrapper (`env`, `timeout`, `nice`, `nohup`, `sudo`, `doas`, `stdbuf`, `setsid`, `time`, `ionice`, `chrt`, `taskset`, `flock`, `chroot`, `xargs`, `busybox`) runs.
+- An argument that a shell or interpreter runs as code cannot use one either: the script or script path of `sh`, `bash`, `dash`, `zsh`, `ksh`, `fish`, and `csh`; everything after `cmd /c`; every argument to `powershell` and `pwsh` except the parameters after `-File <script>`; the `-c`, `-m`, `-e`, `--eval`, or `-r` code and the script path of Python, Perl, Ruby, Node.js, Bun, Deno, PHP, Lua, Tcl, `osascript`, and `Rscript`; the `awk`, `sed`, and `jq` program; and the `su -c` command. A `cmd` command line also cannot expand an `env` entry that uses one as `%NAME%`, because `cmd` expands it before parsing; `!NAME!` with `/V:ON` expands after parsing. Such an entry fails at load. Pass the value as a separate argument instead, which shells and interpreters read as data: `["sh", "-c", "lookup \"$1\"", "sh", "${detection.fields.Host}"]`, or through `env` for PowerShell (`$env:HOST`).
+- An argument whose template starts with an event value is refused when the value starts with `-`, unless an earlier argument is `--`, so the value cannot pose as an option. The call fails with a fetch error and `on_error` applies.
+
+Other programs read each argument however they choose. A program that runs one of its arguments as code, and is not listed above, must not receive event values in that argument.
 
 ## Composing enrichers (recipes)
 
@@ -560,7 +586,7 @@ If the GeoIP data is already exported as JSON, use `lookup` against a dynamic so
 sources:
   - id: geoip_db
     type: file
-    path: /var/lib/geoip/cidr-to-country.json
+    path: /var/lib/geoip/ip-to-country.json   # {"203.0.113.7": {"country": "NL"}, ...}
     format: json
     refresh: 24h
 ```
@@ -573,7 +599,7 @@ enrichers:
     type: lookup
     inject_field: geoip
     source: geoip_db
-    extract: '.[] | select(.cidr | test("${detection.fields.SourceIp}"))'
+    extract: '."${detection.fields.SourceIp}"'
     extract_type: jq
     default: { country: "unknown" }
 ```

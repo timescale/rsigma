@@ -9,6 +9,13 @@
 //! Non-zero exit codes map to [`EnrichErrorKind::Fetch`]. Stderr is read
 //! into the error message (truncated at 4 KB) so operators can see what
 //! went wrong without grepping the daemon's tracing output.
+//!
+//! The argv runs without a shell, so each rendered element is one argument.
+//! An argv that would hand an event value to a program as code (a shell
+//! script, an interpreter's inline code, the program path itself) fails
+//! every call, and the config loader rejects it. An argument whose template
+//! starts with an event value is refused when the value starts with `-`,
+//! unless an earlier argument is `--`, so a value cannot pose as an option.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -17,6 +24,7 @@ use async_trait::async_trait;
 use rsigma_eval::EvaluationResult;
 use tokio::process::Command;
 
+use super::command_argv::{command_argv_problem, starts_with_result_ref};
 use super::{
     EnrichError, EnrichErrorKind, Enricher, EnricherKind, OnError, Scope, inject_enrichment,
     render_enricher_template,
@@ -52,6 +60,7 @@ pub struct CommandEnricher {
     on_error: OnError,
     scope: Scope,
     output: OutputFormat,
+    argv_problem: Option<String>,
 }
 
 impl CommandEnricher {
@@ -67,6 +76,7 @@ impl CommandEnricher {
         scope: Scope,
         output: OutputFormat,
     ) -> Self {
+        let argv_problem = command_argv_problem(&argv, &env);
         Self {
             id,
             kind,
@@ -77,6 +87,14 @@ impl CommandEnricher {
             on_error,
             scope,
             output,
+            argv_problem,
+        }
+    }
+
+    fn error(&self, message: String) -> EnrichError {
+        EnrichError {
+            enricher_id: self.id.clone(),
+            kind: EnrichErrorKind::Fetch(message),
         }
     }
 }
@@ -118,10 +136,10 @@ impl Enricher for CommandEnricher {
 
     async fn enrich(&self, result: &mut EvaluationResult) -> Result<(), EnrichError> {
         if self.argv.is_empty() {
-            return Err(EnrichError {
-                enricher_id: self.id.clone(),
-                kind: EnrichErrorKind::Fetch("empty argv".to_string()),
-            });
+            return Err(self.error("empty argv".to_string()));
+        }
+        if let Some(problem) = &self.argv_problem {
+            return Err(self.error(problem.clone()));
         }
 
         let rendered: Vec<String> = self
@@ -129,6 +147,17 @@ impl Enricher for CommandEnricher {
             .iter()
             .map(|a| render_enricher_template(a, result))
             .collect();
+        let end_of_options = self.argv.iter().position(|a| a == "--");
+        for (i, (template, value)) in self.argv.iter().zip(&rendered).enumerate().skip(1) {
+            if end_of_options.is_some_and(|end| end < i) {
+                break;
+            }
+            if value.starts_with('-') && starts_with_result_ref(template) {
+                return Err(self.error(format!(
+                    "command[{i}] starts with '-' from an event value, so the program could read it as an option; put \"--\" before it if the program accepts one"
+                )));
+            }
+        }
 
         let mut cmd = Command::new(&rendered[0]);
         cmd.args(&rendered[1..]);

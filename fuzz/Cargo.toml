@@ -23,6 +23,7 @@ yaml_serde = "0.10"
 regex = "1"
 arbitrary = { version = "1", features = ["derive"] }
 rstix = { path = "../crates/rstix", features = ["serde", "pattern", "validate", "taxii"] }
+tokio = { version = "1", features = ["rt"] }
 
 [[bin]]
 name = "fuzz_stix_pattern"
@@ -237,4 +238,9 @@ doc = false
 [[bin]]
 name = "fuzz_host_guard"
 path = "fuzz_targets/fuzz_host_guard.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_enricher_extract"
+path = "fuzz_targets/fuzz_enricher_extract.rs"
 doc = false
