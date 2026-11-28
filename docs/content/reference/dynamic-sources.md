@@ -292,6 +292,8 @@ The client follows the daemon egress policy. It does not follow redirects and it
 | `csv` | `csv` crate | Header row required; each subsequent row becomes an object keyed by the header. |
 | `stix` | `rstix` | A STIX 2.1 bundle. File and HTTP only. Requires `stix-source`. `extract` is rejected. See [format: stix](#format-stix). {{ added "0.28.0" }} |
 
+Every format is parsed on the blocking thread pool, so a large payload or STIX bundle does not stall the daemon's other work; a TAXII poll builds its value there as well. {{ added "unreleased" }}
+
 ### `format: stix`
 
 {{ added "0.28.0" }}

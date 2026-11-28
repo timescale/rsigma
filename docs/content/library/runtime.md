@@ -198,6 +198,8 @@ Wire a `MetricsHook` via `EnrichmentPipeline::with_metrics` to surface `rsigma_e
 
 For YAML-driven configuration, use the `enrichment::config` loader: `load_enrichers_file(path)` parses an enrichers config file into an `EnrichersFile`, and `build_enrichers(file)` or `build_enrichers_full(file, EnricherResources, metrics)` turns it into an `EnrichmentPipeline` (validating template namespaces and bespoke types). Pass `EnricherResources { source_cache, stix_store }` when building `lookup` or `stix` enrichers. The daemon and the MCP server's `evaluate_events` tool share this loader.
 
+`StixEnricher` rejects a rendered `text_search` term shorter than `MIN_TEXT_SEARCH_CHARS` (3), compares the term as `StixEnricherQuery::text_match` says (`rstix::store::TextMatch`: substring, token, or exact; `text_match` in YAML), and runs the store query on the blocking pool under the enricher timeout. {{ added "unreleased" }}
+
 Enricher templates resolve `${detection.fields.<name>}` from the event when the rule did not match on `<name>`, and `${detection.event.*}` always reads the event, so both need the event retained on the result. When you build your own engine, pass `pipeline.needs_event()` to `RuntimeEngine::set_include_event` (or `LogProcessor::set_include_event`), and call `strip_auto_retained_event` on each result after `pipeline.run` unless you want events delivered: {{ added "0.28.0" }}
 
 ```rust
