@@ -473,6 +473,14 @@ Per-result `tokio::process::Command` invocation with template-expanded argv and 
   on_error: skip
 ```
 
+The argv runs without a shell, so each rendered element reaches the program as exactly one argument. Three rules keep an event value from becoming more than data: {{ added "unreleased" }}
+
+- The program, `command[0]`, cannot use a `${detection.*}` or `${correlation.*}` reference, and neither can the program that a wrapper (`env`, `timeout`, `nice`, `nohup`, `sudo`, `doas`, `stdbuf`, `setsid`, `time`, `ionice`, `chrt`, `taskset`, `flock`, `chroot`, `xargs`, `busybox`) runs.
+- An argument that a shell or interpreter runs as code cannot use one either: the script or script path of `sh`, `bash`, `dash`, `zsh`, `ksh`, `fish`, and `csh`; everything after `cmd /c`; every argument to `powershell` and `pwsh` except the parameters after `-File <script>`; the `-c`, `-m`, `-e`, `--eval`, or `-r` code and the script path of Python, Perl, Ruby, Node.js, Bun, Deno, PHP, Lua, Tcl, `osascript`, and `Rscript`; the `awk`, `sed`, and `jq` program; and the `su -c` command. A `cmd` command line also cannot expand an `env` entry that uses one as `%NAME%`, because `cmd` expands it before parsing; `!NAME!` with `/V:ON` expands after parsing. Such an entry fails at load. Pass the value as a separate argument instead, which shells and interpreters read as data: `["sh", "-c", "lookup \"$1\"", "sh", "${detection.fields.Host}"]`, or through `env` for PowerShell (`$env:HOST`).
+- An argument whose template starts with an event value is refused when the value starts with `-`, unless an earlier argument is `--`, so the value cannot pose as an option. The call fails with a fetch error and `on_error` applies.
+
+Other programs read each argument however they choose. A program that runs one of its arguments as code, and is not listed above, must not receive event values in that argument.
+
 ## Composing enrichers (recipes)
 
 The seven primitives cover almost every operational use case via composition. Recipes are *field-parametric*: substitute the field names your pipeline actually produces (`SourceIp`, `cip`, `client.ip`, `ClientIp`, ...) for the placeholders below.

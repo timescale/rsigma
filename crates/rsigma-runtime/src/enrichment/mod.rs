@@ -69,6 +69,7 @@ use crate::log_throttle::WarnThrottle;
 use crate::metrics::{MetricsHook, NoopMetrics};
 
 mod command;
+mod command_argv;
 pub mod config;
 #[cfg(feature = "dns-enrich")]
 mod dns;

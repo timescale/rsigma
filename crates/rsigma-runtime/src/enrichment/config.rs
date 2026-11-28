@@ -807,6 +807,15 @@ fn validate_values(cfg: &EnricherConfig) -> Result<(), EnrichersConfigError> {
             message: "has no effect when 'default' is set".to_string(),
         });
     }
+    if cfg.type_name == "command"
+        && let Some(message) = super::command_argv::command_argv_problem(&cfg.command, &cfg.env)
+    {
+        return Err(EnrichersConfigError::InvalidValue {
+            enricher_id: cfg.id.clone(),
+            field: "command",
+            message,
+        });
+    }
     Ok(())
 }
 
