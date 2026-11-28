@@ -267,6 +267,13 @@ pub fn deserialize_stix_object_from_value(
         return Err(crate::ParseError::UnknownObjectType(type_name.to_owned()));
     };
 
+    if opts.decode_email_encoded_words
+        && let StixObject::Sco(super::sco::ScoObject::EmailMessage(message)) = &mut object
+    {
+        message.decode_encoded_words();
+        message.validate()?;
+    }
+
     if let Some(wire) = wire_for_extra.as_ref() {
         capture_unmodeled_properties(wire, &object, &mut extra)?;
     }

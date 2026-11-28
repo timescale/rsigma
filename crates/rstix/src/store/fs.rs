@@ -38,10 +38,16 @@ impl FsStore {
     }
 
     /// Open or create a store at `root` with explicit [`ParseOptions`] for disk reload.
+    ///
+    /// Stored values are already decoded, so loading never applies RFC 2047
+    /// decoding whatever
+    /// [`decode_email_encoded_words`](ParseOptions::decode_email_encoded_words)
+    /// says.
     pub fn open_with_parse_options(
         root: impl AsRef<Path>,
         parse_options: ParseOptions,
     ) -> Result<Self, StoreError> {
+        let parse_options = parse_options.decode_email_encoded_words(false);
         let root = root.as_ref().to_path_buf();
         fs::create_dir_all(root.join(OBJECTS_DIR)).map_err(|err| StoreError::io(&root, err))?;
         let memory = MemoryStore::new();
