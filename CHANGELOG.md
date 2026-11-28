@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### STIX pattern evaluation, bundle validation, and store search stay near-linear
+### STIX pattern evaluation, bundle validation, and store search stay near-linear (#820)
 
 A chain of `_refs[*]` dereferences over SCOs that reference each other multiplied the objects visited at every step, nested observation `AND`s re-evaluated their operands for every observation (exponential in the number of `AND`s), and every `MATCHES` comparison recompiled its regex. Each dereference step now keeps every object it reaches once and fails with the new `PatternMatchError::PathTooWide` past `MAX_PATH_TARGETS` (10,000) objects, and the type-checker rejects object paths with more than `MAX_REF_DEREFERENCES` (8) dereferences. Evaluation records whether each observation expression matches each observation, so `AND`, `OR`, `FOLLOWEDBY`, `WITHIN`, `REPEATS`, and `START`/`STOP` cost a few passes over the observations per node; a left-deep chain of 256 `AND`ed observations over 256 observations evaluates in about 30 ms. Path targets, observation checks, `IN` items, `LIKE` and `MATCHES` scans, and regex compiles count against `MAX_EVAL_STEPS` (10,000,000) and fail with the new `PatternMatchError::StepLimitExceeded`. `MATCHES` regexes are compiled once per pattern and kept up to `MATCHES_REGEX_CACHE_BYTES` (16 MiB), `LIKE` places each `%`-separated segment in one pass, `IN` no longer copies the field value for every list item, and the parser no longer scans back over every index step of a path.
 
