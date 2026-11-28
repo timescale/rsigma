@@ -102,8 +102,12 @@ fn the_rsigmarc_walk_stops_at_home() {
     std::fs::create_dir_all(&cwd).unwrap();
     std::fs::write(root.path().join(".rsigmarc"), "version: 1\n").unwrap();
 
-    let envelope = config_path_json(&cwd, &home);
-    assert_eq!(searched(&envelope, "project_rc")["status"], "missing");
+    // Windows reads the home directory from the profile known folder, not HOME.
+    #[cfg(unix)]
+    {
+        let envelope = config_path_json(&cwd, &home);
+        assert_eq!(searched(&envelope, "project_rc")["status"], "missing");
+    }
 
     let elsewhere = tempfile::tempdir().unwrap();
     let envelope = config_path_json(&cwd, elsewhere.path());
