@@ -1433,12 +1433,14 @@ pub async fn run_daemon(config: DaemonConfig) -> i32 {
     // their contributing rules through the live incident map.
     let disposition_state = if config.dispositions.enabled {
         tracing::info!("Triage feedback loop enabled (POST/GET /api/v1/dispositions)");
-        let state = super::dispositions::DispositionState::with_capture(
+        let mut state = super::dispositions::DispositionState::with_capture(
             config.dispositions.config.clone(),
             metrics.clone(),
             alert_state.clone(),
             capture_spool,
         );
+        let rules = processor.clone();
+        state.set_rule_catalog(Arc::new(move |rule_id: &str| rules.knows_rule(rule_id)));
         // Roll the window forward for idle rules on a timer.
         state.spawn_pruner();
         // Restore persisted disposition state (unless --clear-state), pruning
@@ -4884,15 +4886,26 @@ async fn ingest_dispositions(
     identity: Option<Extension<AuthIdentity>>,
     body: String,
 ) -> Response {
-    let Some(dispositions) = state.disposition_state.as_ref() else {
+    let Some(dispositions) = state.disposition_state.clone() else {
         return dispositions_disabled();
+    };
+    let raws = match dispositions.parse_request(&body) {
+        Ok(raws) => raws,
+        Err(e) => {
+            let status = match e {
+                super::dispositions::IngestError::Parse(_) => StatusCode::BAD_REQUEST,
+                super::dispositions::IngestError::TooMany { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            };
+            return (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
+        }
     };
     // Every record's `tenant` is checked against the token by `write_tenant`,
     // which refuses a foreign tenant with 403, so a batch may name at most one.
-    let mut body_tenants: Vec<String> = rsigma_runtime::parse_dispositions(&body)
-        .map(|raws| raws.into_iter().filter_map(|raw| raw.tenant).collect())
-        .unwrap_or_default();
-    body_tenants.sort();
+    let mut body_tenants: Vec<&str> = raws
+        .iter()
+        .filter_map(|raw| raw.tenant.as_deref())
+        .collect();
+    body_tenants.sort_unstable();
     body_tenants.dedup();
     if body_tenants.len() > 1 {
         return (
@@ -4903,7 +4916,7 @@ async fn ingest_dispositions(
         )
             .into_response();
     }
-    let body_tenant = body_tenants.pop();
+    let body_tenant = body_tenants.pop().map(str::to_string);
     let tenant = match super::tenancy::write_tenant(
         state.tenancy_enabled,
         identity.as_ref().map(|e| &e.0),
@@ -4913,14 +4926,19 @@ async fn ingest_dispositions(
         Err(response) => return response,
     };
     let target = tenant.clone();
-    let response = match dispositions.ingest_with_tenant(&body, "api", tenant) {
-        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    };
+    let response =
+        match tokio::task::spawn_blocking(move || dispositions.ingest_raws(raws, "api", tenant))
+            .await
+        {
+            Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({ "error": format!("disposition ingest task failed: {e}") }),
+                ),
+            )
+                .into_response(),
+        };
     super::audit::with_audit_target(response, target.as_ref())
 }
 

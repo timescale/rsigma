@@ -101,6 +101,9 @@ pub struct LogProcessor {
     /// Per-tenant reference point for advancing absence clocks while input is
     /// idle.
     idle: Mutex<HashMap<Option<rsigma_eval::TenantId>, IdleRef>>,
+    /// Identities of the loaded rules, kept beside the engine so a lookup
+    /// never waits on a batch holding the engine lock.
+    rule_identities: ArcSwap<std::collections::HashSet<String>>,
 }
 
 impl LogProcessor {
@@ -114,7 +117,9 @@ impl LogProcessor {
                 stats.correlation_rules,
             );
         }
+        let rule_identities = ArcSwap::new(engine.rule_identities());
         LogProcessor {
+            rule_identities,
             engine: Arc::new(ArcSwap::from_pointee(RwLock::new(engine))),
             processing_order: Mutex::new(()),
             metrics,
@@ -190,7 +195,14 @@ impl LogProcessor {
         self.reset_idle(&new_engine);
         self.metrics
             .set_correlation_absence_pending(new_engine.absence_pending() as u64);
+        self.rule_identities.store(new_engine.rule_identities());
         self.engine.store(Arc::new(RwLock::new(new_engine)));
+    }
+
+    /// Whether a loaded detection or correlation rule carries `rule_id` (its
+    /// id, or its title when it has none) on its results.
+    pub fn knows_rule(&self, rule_id: &str) -> bool {
+        self.rule_identities.load().contains(rule_id)
     }
 
     /// Load a snapshot of the current engine, for example to inspect its

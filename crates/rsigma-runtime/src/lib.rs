@@ -91,9 +91,10 @@ pub use capture_spool::{
     bundle_id, disposition_identity, parse_corpus_events, parse_manifest, parse_provenance,
 };
 pub use dispositions::{
-    Disposition, DispositionConfig, DispositionError, DispositionScope, DispositionSnapshot,
-    DispositionStore, IngestOutcome, Numerator, RawDisposition, RuleSummary, Verdict,
-    parse_dispositions, triage_feed,
+    DEFAULT_MAX_RULES, Disposition, DispositionConfig, DispositionError, DispositionScope,
+    DispositionSnapshot, DispositionStore, IngestOutcome, MAX_DISPOSITION_CLOCK_SKEW_SECS,
+    MAX_DISPOSITION_ID_BYTES, MAX_DISPOSITIONS_PER_REQUEST, Numerator, RawDisposition, RuleSummary,
+    Verdict, parse_dispositions, triage_feed,
 };
 pub use egress::{
     EgressDenial, EgressFilteredResolver, EgressPolicy, default_egress_policy,

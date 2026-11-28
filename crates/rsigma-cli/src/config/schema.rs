@@ -866,6 +866,10 @@ pub(crate) struct DispositionsPartial {
     /// published (so a single false positive cannot publish a misleading 100%).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_sample: Option<u64>,
+    /// Most `(tenant, rule)` pairs the store counts. A disposition for a new
+    /// pair is refused once it is reached. Default 10000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rules: Option<usize>,
 }
 
 impl Merge for DispositionsPartial {
@@ -876,6 +880,7 @@ impl Merge for DispositionsPartial {
             window: over.window.or(self.window),
             numerator: over.numerator.or(self.numerator),
             min_sample: over.min_sample.or(self.min_sample),
+            max_rules: over.max_rules.or(self.max_rules),
         }
     }
 }

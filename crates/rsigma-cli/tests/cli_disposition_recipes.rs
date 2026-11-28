@@ -126,7 +126,8 @@ async fn recipe_dispositions(recipe: &str, sample: &str) -> Vec<(String, Verdict
     let mut out: Vec<(String, Verdict, Option<String>)> = raws
         .into_iter()
         .map(|raw| {
-            let d = Disposition::from_raw(raw, 0).expect("reshaped record validates");
+            let d = Disposition::from_raw(raw, chrono::Utc::now().timestamp())
+                .expect("reshaped record validates");
             (
                 d.rule_id.expect("detection scope carries a rule_id"),
                 d.verdict,

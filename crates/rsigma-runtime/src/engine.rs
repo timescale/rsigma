@@ -75,6 +75,10 @@ pub struct RuntimeEngine {
     /// `/api/v1/fields/*` endpoints) can snapshot a stable view without
     /// blocking the hot path during a reload.
     rule_field_set: Arc<ArcSwap<RuleFieldSet>>,
+    /// The identity each loaded detection and correlation rule carries on
+    /// its results (its id, or its title when it has none), refreshed on
+    /// every `load_rules()`.
+    rule_identities: Arc<std::collections::HashSet<String>>,
     /// Optional schema-routing spec. When set, `load_rules` builds a
     /// [`SchemaRouter`] (one detection engine per pipeline-set plus a shared
     /// correlation store) instead of a single engine, and rebuilds it on
@@ -146,6 +150,7 @@ impl RuntimeEngine {
             #[cfg(feature = "daachorse-index")]
             cross_rule_ac: false,
             rule_field_set: Arc::new(ArcSwap::from_pointee(RuleFieldSet::default())),
+            rule_identities: Arc::default(),
             routing: None,
             logsource_extractor: None,
             rule_source: RuleSource::Path(rules_path.clone()),
@@ -299,6 +304,12 @@ impl RuntimeEngine {
     /// engine lock.
     pub fn rule_field_set(&self) -> Arc<RuleFieldSet> {
         self.rule_field_set.load_full()
+    }
+
+    /// The identity each loaded detection and correlation rule carries on its
+    /// results: its id, or its title when it has none.
+    pub fn rule_identities(&self) -> Arc<std::collections::HashSet<String>> {
+        self.rule_identities.clone()
     }
 
     /// Enable or disable bloom-filter pre-filtering on the inner detection
@@ -667,6 +678,7 @@ impl RuntimeEngine {
         self.engine = variant;
         self.parse_errors = parse_errors;
         self.refresh_rule_field_set(&collection);
+        self.rule_identities = Arc::new(rule_identities([&collection]));
         tracing::debug!(
             detection_rules = stats.detection_rules,
             correlation_rules = stats.correlation_rules,
@@ -680,6 +692,7 @@ impl RuntimeEngine {
         let previous = self.export_state();
         let mut units = Vec::new();
         let mut parse_errors = 0usize;
+        let mut identities = std::collections::HashSet::new();
 
         for binding in bindings {
             let resolved =
@@ -689,6 +702,7 @@ impl RuntimeEngine {
             check_parse_errors(&collection, self.strict_rules)
                 .map_err(|error| format!("ruleset '{}': {error}", binding.name))?;
             parse_errors += collection.error_count();
+            identities.extend(rule_identities([&collection]));
             let mut pipelines = load_ruleset_pipelines(binding)?;
             if let Some(resolved) = self
                 .resolve_pipeline_sources(&pipelines)
@@ -725,6 +739,7 @@ impl RuntimeEngine {
             parse_errors,
         };
         self.rule_field_set.store(Arc::new(field_set));
+        self.rule_identities = Arc::new(identities);
         self.engine = EngineVariant::Rulesets(Box::new(engines));
         self.parse_errors = parse_errors;
         Ok(stats)
@@ -1198,6 +1213,23 @@ fn check_parse_errors(collection: &SigmaCollection, strict: bool) -> Result<(), 
         ));
     }
     Ok(())
+}
+
+/// The identity each rule in `collections` carries on its results: its id,
+/// or its title when it has none.
+fn rule_identities<'a>(
+    collections: impl IntoIterator<Item = &'a SigmaCollection>,
+) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    for collection in collections {
+        for rule in &collection.rules {
+            ids.insert(rule.id.clone().unwrap_or_else(|| rule.title.clone()));
+        }
+        for rule in &collection.correlations {
+            ids.insert(rule.id.clone().unwrap_or_else(|| rule.title.clone()));
+        }
+    }
+    ids
 }
 
 /// Re-read and parse all pipeline files from disk, sorted by priority.

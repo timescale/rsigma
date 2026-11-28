@@ -306,6 +306,16 @@ impl IncidentStore {
         self.incidents.get(id).map(|inc| inc.to_snapshot(include))
     }
 
+    /// The rule identities that contributed to the open incident `id` of
+    /// `tenant`, or `None` when no such incident is open. Reads only that
+    /// incident, so a lookup costs the same however many are open.
+    pub fn incident_rule_keys(&self, tenant: Option<&TenantId>, id: &str) -> Option<Vec<String>> {
+        self.incidents
+            .get(id)
+            .filter(|inc| inc.tenant.as_ref() == tenant)
+            .map(|inc| inc.rule_counts.keys().cloned().collect())
+    }
+
     /// Assign a result to an incident, returning the incident id to annotate
     /// the pass-through result with, or `None` when it would open a new
     /// incident while `max_open_incidents` is full. Records guard hits via
@@ -1107,6 +1117,33 @@ mod tests {
         assert_eq!(one.incident_id, id);
         assert_eq!(one.result_count, 1);
         assert!(store.snapshot_one("nosuchincident", cfg.include).is_none());
+    }
+
+    #[test]
+    fn incident_rule_keys_reads_one_incident_of_one_tenant() {
+        let cfg = group_by_cfg();
+        let mut store = IncidentStore::default();
+        let id = store
+            .assign(
+                &cfg,
+                &detection("r1", "10.0.0.1", "alice", Level::High),
+                0,
+                |_| {},
+            )
+            .unwrap();
+        store.assign(
+            &cfg,
+            &detection("r2", "10.0.0.1", "bob", Level::High),
+            0,
+            |_| {},
+        );
+        assert_eq!(
+            store.incident_rule_keys(None, &id),
+            Some(vec!["r1".to_string(), "r2".to_string()])
+        );
+        let other = TenantId::new("t").unwrap();
+        assert_eq!(store.incident_rule_keys(Some(&other), &id), None);
+        assert_eq!(store.incident_rule_keys(None, "missing"), None);
     }
 
     #[test]

@@ -21,6 +21,8 @@ pub const DEFAULT_BUCKET: Duration = Duration::from_secs(24 * 60 * 60);
 pub const DEFAULT_MIN_SAMPLE: u64 = 5;
 /// Default ceiling on the idempotency seen-id set.
 pub const DEFAULT_MAX_SEEN_IDS: usize = 100_000;
+/// Default ceiling on the `(tenant, rule)` pairs the store counts.
+pub const DEFAULT_MAX_RULES: usize = 10_000;
 
 /// Whether the false-positive ratio numerator counts false positives only or
 /// also benign true positives.
@@ -68,6 +70,10 @@ pub struct DispositionConfig {
     /// Ceiling on the idempotency seen-id set of each tenant (and of the
     /// untenanted set), so one tenant's volume cannot evict another's ids.
     pub max_seen_ids: usize,
+    /// Ceiling on the `(tenant, rule)` pairs counted. A disposition for a new
+    /// pair is refused once it is reached; pairs already counted keep
+    /// counting.
+    pub max_rules: usize,
 }
 
 impl Default for DispositionConfig {
@@ -78,6 +84,7 @@ impl Default for DispositionConfig {
             numerator: Numerator::FpOnly,
             min_sample: DEFAULT_MIN_SAMPLE,
             max_seen_ids: DEFAULT_MAX_SEEN_IDS,
+            max_rules: DEFAULT_MAX_RULES,
         }
     }
 }
@@ -129,6 +136,9 @@ pub enum IngestOutcome {
     Duplicate,
     /// The disposition could not be counted; carries a reason.
     Rejected(String),
+    /// The disposition names a `(tenant, rule)` pair the store does not count
+    /// yet, and it already counts [`DispositionConfig::max_rules`] pairs.
+    RuleCapReached,
 }
 
 /// A per-rule rolling summary for the `GET` view and the scorecard feed.
@@ -154,8 +164,15 @@ pub struct DispositionStore {
     config: DispositionConfig,
     /// Per-rule bucketed counts, keyed by `(tenant, rule_id)` then bucket index.
     rules: HashMap<(Option<TenantId>, String), BTreeMap<i64, VerdictCounts>>,
+    /// The tenants with counts for each rule id, so a cross-tenant ratio
+    /// reads only that rule's entries.
+    rule_tenants: HashMap<String, HashSet<Option<TenantId>>>,
     /// Idempotency sets keyed by the tenant prefix of the dedup key.
     seen: HashMap<String, SeenIds>,
+    /// `(tenant, rule)` entries read by aggregations, for tests that check
+    /// how the work scales.
+    #[cfg(test)]
+    entries_read: std::cell::Cell<usize>,
 }
 
 /// One tenant's idempotency keys, with their timestamp for window pruning.
@@ -195,8 +212,24 @@ impl DispositionStore {
         Self {
             config,
             rules: HashMap::new(),
+            rule_tenants: HashMap::new(),
             seen: HashMap::new(),
+            #[cfg(test)]
+            entries_read: std::cell::Cell::new(0),
         }
+    }
+
+    /// Start counting `key`, keeping the per-rule tenant index in step.
+    fn insert_rule(
+        &mut self,
+        key: (Option<TenantId>, String),
+        buckets: BTreeMap<i64, VerdictCounts>,
+    ) {
+        self.rule_tenants
+            .entry(key.1.clone())
+            .or_default()
+            .insert(key.0.clone());
+        self.rules.insert(key, buckets);
     }
 
     /// The store's configuration.
@@ -211,15 +244,25 @@ impl DispositionStore {
     /// Apply one disposition at `now` (epoch seconds), enforcing idempotency.
     ///
     /// Returns [`IngestOutcome::Rejected`] for an unresolved incident-scoped
-    /// record (no `rule_id`), [`IngestOutcome::Duplicate`] for a redelivery, and
-    /// [`IngestOutcome::Accepted`] otherwise. The affected rule's bucket map is
-    /// pruned to the window on each apply.
+    /// record (no `rule_id`) or one whose timestamp is already outside the
+    /// window, [`IngestOutcome::Duplicate`] for a redelivery,
+    /// [`IngestOutcome::RuleCapReached`] for a new `(tenant, rule)` pair past
+    /// [`DispositionConfig::max_rules`], and [`IngestOutcome::Accepted`]
+    /// otherwise. The affected rule's bucket map is pruned to the window on
+    /// each apply.
     pub fn apply(&mut self, disposition: &Disposition, now: i64) -> IngestOutcome {
         let Some(rule_id) = disposition.rule_id.clone() else {
             return IngestOutcome::Rejected(
                 "incident-scoped disposition could not be resolved to a rule_id".to_string(),
             );
         };
+        let idx = self.bucket_index(disposition.timestamp);
+        let cutoff = self.bucket_index(now - self.config.window_secs());
+        if idx < cutoff {
+            return IngestOutcome::Rejected(
+                "timestamp is older than the rolling window".to_string(),
+            );
+        }
 
         let key = disposition.dedup_key();
         if self
@@ -229,6 +272,10 @@ impl DispositionStore {
         {
             return IngestOutcome::Duplicate;
         }
+        let rule_key = (disposition.tenant.clone(), rule_id);
+        if !self.rules.contains_key(&rule_key) && self.rules.len() >= self.config.max_rules {
+            return IngestOutcome::RuleCapReached;
+        }
         // Order the seen entry by the disposition's own timestamp so the
         // idempotency key lives exactly as long as its bucket can contribute to
         // the window: once a record ages out of the window its bucket is pruned
@@ -236,14 +283,13 @@ impl DispositionStore {
         // cannot double count.
         self.remember(key, disposition.timestamp, now);
 
-        let idx = self.bucket_index(disposition.timestamp);
-        let cutoff = self.bucket_index(now - self.config.window_secs());
-        let buckets = self
-            .rules
-            .entry((disposition.tenant.clone(), rule_id))
-            .or_default();
-        buckets.entry(idx).or_default().add(disposition.verdict);
-        buckets.retain(|&i, _| i >= cutoff);
+        if !self.rules.contains_key(&rule_key) {
+            self.insert_rule(rule_key.clone(), BTreeMap::new());
+        }
+        if let Some(buckets) = self.rules.get_mut(&rule_key) {
+            buckets.entry(idx).or_default().add(disposition.verdict);
+            buckets.retain(|&i, _| i >= cutoff);
+        }
 
         IngestOutcome::Accepted
     }
@@ -271,18 +317,36 @@ impl DispositionStore {
     }
 
     /// Drop buckets older than the window across every rule (called on a
-    /// periodic tick). Rules left with no buckets are removed.
-    pub fn prune(&mut self, now: i64) {
+    /// periodic tick). Rules left with no buckets are removed. Returns the
+    /// rule ids no tenant has counts for any more.
+    pub fn prune(&mut self, now: i64) -> Vec<String> {
         let cutoff = self.bucket_index(now - self.config.window_secs());
-        self.rules.retain(|_, buckets| {
+        let mut emptied = Vec::new();
+        self.rules.retain(|key, buckets| {
             buckets.retain(|&i, _| i >= cutoff);
+            if buckets.is_empty() {
+                emptied.push(key.clone());
+            }
             !buckets.is_empty()
         });
+        let mut gone = Vec::new();
+        for (tenant, rule_id) in emptied {
+            if let Some(tenants) = self.rule_tenants.get_mut(&rule_id) {
+                tenants.remove(&tenant);
+                if tenants.is_empty() {
+                    self.rule_tenants.remove(&rule_id);
+                    gone.push(rule_id);
+                }
+            }
+        }
         self.prune_seen(now);
+        gone
     }
 
     fn aggregate(&self, tenant: Option<&TenantId>, rule_id: &str) -> VerdictCounts {
         let mut total = VerdictCounts::default();
+        #[cfg(test)]
+        self.entries_read.set(self.entries_read.get() + 1);
         if let Some(buckets) = self.rules.get(&(tenant.cloned(), rule_id.to_string())) {
             for counts in buckets.values() {
                 total.merge(counts);
@@ -293,12 +357,8 @@ impl DispositionStore {
 
     fn aggregate_all_tenants(&self, rule_id: &str) -> VerdictCounts {
         let mut total = VerdictCounts::default();
-        for ((_, rule), buckets) in &self.rules {
-            if rule == rule_id {
-                for counts in buckets.values() {
-                    total.merge(counts);
-                }
-            }
+        for tenant in self.rule_tenants.get(rule_id).into_iter().flatten() {
+            total.merge(&self.aggregate(tenant.as_ref(), rule_id));
         }
         total
     }
@@ -359,6 +419,11 @@ impl DispositionStore {
         self.rules.len()
     }
 
+    /// Every rule id with counts in at least one tenant, in no set order.
+    pub fn rule_ids(&self) -> Vec<String> {
+        self.rule_tenants.keys().cloned().collect()
+    }
+
     /// Capture the store into a versioned snapshot for persistence.
     pub fn snapshot(&self) -> DispositionSnapshot {
         DispositionSnapshot {
@@ -417,6 +482,7 @@ impl DispositionStore {
             return None;
         }
         let mut stats = rsigma_eval::ImportStats::default();
+        let mut over_limit = 0usize;
         let cutoff = self.bucket_index(now - self.config.window_secs());
         for rule in snapshot.rules {
             let keep = if tenancy {
@@ -446,10 +512,26 @@ impl DispositionStore {
                     },
                 );
             }
-            if !buckets.is_empty() {
-                self.rules.insert((rule.tenant, rule.rule_id), buckets);
-                stats.restored += 1;
+            if buckets.is_empty() {
+                continue;
             }
+            let key = (rule.tenant, rule.rule_id);
+            if key.1.is_empty()
+                || key.1.len() > super::record::MAX_DISPOSITION_ID_BYTES
+                || (!self.rules.contains_key(&key) && self.rules.len() >= self.config.max_rules)
+            {
+                over_limit += 1;
+                continue;
+            }
+            self.insert_rule(key, buckets);
+            stats.restored += 1;
+        }
+        if over_limit > 0 {
+            tracing::warn!(
+                rules = over_limit,
+                max_rules = self.config.max_rules,
+                "Left out restored disposition rules over max_rules or the rule_id length limit"
+            );
         }
         let seen_cutoff = now - self.config.window_secs();
         for (ts, key) in snapshot.seen {
@@ -653,6 +735,118 @@ mod tests {
         let stats = untenanted.restore_detailed(snap, 1000, false).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(stats.discarded_tenanted, 1);
+    }
+
+    #[test]
+    fn new_rules_past_max_rules_are_refused() {
+        let mut store = DispositionStore::new(DispositionConfig {
+            min_sample: 1,
+            max_rules: 2,
+            ..Default::default()
+        });
+        assert_eq!(
+            store.apply(&disp("a", "true_positive", 10), 10),
+            IngestOutcome::Accepted
+        );
+        assert_eq!(
+            store.apply(&disp("b", "true_positive", 11), 11),
+            IngestOutcome::Accepted
+        );
+        assert_eq!(
+            store.apply(&disp("c", "true_positive", 12), 12),
+            IngestOutcome::RuleCapReached
+        );
+        assert_eq!(
+            store.apply(&disp("a", "false_positive", 13), 13),
+            IngestOutcome::Accepted,
+            "a rule already counted keeps counting"
+        );
+        assert_eq!(store.rule_count(), 2);
+        // A refused record leaves no idempotency key behind.
+        let mut sorted = store.rule_ids();
+        sorted.sort();
+        assert_eq!(sorted, ["a", "b"]);
+        let day = 24 * 60 * 60;
+        let later = 12 + 40 * day;
+        let gone = store.prune(later);
+        assert_eq!(gone.len(), 2);
+        assert!(store.rule_ids().is_empty());
+        assert_eq!(
+            store.apply(&disp("c", "true_positive", later), later),
+            IngestOutcome::Accepted
+        );
+    }
+
+    #[test]
+    fn a_flood_of_distinct_rule_ids_stops_at_max_rules() {
+        let mut store = DispositionStore::new(cfg(1));
+        let now = 1_000_000;
+        let mut refused = 0;
+        for i in 0..100_000 {
+            if store.apply(&disp(&format!("rule-{i}"), "false_positive", now), now)
+                == IngestOutcome::RuleCapReached
+            {
+                refused += 1;
+            }
+        }
+        assert_eq!(store.rule_count(), DEFAULT_MAX_RULES);
+        assert_eq!(refused, 100_000 - DEFAULT_MAX_RULES);
+    }
+
+    #[test]
+    fn a_timestamp_older_than_the_window_leaves_no_entry() {
+        let mut store = DispositionStore::new(cfg(1));
+        let day = 24 * 60 * 60;
+        let now = 100 * day;
+        let outcome = store.apply(&disp("r", "false_positive", now - 40 * day), now);
+        assert!(matches!(outcome, IngestOutcome::Rejected(_)), "{outcome:?}");
+        assert_eq!(store.rule_count(), 0);
+        assert!(store.snapshot().seen.is_empty());
+    }
+
+    #[test]
+    fn a_cross_tenant_ratio_reads_only_its_own_rule() {
+        let ratio_reads = |other_rules: usize| {
+            let mut store = DispositionStore::new(DispositionConfig {
+                min_sample: 1,
+                max_rules: usize::MAX,
+                ..Default::default()
+            });
+            for tenant in ["a", "b"] {
+                store.apply(&disp_tenant("r", "false_positive", 10, tenant), 10);
+            }
+            for i in 0..other_rules {
+                store.apply(&disp(&format!("other-{i}"), "true_positive", 10), 10);
+            }
+            store.entries_read.set(0);
+            assert_eq!(store.ratio("r"), Some(1.0));
+            store.entries_read.get()
+        };
+        assert_eq!(ratio_reads(10), 2);
+        assert_eq!(
+            ratio_reads(20_000),
+            2,
+            "the work does not grow with other rules"
+        );
+    }
+
+    #[test]
+    fn restore_applies_max_rules() {
+        let mut store = DispositionStore::new(cfg(1));
+        for i in 0..5 {
+            store.apply(&disp(&format!("r{i}"), "true_positive", 100), 100);
+        }
+        let mut small = DispositionStore::new(DispositionConfig {
+            min_sample: 1,
+            max_rules: 3,
+            ..Default::default()
+        });
+        let stats = small
+            .restore_detailed(store.snapshot(), 100, false)
+            .unwrap();
+        assert_eq!(stats.restored, 3);
+        assert_eq!(small.rule_count(), 3);
+        assert_eq!(small.rule_ids().len(), 3);
     }
 
     #[test]

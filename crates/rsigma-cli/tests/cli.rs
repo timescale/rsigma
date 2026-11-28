@@ -22,6 +22,7 @@ mod cli_daemon_capture;
 mod cli_daemon_correlations;
 mod cli_daemon_cross_rule_ac;
 mod cli_daemon_delivery;
+mod cli_daemon_dispositions;
 mod cli_daemon_dynamic;
 mod cli_daemon_enrichment;
 mod cli_daemon_enrichment_logs;

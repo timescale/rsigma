@@ -101,6 +101,17 @@ pub struct RawDisposition {
 /// Maximum accepted length of the free-text `note` field, in bytes.
 pub const MAX_NOTE_BYTES: usize = 2048;
 
+/// Maximum accepted length of `rule_id`, `fingerprint`, `incident_id`, and
+/// `analyst`, in bytes.
+pub const MAX_DISPOSITION_ID_BYTES: usize = 256;
+
+/// Most records one `POST /api/v1/dispositions` body may carry.
+pub const MAX_DISPOSITIONS_PER_REQUEST: usize = 1000;
+
+/// How far past ingest time a disposition `timestamp` may be. A timestamp
+/// within the skew is placed at ingest time; a later one is rejected.
+pub const MAX_DISPOSITION_CLOCK_SKEW_SECS: i64 = 300;
+
 /// A validated, normalized disposition ready for the store.
 ///
 /// `rule_id` is `None` only for an `incident`-scoped record that the daemon has
@@ -143,6 +154,23 @@ impl Disposition {
             None => DispositionScope::Detection,
         };
 
+        for (field, value) in [
+            ("rule_id", &raw.rule_id),
+            ("fingerprint", &raw.fingerprint),
+            ("incident_id", &raw.incident_id),
+            ("analyst", &raw.analyst),
+        ] {
+            if value
+                .as_ref()
+                .is_some_and(|v| v.len() > MAX_DISPOSITION_ID_BYTES)
+            {
+                return Err(DispositionError::field(
+                    field,
+                    format!("exceeds the {MAX_DISPOSITION_ID_BYTES}-byte limit"),
+                ));
+            }
+        }
+
         let rule_id = raw.rule_id.filter(|s| !s.is_empty());
         let incident_id = raw.incident_id.filter(|s| !s.is_empty());
         let fingerprint = raw.fingerprint.filter(|s| !s.is_empty());
@@ -170,6 +198,13 @@ impl Disposition {
             Some(ts) => parse_rfc3339(ts)?,
             None => now,
         };
+        if timestamp > now.saturating_add(MAX_DISPOSITION_CLOCK_SKEW_SECS) {
+            return Err(DispositionError::field(
+                "timestamp",
+                format!("is more than {MAX_DISPOSITION_CLOCK_SKEW_SECS} seconds in the future"),
+            ));
+        }
+        let timestamp = timestamp.min(now);
 
         if let Some(note) = raw.note.as_deref()
             && note.len() > MAX_NOTE_BYTES
@@ -397,7 +432,7 @@ mod tests {
 
         let d = Disposition::from_raw(
             raw(r#"{"rule_id": "r", "verdict": "true_positive", "timestamp": "2026-01-01T00:00:00Z"}"#),
-            42,
+            1_767_225_700,
         )
         .unwrap();
         assert_eq!(d.timestamp, 1_767_225_600);
@@ -408,6 +443,37 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, DispositionError::Field { ref field, .. } if field == "timestamp"));
+    }
+
+    #[test]
+    fn future_timestamps_are_rejected_and_small_skew_is_clamped() {
+        let now = 1_767_225_600; // 2026-01-01T00:00:00Z
+        let at = |ts: &str| {
+            Disposition::from_raw(
+                raw(&format!(
+                    r#"{{"rule_id": "r", "verdict": "true_positive", "timestamp": "{ts}"}}"#
+                )),
+                now,
+            )
+        };
+        let err = at("2026-01-01T00:05:01Z").unwrap_err();
+        assert!(matches!(err, DispositionError::Field { ref field, .. } if field == "timestamp"));
+        assert_eq!(at("2026-01-01T00:05:00Z").unwrap().timestamp, now);
+        assert_eq!(at("2025-12-31T23:00:00Z").unwrap().timestamp, now - 3600);
+    }
+
+    #[test]
+    fn identity_fields_are_length_bounded() {
+        for field in ["rule_id", "fingerprint", "incident_id", "analyst"] {
+            let long = "x".repeat(MAX_DISPOSITION_ID_BYTES + 1);
+            let mut value = serde_json::json!({"rule_id": "r", "verdict": "true_positive"});
+            value[field] = long.into();
+            let err = Disposition::from_raw(raw(&value.to_string()), 1).unwrap_err();
+            assert!(
+                matches!(err, DispositionError::Field { field: ref f, .. } if f == field),
+                "{field}"
+            );
+        }
     }
 
     #[test]

@@ -133,6 +133,7 @@ pub struct Metrics {
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
     pub disposition_ingest_errors_total: IntCounterVec,
+    pub disposition_tracked_rules: IntGauge,
     pub capture_incidents_open: IntGauge,
     pub capture_events_held: IntGauge,
     pub capture_bytes_held: IntGauge,
@@ -1409,7 +1410,13 @@ impl Metrics {
                     .inc_by(0);
             }
         }
-        for reason in ["parse", "validation"] {
+        for reason in [
+            "parse",
+            "validation",
+            "unknown_rule",
+            "rule_cap",
+            "batch_size",
+        ] {
             disposition_ingest_errors_total
                 .with_label_values(&[reason])
                 .inc_by(0);
@@ -1425,6 +1432,14 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(disposition_ingest_errors_total.clone()))
+            .unwrap();
+        let disposition_tracked_rules = IntGauge::with_opts(Opts::new(
+            "rsigma_disposition_tracked_rules",
+            "(tenant, rule) pairs the disposition store holds counts for",
+        ))
+        .unwrap();
+        registry
+            .register(Box::new(disposition_tracked_rules.clone()))
             .unwrap();
 
         let capture_incidents_open = IntGauge::with_opts(Opts::new(
@@ -1863,6 +1878,7 @@ impl Metrics {
             dispositions_total,
             disposition_ingest_total,
             disposition_ingest_errors_total,
+            disposition_tracked_rules,
             capture_incidents_open,
             capture_events_held,
             capture_bytes_held,
