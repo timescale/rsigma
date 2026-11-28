@@ -6,6 +6,8 @@
 
 mod common;
 
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,30 +26,14 @@ struct McpHttp {
 }
 
 impl McpHttp {
+    /// Start a server on `0.0.0.0:0` and read the port it bound from its
+    /// listening line. Picking a free port first and passing it in leaves a
+    /// window in which a test in another binary can take the same port.
     fn spawn(extra: &[&str]) -> Self {
-        for _ in 0..5 {
-            if let Some(server) = Self::try_spawn(extra) {
-                return server;
-            }
-        }
-        panic!("MCP HTTP server did not start on any of 5 ports");
-    }
-
-    /// Start a server on a free port and wait for its own listening line, which
-    /// it prints after binding. A TCP connect alone can reach another test's
-    /// server that took the same port. Returns `None` when the server exits
-    /// first, for example because the port was taken before it could bind.
-    fn try_spawn(extra: &[&str]) -> Option<Self> {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         let rules = tempfile::tempdir().unwrap();
         let stderr = tempfile::NamedTempFile::new().unwrap();
-        let child = StdCommand::new(rsigma_bin())
-            .args(["mcp", "serve", "--allow-plaintext", "--http"])
-            .arg(format!("0.0.0.0:{port}"))
+        let mut child = StdCommand::new(rsigma_bin())
+            .args(["mcp", "serve", "--allow-plaintext", "--http", "0.0.0.0:0"])
             .arg("--rules-dir")
             .arg(rules.path())
             .args(extra)
@@ -56,26 +42,24 @@ impl McpHttp {
             .stderr(stderr.reopen().unwrap())
             .spawn()
             .expect("spawn rsigma mcp serve");
-        let mut server = McpHttp {
-            child,
-            port,
-            stderr,
-            _rules: rules,
-        };
-        let ready = format!("listening on http://0.0.0.0:{port}/mcp");
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if server.stderr().contains(&ready) {
-                return Some(server);
+            let log = std::fs::read_to_string(stderr.path()).unwrap();
+            if let Some(port) = listening_port(&log) {
+                return McpHttp {
+                    child,
+                    port,
+                    stderr,
+                    _rules: rules,
+                };
             }
-            if server.child.try_wait().unwrap().is_some() {
-                return None;
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("MCP HTTP server exited with {status}: {log}");
             }
-            assert!(
-                Instant::now() < deadline,
-                "MCP HTTP server did not start: {}",
-                server.stderr()
-            );
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("MCP HTTP server did not start: {log}");
+            }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -86,25 +70,46 @@ impl McpHttp {
 
     /// POST an `initialize` request with the given `Host` header and optional
     /// bearer token, returning the status code.
+    ///
+    /// The request goes out in a single write. The server answers 401 and 403
+    /// without reading the body, and when it closes the connection with body
+    /// bytes still unread, Windows resets it and the client loses the response.
     fn initialize(&self, host: &str, token: Option<&str>) -> u16 {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .build()
-            .into();
-        let mut request = agent
-            .post(format!("http://127.0.0.1:{}/mcp", self.port))
-            .header("host", host)
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream");
+        let mut request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
+             Accept: application/json, text/event-stream\r\nContent-Length: {}\r\n\
+             Connection: close\r\n",
+            INIT_BODY.len()
+        );
         if let Some(token) = token {
-            request = request.header("authorization", format!("Bearer {token}"));
+            request.push_str(&format!("Authorization: Bearer {token}\r\n"));
         }
-        request
-            .send(INIT_BODY)
-            .expect("POST /mcp failed")
-            .status()
-            .as_u16()
+        request.push_str("\r\n");
+        request.push_str(INIT_BODY);
+
+        let mut stream = TcpStream::connect(("127.0.0.1", self.port)).expect("connect to /mcp");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+            .write_all(request.as_bytes())
+            .expect("POST /mcp failed");
+        let mut status_line = String::new();
+        BufReader::new(stream)
+            .read_line(&mut status_line)
+            .expect("read the status line");
+        status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or_else(|| panic!("malformed status line {status_line:?}"))
     }
+}
+
+/// The port in `listening on http://0.0.0.0:<port>/mcp`.
+fn listening_port(log: &str) -> Option<u16> {
+    let rest = log.split("listening on http://0.0.0.0:").nth(1)?;
+    rest.split('/').next()?.parse().ok()
 }
 
 impl Drop for McpHttp {

@@ -345,12 +345,14 @@ async fn serve_http_transport(
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Report the bound address, so a `:0` bind prints the port it was given.
+    let local = listener.local_addr()?;
 
     if tls_requested {
-        return serve_http_tls(handler, listener, options, addr, args).await;
+        return serve_http_tls(handler, listener, options, local, args).await;
     }
 
-    eprintln!("MCP Streamable HTTP server listening on http://{addr}/mcp");
+    eprintln!("MCP Streamable HTTP server listening on http://{local}/mcp");
     rsigma_mcp::serve_http_with(handler, listener, options).await
 }
 

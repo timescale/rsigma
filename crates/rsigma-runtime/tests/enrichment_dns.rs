@@ -161,7 +161,9 @@ async fn on_error_null_injects_null_for_a_timeout() {
         results[0].header.enrichments.as_ref().unwrap()["resolved"],
         json!(null)
     );
-    assert_eq!(stub.query_count("slow.example.com.", RecordType::A), 1);
+    // The resolver's per-attempt timeout equals the enricher's, so hickory's
+    // retry can go out just before the enricher gives up.
+    assert!(stub.query_count("slow.example.com.", RecordType::A) >= 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
