@@ -4,7 +4,7 @@ All notable changes to RSigma are documented in this file. Each entry correspond
 
 ## [Unreleased]
 
-### Alerts, incidents, and other stateful keys merge only on equal identities
+### Alerts, incidents, and other stateful keys merge only on equal identities (#808)
 
 The dedup store, the `group_by` incident store, and the capture ring keyed on a 64-bit FNV-1a digest of a delimiter-joined string. Results merged into one alert, one incident, and one capture generation when their digests collided, and also whenever their strings matched: a selector value containing the separator could shift text into the next selector, an absent selector matched the string `"\u0000null"`, JSON `null` matched `"null"`, and `123` matched `"123"`. A collision could fold away an alert or put two tenants' results in one incident.
 
