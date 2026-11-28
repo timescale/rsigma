@@ -35,10 +35,12 @@ fn link_dir(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
     #[cfg(windows)]
     {
-        let target = std::path::absolute(target).unwrap();
+        // `cmd` reads a `/` inside an argument as the start of a switch.
+        let native = |path: &Path| PathBuf::from(path.to_string_lossy().replace('/', "\\"));
+        let target = native(&std::path::absolute(target).unwrap());
         let output = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(link)
+            .arg(native(link))
             .arg(&target)
             .output()
             .unwrap();

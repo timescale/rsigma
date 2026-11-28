@@ -44,10 +44,12 @@ fn link_dir(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
     #[cfg(windows)]
     {
+        // `cmd` reads a `/` inside an argument as the start of a switch.
+        let native = |path: &Path| PathBuf::from(path.to_string_lossy().replace('/', "\\"));
         let output = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
-            .arg(link)
-            .arg(target)
+            .arg(native(link))
+            .arg(native(target))
             .output()
             .unwrap();
         assert!(output.status.success(), "mklink /J failed: {output:?}");
