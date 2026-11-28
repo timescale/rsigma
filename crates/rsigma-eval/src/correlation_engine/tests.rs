@@ -6823,7 +6823,33 @@ fn a_negated_hit_between_two_triggers_covers_both_only_under_temporal() {
     let fired = engine.finalize();
     assert_eq!(fired.len(), 1);
     assert_eq!(
-        fired[0].as_correlation().unwrap().absence.as_ref().unwrap().deadline,
+        fired[0]
+            .as_correlation()
+            .unwrap()
+            .absence
+            .as_ref()
+            .unwrap()
+            .deadline,
         540
     );
+}
+
+#[test]
+fn an_invalid_absence_grace_fails_to_compile_only_on_an_absence_correlation() {
+    for grace in ["30seconds", "30"] {
+        let yaml = format!(
+            "{}{TEMPORAL}rsigma.absence_grace: {grace}\n",
+            absence_detections()
+        );
+        let collection = parse_sigma_yaml(&yaml).unwrap();
+        let mut engine = CorrelationEngine::new(CorrelationConfig::default());
+        let error = engine.add_collection(&collection).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid rsigma.absence_grace"),
+            "{grace}: {error}"
+        );
+    }
+
+    let threshold = TEMPORAL.replace("a and not b", "a and b") + "rsigma.absence_grace: 30\n";
+    absence_engine(&threshold, CorrelationConfig::default());
 }

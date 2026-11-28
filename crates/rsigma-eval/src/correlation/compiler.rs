@@ -64,14 +64,21 @@ pub fn compile_correlation(rule: &CorrelationRule) -> Result<CompiledCorrelation
             let grace_secs = rule
                 .custom_attributes
                 .get("rsigma.absence_grace")
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    Timespan::parse(s).map(|ts| ts.seconds).map_err(|_| {
-                        EvalError::CorrelationError(format!(
-                            "invalid rsigma.absence_grace '{s}' (correlation: {})",
-                            rule.title
-                        ))
-                    })
+                .map(|value| {
+                    value
+                        .as_str()
+                        .and_then(|s| Timespan::parse(s).ok())
+                        .map(|ts| ts.seconds)
+                        .ok_or_else(|| {
+                            let shown = value
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("{value:?}"));
+                            EvalError::CorrelationError(format!(
+                                "invalid rsigma.absence_grace '{shown}', expected a duration such as 30s (correlation: {})",
+                                rule.title
+                            ))
+                        })
                 })
                 .transpose()?
                 .unwrap_or(0);
