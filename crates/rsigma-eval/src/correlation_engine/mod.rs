@@ -2746,15 +2746,23 @@ impl<L> CorrelationEngine<L> {
         //   whole group once it is stale (no event within its bucket span /
         //   session gap), which is exactly the point at which the next arrival
         //   would reset it anyway.
-        let specs: Vec<(u64, WindowMode, Option<u64>)> = self
+        let specs: Vec<(u64, WindowMode, Option<u64>, u64)> = self
             .correlations
             .iter()
-            .map(|c| (c.timespan_secs, c.window_mode, c.gap_secs))
+            .enumerate()
+            .map(|(idx, c)| {
+                (
+                    c.timespan_secs,
+                    c.window_mode,
+                    c.gap_secs,
+                    self.absence_grace(idx),
+                )
+            })
             .collect();
 
         let mut removed_keys = Vec::new();
         self.state.retain(|key, state| {
-            if let Some(&(timespan, mode, gap)) = specs.get(key.corr_idx) {
+            if let Some(&(timespan, mode, gap, _)) = specs.get(key.corr_idx) {
                 match mode {
                     WindowMode::Sliding => {
                         state.evict(now_secs - timespan as i64, timespan);
@@ -2791,9 +2799,9 @@ impl<L> CorrelationEngine<L> {
         // window state (dropped above when the group went stale).
         let state = &self.state;
         self.event_buffers.retain(|key, buf| {
-            if let Some(&(timespan, mode, _)) = specs.get(key.corr_idx) {
+            if let Some(&(timespan, mode, _, grace)) = specs.get(key.corr_idx) {
                 match mode {
-                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
+                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64 - grace as i64),
                     WindowMode::Tumbling | WindowMode::Session => {
                         if !state.contains_key(key) {
                             return false;
@@ -2804,9 +2812,9 @@ impl<L> CorrelationEngine<L> {
             !buf.is_empty()
         });
         self.event_ref_buffers.retain(|key, buf| {
-            if let Some(&(timespan, mode, _)) = specs.get(key.corr_idx) {
+            if let Some(&(timespan, mode, _, grace)) = specs.get(key.corr_idx) {
                 match mode {
-                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64),
+                    WindowMode::Sliding => buf.evict(now_secs - timespan as i64 - grace as i64),
                     WindowMode::Tumbling | WindowMode::Session => {
                         if !state.contains_key(key) {
                             return false;
