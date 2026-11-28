@@ -312,6 +312,16 @@ fn build_sequence_condition(
     let threshold = match &rule.condition {
         CorrelationCondition::Threshold { predicates, .. } => extract_threshold(predicates)?,
         CorrelationCondition::Extended(_) => {
+            if rsigma_parser::analyze_absence(rule)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                return Err(ConvertError::UnsupportedCorrelation(
+                    "condition contains negated rules, which the rsigma engine evaluates at a deadline and which Fibratus cannot express as a query"
+                        .into(),
+                ));
+            }
             return Err(ConvertError::UnsupportedCorrelation(
                 "extended boolean correlation conditions are not yet supported (Fibratus sequence DSL is a list of stages, not a boolean tree)"
                     .into(),
@@ -1680,5 +1690,79 @@ correlation:
 "#)
         .unwrap_err();
         assert!(format!("{err}").contains("no converted query"));
+    }
+
+    #[test]
+    fn absence_condition_message_explains_the_deadline() {
+        let error = run(r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#)
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("negated rules"), "{message}");
+        assert!(message.contains("deadline"), "{message}");
+        assert!(message.contains("cannot express as a query"), "{message}");
+    }
+
+    #[test]
+    fn a_positive_extended_condition_keeps_the_generic_message() {
+        let error = run(r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Both
+correlation:
+    type: temporal
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and mfa-rule
+"#)
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("extended boolean correlation conditions are not yet supported"),
+            "{message}"
+        );
+        assert!(!message.contains("negated rules"), "{message}");
     }
 }

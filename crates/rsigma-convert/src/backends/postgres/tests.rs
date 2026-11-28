@@ -3031,3 +3031,93 @@ fn jsonb_paths_with_empty_segments_are_rejected() {
         .unwrap_err();
     assert!(matches!(err, ConvertError::InvalidIdentifier(_)), "{err}");
 }
+
+#[test]
+fn absence_condition_message_explains_the_deadline() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and not mfa-rule
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let backend = PostgresBackend::new();
+    let error = backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("negated rules"), "{message}");
+    assert!(message.contains("deadline"), "{message}");
+    assert!(message.contains("cannot express as a query"), "{message}");
+}
+
+#[test]
+fn a_positive_extended_condition_keeps_the_generic_message() {
+    let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Both
+correlation:
+    type: temporal
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 5m
+    condition: login-rule and mfa-rule
+"#;
+    let collection = parse_sigma_yaml(yaml).unwrap();
+    let backend = PostgresBackend::new();
+    let error = backend
+        .convert_correlation_rule(
+            &collection.correlations[0],
+            "default",
+            &PipelineState::default(),
+        )
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        message.contains("extended boolean conditions not yet supported"),
+        "{message}"
+    );
+    assert!(!message.contains("negated rules"), "{message}");
+}
