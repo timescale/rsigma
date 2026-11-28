@@ -6805,3 +6805,25 @@ fn importing_clocks_without_absence_rules_drops_them() {
     assert!(restored.clocks().is_empty());
     assert_eq!(restored.export_state().version, 2);
 }
+
+#[test]
+fn a_negated_hit_between_two_triggers_covers_both_only_under_temporal() {
+    let five_minutes = TEMPORAL.replace("timespan: 60s", "timespan: 5m");
+    let mut engine = absence_engine(&five_minutes, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "b", "alice", 60);
+    hit(&mut engine, "a", "alice", 240);
+    assert!(engine.finalize().is_empty());
+
+    let ordered = five_minutes.replace("type: temporal", "type: temporal_ordered");
+    let mut engine = absence_engine(&ordered, CorrelationConfig::default());
+    hit(&mut engine, "a", "alice", 0);
+    hit(&mut engine, "b", "alice", 60);
+    hit(&mut engine, "a", "alice", 240);
+    let fired = engine.finalize();
+    assert_eq!(fired.len(), 1);
+    assert_eq!(
+        fired[0].as_correlation().unwrap().absence.as_ref().unwrap().deadline,
+        540
+    );
+}
