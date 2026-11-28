@@ -6,6 +6,7 @@ use super::super::{
     FixPatch, LintRule, LintWarning, err, get_mapping, get_seq, get_str, key, safe_fix, warning,
 };
 use crate::condition::parse_condition;
+use crate::lint::pointer_segment;
 use crate::parser::parse_field_spec;
 use crate::validate::{check_modifiers, unresolved_references};
 
@@ -383,6 +384,15 @@ fn lint_detection_logic(det: &yaml_serde::Mapping, warnings: &mut Vec<LintWarnin
     }
 }
 
+/// The JSON-pointer path of one field key in one named detection, for a fix.
+fn fix_path(det_name: &str, field_key: &str) -> String {
+    format!(
+        "/detection/{}/{}",
+        pointer_segment(det_name),
+        pointer_segment(field_key)
+    )
+}
+
 fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWarning>) {
     match value {
         Value::Mapping(m) => {
@@ -404,7 +414,7 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                     w.fix = safe_fix(
                         format!("remove |all from '{field_key_str}'"),
                         vec![FixPatch::ReplaceKey {
-                            path: format!("/detection/{det_name}/{field_key_str}"),
+                            path: fix_path(det_name, field_key_str),
                             new_key,
                         }],
                     );
@@ -434,7 +444,7 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                         w.fix = safe_fix(
                             format!("remove |all from '{field_key_str}'"),
                             vec![FixPatch::ReplaceKey {
-                                path: format!("/detection/{det_name}/{field_key_str}"),
+                                path: fix_path(det_name, field_key_str),
                                 new_key,
                             }],
                         );
@@ -492,12 +502,12 @@ fn lint_detection_value(value: &Value, det_name: &str, warnings: &mut Vec<LintWa
                         format!("replace with '{new_key}: true'"),
                         vec![
                             FixPatch::ReplaceKey {
-                                path: format!("/detection/{det_name}/{field_key_str}"),
+                                path: fix_path(det_name, field_key_str),
                                 new_key,
                             },
-                            FixPatch::ReplaceValue {
-                                path: format!("/detection/{det_name}/{base_field}|exists"),
-                                new_value: "true".into(),
+                            FixPatch::ReplaceBool {
+                                path: fix_path(det_name, &format!("{base_field}|exists")),
+                                new_value: true,
                             },
                         ],
                     );
@@ -617,6 +627,9 @@ mod tests {
             match p {
                 FixPatch::ReplaceValue { path, new_value } => {
                     writeln!(s, "patch[{i}]: ReplaceValue {path} -> {new_value}").unwrap();
+                }
+                FixPatch::ReplaceBool { path, new_value } => {
+                    writeln!(s, "patch[{i}]: ReplaceBool {path} -> {new_value}").unwrap();
                 }
                 FixPatch::ReplaceKey { path, new_key } => {
                     writeln!(s, "patch[{i}]: ReplaceKey {path} -> {new_key}").unwrap();
@@ -1931,7 +1944,28 @@ detection:
         title: replace with 'CommandLine|exists: true'
         disposition: Safe
         patch[0]: ReplaceKey /detection/sel/CommandLine -> CommandLine|exists
-        patch[1]: ReplaceValue /detection/sel/CommandLine|exists -> true
+        patch[1]: ReplaceBool /detection/sel/CommandLine|exists -> true
+        ");
+    }
+
+    #[test]
+    fn fix_paths_escape_slashes_in_names() {
+        let w = lint(
+            r#"
+title: Test
+logsource:
+    category: test
+detection:
+    sel/a:
+        dir/name~x|all: one
+    condition: all of them
+"#,
+        );
+        let fix = find_fix(&w, LintRule::SingleValueAllModifier).expect("should have fix");
+        insta::assert_snapshot!(fix_summary(fix), @r"
+        title: remove |all from 'dir/name~x|all'
+        disposition: Safe
+        patch[0]: ReplaceKey /detection/sel~1a/dir~1name~0x|all -> dir/name~x
         ");
     }
 }

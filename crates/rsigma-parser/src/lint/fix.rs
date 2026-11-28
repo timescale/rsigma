@@ -42,26 +42,38 @@ pub struct SourceFixOutcome {
 /// Convert an rsigma JSON-pointer path (e.g. "/tags/2", "/detection/sel/CommandLine|contains")
 /// into a `yamlpath::Route` with owned components.
 ///
-/// JSON-pointer segments that parse as `usize` become `Index`, others become `Key`.
-/// Leading "/" is stripped; an empty/root path returns an empty route.
+/// JSON-pointer segments that parse as `usize` become `Index`, others become
+/// `Key`, with `~1` and `~0` unescaped to `/` and `~`. Leading "/" is stripped;
+/// an empty/root path returns an empty route.
 pub fn json_pointer_to_route(path: &str) -> Route<'static> {
+    Route::from(
+        pointer_segments(path)
+            .into_iter()
+            .map(|segment| match segment {
+                Segment::Index(idx) => Component::Index(idx),
+                Segment::Key(key) => Component::Key(Cow::Owned(key)),
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+enum Segment {
+    Index(usize),
+    Key(String),
+}
+
+fn pointer_segments(path: &str) -> Vec<Segment> {
     let trimmed = path.strip_prefix('/').unwrap_or(path);
     if trimmed.is_empty() {
-        return Route::default();
+        return Vec::new();
     }
-
-    let components: Vec<Component<'static>> = trimmed
+    trimmed
         .split('/')
-        .map(|segment| {
-            if let Ok(idx) = segment.parse::<usize>() {
-                Component::Index(idx)
-            } else {
-                Component::Key(Cow::Owned(segment.to_string()))
-            }
+        .map(|segment| match segment.parse::<usize>() {
+            Ok(idx) => Segment::Index(idx),
+            Err(_) => Segment::Key(segment.replace("~1", "/").replace("~0", "~")),
         })
-        .collect();
-
-    Route::from(components)
+        .collect()
 }
 
 /// Apply a single [`FixPatch`] to a `yamlpath::Document`, returning a new Document.
@@ -81,6 +93,13 @@ pub fn apply_single_fix_patch(
             };
             yamlpatch::apply_yaml_patches(doc, &[yp]).map_err(|e| e.to_string())
         }
+        FixPatch::ReplaceBool { path, new_value } => {
+            let yp = yamlpatch::Patch {
+                route: json_pointer_to_route(path),
+                operation: yamlpatch::Op::Replace(yaml_serde::Value::Bool(*new_value)),
+            };
+            yamlpatch::apply_yaml_patches(doc, &[yp]).map_err(|e| e.to_string())
+        }
         FixPatch::ReplaceKey { path, new_key } => apply_rename_key(doc, path, new_key),
         FixPatch::Remove { path } => {
             let yp = yamlpatch::Patch {
@@ -93,7 +112,8 @@ pub fn apply_single_fix_patch(
 }
 
 /// Rename a YAML key in-place using `query_key_only` to get the exact
-/// byte span of the key, then replacing it in the document source.
+/// byte span of the key, then replacing it in the document source. The new
+/// key is quoted when YAML would not read it back plain.
 pub fn apply_rename_key(
     doc: &yamlpath::Document,
     path: &str,
@@ -107,7 +127,10 @@ pub fn apply_rename_key(
 
     let (start, end) = key_feature.location.byte_span;
     let mut patched = doc.source().to_string();
-    patched.replace_range(start..end, new_key);
+    patched.replace_range(
+        start..end,
+        &crate::style::encode_key(new_key, crate::style::KeyCtx::FieldKey),
+    );
 
     yamlpath::Document::new(patched).map_err(|e| format!("re-parse after key rename failed: {e}"))
 }
@@ -115,58 +138,171 @@ pub fn apply_rename_key(
 /// Apply every safe fix from `warnings` to `source`, returning the rewritten
 /// source plus applied/failed counts.
 ///
-/// Each warning's patches are applied sequentially against a running document
-/// (so routes stay valid as the source mutates). A fix counts as `applied`
-/// only when all of its patches land; the first conflicting patch aborts that
-/// fix and counts it as `failed`. Unsafe fixes and warnings without a fix are
+/// Each fix lands on the first YAML document of `source` it changes, in
+/// document order, so identical findings in several documents of one file are
+/// fixed once each. A fix counts as `applied` only when all of its patches
+/// land, the document then reads back as exactly the requested edit, and the
+/// edit adds no Sigma parse error; otherwise the document is left as it was
+/// and the fix counts as `failed`. Unsafe fixes and warnings without a fix are
 /// ignored. An unparseable document fails every safe fix and returns the
 /// source unchanged.
 pub fn apply_fixes_to_source(source: &str, warnings: &[&LintWarning]) -> SourceFixOutcome {
-    let safe_fixes = || {
-        warnings.iter().filter(|w| {
-            w.fix
-                .as_ref()
-                .is_some_and(|f| f.disposition == FixDisposition::Safe)
-        })
-    };
-
-    let mut current_doc = match yamlpath::Document::new(source.to_string()) {
-        Ok(d) => d,
-        Err(_) => {
-            return SourceFixOutcome {
-                fixed_source: source.to_string(),
-                applied: 0,
-                failed: safe_fixes().count(),
-            };
-        }
-    };
-
+    let mut documents = split_documents(source);
     let mut applied = 0usize;
     let mut failed = 0usize;
 
-    for w in safe_fixes() {
-        let fix = w.fix.as_ref().expect("filtered to fixes above");
-        let mut ok = true;
-        for patch in &fix.patches {
-            match apply_single_fix_patch(&current_doc, patch) {
-                Ok(new_doc) => current_doc = new_doc,
-                Err(_) => {
-                    failed += 1;
-                    ok = false;
-                    break;
+    let safe_fixes = warnings
+        .iter()
+        .filter_map(|w| w.fix.as_ref())
+        .filter(|f| f.disposition == FixDisposition::Safe);
+    for fix in safe_fixes {
+        let landed = documents.iter_mut().any(|document| {
+            match apply_fix_to_document(document, &fix.patches) {
+                Some(fixed) => {
+                    *document = fixed;
+                    true
                 }
+                None => false,
             }
-        }
-        if ok {
+        });
+        if landed {
             applied += 1;
+        } else {
+            failed += 1;
         }
     }
 
     SourceFixOutcome {
-        fixed_source: current_doc.source().to_string(),
+        fixed_source: documents.concat(),
         applied,
         failed,
     }
+}
+
+/// Apply `patches` to one YAML document's text and check the result, returning
+/// the fixed text, or `None` when a patch does not land, the text does not
+/// change, or the result is not the requested edit.
+fn apply_fix_to_document(text: &str, patches: &[FixPatch]) -> Option<String> {
+    let mut expected: yaml_serde::Value = yaml_serde::from_str(text).ok()?;
+    for patch in patches {
+        apply_to_value(&mut expected, patch)?;
+    }
+    let mut document = yamlpath::Document::new(text.to_string()).ok()?;
+    for patch in patches {
+        document = apply_single_fix_patch(&document, patch).ok()?;
+    }
+    let fixed = document.source();
+    if fixed == text {
+        return None;
+    }
+    let actual: yaml_serde::Value = yaml_serde::from_str(fixed).ok()?;
+    if actual != expected || sigma_errors(fixed) > sigma_errors(text) {
+        return None;
+    }
+    Some(fixed.to_string())
+}
+
+fn sigma_errors(text: &str) -> usize {
+    crate::parse_sigma_yaml(text).map_or(usize::MAX, |collection| collection.error_count())
+}
+
+/// Apply one patch to a parsed value, the way the source edit should change it.
+fn apply_to_value(root: &mut yaml_serde::Value, patch: &FixPatch) -> Option<()> {
+    let (path, edit) = match patch {
+        FixPatch::ReplaceValue { path, new_value } => (
+            path,
+            Edit::Replace(yaml_serde::Value::String(new_value.clone())),
+        ),
+        FixPatch::ReplaceBool { path, new_value } => {
+            (path, Edit::Replace(yaml_serde::Value::Bool(*new_value)))
+        }
+        FixPatch::ReplaceKey { path, new_key } => (path, Edit::Rename(new_key)),
+        FixPatch::Remove { path } => (path, Edit::Remove),
+    };
+    let mut segments = pointer_segments(path);
+    let last = segments.pop()?;
+    let mut parent = root;
+    for segment in segments {
+        parent = match (segment, parent) {
+            (Segment::Index(idx), yaml_serde::Value::Sequence(seq)) => seq.get_mut(idx)?,
+            (Segment::Key(key), yaml_serde::Value::Mapping(map)) => map.get_mut(key.as_str())?,
+            _ => return None,
+        };
+    }
+    match (last, parent, edit) {
+        (Segment::Index(idx), yaml_serde::Value::Sequence(seq), Edit::Replace(value)) => {
+            *seq.get_mut(idx)? = value;
+        }
+        (Segment::Index(idx), yaml_serde::Value::Sequence(seq), Edit::Remove) => {
+            if idx >= seq.len() {
+                return None;
+            }
+            seq.remove(idx);
+        }
+        (Segment::Key(key), yaml_serde::Value::Mapping(map), Edit::Replace(value)) => {
+            *map.get_mut(key.as_str())? = value;
+        }
+        (Segment::Key(key), yaml_serde::Value::Mapping(map), Edit::Remove) => {
+            map.shift_remove(key.as_str())?;
+        }
+        (Segment::Key(key), yaml_serde::Value::Mapping(map), Edit::Rename(new_key)) => {
+            if key != new_key && map.contains_key(new_key) {
+                return None;
+            }
+            map.get(key.as_str())?;
+            let renamed: yaml_serde::Mapping = std::mem::take(map)
+                .into_iter()
+                .map(|(k, v)| {
+                    if k.as_str() == Some(key.as_str()) {
+                        (yaml_serde::Value::String(new_key.to_string()), v)
+                    } else {
+                        (k, v)
+                    }
+                })
+                .collect();
+            *map = renamed;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+enum Edit<'a> {
+    Replace(yaml_serde::Value),
+    Rename(&'a str),
+    Remove,
+}
+
+/// Split a YAML stream into its documents' exact text, so the pieces
+/// concatenate back to `source`. A document starts at a `---` marker line,
+/// unless nothing but comments, blank lines, and directives came before it in
+/// the current piece, and after a `...` end marker line.
+fn split_documents(source: &str) -> Vec<String> {
+    let mut documents: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut has_content = false;
+    let mut ended = false;
+    for line in source.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        let is_marker = |marker: &str| {
+            bare.strip_prefix(marker)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+        };
+        let blank = bare.trim().is_empty() || bare.starts_with('#');
+        if (is_marker("---") && has_content) || (ended && !blank && !bare.starts_with('%')) {
+            documents.push(std::mem::take(&mut current));
+            has_content = false;
+            ended = false;
+        }
+        current.push_str(line);
+        if is_marker("...") {
+            ended = true;
+        } else if !blank && !bare.starts_with('%') && !is_marker("---") {
+            has_content = true;
+        }
+    }
+    documents.push(current);
+    documents
 }
 
 #[cfg(test)]
@@ -349,5 +485,124 @@ mod tests {
         let outcome = apply_fixes_to_source(broken, &fixable);
         assert_eq!(outcome.applied, 0);
         assert_eq!(outcome.fixed_source, broken);
+    }
+
+    fn fix_all(source: &str) -> SourceFixOutcome {
+        let warnings = lint_yaml_str(source);
+        let fixable: Vec<&LintWarning> = warnings.iter().filter(|w| w.fix.is_some()).collect();
+        apply_fixes_to_source(source, &fixable)
+    }
+
+    fn field_names(source: &str) -> Vec<String> {
+        let collection = crate::parse_sigma_yaml(source).unwrap();
+        assert!(!collection.has_errors(), "{:?}", collection.diagnostics);
+        let mut names = Vec::new();
+        for rule in &collection.rules {
+            for detection in rule.detection.named.values() {
+                if let crate::ast::Detection::AllOf(items) = detection {
+                    for item in items {
+                        names.push(format!(
+                            "{}|{:?}",
+                            item.field.name.as_deref().unwrap_or(""),
+                            item.field.modifiers
+                        ));
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn wildcard_only_fix_writes_a_boolean() {
+        let source = "title: Test\nlogsource:\n    category: test\ndetection:\n    sel:\n        CommandLine: '*'\n    condition: sel\n";
+        let outcome = fix_all(source);
+        assert_eq!(outcome.applied, 1, "{}", outcome.fixed_source);
+        assert!(
+            outcome.fixed_source.contains("CommandLine|exists: true\n"),
+            "{}",
+            outcome.fixed_source
+        );
+        assert_eq!(field_names(&outcome.fixed_source), ["CommandLine|[Exists]"]);
+    }
+
+    #[test]
+    fn renamed_keys_stay_quoted_when_yaml_needs_it() {
+        for key in [
+            "x: y",
+            "#hash",
+            "a #b",
+            "- dash",
+            "tab\there",
+            "{flow}",
+            "\"dq\"",
+        ] {
+            let source = format!(
+                "title: Test\nlogsource:\n    category: test\ndetection:\n    sel:\n        {}: v\n    condition: sel\n",
+                crate::style::encode_key(&format!("{key}|all"), crate::style::KeyCtx::FieldKey)
+            );
+            let outcome = fix_all(&source);
+            assert_eq!(outcome.applied, 1, "{key:?}: {}", outcome.fixed_source);
+            assert_eq!(field_names(&outcome.fixed_source), [format!("{key}|[]")]);
+        }
+    }
+
+    #[test]
+    fn fixes_land_on_the_document_they_came_from() {
+        let source = "title: One\nstatus: test\nlogsource:\n    category: test\ndetection:\n    sel:\n        a: b\n    condition: sel\n---\ntitle: Two\nStatus: test\nlogsource:\n    category: test\ndetection:\n    sel:\n        a: b\n    condition: sel\n";
+        let outcome = fix_all(source);
+        assert_eq!(outcome.applied, 1);
+        let (first, second) = outcome.fixed_source.split_once("---\n").unwrap();
+        assert!(first.contains("status: test") && !first.contains("Status"));
+        assert!(second.contains("status: test") && !second.contains("Status"));
+    }
+
+    #[test]
+    fn identical_findings_in_two_documents_are_fixed_once_each() {
+        let doc = "title: T\nStatus: test\nlogsource:\n    category: test\ndetection:\n    sel:\n        a: b\n    condition: sel\n";
+        let source = format!("{doc}---\n{doc}");
+        let outcome = fix_all(&source);
+        assert_eq!(outcome.applied, 2);
+        assert!(!outcome.fixed_source.contains("Status"));
+        assert_eq!(outcome.fixed_source.matches("status: test").count(), 2);
+    }
+
+    #[test]
+    fn documents_split_back_into_the_same_text() {
+        for source in [
+            "",
+            "a: 1\n",
+            "# c\n---\na: 1\n---\nb: 2\n",
+            "%YAML 1.2\n---\na: 1\n...\n---\nb: 2\n",
+            "a: 1\n...\nb: 2\n",
+            "a: |\n    --- not a marker\nb: 2\r\n---\r\nc: 3",
+        ] {
+            assert_eq!(split_documents(source).concat(), source);
+        }
+        assert_eq!(split_documents("a: 1\n---\nb: 2\n").len(), 2);
+        assert_eq!(split_documents("---\na: 1\n").len(), 1);
+        assert_eq!(split_documents("a: 1\n...\nb: 2\n").len(), 2);
+    }
+
+    #[test]
+    fn a_patch_with_the_wrong_result_is_not_applied() {
+        let source = "title: Test\nStatus: test\nstatus: stable\n";
+        let rename = FixPatch::ReplaceKey {
+            path: "/Status".into(),
+            new_key: "status".into(),
+        };
+        assert!(apply_fix_to_document(source, &[rename]).is_none());
+
+        let missing = FixPatch::ReplaceValue {
+            path: "/level".into(),
+            new_value: "high".into(),
+        };
+        assert!(apply_fix_to_document(source, &[missing]).is_none());
+    }
+
+    #[test]
+    fn json_pointer_unescapes_slash_and_tilde() {
+        let route = json_pointer_to_route("/detection/a~1b/c~0d~01");
+        assert_snapshot!(format!("{route:?}"), @r#"Route { route: [Key("detection"), Key("a/b"), Key("c~d~1")] }"#);
     }
 }

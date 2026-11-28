@@ -312,6 +312,9 @@ mod tests {
                 super::super::super::FixPatch::ReplaceValue { path, new_value } => {
                     writeln!(s, "patch[{i}]: ReplaceValue {path} -> {new_value}").unwrap();
                 }
+                super::super::super::FixPatch::ReplaceBool { path, new_value } => {
+                    writeln!(s, "patch[{i}]: ReplaceBool {path} -> {new_value}").unwrap();
+                }
                 super::super::super::FixPatch::ReplaceKey { path, new_key } => {
                     writeln!(s, "patch[{i}]: ReplaceKey {path} -> {new_key}").unwrap();
                 }
