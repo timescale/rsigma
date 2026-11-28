@@ -335,11 +335,28 @@ fn run_correlation(
             first_fire = Some((index, timed.offset.original.clone()));
         }
     }
+    // A finite exemplar is the whole observation, so an absence obligation that
+    // never saw its negated rule fires at the end of the events.
+    let mut finalize_missing: Option<Vec<String>> = None;
+    if first_fire.is_none() {
+        let finalized = engine.finalize();
+        if let Some(result) = finalized.iter().find(|r| identity.matches(r)) {
+            first_fire = Some((events.len(), "the end of the events".to_string()));
+            finalize_missing = result
+                .as_correlation()
+                .and_then(|body| body.absence.as_ref())
+                .map(|absence| absence.missing.clone());
+        }
+    }
     let fired = first_fire.is_some();
     let diagnostic = match (first_fire, exemplar.expect) {
-        (Some((index, offset)), Expect::NoMatch) => Some(format!(
-            "the correlation fired at event index {index} (offset {offset})"
-        )),
+        (Some((index, offset)), Expect::NoMatch) => Some(match finalize_missing {
+            Some(missing) => format!(
+                "the correlation fired at the end of the events, because no {} arrived by the deadline",
+                missing.join(", ")
+            ),
+            None => format!("the correlation fired at event index {index} (offset {offset})"),
+        }),
         (None, Expect::Match) => Some(format!(
             "the correlation never fired across {} events",
             events.len()
@@ -934,6 +951,107 @@ detection:
 "#;
         let err = run_exemplars(&collection(yaml), &[]).unwrap_err();
         assert!(matches!(err, ExemplarRunError::AmbiguousTitle(_)), "{err}");
+    }
+
+    #[test]
+    fn absence_exemplar_matches_when_the_negated_rule_never_arrives() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules:
+        - login-rule
+        - mfa-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+custom_attributes:
+    rsigma.exemplars:
+        - expect: match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+        - expect: no-match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+              - offset: 10s
+                event: { EventType: mfa, User: alice }
+"#;
+        let report = run(yaml);
+        assert!(report.all_passed(), "{report:?}");
+        assert_eq!(report.results[0].actual, Expect::Match);
+        assert_eq!(report.results[1].actual, Expect::NoMatch);
+    }
+
+    #[test]
+    fn absence_no_match_diagnostic_names_the_missing_rule() {
+        let yaml = r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules:
+        - login-rule
+        - mfa-rule
+    group-by:
+        - User
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+custom_attributes:
+    rsigma.exemplars:
+        - expect: no-match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+"#;
+        let report = run(yaml);
+        assert!(!report.all_passed());
+        assert_eq!(
+            report.results[0].diagnostic.as_deref(),
+            Some(
+                "the correlation fired at the end of the events, because no mfa-rule arrived by \
+                 the deadline"
+            )
+        );
     }
 
     #[test]

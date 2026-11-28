@@ -605,6 +605,115 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Whether any unit has an absence correlation.
+    pub fn has_absence_correlations(&self) -> bool {
+        self.units.iter().any(|unit| match &unit.engine {
+            UnitEngine::Detection(_) => false,
+            UnitEngine::Correlation(engine) => engine.has_absence_correlations(),
+            UnitEngine::Routed(router) => router.has_absence_correlations(),
+        })
+    }
+
+    /// Tenants with a non-empty absence deadline index, across every unit.
+    pub fn absence_tenants(&self) -> Vec<Option<TenantId>> {
+        let mut tenants = Vec::new();
+        for unit in &self.units {
+            let unit_tenants = match &unit.engine {
+                UnitEngine::Detection(_) => Vec::new(),
+                UnitEngine::Correlation(engine) => engine.absence_tenants(),
+                UnitEngine::Routed(router) => router.absence_tenants(),
+            };
+            for tenant in unit_tenants {
+                if !tenants.contains(&tenant) {
+                    tenants.push(tenant);
+                }
+            }
+        }
+        tenants
+    }
+
+    /// Every tenant event-time clock, merged with the maximum per tenant across
+    /// units.
+    pub fn clocks(&self) -> Vec<(Option<TenantId>, i64)> {
+        let mut clocks: std::collections::BTreeMap<Option<TenantId>, i64> =
+            std::collections::BTreeMap::new();
+        for unit in &self.units {
+            let unit_clocks = match &unit.engine {
+                UnitEngine::Detection(_) => Vec::new(),
+                UnitEngine::Correlation(engine) => engine.clocks(),
+                UnitEngine::Routed(router) => router.clocks(),
+            };
+            for (tenant, clock) in unit_clocks {
+                let entry = clocks.entry(tenant).or_insert(clock);
+                *entry = (*entry).max(clock);
+            }
+        }
+        clocks.into_iter().collect()
+    }
+
+    /// Advance a tenant's event-time clock in every unit and fire the deadlines
+    /// that pass, stamping each result with its unit name.
+    pub fn advance_clock(&mut self, tenant: Option<&TenantId>, to_secs: i64) -> ProcessResult {
+        let mut results = Vec::new();
+        for unit in &mut self.units {
+            let mut batch = match &mut unit.engine {
+                UnitEngine::Detection(_) => Vec::new(),
+                UnitEngine::Correlation(engine) => engine.advance_clock(tenant, to_secs),
+                UnitEngine::Routed(router) => router.advance_clock(tenant, to_secs),
+            };
+            stamp_results(&unit.name, &mut batch);
+            results.extend(batch);
+        }
+        results
+    }
+
+    /// Fire every pending absence obligation in every unit, stamping each
+    /// result with its unit name.
+    pub fn finalize(&mut self) -> ProcessResult {
+        let mut results = Vec::new();
+        for unit in &mut self.units {
+            let mut batch = match &mut unit.engine {
+                UnitEngine::Detection(_) => Vec::new(),
+                UnitEngine::Correlation(engine) => engine.finalize(),
+                UnitEngine::Routed(router) => router.finalize(),
+            };
+            stamp_results(&unit.name, &mut batch);
+            results.extend(batch);
+        }
+        results
+    }
+
+    /// Number of absence groups with a pending deadline, summed across units.
+    pub fn absence_pending(&self) -> usize {
+        self.units
+            .iter()
+            .map(|unit| match &unit.engine {
+                UnitEngine::Detection(_) => 0,
+                UnitEngine::Correlation(engine) => engine.absence_pending(),
+                UnitEngine::Routed(router) => router.absence_pending(),
+            })
+            .sum()
+    }
+
+    /// Drain the absence outcome counters, summed across units.
+    pub fn take_absence_counters(&mut self) -> crate::AbsenceCounters {
+        let mut total = crate::AbsenceCounters::default();
+        for unit in &mut self.units {
+            let counters = match &mut unit.engine {
+                UnitEngine::Detection(_) => crate::AbsenceCounters::default(),
+                UnitEngine::Correlation(engine) => engine.take_absence_counters(),
+                UnitEngine::Routed(router) => router.take_absence_counters(),
+            };
+            total.fired += counters.fired;
+            total.cancelled += counters.cancelled;
+            total.refused_global_cap += counters.refused_global_cap;
+            total.refused_tenant_quota += counters.refused_tenant_quota;
+            total.refused_group_cap += counters.refused_group_cap;
+            total.late_negatives += counters.late_negatives;
+        }
+        total
+    }
+
     /// Export per-ruleset correlation state in one snapshot.
     pub fn export_state(&self) -> CorrelationSnapshot {
         let mut rulesets = BTreeMap::new();
@@ -1481,5 +1590,75 @@ detection:
 
         let stats = engines.ruleset_stats();
         assert_eq!(stats[0].tenants, vec![a]);
+    }
+
+    fn absence_unit(name: &str) -> RulesetUnit {
+        let collection = rsigma_parser::parse_sigma_yaml(
+            r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+"#,
+        )
+        .unwrap();
+        let mut engine = CorrelationEngine::new(crate::CorrelationConfig::default());
+        engine.add_collection(&collection).unwrap();
+        RulesetUnit {
+            name: Arc::from(name),
+            when_schemas: Vec::new(),
+            tenants: Vec::new(),
+            engine: UnitEngine::Correlation(Box::new(engine)),
+            field_set: RuleFieldSet::collect(&collection, &[], true),
+        }
+    }
+
+    #[test]
+    fn absence_forwarding_stamps_each_unit() {
+        let mut engines =
+            RulesetEngines::new(vec![absence_unit("a"), absence_unit("b")], None).unwrap();
+        let event = serde_json::json!({
+            "@timestamp": 1000,
+            "EventType": "login",
+            "User": "alice",
+        });
+        engines.process_event(&JsonEvent::borrow(&event));
+        assert!(engines.has_absence_correlations());
+        assert_eq!(engines.absence_pending(), 2);
+        assert_eq!(engines.absence_tenants(), vec![None]);
+        assert_eq!(engines.clocks(), vec![(None, 1000)]);
+
+        let fired = engines.advance_clock(None, 1061);
+        assert_eq!(fired.len(), 2);
+        let rulesets: Vec<Option<String>> = fired
+            .iter()
+            .map(|r| r.header.ruleset.as_ref().map(|name| name.to_string()))
+            .collect();
+        assert_eq!(rulesets, vec![Some("a".to_string()), Some("b".to_string())]);
+        assert_eq!(engines.absence_pending(), 0);
+        assert!(engines.finalize().is_empty());
+        assert_eq!(engines.take_absence_counters().fired, 2);
     }
 }

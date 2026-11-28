@@ -1455,15 +1455,8 @@ impl<L> CorrelationEngine<L> {
 
         // Action on match
         if action == CorrelationAction::Reset {
-            let was_pending = self
-                .state
-                .get(key)
-                .is_some_and(WindowState::absence_pending);
             if let Some(state) = self.state.get_mut(key) {
                 state.clear();
-            }
-            if was_pending {
-                self.absence_groups = self.absence_groups.saturating_sub(1);
             }
             self.index_clear(key);
             if let Some(buf) = self.event_buffers.get_mut(key) {
@@ -1848,13 +1841,7 @@ impl<L> CorrelationEngine<L> {
     /// Drop an absence group after its deadman fired. Its `last_alert` entry
     /// stays so suppression survives until the next heartbeat re-arms it.
     fn drop_absence_group(&mut self, key: &StateKey) {
-        if self
-            .state
-            .get(key)
-            .is_some_and(WindowState::absence_pending)
-        {
-            self.absence_groups = self.absence_groups.saturating_sub(1);
-        }
+        self.absence_groups = self.absence_groups.saturating_sub(1);
         self.state.remove(key);
         self.note_tenant_removal(key);
         self.event_buffers.remove(key);
@@ -2047,6 +2034,13 @@ impl<L> CorrelationEngine<L> {
                     self.drop_absence_group(&key);
                 }
             } else {
+                let pending = self
+                    .state
+                    .get(&key)
+                    .is_some_and(WindowState::absence_pending);
+                if !pending {
+                    self.absence_groups = self.absence_groups.saturating_sub(1);
+                }
                 self.refresh_absence_index(&key);
             }
         }
@@ -2996,6 +2990,7 @@ impl<L> CorrelationEngine<L> {
             .filter(|(_, state)| state.absence_pending())
             .map(|(key, _)| key.clone())
             .collect();
+        self.absence_groups = pending.len();
         self.deadlines.clear();
         for key in pending {
             self.refresh_absence_index(&key);

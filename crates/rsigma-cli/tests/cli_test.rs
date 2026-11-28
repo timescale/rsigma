@@ -185,3 +185,57 @@ fn test_missing_path_exits_rule_error() {
         .failure()
         .code(2);
 }
+
+#[test]
+fn absence_exemplar_passes_when_the_missing_rule_never_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("absence.yml");
+    std::fs::write(
+        &path,
+        r#"
+title: Login
+id: login-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: login
+    condition: selection
+---
+title: MFA
+id: mfa-rule
+logsource:
+    category: auth
+detection:
+    selection:
+        EventType: mfa
+    condition: selection
+---
+title: Login without MFA
+id: login-without-mfa
+correlation:
+    type: temporal_ordered
+    rules: [login-rule, mfa-rule]
+    group-by: [User]
+    timespan: 60s
+    condition: login-rule and not mfa-rule
+custom_attributes:
+    rsigma.exemplars:
+        - expect: match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+        - expect: no-match
+          events:
+              - offset: 0s
+                event: { EventType: login, User: alice }
+              - offset: 10s
+                event: { EventType: mfa, User: alice }
+"#,
+    )
+    .unwrap();
+    rsigma()
+        .args(["rule", "test", "--rules", path.to_str().unwrap()])
+        .assert()
+        .success();
+}
