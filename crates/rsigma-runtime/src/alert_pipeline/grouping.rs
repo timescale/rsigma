@@ -307,7 +307,9 @@ impl IncidentStore {
     }
 
     /// Assign a result to an incident, returning the incident id to annotate
-    /// the pass-through result with. Records guard hits via `on_guard`.
+    /// the pass-through result with, or `None` when it would open a new
+    /// incident while `max_open_incidents` is full. Records guard hits via
+    /// `on_guard`.
     #[cfg(test)]
     pub(crate) fn assign(
         &mut self,

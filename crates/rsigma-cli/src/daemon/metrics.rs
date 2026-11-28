@@ -21,6 +21,7 @@ pub struct Metrics {
     pub correlation_absence_cancelled_total: IntCounter,
     pub correlation_absence_refused_total: IntCounterVec,
     pub correlation_absence_late_negatives_total: IntCounter,
+    pub correlation_state_evictions_total: IntCounter,
     pub reloads_total: IntCounter,
     pub reloads_failed: IntCounter,
     pub api_auth_failures: IntCounterVec,
@@ -126,6 +127,7 @@ pub struct Metrics {
     pub inhibited_total: IntCounterVec,
     pub inhibit_sources_active: IntGauge,
     pub inhibit_sources_refused_total: IntCounterVec,
+    pub alert_pipeline_cap_refused_total: IntCounterVec,
     pub rule_false_positive_ratio: GaugeVec,
     pub dispositions_total: IntCounterVec,
     pub disposition_ingest_total: IntCounterVec,
@@ -244,6 +246,11 @@ impl Metrics {
                 .inc_by(0);
         }
         correlation_absence_pending.set(0);
+        let correlation_state_evictions_total = IntCounter::with_opts(Opts::new(
+            "rsigma_correlation_state_evictions_total",
+            "Correlation windows dropped because the state store hit max_state_entries",
+        ))
+        .unwrap();
         let reloads_total = IntCounter::with_opts(Opts::new(
             "rsigma_reloads_total",
             "Total rule reload attempts",
@@ -496,6 +503,9 @@ impl Metrics {
             .unwrap();
         registry
             .register(Box::new(correlation_absence_late_negatives_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(correlation_state_evictions_total.clone()))
             .unwrap();
         registry.register(Box::new(reloads_total.clone())).unwrap();
         registry.register(Box::new(reloads_failed.clone())).unwrap();
@@ -1306,6 +1316,22 @@ impl Metrics {
         registry
             .register(Box::new(inhibit_sources_refused_total.clone()))
             .unwrap();
+        let alert_pipeline_cap_refused_total = IntCounterVec::new(
+            Opts::new(
+                "rsigma_alert_pipeline_cap_refused_total",
+                "Results that passed through without a new dedup alert or incident because the store's global cap was full, by store (active_alerts, incidents)",
+            ),
+            &["store"],
+        )
+        .unwrap();
+        for store in ["active_alerts", "incidents"] {
+            alert_pipeline_cap_refused_total
+                .with_label_values(&[store])
+                .inc_by(0);
+        }
+        registry
+            .register(Box::new(alert_pipeline_cap_refused_total.clone()))
+            .unwrap();
 
         // Triage feedback loop (#70). The gauge and the per-rule disposition
         // counter label on `rule_title` to line up with
@@ -1667,6 +1693,7 @@ impl Metrics {
             correlation_absence_cancelled_total,
             correlation_absence_refused_total,
             correlation_absence_late_negatives_total,
+            correlation_state_evictions_total,
             reloads_total,
             reloads_failed,
             api_auth_failures,
@@ -1772,6 +1799,7 @@ impl Metrics {
             inhibited_total,
             inhibit_sources_active,
             inhibit_sources_refused_total,
+            alert_pipeline_cap_refused_total,
             rule_false_positive_ratio,
             dispositions_total,
             disposition_ingest_total,
@@ -1985,6 +2013,10 @@ impl MetricsHook for Metrics {
         self.correlation_absence_late_negatives_total.inc_by(count);
     }
 
+    fn on_correlation_cap_evictions(&self, count: u64) {
+        self.correlation_state_evictions_total.inc_by(count);
+    }
+
     fn on_tenant_quota_eviction(&self, store: &'static str) {
         self.tenant_quota_evictions_total
             .with_label_values(&[store])
@@ -2101,6 +2133,12 @@ impl MetricsHook for Metrics {
     fn on_inhibit_source_refused(&self, rule: &str) {
         self.inhibit_sources_refused_total
             .with_label_values(&[rule])
+            .inc();
+    }
+
+    fn on_alert_pipeline_cap_refused(&self, store: &'static str) {
+        self.alert_pipeline_cap_refused_total
+            .with_label_values(&[store])
             .inc();
     }
 

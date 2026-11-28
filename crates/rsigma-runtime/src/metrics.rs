@@ -244,6 +244,14 @@ pub trait MetricsHook: Send + Sync {
     /// engine skipped an untenanted event. `channel` is `rest`, `otlp_http`,
     /// `otlp_grpc`, or `engine`; `reason` is `no_tenant` or `untenanted_event`.
     fn on_tenant_rejected(&self, _channel: &'static str, _reason: &'static str) {}
+    /// `count` correlation windows were dropped because the state store hit
+    /// `max_state_entries`.
+    fn on_correlation_cap_evictions(&self, _count: u64) {}
+    /// A result could not open a new entry because a global alert-pipeline
+    /// cap was full, and passed through without one. `store` is
+    /// `active_alerts` (`dedup.max_active_alerts`) or `incidents`
+    /// (`group.caps.max_open_incidents`).
+    fn on_alert_pipeline_cap_refused(&self, _store: &'static str) {}
     /// `count` events were skipped for correlation because their timestamp
     /// was further ahead of the wall clock than `max_future_skew`.
     fn on_correlation_future_skipped(&self, _count: u64) {}

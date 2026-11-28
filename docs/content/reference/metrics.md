@@ -23,6 +23,7 @@ These always show up. They cover ingest, matches, queue depth, back-pressure, re
 | `rsigma_rule_parse_errors` | gauge | none | Rule documents that failed to parse and were left out of the currently loaded rule set. A refused reload leaves it unchanged. {{ added "0.26.0" }} |
 | `rsigma_cross_rule_ac_unindexed_fields` | gauge | none | Fields the cross-rule Aho-Corasick prefilter (`--cross-rule-ac`) left without an automaton in the current rule set, because a field had more than 100,000 distinct substring patterns or its automaton failed to build. Rules matching on such a field are always evaluated, so this only means the prefilter is doing less work. Zero without `--cross-rule-ac`. Refreshed on every scrape. {{ added "unreleased" }} |
 | `rsigma_correlation_state_entries` | gauge | none | Active entries in the correlation state. Watch versus the `max_state_entries` cap (default 100000). |
+| `rsigma_correlation_state_evictions_total` | counter | none | Correlation windows dropped because the state store hit `max_state_entries`: the stalest entries down to 90% of the cap. A rising count means correlations can miss matches whose windows were dropped; raise the cap or shorten the windows. {{ added "unreleased" }} |
 | `rsigma_correlation_future_events_skipped_total` | counter | none | Events that fed a correlation but were skipped for it because their timestamp was further ahead of the wall clock than `max_future_skew`. A rising count points at a source with a skewed clock or a timezone parsed wrong. {{ added "unreleased" }} |
 | `rsigma_reloads_total` | counter | none | Total reload attempts (file watcher, SIGHUP, `POST /api/v1/reload`). |
 | `rsigma_reloads_failed_total` | counter | none | Reload attempts that were refused, for example a compile error, every rule failing to parse, or any parse error under `--strict-rules`. The previous rules stay active. |
@@ -137,6 +138,7 @@ Exposed when the daemon is built with `daemon`. The fixed label sets on `rsigma_
 | `rsigma_dedup_results_total` | counter | `action` (`emitted`, `folded`, `repeat`, `resolved`) | Dedup outcomes: first fires emitted, duplicates folded, repeat re-emits, and resolved records. |
 | `rsigma_dedup_store_entries` | gauge | none | Active dedup alerts currently tracked. |
 | `rsigma_dedup_evictions_total` | counter | none | Active alerts evicted after resolving. |
+| `rsigma_alert_pipeline_cap_refused_total` | counter | `store` (`active_alerts`, `incidents`) | Results that passed through without opening a new dedup alert (`dedup.max_active_alerts` full) or a new incident (`group.caps.max_open_incidents` full). They are still delivered, un-deduplicated or without an `incident_id`. Both series are registered at startup. {{ added "unreleased" }} |
 | `rsigma_dedup_summaries_emitted_total` | counter | none | Dedup summary records emitted (repeat re-emits plus resolved records). |
 | `rsigma_incidents_open` | gauge | none | Open incidents currently tracked by the grouping stage. |
 | `rsigma_incidents_emitted_total` | counter | `trigger` (`group_wait`, `group_interval`, `repeat`, `resolved`) | Incident emissions by trigger. |

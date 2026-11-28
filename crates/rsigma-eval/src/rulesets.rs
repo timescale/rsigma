@@ -579,6 +579,19 @@ impl RulesetEngines {
             .sum()
     }
 
+    /// Entries evicted because a correlation store hit `max_state_entries`
+    /// since the previous call, summed across units.
+    pub fn take_cap_evictions(&mut self) -> u64 {
+        self.units
+            .iter_mut()
+            .map(|unit| match &mut unit.engine {
+                UnitEngine::Detection(_) => 0,
+                UnitEngine::Correlation(engine) => engine.take_cap_evictions(),
+                UnitEngine::Routed(router) => router.take_cap_evictions(),
+            })
+            .sum()
+    }
+
     /// Events skipped by `require_tenant` since the previous call, summed across
     /// units.
     pub fn take_untenanted_skipped(&mut self) -> u64 {

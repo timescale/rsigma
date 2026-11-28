@@ -676,6 +676,8 @@ fn test_hard_cap_evicts_the_stalest_groups() {
     // the two groups with the oldest latest timestamps go.
     let v = json!({"action": "click", "User": "newcomer"});
     engine.process_event_at(&JsonEvent::borrow(&v), 200);
+    assert_eq!(engine.take_cap_evictions(), 2);
+    assert_eq!(engine.take_cap_evictions(), 0, "the counter drains");
 
     let users: std::collections::HashSet<String> = engine
         .state

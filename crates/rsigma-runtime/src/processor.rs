@@ -453,6 +453,8 @@ impl LogProcessor {
         let batch_results = engine.process_batch(&event_refs);
         let skipped = engine.take_ruleset_skipped();
         let future_skipped = engine.take_future_skipped();
+        let quota_evictions = engine.take_tenant_quota_evictions();
+        let cap_evictions = engine.take_correlation_cap_evictions();
         let elapsed = start.elapsed().as_secs_f64();
         let per_event_latency = elapsed / event_refs.len() as f64;
 
@@ -465,6 +467,12 @@ impl LogProcessor {
         }
         self.refresh_idle(&engine, &[None]);
         self.report_absence_metrics(&mut engine, &[]);
+        for _ in 0..quota_evictions {
+            self.metrics.on_tenant_quota_eviction("correlation_state");
+        }
+        if cap_evictions > 0 {
+            self.metrics.on_correlation_cap_evictions(cap_evictions);
+        }
 
         // Phase 3: Merge results per input line and update metrics
         let mut line_results = empty_results(batch.len());
@@ -721,38 +729,55 @@ impl LogProcessor {
         };
 
         let start = Instant::now();
-        let (batch_results, state_entries, skipped, quota_evictions, untenanted, future_skipped) =
-            if concurrent {
-                let engine = engine_guard.read();
-                let results = engine
-                    .process_batch_shared_for_tenants(&event_refs, &event_tenants)
-                    .expect("concurrent path requires shared detection");
-                let state_entries = engine.stats().state_entries as u64;
-                (
-                    results,
-                    state_entries,
-                    engine.take_ruleset_skipped(),
-                    0,
-                    0,
-                    0,
-                )
+        let (
+            batch_results,
+            state_entries,
+            skipped,
+            quota_evictions,
+            cap_evictions,
+            untenanted,
+            future_skipped,
+        ) = if concurrent {
+            let engine = engine_guard.read();
+            let results = engine
+                .process_batch_shared_for_tenants(&event_refs, &event_tenants)
+                .expect("concurrent path requires shared detection");
+            let state_entries = engine.stats().state_entries as u64;
+            (
+                results,
+                state_entries,
+                engine.take_ruleset_skipped(),
+                0,
+                0,
+                0,
+                0,
+            )
+        } else {
+            let mut engine = engine_guard.write();
+            let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
+            let state_entries = engine.stats().state_entries as u64;
+            let skipped = engine.take_ruleset_skipped();
+            let quota = engine.take_tenant_quota_evictions();
+            let cap = engine.take_correlation_cap_evictions();
+            let untenanted = engine.take_untenanted_skipped();
+            let future = engine.take_future_skipped();
+            let idle_tenants: &[Option<TenantId>] = if event_tenants.is_empty() {
+                &[None]
             } else {
-                let mut engine = engine_guard.write();
-                let results = engine.process_batch_for_tenants(&event_refs, &event_tenants);
-                let state_entries = engine.stats().state_entries as u64;
-                let skipped = engine.take_ruleset_skipped();
-                let quota = engine.take_tenant_quota_evictions();
-                let untenanted = engine.take_untenanted_skipped();
-                let future = engine.take_future_skipped();
-                let idle_tenants: &[Option<TenantId>] = if event_tenants.is_empty() {
-                    &[None]
-                } else {
-                    &event_tenants
-                };
-                self.refresh_idle(&engine, idle_tenants);
-                self.report_absence_metrics(&mut engine, &[]);
-                (results, state_entries, skipped, quota, untenanted, future)
+                &event_tenants
             };
+            self.refresh_idle(&engine, idle_tenants);
+            self.report_absence_metrics(&mut engine, &[]);
+            (
+                results,
+                state_entries,
+                skipped,
+                quota,
+                cap,
+                untenanted,
+                future,
+            )
+        };
         let elapsed = start.elapsed().as_secs_f64();
         self.metrics
             .observe_batch_phase_duration("evaluate", elapsed);
@@ -761,6 +786,9 @@ impl LogProcessor {
         self.metrics.set_correlation_state_entries(state_entries);
         for _ in 0..quota_evictions {
             self.metrics.on_tenant_quota_eviction("correlation_state");
+        }
+        if cap_evictions > 0 {
+            self.metrics.on_correlation_cap_evictions(cap_evictions);
         }
         for _ in 0..untenanted {
             self.metrics
@@ -1283,6 +1311,89 @@ correlation:
 
         proc.process_batch_with_format(&[future.to_string()], &InputFormat::Json, None);
         assert_eq!(metrics.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn correlation_cap_evictions_are_reported_to_the_metrics_hook() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        #[derive(Default)]
+        struct CapMetrics(AtomicU64);
+
+        impl MetricsHook for CapMetrics {
+            fn on_parse_error(&self) {}
+            fn on_events_processed(&self, _: u64) {}
+            fn on_detection_matches(&self, _: u64) {}
+            fn on_correlation_matches(&self, _: u64) {}
+            fn observe_processing_latency(&self, _: f64) {}
+            fn on_input_queue_depth_change(&self, _: i64) {}
+            fn on_back_pressure(&self) {}
+            fn observe_batch_size(&self, _: u64) {}
+            fn on_output_queue_depth_change(&self, _: i64) {}
+            fn observe_pipeline_latency(&self, _: f64) {}
+            fn set_correlation_state_entries(&self, _: u64) {}
+            fn on_correlation_cap_evictions(&self, count: u64) {
+                self.0.fetch_add(count, Ordering::Relaxed);
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let rule_path = dir.path().join("rules.yml");
+        std::fs::write(
+            &rule_path,
+            r#"
+title: Base
+id: base-rule
+logsource:
+    category: test
+detection:
+    selection:
+        EventID: 1
+    condition: selection
+---
+title: Corr
+correlation:
+    type: event_count
+    rules:
+        - base-rule
+    group-by:
+        - User
+    timespan: 1h
+    condition:
+        gte: 5
+"#,
+        )
+        .unwrap();
+        let config = CorrelationConfig {
+            max_state_entries: 2,
+            ..CorrelationConfig::default()
+        };
+        let mut engine = RuntimeEngine::new(rule_path, vec![], config, false);
+        engine.load_rules().unwrap();
+        let metrics = Arc::new(CapMetrics::default());
+        let proc = LogProcessor::new(engine, metrics.clone());
+
+        let lines: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|user| {
+                format!(
+                    r#"{{"EventID": 1, "User": "{user}", "@timestamp": "2024-01-01T00:00:00Z"}}"#
+                )
+            })
+            .collect();
+        proc.process_batch_lines(&lines, &identity_filter);
+        assert_eq!(metrics.0.load(Ordering::Relaxed), 1);
+
+        let lines: Vec<String> = ["d", "e"]
+            .iter()
+            .map(|user| {
+                format!(
+                    r#"{{"EventID": 1, "User": "{user}", "@timestamp": "2024-01-01T00:00:00Z"}}"#
+                )
+            })
+            .collect();
+        proc.process_batch_with_format(&lines, &InputFormat::Json, None);
+        assert_eq!(metrics.0.load(Ordering::Relaxed), 3);
     }
 
     #[test]

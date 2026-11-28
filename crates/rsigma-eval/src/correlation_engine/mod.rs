@@ -176,6 +176,8 @@ pub struct CorrelationEngine<L = LogSourceExtractor> {
     tenant_keys: HashMap<Option<TenantId>, HashSet<StateKey>>,
     /// Entries evicted because a tenant hit its quota.
     tenant_quota_evictions: u64,
+    /// Entries evicted because the store hit `max_state_entries`.
+    cap_evictions: u64,
     /// Sequence number the next processed event gets. Retained buffer entries
     /// carry it so a parent correlation can skip an event it already merged.
     next_event_seq: u64,
@@ -238,6 +240,7 @@ impl<L> CorrelationEngine<L> {
             high_water: i64::MIN,
             tenant_keys: HashMap::new(),
             tenant_quota_evictions: 0,
+            cap_evictions: 0,
             next_event_seq: 1,
             retention: Vec::new(),
             retention_dirty: true,
@@ -957,6 +960,13 @@ impl<L> CorrelationEngine<L> {
     /// draining the counter.
     pub fn take_tenant_quota_evictions(&mut self) -> u64 {
         std::mem::take(&mut self.tenant_quota_evictions)
+    }
+
+    /// Entries evicted because the store hit
+    /// [`CorrelationConfig::max_state_entries`] since the previous call,
+    /// draining the counter.
+    pub fn take_cap_evictions(&mut self) -> u64 {
+        std::mem::take(&mut self.cap_evictions)
     }
 
     /// Run stateless detection only (no correlation), delegating to the inner engine.
@@ -2881,6 +2891,7 @@ impl<L> CorrelationEngine<L> {
                 .collect();
 
             // Drop the stalest entries (and their associated event buffers)
+            self.cap_evictions += stalest.len() as u64;
             for key in stalest {
                 self.remove_state_entry(&key);
             }

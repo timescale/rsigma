@@ -124,7 +124,7 @@ dedup:
 | `dedup.fingerprint` | required | Selectors that, with the tenant and the rule identity, make up the fingerprint. At least one is required when `dedup` is set. |
 | `dedup.repeat_interval` | `0` | Re-emit cadence for a still-active alert (humantime, e.g. `1h`). `0` means pure suppression. |
 | `dedup.resolve_timeout` | `1h` | Idle timeout after which an active alert resolves and is evicted (humantime). |
-| `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. The `rsigma_dedup_store_entries` gauge plateauing at this value signals saturation. |
+| `dedup.max_active_alerts` | `100000` | Ceiling on concurrently-active alerts. Once reached, a first-fire for a new fingerprint passes through un-deduped instead of growing the store, so a high-cardinality fingerprint cannot exhaust memory. Each such result counts in `rsigma_alert_pipeline_cap_refused_total{store="active_alerts"}`. {{ added "unreleased" }} With a tenant quota, a tenant at its quota first evicts its own least recently seen alert, even when the global cap is also full. {{ added "unreleased" }} |
 | `max_silences` | `1000` | Ceiling on concurrently-tracked dynamic (API) silences. `POST /api/v1/silences` returns `429` past this. Static silences from the config do not count against it. |
 | `max_silence_duration` | `720h` | Latest `ends_at` for an API silence, measured from when it is created (humantime). `POST /api/v1/silences` returns `400` for a silence without `ends_at` or one that ends later. `0` removes the bound. Static silences are not limited. {{ added "0.27.0" }} |
 | `allow_broad_silences` | `false` | Accept API silences with no `=` matcher on a non-empty value on `rule`, `match.<field>`, or `correlation.group_key.<field>`, such as `rule =~ .*`, `rule != x`, or `level = high` alone, which mute whole classes of results. Static silences are not limited. {{ added "0.27.0" }} |
@@ -169,6 +169,7 @@ The dedup stage exposes (see [Metrics](../reference/metrics.md)):
 - `rsigma_dedup_results_total{action}`: outcomes (`emitted`, `folded`, `repeat`, `resolved`).
 - `rsigma_dedup_store_entries`: active alerts currently tracked.
 - `rsigma_dedup_evictions_total`: alerts evicted after resolving.
+- `rsigma_alert_pipeline_cap_refused_total{store}`: results that could not open a new alert or incident because the global cap was full. {{ added "unreleased" }}
 - `rsigma_dedup_summaries_emitted_total`: `repeat` plus `resolved` records emitted.
 - `rsigma_alert_pipeline_duration_seconds`: stage duration.
 
@@ -227,6 +228,8 @@ group:
 `include: refs` (default) embeds lightweight `{rule, level}` references; `include: results` embeds the full (event-stripped) contributing results, bounded by `max_results_per_incident`.
 
 In `entity_graph` mode, `max_entities_per_incident` bounds the values an incident stores per selector. Once a selector is full, new values for it still let a result join through its other values, but they are not recorded on the incident and do not act as join keys for later results. They also do not count toward `max_value_cardinality`, and neither does any value of a result refused by `max_open_incidents`.
+
+A result that would open a new incident while `max_open_incidents` is full passes through without an `incident_id` and counts in `rsigma_alert_pipeline_cap_refused_total{store="incidents"}`. {{ added "unreleased" }}
 
 ### Wire shape
 

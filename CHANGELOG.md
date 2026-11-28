@@ -14,6 +14,14 @@ The risk snapshot moves to version 3 and stores the window buckets, so scores su
 
 Library changes: `RiskState::restore` and `restore_detailed` take the `IncidentConfig`; `RiskState::enforce_caps` and `RiskLayer::enforce_caps` replace `enforce_tenant_cap` and `evict_tenant_oldest` and return a `RiskCapTrim`; `MetricsHook::on_risk_eviction` takes a `reason`; `RiskConfigError` has an `Incident` variant.
 
+### Correlation and alert-pipeline caps report what they drop
+
+Correlation windows dropped by the `max_state_entries` hard cap were visible only as a warning log, and results that could not open a dedup alert or an incident because `dedup.max_active_alerts` or `group.caps.max_open_incidents` was full only as a plateauing gauge. They now count in `rsigma_correlation_state_evictions_total` and `rsigma_alert_pipeline_cap_refused_total{store}` (`active_alerts`, `incidents`). Correlation quota and cap evictions are also reported when events go through `LogProcessor::process_batch_lines`, which reported neither.
+
+With `daemon.tenancy.quotas.active_alerts` set, a tenant at its quota could not reclaim its own oldest alert while the global `dedup.max_active_alerts` was full, so its new fingerprints went through un-deduplicated. The tenant now evicts its own least recently seen alert first, as incident grouping already did.
+
+New library surface: `CorrelationEngine::take_cap_evictions` (also on `SchemaRouter` and `RulesetEngines`), `RuntimeEngine::take_correlation_cap_evictions`, and the `MetricsHook` methods `on_correlation_cap_evictions` and `on_alert_pipeline_cap_refused`, which default to no-ops.
+
 ### Absence and missing-event correlations (#816)
 
 Correlation rules can now express "A without B within T" and entity deadman detection, "no heartbeat from host X for T". A negated rule reference in the string `condition:` of a `temporal` or `temporal_ordered` correlation is evaluated at an event-time deadline instead of the moment the positive rule matches: a negated hit inside the obligation's window cancels it, and the alert fires when the tenant clock passes the deadline. A condition made only of one negated rule is the deadman form, which arms on a heartbeat, slides on a later heartbeat, and fires once when the clock passes the deadline. `rsigma.absence_grace` delays firing past the deadline. Late negated hits cannot retract an alert.
