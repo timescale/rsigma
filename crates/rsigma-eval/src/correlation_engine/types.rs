@@ -272,8 +272,10 @@ pub type ProcessResult = Vec<EvaluationResult>;
 /// Inner maps use `Vec<(GroupKey, T)>` instead of `HashMap<GroupKey, T>` because
 /// `GroupKey` cannot be used as a JSON object key.
 ///
-/// Version 2 nests state under [`Self::tenants`]; the top-level maps hold the
-/// version 1 layout and are read as tenant `None` but never written.
+/// Version 3 adds absence state and per-tenant clocks; version 2 nests state
+/// under [`Self::tenants`]; version 1 snapshots keep their top-level layout and
+/// are read as tenant `None`. The engine writes version 2 unless absence state
+/// or a clock is present.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CorrelationSnapshot {
     /// Schema version — used to detect incompatible snapshots on load.
@@ -301,7 +303,7 @@ pub struct CorrelationSnapshot {
     pub rulesets: BTreeMap<String, CorrelationSnapshot>,
 }
 
-/// State belonging to one tenant in a version 2 snapshot.
+/// State belonging to one tenant in a version 2 or 3 snapshot.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TenantStateSnapshot {
     /// Tenant that owns this state. `None` for the untenanted bucket.
